@@ -40,7 +40,7 @@ CONCEPT_DEFINITIONS: list[dict[str, object]] = [
     {"name": "Mean corpuscular hemoglobin concentration", "category": "hematology", "unit": "g/L", "aliases": ["середня концентрація гемоглобіну в еритроциті (mchc)", "середня концентрація гемоглобіну в еритроциті (мснс)", "середня концентрація hb в еритроцитах (мснс)", "мснс", "mchc"]},
     {"name": "Platelet count", "category": "hematology", "unit": "10^9/L", "aliases": ["тромбоцити (plt)", "тромбоцити", "plt"]},
     {"name": "Mean platelet volume", "category": "hematology", "unit": "fL", "aliases": ["середній об'єм тромбоцитів (mpv)", "mpv"]},
-    {"name": "Erythrocyte sedimentation rate", "category": "inflammation", "unit": "mm/h", "aliases": ["шое", "аналіз крові: швидкість осідання еритроцитів (шое, esr)", "шое за вестергреном (швидкість осідання еритроцитів)", "esr", "шое (ser)"]},
+    {"name": "Erythrocyte sedimentation rate", "category": "inflammation", "unit": "mm/h", "aliases": ["шое", "аналіз крові: швидкість осідання еритроцитів (шое, esr)", "швидкість осідання еритроцитів (шое, esr)", "шое за вестергреном (швидкість осідання еритроцитів)", "esr", "шое (ser)"]},
     {"name": "Blood glucose", "category": "metabolic", "unit": "mmol/L", "aliases": ["глюкоза", "глюкоза (сироватка)", "глюкоза (сироватка крові)", "глюкоза (плазма крові)", "glucose", "blood glucose"]},
     {"name": "Hemoglobin A1c", "category": "metabolic", "unit": "%", "aliases": ["глікований гемоглобін (hba1c)", "глікований гемоглобін (hba1c)цільна кров", "hba1c", "hb a1c"]},
     {"name": "Albumin", "category": "liver", "unit": "g/L", "aliases": ["альбумін", "albumin"]},

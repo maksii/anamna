@@ -14,7 +14,7 @@ from .text import collapse_space, parse_decimal
 # the files it names.  Two changes reached `main` without a bump -- 196 lines of
 # new rules in 4472233, and the Latin unit spellings below -- so every row those
 # produced is indistinguishable from a row the previous parser produced.
-PARSER_VERSION = "2026.11.07-3"
+PARSER_VERSION = "2026.11.07-4"
 
 #: The kinds of report this module reads values out of.  Everything else --
 #: ultrasound, MRI, consultation, pathology, radiology -- it returns nothing
@@ -232,9 +232,74 @@ NON_NORMAL_BAND_RE = re.compile(
     # that *is* this patient's, contains neither and stays selectable.
     r"вище\s+оптимальн\w*|порогов\w*|"
     # Synevo's cholesterol scale names its middle band «Умовний ризик».
-    r"умовн\w*\s+ризик\w*",
+    r"умовн\w*\s+ризик\w*|"
+    # Faecal elastase prints «> 200 - нормальна екзокринна функція / 100 - 200
+    # - помірна форма недостатності / < 100 - важка форма недостатності».
+    # With the insufficiency tier unrecognised, 100 - 200 was read as the
+    # reference and a normal 277.6 was published as high.
+    r"недостатн\w*",
     re.I,
 )
+
+#: A reference given per time of day («Ранок (7:00-10:00): 5-25 Вечір
+#: (16:00-20:00): 2.5-12.5», cortisol).  Two intervals for two collection
+#: times are not one interval: read as one, the clock times themselves became
+#: the bounds («00-10») and a morning cortisol of 12.0 was published as high.
+#: `reference_limits` refuses it; `time_of_day_bands` reads the bands so a
+#: value inside every one of them (or outside every one) can still be judged.
+_TIME_OF_DAY_WORD = r"ранок|ранку|вранці|вечір|вечора|увечері|morning|evening"
+TIME_OF_DAY_RE = re.compile(rf"\d{{1,2}}:\d{{2}}\s*[-–—]\s*\d{{1,2}}:\d{{2}}|\b(?:{_TIME_OF_DAY_WORD})\b", re.I)
+_TIME_OF_DAY_BAND = re.compile(
+    rf"\b(?:{_TIME_OF_DAY_WORD})\b\s*(?:\([^)]*\))?\s*:\s*"
+    r"(?P<low>\d+(?:\.\d+)?)\s*[-–—]\s*(?P<high>\d+(?:\.\d+)?)",
+    re.I,
+)
+
+
+def time_of_day_bands(reference: str | None) -> list[tuple[float, float]]:
+    """The «label (time): low - high» bands of a per-time-of-day reference."""
+    if not reference or not TIME_OF_DAY_RE.search(reference):
+        return []
+    value = reference.replace(",", ".")
+    bands = [(float(found["low"]), float(found["high"])) for found in _TIME_OF_DAY_BAND.finditer(value)]
+    return bands if len(bands) >= 2 else []
+
+
+#: One tier of a scale that labels each interval after it: «<2.0 - показник
+#: гіпопроліферативного компонента анемії», «0.8 - 1.2 - відсутність ризику».
+_LABELLED_TIER = re.compile(
+    r"(?:[<>≤≥]\s*)?\d+(?:\.\d+)?\s*%?(?:\s*[-–—]\s*[<>≤≥]?\s*\d+(?:\.\d+)?\s*%?)?"
+    r"\s*[-–—]\s*(?P<label>[^\W\d_][^<>≤≥\d;]*)"
+)
+#: The words a tier uses to say it is the healthy one.
+_HEALTHY_TIER = re.compile(r"норм|негатив|відсутн|оптимальн|здоров|negative|normal|absent|optimal|healthy", re.I)
+
+
+def interpretive_scale(reference: str | None) -> bool:
+    """A scale of labelled tiers none of which is named as the healthy one.
+
+    The reticulocyte index prints «<2.0 - показник гіпопроліферативного
+    компонента анемії / >2-3 - показник збільшення виникнення еритроцитів»:
+    two readings of what a value means, not a normal interval.  Taken as one,
+    2-3 became the "range" and an index of 0.15 was published as low.  A
+    scale that does name its healthy tier («<5.2 - Відсутність ризику», «<0.9
+    - негативний результат») is read by the band logic below as before.
+    """
+    if not reference:
+        return False
+    labels = [found["label"] for found in _LABELLED_TIER.finditer(reference.replace(",", "."))]
+    return len(labels) >= 2 and not any(_HEALTHY_TIER.search(label) for label in labels)
+
+
+def refused_reference(reference: str | None) -> bool:
+    """A printed reference that is known not to be an interval at all.
+
+    Narrower than "`reference_limits` found no bounds": a demographic block
+    has an interval for somebody, and a stored bound read from it by a
+    layout-aware parser is kept.  A per-time-of-day or purely interpretive
+    scale has none for anybody, so a bound stored from it is an error.
+    """
+    return bool(reference) and (bool(TIME_OF_DAY_RE.search(reference or "")) or interpretive_scale(reference))
 
 #: A reference that announces itself as a treatment target is not a reference
 #: interval.  Non-HDL cholesterol prints four ESC/EAS targets, one per
@@ -267,7 +332,11 @@ RELATIVE_PERCENT_RE = re.compile(r"\d\s*%\s*від\b", re.I)
 #: not the equivocal 0.9-1.0 that the first number pair would give.
 #: Deliberately only the immunoassay word: a risk or optimum tier («оптимальний
 #: рівень», «Низький рівень ризику») is a tier and stays refused.
-_NORMAL_LABEL = r"негатив\w*|negative"
+#: «Здорове населення» ("healthy population") is the same statement in
+#: EskuLab's vitamin D scale: «Ризик дефіциту: <20.0 Ризик недостатнього
+#: вживання: 20.0 - <30.0 Здорове населення: 30.0 - 100.0», where the first pair
+#: of numbers is the insufficiency tier.
+_NORMAL_LABEL = r"негатив\w*|negative|здоров\w*\s+населенн\w*"
 _LIMIT = r"(?:від\s*)?[<>≤≥]?\s*-?\d+(?:\.\d+)?(?:\s*(?:до|[-–—])\s*[<≤]?\s*-?\d+(?:\.\d+)?)?"
 _NORMAL_BAND_FIRST = re.compile(
     rf"(?:{_NORMAL_LABEL})\s*(?:результат\w*)?\s*(?:\([^)]*\))?\s*[:\-–]?\s*(?P<limit>{_LIMIT})", re.I
@@ -392,6 +461,14 @@ def reference_limits(reference: str | None) -> ReferenceLimits:
     if not reference:
         return ReferenceLimits()
     value = reference.replace(",", ".")
+    # A lone zero («0.0» beside NRBC or reactive lymphocytes) is the value the
+    # laboratory expects: a count that cannot be negative has nothing to be
+    # but at most zero.  Read as no reference, an NRBC of 0.2 % against it was
+    # left with no direction.  Only zero: a lone «5» could be either limit.
+    if re.fullmatch(r"\s*0(?:\.0+)?\s*", value):
+        return ReferenceLimits(None, 0.0, True, True)
+    if refused_reference(value):
+        return ReferenceLimits()
     if (
         demographic_reference(value)
         or TARGET_SCALE_RE.search(value)
@@ -418,7 +495,13 @@ def _named_normal_band(value: str) -> ReferenceLimits | None:
     # the grey zone that follows it.
     label = re.search(_NORMAL_LABEL, value, re.I)
     number = re.search(r"\d", value)
-    limit_first = bool(label and number and number.start() < label.start())
+    # A label followed by its colon introduces the numbers after it, however
+    # many bands came before: «Ризик дефіциту: <20.0 ... Здорове населення:
+    # 30.0 - 100.0» is not "<30.0 is healthy".
+    introduces = bool(label) and bool(
+        re.match(r"\s*(?:результат\w*)?\s*(?:\([^)]*\))?\s*:", value[label.end():], re.I)
+    )
+    limit_first = bool(label and number and number.start() < label.start()) and not introduces
     normal = (_NORMAL_BAND_AFTER if limit_first else _NORMAL_BAND_FIRST).search(value)
     if normal:
         limits = _plain_limits(normal.group("limit"), labelled_scale=False)
@@ -3573,10 +3656,15 @@ def parse_synevo_unitless(words: list, page_number: int) -> list[ParsedObservati
         if not value or cells["unit"] or not valid_analyte_name(name):
             continue
         reference = _synevo_block(lines, first, columns) or None
-        inline = _SYNEVO_INLINE_NORM.match(value)
-        if inline and not reference:
-            value, reference = inline.group("value"), inline.group("norm")
-        if not reference and not _SYNEVO_GENOTYPE.match(value):
+        inline = _SYNEVO_INLINE_NORM.match(value) if not reference else None
+        if inline:
+            # «не виявлені (в нормі - не виявлені)» is all result column (the
+            # words start inside it, left of the reference header), the row's
+            # reference column is empty, and the lab's own record has no norm
+            # for it.  Moved into the reference, a gloss in the result cell was
+            # published as an interval the laboratory never printed.
+            value = inline.group("value")
+        if not reference and not inline and not _SYNEVO_GENOTYPE.match(value):
             # A result row prints its norm; a line with none is a panel heading
             # or a note in the result column («Звіт з описом лабораторних
             # показників | Ваш результат готовий ...»), and stays with the
@@ -4231,13 +4319,41 @@ def _review_antibiotics(
     return kept
 
 
-#: A reference line that is a band rather than a method note: it carries a
-#: number or a «label:», or names a population.
-_BAND_LINE = re.compile(r"\d|:\s*$|^(?:Діти|Дорослі|Чоловіки|Жінки|Новонар|Вагітн)", re.I)
 #: Reference-column lines that end a block: method, reagent and analyser
-#: notes, target-level citations, footnotes.
+#: notes, notes on how the limits were set, the page footer.
 _BLOCK_END = re.compile(
-    r"^(?:\*|Метод|Реагент|Аналізатор|Виконано|Цільові\s+рівні|Примітка|Результати\s+лаборатор|Обробка|Стор\.)",
+    r"^(?:Метод|Реагент|Аналізатор|Виконано|Цільові\s+рівні|Примітка|Результати\s+лаборатор|Обробка|Стор\.|"
+    # Anti-Müllerian hormone: «Референтні межі данного аналізу відповідають 5-му
+    # – 95-му процентилю» and «Довідково: Референтні межі для жінок з СПКЯ: 2.41
+    # - 17.1» say where the limits come from and give another population's
+    # interval -- neither is this row's reference.
+    r"Референтні\s+межі|Довідково)",
+    re.I,
+)
+#: A line of a reference block that says how the value was measured
+#: («Безціанидовий SLS-метод», «Гідродинамічне фокусування з імпедансним
+#: методом», «Лейкоцити визначаються за активністю лейкоцитестерази.»,
+#: «Виконано на аналізаторі ...»), not what is normal.  Shared with the lab
+#: record reader, whose reference lines carry the same notes.
+METHOD_NOTE_RE = re.compile(
+    r"метод|аналізатор|реагент|тест-систем|обладнан|^\s*виконано|визнача\w*ся\s+за\b|визначенн|фокусуванн",
+    re.I,
+)
+_METHOD_INTERVAL_RE = re.compile(r"\d\s*[-–]\s*\d|[<>≤≥]\s*\d|\bдо\s+\d")
+
+
+def method_note(line: str) -> bool:
+    """A reference line that names a method, reagent or analyser and gives no interval."""
+    return bool(METHOD_NOTE_RE.search(line)) and not _METHOD_INTERVAL_RE.search(line)
+
+
+#: A line opening with an asterisk is either a citation («*Згідно наданих
+#: рекомендацій Roehrl et al.,», «**Враховуючи рекомендації ...») or a band the
+#: citation refers to («*Діти: <2 років: ≤0.4», «**Вагітні жінки:»).  A
+#: population word or a «label:» says which.
+_FOOTNOTE = re.compile(r"^\*+\s*(?!\S[^:]{0,40}:)")
+_BAND_START = re.compile(
+    r"^\**\s*(?:Діти|Дорослі|Чоловіки|Жінки|Новонар|Вагітн|[IІ]{1,3}\s+триместр|[<>≤≥]?\s*\d+\s*[-–]?\s*\d*\s*(?:рок|років|міс|дн|тиж))",
     re.I,
 )
 
@@ -4255,10 +4371,12 @@ def synevo_reference_blocks(words: list) -> dict[str, str]:
 
     Read by column, the block is every reference-column line from the value
     line down to whichever comes first: the next result row, a line with
-    nothing in the reference column (a section heading), a method or citation
-    note, or a line that is no band at all.  The name column's wrapped tail
-    («еритроцитів (ШОЕ, ESR)») and the unit's («клітин/л») sit on the same
-    lines and are simply not in the column.
+    nothing in the reference column (a section heading), or a method or
+    note line.  A citation footnote («*Згідно наданих рекомендацій ...») is
+    skipped with its continuation lines, and the block goes on at the next
+    band after it.  The name column's wrapped tail («еритроцитів (ШОЕ, ESR)»)
+    and the unit's («клітин/л») sit on the same lines and are simply not in
+    the column.
     """
     lines = _word_lines(words)
     columns = _synevo_columns(lines)
@@ -4273,17 +4391,31 @@ def synevo_reference_blocks(words: list) -> dict[str, str]:
 
 
 def _synevo_block(lines: list, index: int, columns: tuple[float, float, float]) -> str:
-    """The reference block that starts on the value line ``lines[index]``."""
+    """The reference block that starts on the value line ``lines[index]``.
+
+    Every line of the block is kept, words and all: the coagulation panel's
+    INR prints its interval under a sentence («Згідно з рекомендаціями
+    міжнародних протоколів ... Не приймають антикоагулянтні препарати: 0.8 –
+    1.2»), homocysteine its second set of bands under «Для людей з додатковим
+    споживанням фолатів:», a genotype its risk lines («Гетерозиготне носійство
+    – ризик»).  Stopping at the first line without a number kept a fragment of
+    the sentence and none of the intervals.
+    """
     value_from, unit_from, reference_from = columns
     parts = [" ".join(word[3] for word in lines[index] if word[0] >= reference_from)]
-    for following in lines[index + 1 : index + 25]:
+    in_footnote = False
+    for following in lines[index + 1 : index + 40]:
         if any(value_from <= word[0] < unit_from for word in following):
             break
         reference = collapse_space(" ".join(word[3] for word in following if word[0] >= reference_from))
-        if not reference or _BLOCK_END.match(reference):
+        if not reference or _BLOCK_END.match(reference) or method_note(reference):
             break
-        if not (_BAND_LINE.search(reference) or parts[-1].rstrip().endswith(",")):
-            break
+        if _FOOTNOTE.match(reference):
+            in_footnote = True
+            continue
+        if in_footnote and not _BAND_START.match(reference):
+            continue
+        in_footnote = False
         parts.append(reference)
     return collapse_space(" ".join(parts))
 
@@ -4413,13 +4545,126 @@ def _synevo_by_column(
             if not any(row.startswith(item.evidence_text) or item.evidence_text.startswith(row) for row in row_texts)
         ] + unitless
     sediment = parse_synevo_sediment(words, page_number)
-    if not sediment:
+    if sediment:
+        # The column reader owns the microscopy section: whatever the flat
+        # passes read inside it is replaced, so a row is neither lost to
+        # them nor read twice.
+        section_text = _sediment_text(text)
+        observations = [item for item in observations if item.evidence_text not in section_text] + sediment
+    return _synevo_rows_in_place(observations, words)
+
+
+#: The order's package heading, «Пакет №183 (CHECK-UP. ... + звіт з описом /
+#: лабораторних показників)»: its «+ звіт з описом» sits in the result column
+#: and the column header «Індикатор зони підвищеної уваги» in the reference
+#: one, so it was stored as a result.  A package is never an analyte.
+_SYNEVO_PACKAGE = re.compile(r"^Пакет\s*№\s*\d+", re.I)
+#: The specimen Synevo prints in front of one row's name: «Аналіз крові:
+#: Швидкість осідання еритроцитів (ШОЕ, ESR)».  It is the material, not part
+#: of the analyte's name; left on, the ESR filed under a name no other
+#: report uses.
+SPECIMEN_LABEL = re.compile(r"^Аналіз\s+крові\s*:\s*(?=\S)", re.I)
+#: A gene and its polymorphism, as a PCR heading names them: «ПЛР. Фолатний
+#: цикл. MTHFR (1298 A>C)», «PAI-1 (-675 5G>4G)».
+_GENE_VARIANT = re.compile(
+    r"\b(?P<gene>[A-Z][A-Z0-9-]{1,9})\s*\(\s*(?P<variant>-?\d+\s*\d*[ACGT]\s*>\s*\d*[ACGT])\s*\)"
+)
+#: A row name that names no analyte on its own -- one step of a test whose
+#: name is the heading above it: «Вовчаковий антикоагулянт» / «Скринінговий
+#: тест 37.9 сек» / «Підтверджуючий тест 34.3 сек».
+_SUBTEST_NAME = re.compile(r"^(?:скринінгов\w*|підтверджуюч\w*)\s+тест\w*$", re.I)
+
+
+def without_specimen_label(name: str) -> str:
+    """«Аналіз крові: Швидкість осідання ...» -> «Швидкість осідання ...»."""
+    return SPECIMEN_LABEL.sub("", name)
+
+
+def _synevo_rows_in_place(observations: list[ParsedObservation], words: list) -> list[ParsedObservation]:
+    """What only the page around a row says about it.
+
+    * a package heading read as a row is dropped;
+    * the specimen label in front of a name is taken off;
+    * a unit whose tail wrapped onto the next line («10^9» / «клітин/л») is
+      joined again;
+    * a row named by the heading above it takes that heading: the gene and
+      variant of a genotype (MTHFR 1298 A>C and 677 C>T were one name, so two
+      different tests merged into one series), the test a «Скринінговий тест»
+      belongs to.
+    """
+    lines = _word_lines(words)
+    columns = _synevo_columns(lines)
+    if columns is None:
         return observations
-    # The column reader owns the microscopy section: whatever the flat
-    # passes read inside it is replaced, so a row is neither lost to
-    # them nor read twice.
-    section_text = _sediment_text(text)
-    return [item for item in observations if item.evidence_text not in section_text] + sediment
+    texts = [collapse_space(" ".join(word[3] for word in line)) for line in lines]
+    finished: list[ParsedObservation] = []
+    claimed: set[int] = set()
+    for item in observations:
+        if _SYNEVO_PACKAGE.match(item.raw_name):
+            continue
+        changes: dict[str, object] = {}
+        name = without_specimen_label(item.raw_name)
+        # Two rows can print the same line (both MTHFR genotypes read
+        # «Метілентетрагідрофолатредуктаза Мутація відсутня ...»): each takes
+        # the first such line not yet taken, in page order.
+        index = next(
+            (
+                number for number, text in enumerate(texts)
+                if number not in claimed and len(text) > 4 and item.evidence_text.startswith(text)
+            ),
+            None,
+        )
+        if index is not None:
+            claimed.add(index)
+            heading = _synevo_heading_above(lines, texts, index, columns[0])
+            variant = _GENE_VARIANT.search(heading or "")
+            if variant:
+                # «Метілентетрагідрофолатредуктаза (MTHFR 677 C>T)»: the enzyme as
+                # printed, then the gene and variant that tell the two MTHFR tests apart.
+                name = f"{name} ({variant['gene']} {collapse_space(variant['variant'])})"
+            elif heading and _SUBTEST_NAME.match(name):
+                name = f"{heading}, {name[:1].lower()}{name[1:]}"
+            tail = _wrapped_unit_tail(item.unit_raw, lines, index, columns)
+            if tail:
+                changes["unit_raw"] = f"{item.unit_raw} {tail}"
+        if name != item.raw_name:
+            changes["raw_name"] = name
+        finished.append(cast(ParsedObservation, replace(item, **changes)) if changes else item)
+    return finished
+
+
+def _synevo_heading_above(lines: list, texts: list[str], index: int, value_from: float) -> str | None:
+    """The nearest line above row ``index`` that is a heading: words in the name column only, opening
+    on a capital, and not the wrapped end of a name above it."""
+    for above in range(index - 1, -1, -1):
+        line = lines[above]
+        if any(word[0] >= value_from for word in line):
+            row_name = " ".join(word[3] for word in line if word[0] < value_from)
+            if row_name and not _SUBTEST_NAME.match(row_name):
+                return None  # another result row: no heading between it and this one
+            continue  # a reference or method line, or a sibling step of the same test
+        text = texts[above]
+        if _RESULT_HEADING in text or not text[:1].isupper():
+            return None
+        if above > 0 and _unclosed_bracket(" ".join(word[3] for word in lines[above - 1] if word[0] < value_from)):
+            return None
+        return text
+    return None
+
+
+#: The second line of a count's unit: Synevo prints «10^9» beside the value
+#: and «клітин/л» under it.
+_UNIT_TAIL = re.compile(r"^клітин/л$", re.I)
+
+
+def _wrapped_unit_tail(unit: str | None, lines: list, index: int, columns: tuple[float, float, float]) -> str | None:
+    """The unit column's word on the line under row ``index``, when it finishes a «10^n» unit."""
+    if not unit or not re.fullmatch(r"10\^\d+", unit) or index + 1 >= len(lines):
+        return None
+    _value_from, unit_from, reference_from = columns
+    below = [word[3] for word in lines[index + 1] if unit_from <= word[0] < reference_from]
+    tail = " ".join(below)
+    return tail if _UNIT_TAIL.match(tail) else None
 
 
 #: The page footer of Synevo's illustrated companion report («звіт з описом
@@ -4666,10 +4911,13 @@ def _numeric_reading(item: ParsedObservation, reference: str | None, bounds: Ref
     if reading is not None:
         return reading
     # The case a plain «>» comparison gets wrong: a value exactly on a
-    # strict limit is outside it.
-    if bounds.high is not None and not bounds.high_inclusive and value == bounds.high:
+    # strict limit is outside it -- unless the value is itself printed below
+    # (or above) that number: carnosine «<1.0» against «<1» is inside.
+    if (bounds.high is not None and not bounds.high_inclusive and value == bounds.high
+            and item.comparator not in {"<", "≤"}):
         return "high"
-    if bounds.low is not None and not bounds.low_inclusive and value == bounds.low:
+    if (bounds.low is not None and not bounds.low_inclusive and value == bounds.low
+            and item.comparator not in {">", "≥"}):
         return "low"
     return None
 

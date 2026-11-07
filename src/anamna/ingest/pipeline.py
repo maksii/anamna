@@ -46,7 +46,10 @@ from .parsers import (
     ParseIssue,
     has_result_header,
     parse_document,
-    reference_bounds,
+    reference_limits,
+    refused_reference,
+    scale_interpretation,
+    time_of_day_bands,
 )
 from .positions import store_positions
 from .text import collapse_space, combined_page_text, normalized_key, search_key
@@ -593,6 +596,8 @@ def _apply_reread_proposal(
         page_number=row["page_number"],
         evidence_text=row["evidence_text"],
         confidence=row["confidence"],
+        reference_low_inclusive=bool(row["vendor_reference_low_inclusive"] if row["vendor_reference_low_inclusive"] is not None else 1),
+        reference_high_inclusive=bool(row["vendor_reference_high_inclusive"] if row["vendor_reference_high_inclusive"] is not None else 1),
     )
     reading = (
         row["vendor_interpretation"]
@@ -1056,12 +1061,45 @@ def interpretation(observation: ParsedObservation, concept_id: str | None = None
         return _ana_index(value)
     if _mumps_igg_positive(observation, concept_id, normalized_name, normalized_reference):
         return "positive"
-    if observation.reference_low is not None and value < observation.reference_low:
+    # A named negative / equivocal / positive scale reads the value itself, as
+    # `parsers.finalise` does at ingest; without it the start-up repair, which
+    # comes through here, turned an HBsAg in the grey zone from "borderline"
+    # into "high".
+    scaled = scale_interpretation(value, observation.reference_text)
+    if scaled is not None:
+        return scaled
+    low, high = observation.reference_low, observation.reference_high
+    if low is None and high is None:
+        return _time_of_day_interpretation(value, observation.reference_text)
+    # A strict bound excludes the value equal to it: CA-125 35.0 against «< 35»
+    # is not inside the laboratory's range, and was published as though it were.
+    # A value printed with its own sign is not equal to it: «<1.0» against «<1»
+    # is inside.
+    below, above = observation.comparator in {"<", "≤"}, observation.comparator in {">", "≥"}
+    if low is not None and (value < low or (value == low and not observation.reference_low_inclusive and not above)):
         return "low"
-    if observation.reference_high is not None and value > observation.reference_high:
+    if high is not None and (value > high or (value == high and not observation.reference_high_inclusive and not below)):
         return "high"
-    if observation.reference_low is not None or observation.reference_high is not None:
+    return "within_vendor_range"
+
+
+def _time_of_day_interpretation(value: float, reference: str | None) -> str | None:
+    """A value against a reference printed per time of day (cortisol).
+
+    Which band applies depends on when the sample was drawn, and nothing here
+    records that reliably; but a value inside every band, or beyond all of
+    them, reads the same whichever applies.  In between, no reading is the
+    honest answer.
+    """
+    bands = time_of_day_bands(reference)
+    if not bands:
+        return None
+    if all(low <= value <= high for low, high in bands):
         return "within_vendor_range"
+    if all(value > high for _, high in bands):
+        return "high"
+    if all(value < low for low, _ in bands):
+        return "low"
     return None
 
 
@@ -1140,12 +1178,16 @@ def parsed_inclusivity(parsed: ParsedObservation) -> tuple[int, int]:
 
 
 def _bounds(reference: str | None) -> tuple[float | None, float | None, int | None, int | None]:
-    """`reference_bounds`, tolerant of it also returning inclusivity."""
-    bounds = tuple(reference_bounds(reference))
-    low, high = bounds[0], bounds[1]
-    if len(bounds) >= 4 and bounds[2] is not None and bounds[3] is not None:
-        return low, high, int(bool(bounds[2])), int(bool(bounds[3]))
-    return (low, high, *reference_inclusivity(reference, low, high))
+    """The bounds and their inclusivity, as `reference_limits` reads them.
+
+    The inclusivity comes from the band the bound was read from: «> 200 ... 100 -
+    200 ...» has a strict lower bound of 200, which a regex over the whole text
+    took for inclusive because a dash range appears elsewhere in it.
+    """
+    limits = reference_limits(reference)
+    if limits.low is None and limits.high is None:
+        return (None, None, *reference_inclusivity(reference, None, None))
+    return limits.low, limits.high, int(limits.low_inclusive), int(limits.high_inclusive)
 
 
 def observation_date(parsed: ParsedObservation, page_class: Classification, *, human_date: bool = False) -> str | None:
@@ -1284,10 +1326,19 @@ def _repaired_bounds(row) -> tuple[float | None, float | None, int | None, int |
     # which knows things the generic one cannot see -- the vitamin D rows
     # carry 30-50 ng/mL from a reference printed in prose.  Re-deriving
     # nothing from that prose and storing the nothing deleted the interval.
-    # A repair may sharpen a bound; it may never erase one.
-    if low is None and high is None:
+    # A repair may sharpen a bound; it may never erase one -- unless the text
+    # is known to be no interval at all (a per-time-of-day or purely
+    # interpretive scale), where the stored bound is the error being repaired.
+    if low is None and high is None and not refused_reference(row["vendor_reference_text"]):
         low, high = row["vendor_reference_low"], row["vendor_reference_high"]
         low_inclusive, high_inclusive = reference_inclusivity(row["vendor_reference_text"], low, high)
+        # The bound came from a parser that read the band («≥18 років: <7»);
+        # its inclusivity did too.  Re-derived from the whole block, any «2-20»
+        # elsewhere in it made the adult «<7» inclusive again.
+        if row["vendor_reference_low_inclusive"] is not None:
+            low_inclusive = int(row["vendor_reference_low_inclusive"])
+        if row["vendor_reference_high_inclusive"] is not None:
+            high_inclusive = int(row["vendor_reference_high_inclusive"])
     return low, high, low_inclusive, high_inclusive
 
 
@@ -1385,6 +1436,8 @@ def repair_observation_semantics(connection: sqlite3.Connection) -> int:
             evidence_text=row["evidence_text"],
             confidence=row["confidence"],
             extraction_method=row["extraction_method"],
+            reference_low_inclusive=bool(1 if low_inclusive is None else low_inclusive),
+            reference_high_inclusive=bool(1 if high_inclusive is None else high_inclusive),
         )
         refreshed = interpretation(provisional, concept_id)
         if row["vendor_interpretation_source"] == "lab_record":
