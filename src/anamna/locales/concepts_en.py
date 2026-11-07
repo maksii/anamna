@@ -221,4 +221,11 @@ CONCEPT_NAMES_EN: dict[str, str] = {
     'Негіалінові циліндри в мкл (Path.CAST)': 'Non-hyaline casts per µL (Path.CAST)',
     'Приносний матеріал, сеча': 'Submitted material, urine',
     'Циліндри (CAST)': 'Casts (CAST)',
+    # A gynaecological smear's microscopy (Synevo): bare labels that are not
+    # the urine concepts of the same name, so they are filed on their own.
+    'Лейкоцити': 'Leukocytes (smear)',
+    'Еритроцити': 'Erythrocytes (smear)',
+    'Слиз': 'Mucus (smear)',
+    'Флора': 'Flora (smear)',
+    'Епітелій': 'Epithelium',
 }
