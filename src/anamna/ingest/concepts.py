@@ -661,7 +661,7 @@ _PER_MICROLITRE = re.compile(r"мкл|[µμu]l\b", re.IGNORECASE)
 _SPECIMEN_FAMILIES = (
     ("stool", re.compile(r"\bкал(?:у|ом|і|ов\w*)?\b|копрограм|фекал|\bstool|\bfa?eces", re.IGNORECASE)),
     ("urinalysis", re.compile(r"\bсеч|\burine", re.IGNORECASE)),
-    ("smear", re.compile(r"мазк|мазок|цитолог|пап[\s-]*тест|зішкріб|урогеніт|\bsmear", re.IGNORECASE)),
+    ("smear", re.compile(r"мазк|мазок|цитолог|пап[\s-]*тест|зішкріб|урогеніт|піхв|цервік|уретр|\bvagin|\bcervi|\bsmear", re.IGNORECASE)),
     ("hematology", re.compile(r"\bкров|сироват|плазм|\bblood|\bserum|\bplasma", re.IGNORECASE)),
 )
 #: Concepts that exist for one specimen only.  A bare «Слиз», «pH» or
