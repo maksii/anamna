@@ -28,6 +28,8 @@
     <span class="eyebrow">{{ t('documents.review_state') }}</span>
     <h2>{{ t('documents.review_' ~ review_task.state) }}</h2>
     <p data-review-line>{{ review_task.line_text }}</p>
+    {% if relations.person_part_of %}<p>{{ t('dup.part_review_note') }} <a href="/documents/{{ relations.person_part_of.id }}#review-status">{{ relations.person_part_of.title_text }}</a></p>
+    {% elif relations.person_parts %}<p>{{ plural_t('dup.parts_review_note', relations.person_parts|length) }}</p>{% endif %}
   </div>
   {% if not viewing %}
   <form class="review-actions" method="post" action="/documents/{{ document.id }}/review">
@@ -74,7 +76,7 @@
         the conclusion reachable only as raw page text two tabs away. -#}
     {% set first_tab = 'conclusion' if narrative else 'observations' %}
     <div class="side-tabs" aria-label="{{ t('doc.side_panels') }}">
-      {% if narrative or findings %}
+      {% if narrative or findings or (not viewing and not observations) %}
       <button type="button" class="side-tab{{ ' is-active' if first_tab == 'conclusion' else '' }}" aria-expanded="{{ 'true' if first_tab == 'conclusion' else 'false' }}" aria-controls="side-panel-conclusion" data-side-tab="conclusion">{{ t('doc.tab_conclusion') }}</button>
       {% endif %}
       <button type="button" class="side-tab{{ ' is-active' if first_tab == 'observations' else '' }}" aria-expanded="{{ 'true' if first_tab == 'observations' else 'false' }}" aria-controls="side-panel-observations" data-side-tab="observations">{{ t('doc.tab_observations') }}{% if narrative %} ({{ observations|length|countfmt }}){% endif %}</button>
@@ -85,7 +87,7 @@
       {% endif %}
     </div>
 
-    {% if narrative or findings %}
+    {% if narrative or findings or (not viewing and not observations) %}
     <section class="panel side-panel{{ ' is-active' if first_tab == 'conclusion' else '' }}" id="side-panel-conclusion" data-side-panel="conclusion"{% if first_tab != 'conclusion' %} hidden{% endif %}>
       <div class="panel-head"><div><span class="eyebrow">{{ document.type_label }}</span><h2>{{ t('doc.conclusion_heading') }}</h2></div></div>
       {% if findings %}
@@ -105,9 +107,33 @@
           {% else %}
           <p class="an-doc-finding__text">{{ finding.text }}</p>
           {% endif %}
+          {% if finding.recommendations %}<p class="an-doc-finding__areas"><b>{{ t('area.finding_recommended') }}:</b> {{ finding.recommendations }}</p>{% endif %}
           {% if finding.areas %}<p class="an-doc-finding__areas"><b>{{ t('doc.finding_areas') }}:</b> {{ finding.areas|join(', ') }}</p>{% endif %}
+          {% if finding.corrected %}<p class="an-field-help an-doc-finding__corrected"><span class="pill">{{ t('doc.finding_added_badge' if finding.person_added else 'doc.finding_corrected_badge') }}</span> {{ finding.corrected_text or t('doc.finding_corrected_help') }}</p>{% endif %}
+          {% if finding.read_text and finding.read_text != finding.text %}
+          <details class="an-doc-finding__original"><summary>{{ t('doc.finding_read_text') }}</summary><blockquote>{{ finding.read_text }}</blockquote></details>
+          {% endif %}
           {% if finding.show_original %}
           <details class="an-doc-finding__original"><summary>{{ t('area.source_wording') }}</summary><blockquote>{{ finding.original_text }}</blockquote></details>
+          {% endif %}
+          {% if not viewing %}
+          {#- OCR of a phone photo can leave debris in a conclusion no parser
+              can undo; a person reads the image and writes what it says. -#}
+          <details class="an-doc-finding__original an-doc-finding__edit">
+            <summary>{{ t('doc.finding_correct') }}</summary>
+            <form method="post" action="/documents/{{ document.id }}/findings" class="an-classify-form">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              {% for id in finding.ids %}<input type="hidden" name="finding_id" value="{{ id }}">{% endfor %}
+              <p class="an-field-help">{{ t('doc.finding_correct_help') }}</p>
+              <label>{{ t('doc.finding_summary_label') }}<textarea name="summary" rows="5" maxlength="6000" required>{{ finding.text }}</textarea></label>
+              <label>{{ t('area.finding_recommended') }}<textarea name="recommendations" rows="3" maxlength="6000">{{ finding.recommendations }}</textarea></label>
+              <div class="an-reread-actions">
+                <button class="primary" name="action" value="correct" type="submit">{{ t('doc.finding_save') }}</button>
+                {% if finding.person_added %}<button class="secondary" name="action" value="remove" type="submit" formnovalidate>{{ t('doc.finding_remove') }}</button>
+                {% elif finding.corrected %}<button class="secondary" name="action" value="revert" type="submit" formnovalidate>{{ t('doc.finding_revert') }}</button>{% endif %}
+              </div>
+            </form>
+          </details>
           {% endif %}
         </li>
         {% endfor %}
@@ -115,6 +141,25 @@
       {% else %}
       {{ empty_state(t('doc.conclusion_heading'), t('doc.conclusion_none'), 3) }}
       <p><button type="button" class="secondary" data-show-tab="text">{{ t('doc.conclusion_read_text') }}</button></p>
+      {% if not viewing %}
+      {#- A photo whose OCR missed the diagnosis line: a person writes it from the image. -#}
+      <h3 id="add-conclusion">{{ t('doc.finding_add_heading') }}</h3>
+      <p class="an-field-help">{{ t('doc.finding_add_help') }}</p>
+      {% if finding_error %}<div class="alert" role="alert">{{ t(finding_error) }}</div>{% endif %}
+      <form method="post" action="/documents/{{ document.id }}/findings" class="an-classify-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label>{{ t('doc.finding_summary_label') }}<textarea name="summary" rows="4" maxlength="6000" required></textarea></label>
+        <label>{{ t('area.finding_recommended') }}<textarea name="recommendations" rows="2" maxlength="6000"></textarea></label>
+        <label>{{ t('doc.finding_date_label') }}<input name="finding_date" type="date" value="{{ document.report_date or '' }}"></label>
+        <label>{{ t('doc.finding_area_label') }}
+          <select name="health_area">
+            <option value="">{{ t('doc.finding_area_auto') }}</option>
+            {% for area in health_areas %}<option value="{{ area.id }}">{{ area.name }}</option>{% endfor %}
+          </select>
+        </label>
+        <button class="primary" name="action" value="add" type="submit">{{ t('doc.finding_add') }}</button>
+      </form>
+      {% endif %}
       {% endif %}
       {#- Measurements the report printed, if any were read: an echo's mass
           index or a duct diameter belongs beside the conclusion it supports. -#}
@@ -243,6 +288,31 @@
           cannot be read at all, and which re-reading cannot rescue. -#}
       <span class="eyebrow">{{ t('doc.details_heading') }}</span>
       {{ classify_form(document, document_kinds, known_vendors, csrf_token, '/documents/' ~ document.id) }}
+
+      {% if part_candidates or relations.person_part_of %}
+      <h3 id="part-of-report">{{ t('dup.part_heading') }}</h3>
+      <p class="an-field-help">{{ t('dup.part_help') }}</p>
+      {% if relations.person_part_of %}
+      <p>{{ t('dup.rel_person_part_of') }} <a href="/documents/{{ relations.person_part_of.id }}">{{ relations.person_part_of.title_text }}</a></p>
+      <form method="post" action="/documents/{{ document.id }}/duplicate" class="inline-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="other_id" value="{{ relations.person_part_of.id }}">
+        <button class="secondary" name="action" value="keep_both" type="submit">{{ t('dup.not_part') }}</button>
+      </form>
+      {% endif %}
+      {% if part_candidates %}
+      <form method="post" action="/documents/{{ document.id }}/duplicate" class="an-classify-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label>{{ t('dup.part_report') }}
+          <select name="primary_id" required>
+            <option value="">{{ t('dup.part_choose') }}</option>
+            {% for other in part_candidates %}<option value="{{ other.id }}">{{ other.title_text }} · {{ other.date_text }} · {{ other.original_filename }}</option>{% endfor %}
+          </select>
+        </label>
+        <button class="secondary" name="action" value="part" type="submit">{{ t('dup.part_action') }}</button>
+      </form>
+      {% endif %}
+      {% endif %}
 
       <span class="eyebrow">{{ t('doc.maintenance') }}</span>
       {#- Nothing was read from a lab record's file, so there is nothing to

@@ -114,6 +114,8 @@ from ..health import (
     applicable_reference_bounds,
     display_value,
     enum_label,
+    finding_attention,
+    _diagnosis_areas,
     localized_health_areas,
     metric_area_ids,
     present_finding,
@@ -177,6 +179,9 @@ from ..ingest.pipeline import (
     PAGE_TEXT_NOTE,
     SAME_ORDER_NOTE,
     DuplicateRefused,
+    _audit_document,
+    _duplicate_pair,
+    _record_person_relation,
     keep_both_documents,
     mark_document_duplicate,
     recount_review_tasks,
@@ -4310,8 +4315,14 @@ def _merge_finding(merged: dict[tuple[int, str], dict[str, object]], row: dict[s
             "status": str(row["status"]),
             "areas": [],
             "date_text": format_date(str(row.get("finding_date") or "") or None),
+            "ids": [],
+            "recommendations": str(row.get("recommendations") or "").strip(),
+            "corrected": False,
         },
     )
+    item["ids"].append(str(row["id"]))  # type: ignore[union-attr]
+    item["person_added"] = str(row["id"]).startswith(PERSON_FINDING_PREFIX)
+    item["corrected"] = item["corrected"] or row.get("verification_status") == "corrected"
     if _FINDING_STATUS_RANK.get(str(row["status"]), 3) < _FINDING_STATUS_RANK.get(str(item["status"]), 3):
         item["status"] = str(row["status"])
     area = AREA_BY_ID.get(str(row["health_area"]))
@@ -4339,8 +4350,13 @@ def _document_findings(connection, owner_user_id: str, document_id: str) -> list
     ):
         _merge_finding(merged, dict(raw), uk)
     findings = list(merged.values())
+    corrections = _finding_corrections(connection, owner_user_id, [i for item in findings for i in item["ids"]])
     for item in findings:
         item["show_original"] = bool(item["original_text"]) and item["original_text"] != item["text"]
+        found = next((corrections[i] for i in item["ids"] if i in corrections), None)
+        if item["corrected"] and found:
+            item["corrected_text"] = t("doc.finding_corrected_by", name=found["name"], date=format_date(found["date"]))
+            item["read_text"] = found["read_text"]
         # A conclusion is a few sentences.  A passage this long is a whole page
         # the extractor could not narrow down; it opens on its first lines and
         # the rest is one press away rather than three screens of letterhead.
@@ -4348,6 +4364,29 @@ def _document_findings(connection, owner_user_id: str, document_id: str) -> list
         item["lead_text"] = (text[:320].rsplit(" ", 1)[0] + " ...") if len(text) > 480 else ""
     findings.sort(key=lambda item: (_FINDING_STATUS_RANK.get(str(item["status"]), 3), item["page_number"]))
     return findings
+
+
+def _finding_corrections(connection, owner_user_id: str, finding_ids: list[str]) -> dict[str, dict[str, str]]:
+    """Finding id -> who corrected its text last, when, and the text the
+    software had read before any person's correction (from the audit log)."""
+    if not finding_ids:
+        return {}
+    found: dict[str, dict[str, str]] = {}
+    for row in connection.execute(
+        f"""SELECT a.entity_id, a.created_at, a.details_json, COALESCE(u.display_name, u.email, '') name
+              FROM audit_events a LEFT JOIN users u ON u.id=a.actor_user_id
+             WHERE a.owner_user_id=? AND a.entity_type='clinical_finding'
+               AND a.action IN ('finding_corrected', 'finding_added')
+               AND a.entity_id IN ({",".join("?" * len(finding_ids))})
+             ORDER BY a.id DESC""",
+        (owner_user_id, *finding_ids),
+    ):
+        entry = found.setdefault(str(row["entity_id"]), {"name": str(row["name"]), "date": str(row["created_at"])[:10]})
+        before = json.loads(row["details_json"] or "{}").get("before") or {}
+        if "read_text" not in entry and before.get("verification_status") != "corrected":
+            entry["read_text"] = str(before.get("summary_uk") or before.get("summary_en") or "")
+            entry["before"] = before  # type: ignore[assignment]
+    return found
 
 
 def _bp_group(
@@ -4522,7 +4561,7 @@ def _document_briefs(connection, owner_user_id: str, document_ids: set[str]) -> 
         str(row["id"]): _document_row(row)
         for row in connection.execute(
             f"""SELECT d.id, d.title, d.clinical_type, d.report_date, d.original_filename, d.imported_at,
-                       d.duplicate_of_document_id, d.sha256, v.canonical_name vendor, {_TITLE_TESTS_SQL},
+                       d.duplicate_of_document_id, d.sha256, d.page_count, d.mime_type, v.canonical_name vendor, {_TITLE_TESTS_SQL},
                        EXISTS(SELECT 1 FROM lab_orders lo WHERE lo.document_id=d.id) has_lab_order
                   FROM documents d LEFT JOIN vendors v ON v.id=d.vendor_id
                  WHERE d.owner_user_id=? AND d.id IN ({",".join("?" * len(ids))})""",
@@ -4644,8 +4683,18 @@ def _related_entries(related, briefs: dict[str, dict[str, object]], document_id:
         key = _RELATION_TEXT_KEYS.get((relationship, is_source, str(row["notes"] or ""))) or _RELATION_TEXT_KEYS.get(
             (relationship, is_source)
         )
+        person = str(row["notes"] or "") == PERSON_PART_NOTE
+        if person:
+            key = "dup.rel_person_part_of" if is_source else "dup.rel_person_has_part"
         if key and other_id in briefs:
-            entries.append({"label": t(key), "document": briefs[other_id], "part": relationship == "part_of"})
+            entries.append({
+                "label": t(key), "document": briefs[other_id], "part": relationship == "part_of",
+                "person": person, "is_source": is_source,
+            })
+    # A file a person placed in a report is no longer offered as the next
+    # screenshot of some other one.
+    if any(item["person"] and item["is_source"] for item in entries):
+        entries = [item for item in entries if item["person"] or not (item["part"] and item["is_source"])]
     return entries
 
 
@@ -4684,8 +4733,38 @@ def _document_relations_view(connection, owner_user_id: str, document: dict[str,
     view["related"] = _related_entries(related, briefs, document_id)
     # Screenshots of one report: the page explains them and offers to unlink one.
     view["parts"] = [item for item in view["related"] if item["part"]]
+    view["person_part_of"] = next(
+        (item["document"] for item in view["related"] if item["person"] and item["is_source"]), None
+    )
+    view["person_parts"] = sorted(
+        (item["document"] for item in view["related"] if item["person"] and not item["is_source"]),
+        key=lambda brief: (str(brief.get("imported_at") or ""), str(brief.get("original_filename") or "")),
+    )
     view["copies"] = [briefs[item] for item in copies if item in briefs]
     return view
+
+
+#: How many reports the "part of a report" picker offers.
+_PART_CANDIDATES = 60
+
+
+def _part_candidates(connection, owner_user_id: str, document: dict[str, object]) -> list[dict[str, object]]:
+    """Reports this file could be a page of: the same patient's other kept
+    files, the same report date first, then the nearest uploads -- photos of
+    one report are taken and sent together."""
+    rows = connection.execute(
+        """SELECT d.id FROM documents d
+            WHERE d.owner_user_id=? AND d.patient_id=? AND d.id<>? AND d.duplicate_of_document_id IS NULL
+              AND NOT EXISTS (SELECT 1 FROM document_relations r WHERE r.source_document_id=d.id
+                              AND r.relationship='part_of' AND r.notes=?)
+            ORDER BY COALESCE(d.report_date, '')=COALESCE(?, '-') DESC,
+                     ABS(julianday(d.imported_at) - julianday(?)), d.id
+            LIMIT ?""",
+        (owner_user_id, document["patient_id"], document["id"], PERSON_PART_NOTE,
+         document.get("report_date"), document.get("imported_at"), _PART_CANDIDATES),
+    ).fetchall()
+    briefs = _document_briefs(connection, owner_user_id, {str(row[0]) for row in rows})
+    return [briefs[str(row[0])] for row in rows if str(row[0]) in briefs]
 
 
 def _concept_picker(connection) -> dict[str, dict[str, object]]:
@@ -9902,6 +9981,7 @@ def document_detail(
     rescan: str = "",
     hint: str = "",
     dup_error: str = "",
+    finding_error: str = "",
 ):
     settings = request.app.state.settings
     user = require_user(request)
@@ -9934,6 +10014,9 @@ def document_detail(
             (document_id,),
         ).fetchall()
         relations = _document_relations_view(connection, user["id"], document)
+        part_candidates = [] if document.get("duplicate_of_document_id") else _part_candidates(
+            connection, user["id"], document
+        )
         concepts = sorted(_concept_picker(connection))
         document["is_stale"] = document_id in set(_stale_document_ids(connection, user["id"]))
         known_vendors = _known_vendors(connection)
@@ -9971,8 +10054,10 @@ def document_detail(
             request, document=document, reports=reports, observations=observations, given_here=given_here,
             listed_observations=listed, bp_readings=bp_readings,
             negative_allergens=negative_allergens, findings=findings, narrative=narrative,
-            pages=pages, tags=tags, relations=relations, concepts=concepts,
+            pages=pages, tags=tags, relations=relations, concepts=concepts, part_candidates=part_candidates,
             dup_error=f"dup.error_{dup_error}" if dup_error in DUPLICATE_ERRORS else None,
+            finding_error=f"doc.finding_error_{finding_error}" if finding_error in FINDING_ERRORS else None,
+            health_areas=localized_health_areas(),
             rescan_queued=rescan == "queued", parser_version=PARSER_VERSION,
             known_vendors=known_vendors, document_kinds=_document_kinds(),
             issue_reports=issue_reports, ai_scope_label=document["title_text"],
@@ -10392,12 +10477,200 @@ def edit_document_metadata(
     invalidate_catalog(user["id"])
     return RedirectResponse(f"/documents/{document_id}#side-panel-details", status_code=303)
 
+#: Longest conclusion and recommendation a person may type.
+_FINDING_TEXT_MAX = 6000
+#: Id prefix of a conclusion a person wrote where the software read none:
+#: the only kind `remove` deletes, and the only kind `revert` leaves alone
+#: (there is no machine reading to go back to).
+PERSON_FINDING_PREFIX = "person-finding-"
+#: Why an added conclusion was refused, as the page names it.
+FINDING_ERRORS = ("area", "exists", "date")
+
+
+class _FindingRefused(ValueError):
+    """An `add` refused before anything changed; the value is the FINDING_ERRORS code."""
+
+
+def _finding_fields(text: str, recommended: str) -> dict[str, str]:
+    """The stored columns of a person's wording: its language, and a status
+    judged from the words themselves, as for the software's own reading."""
+    uk = bool(_CYRILLIC_RE.search(text))
+    reasons = finding_attention(text)
+    return {
+        "summary_uk": text if uk else "", "summary_en": "" if uk else text,
+        "recommendations": recommended, "status": "attention" if reasons else "information",
+        "attention_reasons": ",".join(reasons), "verification_status": "corrected",
+    }
+
+
+def _add_person_finding(
+    connection, user_id: str, document_id: str, text: str, recommended: str, finding_date: str, area: str,
+) -> list[str]:
+    """Write a conclusion the software did not read (photos whose OCR missed
+    the diagnosis line); the ids written.  Filed under the chosen area, else
+    under every area the diagnosis names (the rule narrative reports are
+    filed by, `_diagnosis_areas`), else under the one the document's title names."""
+    document = connection.execute(
+        "SELECT patient_id, vendor_id, report_date, title, clinical_type FROM documents WHERE id=? AND owner_user_id=?",
+        (document_id, user_id),
+    ).fetchone()
+    if document is None:
+        raise LookupError(document_id)
+    if finding_date:
+        try:
+            finding_date = date.fromisoformat(finding_date).isoformat()
+        except ValueError:
+            raise _FindingRefused("date") from None
+    areas = (area,) if area else (_diagnosis_areas(text) or _diagnosis_areas(str(document["title"] or "")))
+    if not areas:
+        raise _FindingRefused("area")
+    title = DOCUMENT_TYPE_TITLES.get(str(document["clinical_type"] or ""), "Clinical report")
+    fields = _finding_fields(text, recommended)
+    ids = []
+    for health_area in areas:
+        finding_id = f"{PERSON_FINDING_PREFIX}{uuid.uuid4()}"
+        try:
+            connection.execute(
+                """INSERT INTO clinical_findings(
+                       id, owner_user_id, patient_id, document_id, report_id, page_number, health_area, title,
+                       summary_en, summary_uk, recommendations, attention_reasons, original_text, finding_date,
+                       vendor_id, status, confidence, verification_status, created_at
+                   ) VALUES (?, ?, ?, ?, NULL, 1, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, 1, 'corrected', ?)""",
+                (finding_id, user_id, document["patient_id"], document_id, health_area, title,
+                 fields["summary_en"], fields["summary_uk"], recommended, fields["attention_reasons"],
+                 finding_date or document["report_date"], document["vendor_id"], fields["status"], utc_now()),
+            )
+        except sqlite3.IntegrityError:
+            raise _FindingRefused("exists") from None
+        ids.append(finding_id)
+    return ids
+
+
+def _audit_finding(connection, user, action: str, finding_id: str, details: dict[str, object]) -> None:
+    if user.get("token_kind"):
+        details["token_kind"] = user["token_kind"]
+    connection.execute(
+        """INSERT INTO audit_events(owner_user_id, actor_user_id, action, entity_type, entity_id,
+               details_json, created_at) VALUES (?, ?, ?, 'clinical_finding', ?, ?, ?)""",
+        (user["id"], user["id"], action, finding_id, json.dumps(details, ensure_ascii=False), utc_now()),
+    )
+
+
+@router.post("/documents/{document_id}/findings", responses=_RESPONSES_400_401_403_404)
+def correct_document_finding(
+    request: Request,
+    document_id: str,
+    finding_id: Annotated[list[str], Form()] = [],  # noqa: B006 - FastAPI copies the default
+    action: Annotated[str, Form()] = "correct",
+    summary: Annotated[str, Form()] = "",
+    recommendations: Annotated[str, Form()] = "",
+    finding_date: Annotated[str, Form()] = "",
+    health_area: Annotated[str, Form()] = "",
+    csrf_token: Annotated[str, Form()] = "",
+    next: Annotated[str, Form()] = "",
+):
+    """A person's wording of a conclusion, read off the image of the report.
+
+    `correct` stores `summary` (and `recommendations`) on the named findings
+    of this document as `corrected`, which neither a re-read nor
+    `sync_clinical_findings` ever rewrites; the status is judged again from
+    the person's words.  The text before, who and when go to the audit log,
+    and the page offers the text the software read.  `revert` puts back what
+    the software read and lets the next rebuild refresh it.
+    `add` writes a conclusion where the software read none (`finding_date`,
+    default the document's date; `health_area`, default the areas the text
+    names); `remove` deletes one a person added, and nothing else.
+    """
+    settings = request.app.state.settings
+    user = require_user(request)
+    require_csrf(user, csrf_token)
+    text, recommended = (value.replace("\r\n", "\n").strip() for value in (summary, recommendations))
+    if action not in {"correct", "revert", "add", "remove"} or action in {"correct", "add"} and not text:
+        raise HTTPException(400)
+    if len(text) > _FINDING_TEXT_MAX or len(recommended) > _FINDING_TEXT_MAX:
+        raise HTTPException(400)
+    if health_area and health_area not in AREA_BY_ID:
+        raise HTTPException(400)
+    destination = _safe_next(next, f"/documents/{document_id}")
+    with connect(settings) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        if action == "add":
+            try:
+                ids = _add_person_finding(
+                    connection, user["id"], document_id, text, recommended, finding_date.strip(), health_area
+                )
+            except LookupError:
+                connection.rollback()
+                raise HTTPException(404) from None
+            except _FindingRefused as refused:
+                connection.rollback()
+                code = str(refused)
+                if _wants_json(request):
+                    return JSONResponse(
+                        {"ok": False, "error": code, "detail": t(f"doc.finding_error_{code}")}, status_code=409
+                    )
+                return RedirectResponse(f"{destination}?finding_error={code}#side-panel-conclusion", status_code=303)
+            for added in ids:
+                _audit_finding(connection, user, "finding_added", added, {
+                    "document_id": document_id, "source": "image", "after": _finding_fields(text, recommended),
+                })
+            connection.commit()
+            invalidate_catalog(user["id"])
+            if _wants_json(request):
+                return JSONResponse({"ok": True, "action": action, "finding_ids": ids})
+            return RedirectResponse(destination + "#side-panel-conclusion", status_code=303)
+        rows = connection.execute(
+            f"""SELECT * FROM clinical_findings WHERE owner_user_id=? AND document_id=?
+                  AND verification_status<>'rejected' AND id IN ({",".join("?" * len(finding_id))})""",
+            (user["id"], document_id, *finding_id),
+        ).fetchall() if finding_id else []
+        if action == "remove":
+            rows = [row for row in rows if str(row["id"]).startswith(PERSON_FINDING_PREFIX)]
+        if not rows:
+            connection.rollback()
+            raise HTTPException(404)
+        if action == "correct":
+            after = _finding_fields(text, recommended)
+        elif action == "revert":
+            history = _finding_corrections(connection, user["id"], [str(row["id"]) for row in rows])
+        columns = ("summary_uk", "summary_en", "recommendations", "status", "attention_reasons", "verification_status")
+        for row in rows:
+            before = {name: row[name] for name in columns}
+            if action == "remove":
+                connection.execute("DELETE FROM clinical_findings WHERE id=?", (row["id"],))
+                _audit_finding(connection, user, "finding_removed", str(row["id"]), {
+                    "document_id": document_id, "health_area": row["health_area"], "before": before,
+                })
+                continue
+            if action == "revert":
+                # A person's own conclusion has no reading to go back to; it is removed instead.
+                if row["verification_status"] != "corrected" or str(row["id"]).startswith(PERSON_FINDING_PREFIX):
+                    continue
+                after = {**before, "verification_status": "extracted",
+                         **(history.get(str(row["id"]), {}).get("before") or {})}
+            connection.execute(
+                f"UPDATE clinical_findings SET {', '.join(f'{name}=?' for name in columns)} WHERE id=?",
+                (*(after[name] for name in columns), row["id"]),
+            )
+            _audit_finding(
+                connection, user, "finding_corrected" if action == "correct" else "finding_correction_reverted",
+                str(row["id"]), {"document_id": document_id, "source": "image", "before": before, "after": after},
+            )
+        if action in {"revert", "remove"}:
+            sync_clinical_findings(connection)  # an extracted row is refreshed from its page now
+        connection.commit()
+    invalidate_catalog(user["id"])
+    if _wants_json(request):
+        return JSONResponse({"ok": True, "action": action, "finding_ids": [str(row["id"]) for row in rows]})
+    return RedirectResponse(destination + "#side-panel-conclusion", status_code=303)
+
+
 @router.post("/documents/{document_id}/tags", responses=_RESPONSES_401_403_404)
 def add_document_tag(
     request: Request,
     document_id: str,
     name: Annotated[str, Form()],
-    csrf_token: Annotated[str, Form()],
+    csrf_token: Annotated[str, Form()] = "",
 ):
     settings = request.app.state.settings
     user = require_user(request)
@@ -11294,8 +11567,83 @@ def _apply_duplicate_action(
         return {"primary_document_id": unmark_document_duplicate(
             connection, owner_user_id, document_id, owner_user_id, token_kind
         )}
+    if action == "part":
+        return _link_document_part(connection, owner_user_id, document_id, primary_id, token_kind)
+    # "Not part of this report" undoes a person's link as well as a suggestion.
+    connection.execute(
+        """DELETE FROM document_relations WHERE relationship='part_of' AND notes=?
+              AND ((source_document_id=? AND target_document_id=?) OR (source_document_id=? AND target_document_id=?))""",
+        (PERSON_PART_NOTE, document_id, other_id, other_id, document_id),
+    )
     keep_both_documents(connection, owner_user_id, document_id, other_id, owner_user_id, token_kind)
     return {}
+
+
+#: A person's "this file is a page or part of that report".  Detection's
+#: `auto:parts` rows only suggest; this one is never replaced by a re-read or
+#: the start-up repair (both touch `auto:` rows only).
+PERSON_PART_NOTE = "person:part_of"
+
+
+def _person_part_target(connection, document_id: str) -> str | None:
+    row = connection.execute(
+        "SELECT target_document_id FROM document_relations WHERE relationship='part_of' AND notes=? AND source_document_id=?",
+        (PERSON_PART_NOTE, document_id),
+    ).fetchone()
+    return str(row[0]) if row else None
+
+
+def _person_part_ids(connection, owner_user_id: str, report_id: str) -> list[str]:
+    """The files a person linked as parts of this report, in upload order."""
+    return [str(row[0]) for row in connection.execute(
+        """SELECT d.id FROM document_relations r JOIN documents d ON d.id=r.source_document_id
+            WHERE r.relationship='part_of' AND r.notes=? AND r.target_document_id=? AND d.owner_user_id=?
+            ORDER BY d.imported_at, d.original_filename""",
+        (PERSON_PART_NOTE, report_id, owner_user_id),
+    )]
+
+
+def _link_document_part(connection, owner_user_id: str, part_id: str, report_id: str, token_kind) -> dict[str, object]:
+    """Record that `part_id` is a page or part of `report_id`; the caller commits.
+
+    Each file keeps its own pages and values; the report's page shows the
+    part's pages, and checking the report checks the part.  Refused like
+    marking a copy: another patient, the file itself, a marked copy, a file
+    being re-read.  Naming a copy means its original, and naming a part means
+    the report it belongs to, so parts are one level deep.
+    """
+    report_id = _duplicate_pair(connection, owner_user_id, part_id, report_id)
+    report_id = _person_part_target(connection, report_id) or report_id
+    if report_id == part_id:
+        raise DuplicateRefused("dup.error_self")
+    # A file re-linked moves; parts of its own follow it to the report.
+    connection.execute(
+        "DELETE FROM document_relations WHERE relationship='part_of' AND notes=? AND source_document_id=?",
+        (PERSON_PART_NOTE, part_id),
+    )
+    connection.execute(
+        """UPDATE OR REPLACE document_relations SET target_document_id=?
+            WHERE relationship='part_of' AND notes=? AND target_document_id=?""",
+        (report_id, PERSON_PART_NOTE, part_id),
+    )
+    # Every automatic suggestion about the pair is the same question, now
+    # answered; and a part is not a copy, so no "same report" offer returns.
+    connection.execute(
+        """DELETE FROM document_relations WHERE notes LIKE 'auto:%'
+              AND ((source_document_id=? AND target_document_id=?) OR (source_document_id=? AND target_document_id=?))""",
+        (part_id, report_id, report_id, part_id),
+    )
+    _record_person_relation(connection, part_id, report_id, NOT_DUPLICATE_NOTE)
+    connection.execute(
+        """INSERT INTO document_relations(source_document_id, target_document_id, relationship, confidence, notes)
+           VALUES (?, ?, 'part_of', 1.0, ?)""",
+        (part_id, report_id, PERSON_PART_NOTE),
+    )
+    details: dict[str, object] = {"report_document_id": report_id}
+    if token_kind:
+        details["token_kind"] = token_kind
+    _audit_document(connection, owner_user_id, owner_user_id, "document_linked_part", part_id, details)
+    return details
 
 def _queue_unmarked_rescan(settings, owner_user_id: str, document_id: str) -> None:
     """Queue the re-read that brings an unmarked duplicate's own values back."""
@@ -11329,15 +11677,17 @@ def document_duplicate(
     once, from that document, exactly as for a byte-identical upload.
     `unmark` makes it a document of its own again and queues its re-read,
     which brings its values back through the normal pipeline.
-    `keep_both` answers a same-report suggestion with "different reports".
+    `keep_both` answers a same-report suggestion with "different reports",
+    and undoes a `part` link between the two.
+    `part` records this file as a page or part of the report `primary_id`.
     Each is audited with the credential kind that made it.
     """
     settings = request.app.state.settings
     user = require_user(request)
     require_csrf(user, csrf_token)
-    if action not in {"mark", "unmark", "keep_both"}:
+    if action not in {"mark", "unmark", "keep_both", "part"}:
         raise HTTPException(400)
-    if action == "mark" and not primary_id or action == "keep_both" and not other_id:
+    if action in {"mark", "part"} and not primary_id or action == "keep_both" and not other_id:
         raise HTTPException(400)
     destination = _safe_next(next, f"/documents/{document_id}")
     token_kind = user.get("token_kind")
@@ -13556,7 +13906,7 @@ def resolve_document_review(
     request: Request,
     document_id: str,
     action: Annotated[str, Form()],
-    csrf_token: Annotated[str, Form()],
+    csrf_token: Annotated[str, Form()] = "",
     next: Annotated[str, Form()] = "",
 ):
     """Apply a file-level review decision from the document detail page."""
@@ -13601,12 +13951,80 @@ def review(request: Request, state: str = "open", document: str = ""):
         return RedirectResponse(f"/documents/{document}", status_code=302)
     return RedirectResponse(f"/documents?review_state={state}", status_code=302)
 
+def _apply_review_action(connection, user_id: str, entity_type: str, entity_id: str, action: str, allowed) -> None:
+    """One file's (or entity's) tasks moved, and what the decision means for its rows."""
+    resolutions = {"verify": "resolved", "needs_correction": "needs_correction", "reopen": "open"}
+    connection.execute(
+        f"""UPDATE review_tasks SET state=?, resolution=?, assigned_user_id=?, resolved_at=?
+                WHERE owner_user_id=? AND entity_type=? AND entity_id=?
+                  AND state IN ({",".join("?" * len(allowed))})""",
+        (
+            resolutions[action],
+            None if action == "reopen" else action,
+            user_id,
+            None if action == "reopen" else utc_now(),
+            user_id,
+            entity_type,
+            entity_id,
+            *allowed,
+        ),
+    )
+    if action == "verify" and entity_type == "document":
+        # Only the values nobody has ruled on move: a correction and a
+        # set-aside are decisions a bulk verification must not overwrite.
+        connection.execute(
+            """UPDATE observations SET verification_status='verified'
+                   WHERE document_id=? AND owner_user_id=? AND verification_status='extracted'""",
+            (entity_id, user_id),
+        )
+        # A visit note's doses are part of what the file says, so
+        # confirming the file confirms them the way it confirms values.
+        connection.execute(
+            """UPDATE immunizations SET verification_status='verified', entered_by_user_id=?, updated_at=?
+                   WHERE document_id=? AND owner_user_id=? AND verification_status='extracted'""",
+            (user_id, utc_now(), entity_id, user_id),
+        )
+        # And its narrative findings: nothing else ever marks one
+        # checked, so a confirmed report kept its findings provisional
+        # and `sync_clinical_findings` rebuilt them on every start.
+        connection.execute(
+            """UPDATE clinical_findings SET verification_status='verified'
+                   WHERE document_id=? AND owner_user_id=? AND verification_status='extracted'""",
+            (entity_id, user_id),
+        )
+        connection.execute(
+            "UPDATE document_pages SET review_status='verified' WHERE document_id=?",
+            (entity_id,),
+        )
+    elif action == "reopen" and entity_type == "document":
+        connection.execute(
+            """UPDATE observations SET verification_status='extracted'
+                   WHERE document_id=? AND owner_user_id=? AND verification_status='verified'""",
+            (entity_id, user_id),
+        )
+        connection.execute(
+            """UPDATE clinical_findings SET verification_status='extracted'
+                   WHERE document_id=? AND owner_user_id=? AND verification_status='verified'""",
+            (entity_id, user_id),
+        )
+        connection.execute(
+            "UPDATE document_pages SET review_status='not_reviewed' WHERE document_id=?",
+            (entity_id,),
+        )
+    connection.execute(
+        """INSERT INTO audit_events(owner_user_id, actor_user_id, action, entity_type, entity_id, details_json, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (user_id, user_id, f"review_{action}", entity_type, entity_id, "{}", utc_now()),
+    )
+    if entity_type == "document":
+        recount_review_tasks(connection, user_id, entity_id, user_id)
+
 @router.post("/review/{task_id}", responses=_RESPONSES_400_401_403_404)
 def resolve_review(
     request: Request,
     task_id: str,
     action: Annotated[str, Form()],
-    csrf_token: Annotated[str, Form()],
+    csrf_token: Annotated[str, Form()] = "",
     next: Annotated[str, Form()] = "",
 ):
     settings = request.app.state.settings
@@ -13632,70 +14050,21 @@ def resolve_review(
         # button named.  The queue shows one entry per file, so finishing it
         # has to finish the file -- otherwise the entry reappears carrying a
         # sibling task the reader was never shown and cannot tell apart.
-        connection.execute(
-            f"""UPDATE review_tasks SET state=?, resolution=?, assigned_user_id=?, resolved_at=?
-                    WHERE owner_user_id=? AND entity_type=? AND entity_id=?
-                      AND state IN ({",".join("?" * len(allowed))})""",
-            (
-                resolutions[action],
-                None if action == "reopen" else action,
-                user["id"],
-                None if action == "reopen" else utc_now(),
-                user["id"],
-                task["entity_type"],
-                task["entity_id"],
-                *allowed,
-            ),
-        )
-        if action == "verify" and task["entity_type"] == "document":
-            # Only the values nobody has ruled on move: a correction and a
-            # set-aside are decisions a bulk verification must not overwrite.
-            connection.execute(
-                """UPDATE observations SET verification_status='verified'
-                       WHERE document_id=? AND owner_user_id=? AND verification_status='extracted'""",
-                (task["entity_id"], user["id"]),
-            )
-            # A visit note's doses are part of what the file says, so
-            # confirming the file confirms them the way it confirms values.
-            connection.execute(
-                """UPDATE immunizations SET verification_status='verified', entered_by_user_id=?, updated_at=?
-                       WHERE document_id=? AND owner_user_id=? AND verification_status='extracted'""",
-                (user["id"], utc_now(), task["entity_id"], user["id"]),
-            )
-            # And its narrative findings: nothing else ever marks one
-            # checked, so a confirmed report kept its findings provisional
-            # and `sync_clinical_findings` rebuilt them on every start.
-            connection.execute(
-                """UPDATE clinical_findings SET verification_status='verified'
-                       WHERE document_id=? AND owner_user_id=? AND verification_status='extracted'""",
-                (task["entity_id"], user["id"]),
-            )
-            connection.execute(
-                "UPDATE document_pages SET review_status='verified' WHERE document_id=?",
-                (task["entity_id"],),
-            )
-        elif action == "reopen" and task["entity_type"] == "document":
-            connection.execute(
-                """UPDATE observations SET verification_status='extracted'
-                       WHERE document_id=? AND owner_user_id=? AND verification_status='verified'""",
-                (task["entity_id"], user["id"]),
-            )
-            connection.execute(
-                """UPDATE clinical_findings SET verification_status='extracted'
-                       WHERE document_id=? AND owner_user_id=? AND verification_status='verified'""",
-                (task["entity_id"], user["id"]),
-            )
-            connection.execute(
-                "UPDATE document_pages SET review_status='not_reviewed' WHERE document_id=?",
-                (task["entity_id"],),
-            )
-        connection.execute(
-            """INSERT INTO audit_events(owner_user_id, actor_user_id, action, entity_type, entity_id, details_json, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (user["id"], user["id"], f"review_{action}", task["entity_type"], task["entity_id"], "{}", utc_now()),
-        )
+        # A file a person linked as part of this report is checked with it,
+        # when its own task is in the same state (a part flagged for
+        # correction is not verified by checking the report).
+        entities = [str(task["entity_id"])]
         if task["entity_type"] == "document":
-            recount_review_tasks(connection, user["id"], str(task["entity_id"]), user["id"])
+            entities += [
+                part for part in _person_part_ids(connection, user["id"], entities[0])
+                if connection.execute(
+                    f"""SELECT 1 FROM review_tasks WHERE owner_user_id=? AND entity_type='document' AND entity_id=?
+                          AND state IN ({",".join("?" * len(allowed))}) LIMIT 1""",
+                    (user["id"], part, *allowed),
+                ).fetchone()
+            ]
+        for entity_id in entities:
+            _apply_review_action(connection, user["id"], str(task["entity_type"]), entity_id, action, allowed)
     invalidate_catalog(user["id"])
     # Finishing a file lands on the next one, so a queue of 85 is one
     # continuous pass rather than 85 returns to the top of a list.

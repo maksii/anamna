@@ -59,11 +59,21 @@
     {% endif %}
   </div>
   {% endfor %}
-  {% if rel.parts %}<p>{{ t('dup.parts_explain') }}</p>{% endif %}
+  {% if rel.person_part_of or rel.person_parts %}<p>{{ t('dup.person_parts_explain') }}</p>
+  {% elif rel.parts %}<p>{{ t('dup.parts_explain') }}</p>{% endif %}
   {% if rel.related or rel.copies %}
   <ul class="an-reread-list">
     {% for item in rel.related %}
     <li class="an-reread-item"><p class="an-relations-line">{{ item.label }} <a href="/documents/{{ item.document.id }}">{{ item.document.title_text }}</a> <span class="an-reread-page">{{ item.document.report_date|datefmt }}</span></p>
+      {%- set part = item.document -%}
+      {% if item.person and not item.is_source and part.page_count and (part.mime_type or '').startswith(('image/', 'application/pdf')) %}
+      {#- The part's own pages, readable from the report it belongs to. -#}
+      <ul class="an-part-pages" aria-label="{{ t('dup.part_pages', title=part.title_text) }}">
+        {% for number in range(1, [part.page_count, 12]|min + 1) %}
+        <li><a href="/documents/{{ part.id }}/pages/{{ number }}/image" target="_blank" rel="noopener"><img src="/documents/{{ part.id }}/pages/{{ number }}/image" loading="lazy" alt="{{ part.title_text }} · {{ t('doc.page_n', n=number) }}"></a></li>
+        {% endfor %}
+      </ul>
+      {% endif %}
       {% if item.part and can_act %}
       <form method="post" action="/documents/{{ document.id }}/duplicate" class="an-reread-actions">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
