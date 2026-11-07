@@ -172,6 +172,24 @@ PANEL_LESS_CONCEPTS = (
     "peak-systolic-velocity-internal-carotid-artery", "peak-systolic-velocity-external-carotid-artery",
     "peak-systolic-velocity-vertebral-artery", "vertebral-artery-diameter",
     "soft-tissue-lesion-largest-diameter", "soft-tissue-lesion-smaller-diameter",
+    # Review 2 (2026-11-07): transcranial and InMed duplex, pelvic and breast
+    # ultrasound, the gallbladder emptying test, the EEG's rhythms and breath
+    # hydrogen, read from narrative protocols for the same reason and shown on
+    # the heart, reproductive, liver, brain and digestive area pages.
+    "peak-systolic-velocity-anterior-cerebral-artery", "peak-systolic-velocity-middle-cerebral-artery",
+    "peak-systolic-velocity-intracranial-vertebral-artery-v4", "peak-systolic-velocity-basilar-artery",
+    "vertebral-artery-resistive-index", "internal-jugular-vein-diameter",
+    "uterine-body-length", "uterine-body-anteroposterior-diameter", "uterine-body-width", "endometrial-thickness",
+    "cervical-length", "cervical-thickness", "ovary-length", "ovarian-volume", "antral-follicle-count",
+    "largest-ovarian-follicle-diameter", "corpus-luteum-diameter", "ovarian-cyst-largest-diameter",
+    "ovarian-cyst-smaller-diameter", "ovarian-o-rads-category", "uterine-lesion-largest-diameter",
+    "uterine-lesion-smaller-diameter", "breast-bi-rads-category", "breast-lesion-largest-diameter",
+    "breast-lesion-smaller-diameter", "largest-breast-cyst-diameter", "breast-skin-thickness",
+    "breast-subcutaneous-fat-thickness", "breast-glandular-tissue-thickness",
+    "gallbladder-ejection-fraction", "gallbladder-volume",
+    "eeg-alpha-rhythm-frequency", "eeg-alpha-rhythm-amplitude", "eeg-beta-rhythm-frequency",
+    "eeg-beta-rhythm-amplitude", "eeg-theta-rhythm-frequency", "eeg-theta-rhythm-amplitude",
+    "breath-hydrogen",
     # Tumour markers: read against a known cancer or a pelvic mass, not a body
     # system, so no area panel claims them; their metric pages explain that.
     "cancer-antigen-125-ca-125", "cancer-antigen-15-3-ca-15-3", "human-epididymis-protein-4-he4",

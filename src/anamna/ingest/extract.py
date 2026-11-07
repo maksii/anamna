@@ -96,6 +96,41 @@ def _first_output(commands: list[list[str]]) -> str:
     return ""
 
 
+#: Tesseract's orientation confidence is a score, not a percentage: sideways
+#: pages of real text score in the tens, while a mis-detection on sparse or
+#: noisy text hovers below 2. Below this the page is left as it is.
+OSD_MIN_CONFIDENCE = 2.0
+
+
+def upright_image_file(path: Path) -> int:
+    """Rotate a page image in place when tesseract's OSD says it is sideways.
+
+    Phone photos of paper arrive turned 90 or 270 degrees and OCR reads
+    nothing from them. Returns the clockwise degrees applied (0 when OSD is
+    unavailable, fails, is not confident, or says the page is already upright).
+    Never raises: on any doubt the image is left untouched.
+    """
+    try:
+        output = _first_output([
+            ["tesseract", str(path), "stdout", "--psm", "0", "-l", "osd"],
+            [WSL_EXE, "tesseract", wsl_path(path), "stdout", "--psm", "0", "-l", "osd"],
+        ])
+        fields = {
+            key.strip().lower(): value.strip()
+            for key, _, value in (line.partition(":") for line in output.splitlines())
+        }
+        degrees = int(float(fields["rotate"]))
+        confidence = float(fields["orientation confidence"])
+        if degrees not in (90, 180, 270) or confidence < OSD_MIN_CONFIDENCE:
+            return 0
+        with Image.open(path) as image:
+            rotated = image.rotate(-degrees, expand=True)  # PIL turns counter-clockwise
+        rotated.save(path)
+        return degrees
+    except (KeyError, ValueError, OSError):
+        return 0
+
+
 def ocr_image(path: Path, psm: str = SPARSE_REGION_PSM) -> str:
     commands = [
         ["tesseract", str(path), "stdout", "-l", OCR_LANGUAGES, "--psm", psm],
@@ -263,6 +298,7 @@ def ocr_pdf_page(pdf_path: Path, page_index: int) -> str:
             finally:
                 bitmap.close()
             source = _embedded_scan(page, scale)
+        upright_image_file(target)
         rendered = _read_scan(target)
         if source is None:
             return rendered
@@ -405,6 +441,7 @@ def extract_document(path: Path, run_ocr: bool = True) -> dict[str, object]:
                 target = Path(directory) / f"page-{index + 1}.png"
                 with ImageOps.exif_transpose(image) as upright:
                     _enlarged(upright.convert("L")).save(target)
+                upright_image_file(target)
                 ocr_text = ocr_layout_rows(target, FULL_PAGE_PSM) or ocr_image(target, FULL_PAGE_PSM)
             pages.append(
                 {

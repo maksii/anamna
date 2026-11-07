@@ -1168,7 +1168,21 @@ _VENDOR_RULES: tuple[tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], st
     (("повноділ", "veselka.clinic"), (), (), "Veselka Medical Center", "https://veselka.clinic"),
     (("3d діагностики",), (), (), "Center of Medical 3D Diagnostics", None),
     (("оксфорд медікал", "oxford.lviv"), (), (), "Oxford Medical Lviv", "https://lviv.oxford-med.com.ua"),
+    # Medical centre «Мати та дитина», trade mark of ТОВ «НЕОМЕД 2007».  Before
+    # Expert: its cytology reports name «лабораторного експерта».
+    (("mdclinics", "неомед 2007", "мати та дитина"), (), (), "MD Clinics", "https://mdclinics.com.ua"),
     (("експерт", "experthospital", "expert hospital"), (), (), "Expert Hospital", "https://experthospital.com.ua"),
+    # Clinics read from their printed headers (photo triage 2026-11-07).
+    # Addresses where OCR of a phone photo keeps the address and loses the
+    # logo; never a bare street name another clinic shares («Хімічна»).
+    (("інмед", "inmed", "мазепи, 25", "лемківська, 28"), (), (), "InMed", None),
+    (("ultramed", "ультрамед"), (), (), "UltraMed", None),
+    (("клініка лоно", "lono.clinic"), (), (), "LONO Clinic", None),
+    (("medicover", "медікавер"), (), (), "Medicover", None),
+    (("parens", "паренс"), (), (), "PARENS", None),
+    (("львів медікал центр", "lviv medical center"), (), (), "Lviv Medical Center", None),
+    (("обласний клінічний перинатальний центр",), (), (), "Lviv Regional Clinical Perinatal Center", None),
+    (("gastrolife", "скнилівський провулок"), (), (), "GastroLife", "https://gastrolife.ua"),
     (("медцентр св. параскеви", "святої параскеви"), ("st-paraskeva",), (), "St. Paraskeva Medical Center", None),
 )
 #: «Антибіотики/Антимікотики <organism>» heads an antibiogram, and is all an
