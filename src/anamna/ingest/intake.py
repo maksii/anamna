@@ -35,6 +35,7 @@ from typing import Callable, Iterable
 from .. import paperless
 from ..config import Settings, resolve_source_path
 from ..db import connect, transaction, utc_now
+from .extract import file_sha256
 from .pipeline import SUPPORTED_SUFFIXES, RereadRefused, ingest_file, reingest_document
 
 
@@ -529,6 +530,24 @@ def _run_document(settings: Settings, job) -> None:
     path = Path(str(job["source_path"]))
     if not path.is_file():
         _finish(settings, job["id"], "failed", FAILED_MISSING)
+        return
+    # The upload doors check SHA-256 against the record, but not against files
+    # still in the queue: the same scan sent twice in one Telegram album, or
+    # sent again while the first copy waited its turn, reached the pipeline
+    # second and was filed as another document.  The queue is drained in
+    # order, so by now the first copy is in the record and this one is not.
+    digest = file_sha256(path)
+    with connect(settings) as connection:
+        held = connection.execute(
+            """SELECT id FROM documents WHERE owner_user_id=? AND sha256=? AND original_filename<>?
+               ORDER BY imported_at LIMIT 1""",
+            (job["owner_user_id"], digest, path.name),
+        ).fetchone()
+    # Same bytes under the same name is ingest_file's own "unchanged" case,
+    # which also covers a retried job whose import had already committed.
+    if held:
+        _discard_upload_copy(settings, path)
+        _finish(settings, job["id"], "skipped", "intake.done_duplicate", document_id=str(held["id"]))
         return
     result = ingest_file(settings, job["owner_user_id"], job["patient_id"], path)
     action = str(result.get("action"))
