@@ -55,48 +55,60 @@ def test_a_lab_flag_reaches_the_verdict_survives_a_restart_and_follows_an_amendm
     settings, user_id, client = make(tmp_path)
     document_id = seed_doc(settings, user_id, vendor="EskuLab", order="9700", day="2026-01-10", values=[
         ("рН (C-PH)", 5.5, None, "within_vendor_range"), ("Еозинофіли", 1.0, "%", "within_vendor_range"),
-        ("Гемоглобін (HGB)", 151.0, "г/л", "within_vendor_range")])
-    ph, eos, hgb = (f"{document_id}-{index}" for index in range(3))
+        ("Гемоглобін (HGB)", 151.0, "г/л", "within_vendor_range"), ("Білок", 0.3, "г/л", None)])
+    ph, eos, hgb, protein = (f"{document_id}-{index}" for index in range(4))
     set_reference(settings, ph, "5.5 - 7.0", 5.5, 7.0)
     set_reference(settings, eos, "1-5", 1.0, 5.0)
     set_reference(settings, hgb, "130-170", 130.0, 170.0)
+    set_reference(settings, protein, None, None, None, None)  # the report prints no interval for it
+    with connect(settings) as connection:  # as an earlier version left the pH
+        connection.execute("UPDATE observations SET vendor_interpretation='low', "
+                           "vendor_interpretation_source='lab_record' WHERE id=?", (ph,))
     rows = {"9700": [lab_row("рН (C-PH)", "5.5", state="critical", norm="{5.5-7.0#%}"),
                      lab_row("Еозинофіли", "1", "%", state="critical"),
-                     lab_row("Гемоглобін (HGB)", "151", "г/л", norm="{130-170#%}")]}
-    routes = eskulab_routes([order(9700, ready=3, total=3)], rows)
+                     lab_row("Гемоглобін (HGB)", "151", "г/л", norm="{130-170#%}"),
+                     lab_row("Білок", "0.3", "г/л", state="critical", norm="{0-0.14#%}")]}
+    routes = eskulab_routes([order(9700, ready=4, total=4)], rows)
     connect_eskulab(settings, user_id, monkeypatch, routes)
     stub_intake(monkeypatch, settings, user_id, {})
     labsync.sync(settings, user_id, "eskulab", inline=True)
 
-    # At the lower edge of both intervals: below range, from the lab&#39;s record.
-    assert (observation(settings, ph)["vendor_interpretation"], observation(settings, ph)["vendor_interpretation_source"]) \
-        == ("low", "lab_record")
-    assert observation(settings, eos)["vendor_interpretation"] == "low"
+    # On an inclusive bound of the printed interval the printed band decides:
+    # in range, however the lab's record flags it, and an earlier adoption is
+    # taken back.  Paper and copies without a lab order read it the same way.
+    for value_id in (ph, eos):
+        assert (observation(settings, value_id)["vendor_interpretation"],
+                observation(settings, value_id)["vendor_interpretation_source"]) == ("within_vendor_range", None)
     assert observation(settings, hgb)["vendor_interpretation_source"] is None  # the lab agrees: untouched
-    assert audit_count(settings, "observation_flag_from_lab") == 2
+    # No interval on the report: the lab's flag, read against its own, judges.
+    assert (observation(settings, protein)["vendor_interpretation"],
+            observation(settings, protein)["vendor_interpretation_source"]) == ("high", "lab_record")
+    assert audit_count(settings, "observation_flag_from_lab") == 1
+    assert audit_count(settings, "observation_flag_from_lab_undone") == 1
     with connect(settings) as connection:
-        stored = observation(settings, ph)
-        verdict = evaluate(connection, stored["concept_id"], 5.5, None, None, vendor_low=5.5, vendor_high=7.0,
+        stored = observation(settings, protein)
+        verdict = evaluate(connection, stored["concept_id"], 0.3, None, None,
                            vendor_interpretation=stored["vendor_interpretation"])
         assert verdict["interpretation"] != "normal" and verdict["authority"] == "vendor"
         # The start-up repair re-derives readings from the printed bounds; it
-        # must not paint the lab&#39;s flag green again.
+        # must not paint the lab's flag green again.
         repair_observation_semantics(connection)
-    assert observation(settings, ph)["vendor_interpretation"] == "low"
+    assert observation(settings, protein)["vendor_interpretation"] == "high"
 
+    # The disagreement is still shown: the lab flags pH and eosinophils.
     page = client.get(f"/documents/{document_id}").text
-    assert "The verdict now follows the lab&#39;s flag" in page and "Values the lab flags differently (2)" in page
+    assert "The verdict now follows the lab&#39;s flag" in page and "Values the lab flags differently (3)" in page
 
     labsync.sync(settings, user_id, "eskulab", inline=True)
-    assert audit_count(settings, "observation_flag_from_lab") == 2  # idempotent
-
-    # The lab amends pH to normal: our reading goes back to the printed range.
-    rows["9700"][0]["state"] = "normal"
-    monkeypatch.setattr(common, "_http", router(eskulab_routes([order(9700, ready=3, total=3)], rows)))
-    labsync.sync(settings, user_id, "eskulab", inline=True)
-    assert (observation(settings, ph)["vendor_interpretation"], observation(settings, ph)["vendor_interpretation_source"]) \
-        == ("within_vendor_range", None)
+    assert audit_count(settings, "observation_flag_from_lab") == 1  # idempotent
     assert audit_count(settings, "observation_flag_from_lab_undone") == 1
+
+    # The lab amends the protein to normal: our reading goes back to the report's.
+    rows["9700"][3]["state"] = "normal"
+    monkeypatch.setattr(common, "_http", router(eskulab_routes([order(9700, ready=4, total=4)], rows)))
+    labsync.sync(settings, user_id, "eskulab", inline=True)
+    assert observation(settings, protein)["vendor_interpretation_source"] is None
+    assert audit_count(settings, "observation_flag_from_lab_undone") == 2
 
 
 def test_the_flag_direction_comes_from_the_band_that_fits_the_person(tmp_path: Path, monkeypatch):

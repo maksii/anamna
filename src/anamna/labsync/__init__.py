@@ -46,12 +46,13 @@ from pathlib import Path
 
 from ..config import Settings, log_run, per_request, resolve_source_path
 from ..db import connect, transaction, utc_now
-from ..health import applicable_reference_bounds
+from ..health import applicable_band, applicable_reference_bounds
 from ..ingest import intake
 from ..ingest.classifier import joined_title
 from ..ingest.extract import file_sha256
 from ..ingest.parsers import (
     ParsedObservation,
+    ReferenceLimits,
     method_note,
     reference_bounds,
     reference_limits,
@@ -60,12 +61,14 @@ from ..ingest.parsers import (
 from ..ingest.text import collapse_space
 from ..derived import refresh_derived_observations
 from ..ingest.pipeline import (
+    NOT_DUPLICATE_NOTE,
     PARSER_VERSION,
     DuplicateRefused,
     ensure_vendor,
     index_search,
     insert_observation,
     interpretation,
+    lab_order_collected_at,
     mark_document_duplicate,
     open_review_task,
     reason_part,
@@ -79,6 +82,7 @@ from .common import (
     comparator,
     loose_name_key,
     name_key,
+    word_key,
     parse_result,
     url_is_acceptable,
 )
@@ -798,6 +802,30 @@ def _pick(found: dict[str, list[str]], numbers: list[str]) -> list[str]:
     return [doc for doc in found.get("", []) if doc in hits]
 
 
+def _kept_documents(connection, document_ids: list) -> dict[str, str]:
+    """document → the document kept in its place: itself, or the one it was
+    marked a copy of (an order linked before its document was set aside)."""
+    ids = sorted({str(doc) for doc in document_ids if doc})
+    if not ids:
+        return {}
+    return {str(row[0]): str(row[1] or row[0]) for row in connection.execute(
+        f"SELECT id, duplicate_of_document_id FROM documents WHERE id IN ({','.join('?' * len(ids))})", ids)}
+
+
+def _duplicate_pairs(connection, document_ids: set[str]) -> list[tuple[str, str]]:
+    """(newer, older) for every duplicate relation among these documents that
+    nobody called different."""
+    ids = sorted(document_ids)
+    if len(ids) < 2:
+        return []
+    marks = ",".join("?" * len(ids))
+    return [(str(row[0]), str(row[1])) for row in connection.execute(
+        f"""SELECT source_document_id, target_document_id FROM document_relations
+             WHERE relationship='duplicate' AND COALESCE(notes, '')<>?
+               AND source_document_id IN ({marks}) AND target_document_id IN ({marks})""",
+        (NOT_DUPLICATE_NOTE, *ids, *ids))]
+
+
 def documents_for_order(connection, owner_user_id: str, numbers: list[str]) -> list[str]:
     """Every document carrying one of these order numbers (oldest first)."""
     wanted = {str(number) for number in numbers if number}
@@ -807,7 +835,7 @@ def documents_for_order(connection, owner_user_id: str, numbers: list[str]) -> l
 _OBS_COLUMNS = """o.id, o.document_id, o.page_number, o.raw_name, o.value_numeric, o.value_text, o.comparator,
                   o.unit_raw, o.verification_status, o.vendor_interpretation, o.vendor_interpretation_source,
                   o.vendor_reference_text, o.vendor_reference_low, o.vendor_reference_high, o.concept_id,
-                  o.evidence_text, r.order_identifier report_order"""
+                  o.evidence_text, o.specimen, r.order_identifier report_order"""
 
 
 def _observation_rows(connection, owner_user_id: str, document_ids: list[str]) -> list[dict]:
@@ -856,6 +884,7 @@ def _obs_view(obs: dict) -> dict:
         "interpretation": obs.get("vendor_interpretation"),
         "from_lab": obs.get("vendor_interpretation_source") == "lab_record",
         "concept_id": obs.get("concept_id"),
+        "specimen": obs.get("specimen"),
     }
 
 
@@ -904,18 +933,45 @@ def _lab_reading(row: dict, obs: dict, number: float | None, age: int | None = N
     return "borderline"
 
 
-def _inside_printed_band(obs: dict, age: int | None, sex: str | None) -> bool:
-    """The value lies strictly inside the band the report prints for this person."""
+def _band_limits(text: object, age: int | None, sex: str | None) -> ReferenceLimits:
+    """The band a reference text states for this person, with whether each
+    bound is part of it («5.5 - 7.0» includes 5.5, «< 35» excludes 35)."""
+    text = collapse_space(str(text or ""))
+    if not text:
+        return ReferenceLimits()
+    plain = reference_limits(text)
+    if plain.low is not None or plain.high is not None:
+        return plain
+    band = applicable_band(text, age, sex)
+    if band is not None:
+        return reference_limits(band.rsplit(":", 1)[-1])
+    low, high = applicable_reference_bounds(text, age, sex)
+    # A sex clause loses its signs on the way: a strict one anywhere in the
+    # text keeps a value on the bound outside, as the stricter reading.
+    inclusive = not re.search(r"[<>](?!=)", text)
+    return ReferenceLimits(low, high, inclusive, inclusive)
+
+
+def _holds(value: float, limits: ReferenceLimits) -> bool:
+    low, high = limits.low, limits.high
+    return ((low is None or value > low or (value == low and limits.low_inclusive))
+            and (high is None or value < high or (value == high and limits.high_inclusive)))
+
+
+def _inside_printed_band(obs: dict, row: dict, age: int | None, sex: str | None) -> bool:
+    """The value lies inside the band the report prints for this person, a
+    bound the band includes counting as inside; with no band readable on the
+    report, inside the lab's own.  The first band found decides."""
     value = obs.get("value_numeric")
     if value is None:
         return False
-    for low, high in ((obs.get("vendor_reference_low"), obs.get("vendor_reference_high")),
-                      applicable_reference_bounds(obs.get("vendor_reference_text"), age, sex)):
-        bounded = low is not None or high is not None
-        above_low = low is None or float(value) > float(low)
-        below_high = high is None or float(value) < float(high)
-        if bounded and above_low and below_high:
-            return True
+    stored = ReferenceLimits(obs.get("vendor_reference_low"), obs.get("vendor_reference_high"),
+                             obs.get("vendor_reference_low_inclusive") != 0,
+                             obs.get("vendor_reference_high_inclusive") != 0)
+    for limits in (stored, _band_limits(obs.get("vendor_reference_text"), age, sex),
+                   _band_limits(" ".join(row.get("norm") or []), age, sex)):
+        if limits.low is not None or limits.high is not None:
+            return _holds(float(value), limits)
     return False
 
 
@@ -1047,6 +1103,12 @@ def _find_observation(row: dict, pool: list[dict], lab_loose: Counter, obs_loose
         candidates = [obs for obs in free if obs["_key"] == glued]
     if not candidates and lab_loose.get(loose) == 1 and obs_loose.get(loose) == 1:
         candidates = [obs for obs in free if obs["_loose"] == loose]
+    if not candidates:
+        # The lab names the specimen in front («Аналіз крові: Швидкість осідання
+        # еритроцитів (ШОЕ, ESR)»); the PDF reader drops it from the name.
+        bare = name_key(without_specimen_label(str(row["test"])))
+        if bare != key:
+            candidates = [obs for obs in free if obs["_key"] == bare]
     if not candidates and len(key) >= 8:
         # The report names the row by the heading it was printed beneath
         # («Метілентетрагідрофолатредуктаза (MTHFR 677 C>T)», «Вовчаковий
@@ -1167,17 +1229,28 @@ def check_orders(connection, owner_user_id: str, order_rows: list) -> dict[tuple
     with_rows = [row for row in with_rows if str(row["document_id"] or "") not in records]
     found = _documents_by_number(connection, owner_user_id,
                                  {number for row in with_rows for number in _numbers(row)})
+    picked = {_order_key(row): _pick(found, _numbers(row)) for row in with_rows}
+    kept = _kept_documents(connection, [row["document_id"] for row in with_rows])
+    pairs = _duplicate_pairs(connection, {doc for docs in picked.values() for doc in docs} | set(kept.values()))
     plan = {}
     for row in with_rows:
-        document_ids = _pick(found, _numbers(row))
-        if row["document_id"] and str(row["document_id"]) not in document_ids:
-            document_ids.append(str(row["document_id"]))
+        own = kept.get(str(row["document_id"] or ""), "")
+        # The order's own document first, and never a copy of a report: a
+        # Telegram re-upload carrying the same order number paired the lab's
+        # rows with its values and left the kept document's as "extra".  A
+        # copy is the other side of a duplicate relation with the order's
+        # document, or the newer side of one between two others.
+        copies = {b if a == own else a for a, b in pairs if own in (a, b)} | {a for a, b in pairs}
+        document_ids = [own] if own else []
+        document_ids += [doc for doc in picked[_order_key(row)] if doc != own and doc not in copies]
         plan[_order_key(row)] = (row, document_ids)
     pooled = _observation_rows(connection, owner_user_id,
                                sorted({doc for _, docs in plan.values() for doc in docs}))
     results: dict[tuple[str, str], dict | None] = {_order_key(row): None for row in order_rows}
     for key, (row, document_ids) in plan.items():
-        result = cross_check(json.loads(row["rows_json"]), _for_order(pooled, _numbers(row), document_ids), key[1])
+        rank = {doc: index for index, doc in enumerate(document_ids)}
+        mine = sorted(_for_order(pooled, _numbers(row), document_ids), key=lambda obs: rank[obs["document_id"]])
+        result = cross_check(json.loads(row["rows_json"]), mine, key[1])
         result["document_ids"] = document_ids
         result["provider"] = row["provider"]
         results[key] = result
@@ -1533,6 +1606,26 @@ def _record_line(row: dict) -> str:
 _method_note = method_note
 
 
+#: A row name that is a number and one word («16 генотип») says what was
+#: measured only beside its test: Synevo's HPV genotyping lists fourteen of
+#: them under «ПЛР. ВПЛ ВКР (генотипування 16, 18, …)».
+_BARE_NAME_RE = re.compile(r"\d+\s+[^\W\d_]+")
+#: A packet's catalogue code (EskuLab «F9008 Кальпротектин …»).
+_PACKET_CODE_RE = re.compile(r"^[A-ZА-ЯІЇЄ]\d{3,5}\s+")
+
+
+def _record_name(row: dict) -> str:
+    """The row's name, with its test in front when the name alone says nothing:
+    «ПЛР. ВПЛ ВКР, 16 генотип», the «heading, name» form the PDF reader gives
+    a row printed under its heading."""
+    name = without_specimen_label(str(row["test"]))
+    if not _BARE_NAME_RE.fullmatch(name.strip()):
+        return name
+    test = collapse_space(re.sub(r"\([^()]*\)", " ", _PACKET_CODE_RE.sub("", str(row.get("packet") or ""))))
+    test = test.strip(" ,;:-\"«»")
+    return f"{test}, {name.strip()}" if test else name
+
+
 def _record_value(row: dict, site: str | None = None) -> ParsedObservation | None:
     """A lab row as a value, or None for a heading, a descriptive block
     (microbiology, cytology — kept in the record file, not split into values),
@@ -1545,7 +1638,7 @@ def _record_value(row: dict, site: str | None = None) -> ParsedObservation | Non
     sign, number = parse_result(result)
     norm = "; ".join(line for line in row["norm"] if not _method_note(line)) or None
     limits = reference_limits(norm)
-    name = without_specimen_label(str(row["test"]))
+    name = _record_name(row)
     value_text = None if number is not None else result
     grade = _GRADE_RESULT_RE.match(str(result).strip()) if name.strip().casefold() == "висновок" else None
     if grade:
@@ -1557,8 +1650,12 @@ def _record_value(row: dict, site: str | None = None) -> ParsedObservation | Non
         extraction_method=LAB_RECORD,
         reference_low_inclusive=limits.low_inclusive, reference_high_inclusive=limits.high_inclusive,
         # The lab's own "out of range" is the vendor's reading here: there is
-        # no printed report for the bounds to speak for.
-        vendor_interpretation=_lab_reading(row, {}, number) if row["state"] == "critical" else None,
+        # no printed report for the bounds to speak for -- except its own
+        # interval, which decides as a printed one does (a "critical" on a
+        # bound «5.5 - 7.0» includes is the bounds' reading, in range).
+        vendor_interpretation=_lab_reading(row, {}, number)
+        if row["state"] == "critical" and not _inside_printed_band({"value_numeric": number}, row, None, None)
+        else None,
         specimen=site,
     )
 
@@ -1953,7 +2050,167 @@ def apply_check(connection, user_id: str, row) -> dict[str, int]:
         check = check_order(connection, user_id, row)
     _persist_check(connection, user_id, row, check)
     return {"units": units, "flags": flags["set"], "flags_undone": flags["undone"],
+            "notes": _store_lab_comments(connection, user_id, key, order_id, check),
+            "collected": _collected_from_order(connection, user_id, row),
+            "record_kept": _keep_unread_record_values(connection, user_id, row, check),
             "tasks": _review_missing(connection, user_id, key, row, check)}
+
+
+def _lab_comments(row: dict) -> list[str]:
+    """What the lab wrote under a descriptive result (EskuLab's culture JSON:
+    ``comments`` and each organism's ``defaultComment``), once each."""
+    try:
+        result = json.loads(row["result"])
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(result, dict):
+        return []
+    found = [*(result.get("comments") or []),
+             *((entry.get("bacteria") or {}).get("defaultComment") for entry in result.get("bacteria_found") or []
+               if isinstance(entry, dict))]
+    return list(dict.fromkeys(collapse_space(str(text)) for text in found if isinstance(text, str) and text.strip()))
+
+
+def _store_lab_comments(connection, user_id: str, key: str, order_id: str, check: dict | None) -> int:
+    """Keep the lab's comment on a culture with the organism it is about, in
+    the value's note («Staphylococcus epidermidis природньо резистентний до
+    цефтазидиму», «Виявлений збудник Lactobacillus spp. є контамінантом …»).
+    The PDF prints it under the table, where no row reads it; without it a
+    growth against «Не виявлено» stands unexplained.  A comment that only
+    restates a value («Ступінь бактеріурії 1,0*10^3 КУО/мл») is left out.
+    Idempotent: a note already holding the comment is not touched."""
+    items = (check or {}).get("items", [])
+    values = list({item["obs"]["id"]: item["obs"] for item in items if item["obs"]}.values())
+    stored = 0
+    for item in items:
+        if item["cls"] != "info" or item.get("part_of"):
+            continue
+        material = word_key(item["lab"].get("material"))
+        for comment in _lab_comments(item["lab"]):
+            words = word_key(comment)
+            for obs in values:
+                name = word_key(re.sub(r"\([^()]*\)", " ", str(obs["name"] or ""))).strip(" .,:;")
+                specimen = word_key(obs.get("specimen"))
+                if (len(name) < 4 or not re.search(rf"(?<!\w){re.escape(name)}(?!\w)", words)
+                        or re.match(rf"{re.escape(name)}\W*[<>≤≥]?\s*\d", words)
+                        or (material and specimen and material != specimen)):
+                    continue
+                changed = connection.execute(
+                    """UPDATE observations SET note=CASE WHEN TRIM(COALESCE(note, ''))='' THEN ?
+                                                     ELSE note || ' ' || ? END
+                        WHERE id=? AND owner_user_id=? AND instr(COALESCE(note, ''), ?)=0""",
+                    (comment, comment, obs["id"], user_id, comment)).rowcount
+                if changed:
+                    stored += 1
+                    _audit(connection, user_id, "observation_note_from_lab", "observation", obs["id"],
+                           {"provider": key, "order_id": order_id, "note": comment})
+    return stored
+
+
+def _keep_unread_record_values(connection, user_id: str, row, check: dict | None) -> int:
+    """The lab's record of an order holds what the order's report does not.
+
+    A report that takes an order over sets the record aside as its copy
+    (:func:`_retire_lab_record`), which empties it -- and a value the PDF
+    reader missed was then gone from the record altogether (a 2016 beta-hCG
+    «< 0.1 мМО/мл», whose unit the reader did not know).  So after every
+    cross-check the record keeps exactly the rows the report lacks: restored
+    from the lab's rows and stood up again while there are any, emptied and
+    set aside again once the report reads them all.  Rows that share a value
+    with an unpaired reading of the report are left to the person (likely the
+    same result under another name).  A record a person set aside themselves
+    is left alone.  Returns the values added or removed."""
+    document_id = str(row["document_id"] or "")
+    if not document_id or check is None:
+        return 0
+    record = connection.execute(
+        """SELECT d.id, d.patient_id, d.vendor_id, d.report_date, d.duplicate_of_document_id, r.id report_id
+             FROM documents d JOIN vendors v ON v.id=d.vendor_id LEFT JOIN reports r ON r.document_id=d.id
+            WHERE d.owner_user_id=? AND d.extraction_strategy=? AND d.order_identifier=? AND d.id<>?
+              AND v.canonical_name=?
+            ORDER BY d.imported_at DESC, d.id LIMIT 1""",
+        (user_id, LAB_RECORD, str(row["order_id"]), document_id, provider(str(row["provider"])).VENDOR)).fetchone()
+    if record is None or record["report_id"] is None or not _set_aside_by_sync(connection, record):
+        return 0
+    spare = [item["obs"] for item in check["items"] if item["cls"] == "extra"]
+    wanted: dict[str, ParsedObservation] = {}
+    for item in check["items"]:
+        parsed = _record_value(item["lab"]) if item["cls"] == "missing" else None
+        if parsed is None or any(_same_result(parsed, obs) for obs in spare):
+            continue
+        wanted[parsed.evidence_text] = parsed
+    held = connection.execute(
+        "SELECT id, evidence_text, verification_status FROM observations WHERE document_id=? AND extraction_method=?",
+        (record["id"], LAB_RECORD)).fetchall()
+    changed = 0
+    for obs in held:
+        if obs["evidence_text"] not in wanted and obs["verification_status"] == "extracted":
+            connection.execute("DELETE FROM observations WHERE id=?", (obs["id"],))
+            changed += 1
+    present = {obs["evidence_text"] for obs in held}
+    for line, parsed in wanted.items():
+        if line not in present:
+            observation_id = insert_observation(
+                connection, owner_user_id=user_id, patient_id=record["patient_id"], document_id=record["id"],
+                report_id=record["report_id"], vendor_id=record["vendor_id"], observed_at=record["report_date"],
+                parsed=parsed)
+            if parsed.vendor_interpretation:
+                connection.execute(
+                    "UPDATE observations SET vendor_interpretation_source='lab_record' WHERE id=?", (observation_id,))
+            changed += 1
+    if not changed:
+        return 0
+    left = connection.execute("SELECT COUNT(*) FROM observations WHERE document_id=?", (record["id"],)).fetchone()[0]
+    if left and record["duplicate_of_document_id"]:
+        connection.execute("UPDATE documents SET duplicate_of_document_id=NULL WHERE id=?", (record["id"],))
+        connection.execute(
+            """DELETE FROM document_relations WHERE relationship='duplicate' AND notes='person:duplicate'
+                AND ((source_document_id=? AND target_document_id=?) OR (source_document_id=? AND target_document_id=?))""",
+            (record["id"], document_id, document_id, record["id"]))
+        _audit(connection, user_id, "labsync_lab_record_kept", "document", str(record["id"]),
+               {"provider": str(row["provider"]), "order_id": str(row["order_id"]), "beside": document_id,
+                "values": left})
+    elif not left and not record["duplicate_of_document_id"]:
+        _retire_lab_record(connection, user_id, str(record["id"]), document_id, str(row["provider"]),
+                           str(row["order_id"]))
+    refresh_derived_observations(connection)
+    return changed
+
+
+def _set_aside_by_sync(connection, record) -> bool:
+    """The record stands, or the sync set it aside -- not a person: the last
+    word on it is the sync's retirement, not a person's "Mark as duplicate"."""
+    if not record["duplicate_of_document_id"]:
+        return True
+    last = connection.execute(
+        """SELECT action FROM audit_events WHERE entity_type='document' AND entity_id=?
+             AND action IN ('document_marked_duplicate', 'labsync_lab_record_retired') ORDER BY id DESC LIMIT 1""",
+        (record["id"],)).fetchone()
+    return last is not None and last[0] == "labsync_lab_record_retired"
+
+
+def _same_result(parsed: ParsedObservation, obs: dict) -> bool:
+    if parsed.value_numeric is not None:
+        return obs["value_numeric"] is not None and _same_number(float(obs["value_numeric"]), parsed.value_numeric)
+    return obs["value_numeric"] is None and _same_text(obs["value_text"], parsed.value_text)
+
+
+def _collected_from_order(connection, user_id: str, row) -> int:
+    """Give the order's document the collection time the lab's order holds,
+    when the page printed none (an EskuLab POLYCHECK sheet prints only the
+    examination day; an Expert Hospital count only the date)."""
+    document_id = row["document_id"]
+    moment = lab_order_collected_at(connection, str(document_id)) if document_id else None
+    if not moment:
+        return 0
+    changed = connection.execute(
+        """UPDATE documents SET collected_at=? WHERE id=? AND owner_user_id=?
+            AND COALESCE(collected_at, '')='' AND extraction_strategy<>?""",
+        (moment, document_id, user_id, LAB_RECORD)).rowcount
+    if changed:
+        _audit(connection, user_id, "document_collected_from_lab", "document", str(document_id),
+               {"provider": str(row["provider"]), "order_id": str(row["order_id"]), "collected_at": moment})
+    return changed
 
 
 def _unit_fits(unit: str, concept_id: str | None, preferred: str | None) -> bool:
@@ -2036,11 +2293,12 @@ def _age(person) -> int | None:
 def _apply_lab_flags(connection, user_id: str, key: str, order_id: str, check: dict | None) -> dict[str, int]:
     """Carry the lab's own "out of range" flag into the vendor tier of the
     verdict (CONTRACTS §5).  Only where the lab's row and our value agree,
-    and only over our own inference from the printed bounds: pH 5.5 against
-    «5.5 - 7.0» reads "within range" on paper and "critical" in EskuLab's
-    record, and a green badge over a value the lab called out is wrong.  A
-    flag the lab later drops (an amended result), or that no longer belongs
-    to the same value, is taken back to the printed range's reading.
+    only over our own inference from the printed bounds, and only where the
+    band printed for this person (or, with none readable, the lab's own) does
+    not hold the value (:func:`_inside_printed_band`).  A flag the
+    lab later drops (an amended result), that no longer belongs to the same
+    value, or that the printed band contradicts, is taken back to the printed
+    range's reading.
     Audited ``observation_flag_from_lab`` / ``…_undone``."""
     done = {"set": 0, "undone": 0}
     for item in (check or {}).get("items", []):
@@ -2053,31 +2311,34 @@ def _apply_lab_flags(connection, user_id: str, key: str, order_id: str, check: d
         # them ("borderline" between a woman's and a man's bands) must not
         # outlive the profile being filled in.
         if agrees and (item["flag"] == "lab_out_ours_in" or (obs["from_lab"] and item["flag"] == "lab_flag_adopted")):
-            done["set"] += _flag_from_lab(connection, user_id, key, order_id, item, obs)
+            kind, count = _flag_from_lab(connection, user_id, key, order_id, item, obs)
+            done[kind] += count
         elif obs["from_lab"] and not (agrees and item["flag"] == "lab_flag_adopted"):
             done["undone"] += _undo_lab_flag(connection, user_id, key, order_id, obs)
     return done
 
 
-def _flag_from_lab(connection, user_id: str, key: str, order_id: str, item: dict, obs: dict) -> int:
-    """Adopt the lab's flag on one value; 1 when the value changed."""
+def _flag_from_lab(connection, user_id: str, key: str, order_id: str, item: dict, obs: dict) -> tuple[str, int]:
+    """Adopt the lab's flag on one value, or take it back where the printed
+    band holds the value: ``("set" | "undone", 1 when the value changed)``."""
     person = connection.execute(
         """SELECT p.date_of_birth, p.sex_at_birth, o.observed_at, o.vendor_reference_text,
-                  o.vendor_reference_low, o.vendor_reference_high, o.value_numeric
+                  o.vendor_reference_low, o.vendor_reference_high, o.vendor_reference_low_inclusive,
+                  o.vendor_reference_high_inclusive, o.value_numeric
              FROM observations o LEFT JOIN patients p ON p.id=o.patient_id WHERE o.id=?""",
         (obs["id"],)).fetchone()
     if person is None:
-        return 0
-    item["lab_reading"] = _lab_reading(item["lab"], dict(person), None, _age(person),
-                                       person["sex_at_birth"] if person["sex_at_birth"] in {"male", "female"}
-                                       else None)
+        return "set", 0
     sex = person["sex_at_birth"] if person["sex_at_birth"] in {"male", "female"} else None
-    if item["lab_reading"] == "borderline" and _inside_printed_band(dict(person), _age(person), sex):
-        # The report's own band for this person holds the value, and the
-        # paper prints no flag: a "critical" the lab's API sets on a whole
-        # order (EskuLab, 2022) is not a statement about this value.  An
-        # edge value (pH 5.5 against «5.5 - 7.0») still takes the flag.
-        return _undo_lab_flag(connection, user_id, key, order_id, obs) if obs["from_lab"] else 0
+    item["lab_reading"] = _lab_reading(item["lab"], dict(person), None, _age(person), sex)
+    if _inside_printed_band(dict(person), item["lab"], _age(person), sex):
+        # The band printed for this person holds the value -- on an inclusive
+        # bound too (pH 5.5 against «5.5 - 7.0», basophils 1 against «0-1»)
+        # -- and the paper prints no flag: the printed band decides.  EskuLab's
+        # API sets "critical" on such values, and on whole 2022 orders; a copy
+        # of the same report with no lab order judges them in range, and one
+        # result must not be judged two ways.  An adoption is taken back.
+        return "undone", _undo_lab_flag(connection, user_id, key, order_id, obs) if obs["from_lab"] else 0
     changed = connection.execute(
         """UPDATE observations SET vendor_interpretation=?, vendor_interpretation_source='lab_record'
             WHERE id=? AND owner_user_id=? AND (
@@ -2087,12 +2348,12 @@ def _flag_from_lab(connection, user_id: str, key: str, order_id: str, item: dict
         (item["lab_reading"], obs["id"], user_id, item["lab_reading"]),
     ).rowcount
     if not changed:
-        return 0
+        return "set", 0
     _audit(connection, user_id, "observation_flag_from_lab", "observation", obs["id"],
            {"provider": key, "order_id": order_id, "value": item["lab"]["result"],
             "lab_state": "critical", "interpretation": item["lab_reading"],
             "previous": obs["interpretation"]})
-    return 1
+    return "set", 1
 
 
 def _undo_lab_flag(connection, user_id: str, key: str, order_id: str, obs: dict) -> int:
@@ -2238,7 +2499,8 @@ def _refresh_record_values(settings: Settings, connection) -> int:
         except (OSError, ValueError, TypeError):
             continue
         stored = connection.execute(
-            "SELECT id, raw_name, value_text, specimen, evidence_text, verification_status FROM observations "
+            "SELECT id, raw_name, value_text, specimen, evidence_text, verification_status, concept_id, "
+            "vendor_interpretation_source FROM observations "
             "WHERE document_id=? AND extraction_method=? ORDER BY rowid", (document["id"], LAB_RECORD)).fetchall()
         unused = list(stored)
         for row, parsed in _record_values(payload.get("rows") or []):
@@ -2254,7 +2516,14 @@ def _refresh_record_values(settings: Settings, connection) -> int:
             if parsed is None:
                 connection.execute("DELETE FROM observations WHERE id=?", (match["id"],))
                 changed += 1
-            elif (parsed.raw_name, parsed.value_text, parsed.specimen) != (
+                continue
+            if match["vendor_interpretation_source"] == "lab_record" and not parsed.vendor_interpretation:
+                # A "critical" the record's own interval contradicts: the bounds' reading.
+                connection.execute(
+                    "UPDATE observations SET vendor_interpretation=?, vendor_interpretation_source=NULL WHERE id=?",
+                    (interpretation(parsed, match["concept_id"]), match["id"]))
+                changed += 1
+            if (parsed.raw_name, parsed.value_text, parsed.specimen) != (
                     match["raw_name"], match["value_text"], match["specimen"]):
                 connection.execute("UPDATE observations SET raw_name=?, value_text=?, specimen=? WHERE id=?",
                                    (parsed.raw_name, parsed.value_text, parsed.specimen, match["id"]))
@@ -2269,7 +2538,7 @@ def recheck(settings: Settings) -> dict[str, int]:
     document with no values at the one holding its results, then
     :func:`apply_check` per order."""
     summary = {"orders": 0, "relinked": 0, "units": 0, "units_undone": 0, "flags": 0, "flags_undone": 0, "tasks": 0,
-               "references": 0, "titles": 0, "record_values": 0}
+               "references": 0, "titles": 0, "record_values": 0, "notes": 0, "collected": 0, "record_kept": 0}
     with transaction(settings) as connection:
         summary["units_undone"] = undo_unfit_units(connection)
         summary["references"] = _clean_record_references(connection)

@@ -600,6 +600,11 @@
   {% if item.evidence_text %}
   <p class="obs-evidence-line"><b>{{ t('doc.derived_from') if item.extraction_method == 'derived_ckd_epi_2021' else t('doc.evidence_line') }}:</b> <q>{{ item.evidence_text }}</q></p>
   {% endif %}
+  {#- What the report or the lab wrote about this result, in their words: a
+      culture's organism called a contaminant, a natural resistance. -#}
+  {% if item.note %}
+  <p class="obs-evidence-line obs-note"><b>{{ t('doc.note_line') }}:</b> {{ item.note }}</p>
+  {% endif %}
   {% if csrf_token %}
   <div class="obs-actions">
     <form class="obs-state" action="/observations/{{ item.id }}/state" method="post">

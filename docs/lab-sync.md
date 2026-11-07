@@ -73,7 +73,11 @@ result, the sync files them as **the lab's own record of the order**:
   open review task, so the document meets the same rules as any other.
 - Values go through `insert_observation`, so concepts resolve through the
   same alias path as a PDF row. They stay `extracted`. A lab "critical" flag
-  becomes the vendor reading (`vendor_interpretation_source='lab_record'`).
+  becomes the vendor reading (`vendor_interpretation_source='lab_record'`),
+  unless the row's own interval holds the value (a bound it includes counts):
+  then the bounds judge it, as they would on paper. A row name that is only a
+  number and a word («16 генотип») is stored with its test in front
+  («ПЛР. ВПЛ ВКР, 16 генотип»).
 - The order moves to `imported`, and `error_key` keeps the reason no PDF exists.
   The profile card shows it as **in your record, no PDF**. The document page
   shows "Reported by the lab's online service — no PDF issued" with the lab, the
@@ -89,6 +93,25 @@ result, the sync files them as **the lab's own record of the order**:
     on the next sync). The record is then marked as that report's duplicate,
     and its values are removed by `mark_document_duplicate`. If the person
     verified a value the report does not hold, the record stays.
+  - A value the report's reading lacks (a row the cross-check calls missing)
+    stays in the record: after every cross-check the record holds exactly
+    those rows and stands beside the report, and it is set aside again once
+    the report reads them all. A record a person marked as a duplicate is left
+    alone.
+
+## After every cross-check
+
+- The cross-check pairs the lab's rows with the order's own document first
+  (or the document it was marked a copy of), then with other documents that
+  print the order number. A document in a duplicate relation with the order's
+  document, or the newer side of one, is a copy and never takes part.
+- A lab flag on a value the printed band holds is not adopted, and an earlier
+  adoption is taken back: the printed band decides, on an inclusive bound too.
+- EskuLab culture comments (`comments`, each organism's `defaultComment`) go
+  into the note of the value they name, in the lab's words, matched by
+  specimen. A comment that only restates a value is skipped.
+- A document whose page prints no collection time takes the order's
+  `ordered_at` (never later than the report day); a re-read keeps it.
   - Deleting the record makes the order `removed`, as for any document.
 
 ## Doctor ELEKS clinics

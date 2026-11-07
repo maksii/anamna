@@ -2751,6 +2751,9 @@ def classification_drift_ids(connection, owner_user_id: str) -> list[str]:
     drifted = []
     for row in rows:
         expected = _expected_classification(connection, row)
+        if expected is not None and not expected[4] and row["collected_at"]:
+            # The page prints no collection time; the lab's own order does.
+            expected = (*expected[:4], lab_order_collected_at(connection, str(row["id"])), *expected[5:])
         if expected is not None and _has_drifted(row, expected):
             drifted.append(str(row["id"]))
     return drifted
@@ -2788,6 +2791,26 @@ def _expected_classification(connection, row) -> tuple[object, ...] | None:
     if key:
         _DRIFT_CACHE[key] = expected
     return expected
+
+
+def lab_order_collected_at(connection, document_id: str) -> str | None:
+    """When the lab's own order of this document says the sample was taken
+    («2024-11-15 11:42» as ``2024-11-15T11:42``), for a report that prints only
+    its examination day: an EskuLab POLYCHECK page, an Expert Hospital blood
+    count.  Never later than the report's own day."""
+    row = connection.execute(
+        """SELECT o.ordered_at, d.report_date FROM lab_orders o JOIN documents d ON d.id=o.document_id
+            WHERE o.document_id=? AND o.ordered_at IS NOT NULL ORDER BY o.ordered_at LIMIT 1""",
+        (document_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    moment = str(row["ordered_at"]).strip().replace(" ", "T")[:16]
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2})?", moment):
+        return None
+    if row["report_date"] and moment[:10] > str(row["report_date"])[:10]:
+        return None
+    return moment
 
 
 def _has_drifted(row, expected: tuple[object, ...]) -> bool:
@@ -3371,7 +3394,7 @@ def _update_reread_document(
             document["report_date"] if date_by_person else classification.report_date,
             classification.status,
             classification.notes,
-            classification.collected_at,
+            classification.collected_at or lab_order_collected_at(connection, document_id),
             classification.issued_at,
             classification.report_number,
             document_id,

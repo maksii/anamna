@@ -51,8 +51,12 @@ _HYPHEN_BREAK = re.compile(r"(?<=\w)- (?=\w)")
 # HBsAg, TSH, MCV, MCH, MCHC, MPV, PDW, RDW-SD and ESR went missing from two
 # Synevo panels.  So: add a unit only with a source line that proves it, and
 # keep longer forms ahead of the shorter ones they contain.
+# «мМО/мл» (milli-IU per mL, exactly IU/L) is Synevo's beta-hCG unit:
+#     β-ХГЛ загальний (хоріонічний < 0.1 мМО/мл Невагітні жінки: ≤1.0
+# Absent, the report's only result was dropped and the lab's own record of it
+# was the one copy left.
 UNIT_PATTERN = (
-    r"ммоль/л|мкмоль/л|мкмоль\/л|мкМО/мл|нг/мл|пг/мл|мг/дл|г/дл|г/л|мг/л|мкг/мл|мкг/л|"
+    r"ммоль/л|мкмоль/л|мкмоль\/л|мкМО/мл|мМО/мл|нг/мл|пг/мл|мг/дл|г/дл|г/л|мг/л|мкг/мл|мкг/л|"
     r"ммо/л|мМО/л|мо/мл|мо/л|мекв/л|од/л|Од/л|ОД/л|пмоль/л|нмоль/л|"
     r"клітин/мкл|тис/мкл|кл/мкл|цл/мкл|мл|"
     r"х\s*10\*\d+/л|10\^\d+/L|10\^\d+|секунди|сек|мм/год\.?|F/л|fL|фл|pg|%|індекс|коефіцієнт|"
