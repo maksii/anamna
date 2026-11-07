@@ -198,6 +198,10 @@ ISSUED_PATTERNS = [
     re.compile(rf"Час виконання:\s*{_DMY}{_HM}", re.I),  # EskuLab, older header
     re.compile(rf"Дата виконання:\s*{_DMY}{_HM}", re.I),  # EskuLab, 2026 header
     re.compile(rf"Дата видруку:?\s*{_DMY}{_HM}", re.I),  # Synevo companion report
+    # POLYCHECK prints its «Дата видруку» label as a picture; the date stands
+    # alone on its line, followed by the Biocheck software version:
+    # «18.11.2024 (V. 6.01.21 )».
+    re.compile(rf"^{_DMY}\s*\(V\.\s*\d", re.M),
     re.compile(rf"ЗАБІР КРОВІ\s+НАДРУКОВАНИЙ НА\s+{_DMY}\s+{_DMY}", re.I),  # ALEX², two columns
     re.compile(rf"НАДРУКОВАНИЙ НА\s+{_DMY}", re.I),
 ]
@@ -553,19 +557,52 @@ def _heading_block_title(lines: list[str]) -> str | None:
 
 
 #: Synevo departments whose name says nothing about the test: the test's own
-#: heading is the line below («Загальна клініка» / «Копрограма»).
-SYNEVO_DEPARTMENTS = frozenset({"Загальна клініка"})
+#: heading is the line below («Загальна клініка» / «Копрограма», «ПЛР» / «ПЛР.
+#: ВПЛ ВКР (...)»), or the results are printed straight under it («Імунохімія»
+#: / «β-ХГЛ загальний ... < 0.1 мМО/мл»), and then the tests are their names.
+SYNEVO_DEPARTMENTS = frozenset({
+    "Загальна клініка", "Біохімія", "Імунохімія", "Імунологія", "Гематологія", "Серологія", "ПЛР",
+    "Мікробіологія", "Алергодіагностика",
+})
 #: Text a heading never carries: a result's digits, the footer's «Примітка:».
 SYNEVO_NOT_HEADING_RE = re.compile(r"\d|^Примітка")
+#: How many lines a test heading's bracket may wrap over («ПЛР. ВПЛ ВКР
+#: (генотипування 16, 18, 31,» / «33, 35, ...» / «зішкріб, кількісне визначення)»).
+SYNEVO_HEADING_LINES = 3
 
 
 def _synevo_heading(lines: list[str], index: int) -> str:
-    """The heading on line `index`, with the line that closes its bracket."""
+    """The heading on line `index`, with the lines that close its bracket."""
     heading = _sub_with_space_before(SYNEVO_INDICATOR_RE, " ", lines[index]).strip()
-    following = lines[index + 1] if index + 1 < len(lines) else ""
-    if heading.count("(") > heading.count(")") and following.endswith(")") and "(" not in following:
-        heading = f"{heading} {following}"
+    if heading.count("(") <= heading.count(")"):
+        return heading
+    tail = lines[index + 1 : index + 1 + SYNEVO_HEADING_LINES]
+    for count, following in enumerate(tail, start=1):
+        if "(" in following:
+            break
+        if following.endswith(")"):
+            return " ".join([heading, *tail[:count]])
     return heading
+
+
+def _synevo_test_heading(lines: list[str], index: int) -> str | None:
+    """The test heading on line `index`, or None for a result row.
+
+    No digits, or a bracket that closes on a later line: a result row prints
+    its value, so its first line never closes on «)» further down.
+    """
+    heading = _synevo_heading(lines, index)
+    if not SYNEVO_NOT_HEADING_RE.search(heading):
+        return heading
+    first = _sub_with_space_before(SYNEVO_INDICATOR_RE, " ", lines[index]).strip()
+    return heading if heading != first and not lines[index].startswith("Примітка") else None
+
+
+def _synevo_row_names(lines: list[str]) -> list[str]:
+    """The names of the results printed with a unit, in order."""
+    from .parsers import parse_unit_rows
+
+    return list(dict.fromkeys(row.raw_name for row in parse_unit_rows("\n".join(lines), 1)))
 
 
 def _synevo_sections(lines: list[str]) -> list[str]:
@@ -588,9 +625,12 @@ def _synevo_sections(lines: list[str]) -> list[str]:
             break
         section = _strip_synevo_city(_synevo_heading(lines, index + 1))
         if section in SYNEVO_DEPARTMENTS and index + 2 < len(lines):
-            if SYNEVO_NOT_HEADING_RE.search(lines[index + 2]):
-                return [section]
-            department, section = True, _synevo_heading(lines, index + 2)
+            test = _synevo_test_heading(lines, index + 2)
+            if test is None:
+                # Results straight under the department: the paper holds those
+                # tests, and «Імунохімія» named none of them.
+                return _synevo_row_names(lines[index + 2 :]) or [section]
+            department, section = True, test
         if section and section not in sections:
             sections.append(section)
         if not department:
@@ -613,7 +653,28 @@ def _synevo_title(lines: list[str]) -> str | None:
         return joined_title([name for _, name in panels])
     # The section («Біохімія», «Аналіз крові розгорнутий (ЗАК)») is the line
     # under the table header; a department is replaced by the test under it.
-    return joined_title(_synevo_sections(lines)) or None
+    sections = _synevo_sections(lines)
+    return joined_title(sections + [test for test in _synevo_later_tests(lines) if test not in sections]) or None
+
+
+#: «Аналіз сечі загальний (ЗАС + ручна мікроскопія осаду)»: a test name and
+#: its description in brackets, on one line.
+SYNEVO_DESCRIBED_TEST_RE = re.compile(r"^(?P<name>[^\d()]+?)\s*\([^()\d]+\)$")
+
+
+def _synevo_later_tests(lines: list[str]) -> list[str]:
+    """Tests that start further down the order, not under a table header.
+
+    Synevo opens each ordered test with its full name and then repeats the
+    bare name as the first section heading: «Аналіз сечі загальний (ЗАС +
+    ручна мікроскопія осаду)» / «Аналіз сечі загальний».  Only the first
+    test sits under the header, so an order of a blood count and a
+    urinalysis was titled as the blood count alone.
+    """
+    return [
+        line for line, following in zip(lines, lines[1:])
+        if (found := SYNEVO_DESCRIBED_TEST_RE.match(line)) and following == found.group("name")
+    ]
 
 
 #: The footer of Synevo's illustrated companion report: «<patient> / Пакет № 183
@@ -852,7 +913,15 @@ _VENDOR_RULES: tuple[tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], st
     (("garmin connect",), (), (), "Garmin Connect", "https://connect.garmin.com"),
     # «synevo-<order>.pdf» is how lab sync names a Synevo download; the
     # illustrated companion report it fetches prints no lab name at all.
-    (("сінево", "synevo"), ("__synevo__", "synevo-"), (), "Synevo", "https://www.synevo.ua"),
+    # A Synevo report printed for a partner clinic («Мати та дитина») drops
+    # the «Сінево (Synevo)» line and carries the clinic's logo; what stays is
+    # the laboratory's own system: the flag column «Індикатор зони підвищеної
+    # уваги» of its result table, and the footer naming its information
+    # system, SILAB, on the printouts that print one.
+    (
+        ("сінево", "synevo", "індикатор зони підвищеної уваги", "інформаційної системи silab"),
+        ("__synevo__", "synevo-"), (), "Synevo", "https://www.synevo.ua",
+    ),
     (("esculab.com", "елаб"), ("__eskulab__", "eskulab-"), ("Apache FOP",), "EskuLab", "https://esculab.com"),
     # Medical centre «Veselka», operated by ТзОВ «Повноділ»; its
     # vaccination card prints only the operator's name.
@@ -862,7 +931,11 @@ _VENDOR_RULES: tuple[tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], st
     (("експерт", "experthospital", "expert hospital"), (), (), "Expert Hospital", "https://experthospital.com.ua"),
     (("медцентр св. параскеви", "святої параскеви"), ("st-paraskeva",), (), "St. Paraskeva Medical Center", None),
 )
-MICROBIOLOGY_TOKENS = ("антибіотикограм", "бакпосів", "мікробіологічне", "мікроорганізм")
+#: «Антибіотики/Антимікотики <organism>» heads an antibiogram, and is all an
+#: EskuLab culture's second page prints of it: typed as a laboratory page, that
+#: page was read as a report of its own and its rows lost the specimen the
+#: first page names.
+MICROBIOLOGY_TOKENS = ("антибіотикограм", "бакпосів", "мікробіологічне", "мікроорганізм", "антибіотики/антимікотики")
 LABORATORY_TOKENS = (
     "показник результат",
     "результат норма",

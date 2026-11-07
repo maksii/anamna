@@ -375,6 +375,7 @@ for _determination in (
 #: Synevo prints all six of these; the app already held the other spelling.
 UNIT_SYNONYMS = {
     "мкмо/мл": _MIU_L,  # µIU/mL and mIU/L are the same quantity, exactly 1:1
+    "ммо/мл": "IU/L",   # «мМО/мл», mIU/mL: 10^-3 IU per 10^-3 L is exactly IU/L (Synevo beta-hCG)
     "f/л": "fL",         # one lab's spelling; «фл» above is what Ukrainian shows
     "пг": "pg",
     "мм/год.": "mm/h",   # the trailing full stop is the lab's, not a new unit
@@ -468,6 +469,13 @@ UNIT_SYNONYMS = {
     "мм.рт.ст.": "mmHg",
     "мм.рт.ст": "mmHg",
     "мсек": "ms",
+    # Colonies per millilitre: a urine culture's count, where a stool culture
+    # counts per gram («КУО/г», CFU/g above).  Not the same quantity, so not
+    # folded together; this only gives the per-millilitre spelling its name.
+    "куо/мл": "CFU/mL",
+    # EskuLab's partner coprogram heads its unit column «кількість в п/з»: a
+    # count per field of view, the same unit as «в п/з».
+    "кількість в п/з": "per HPF",
 }
 
 #: Same number, different label -- registered per concept and never globally.

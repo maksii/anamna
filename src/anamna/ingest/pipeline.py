@@ -927,6 +927,8 @@ def ensure_concept(
     # «лейкоцити» -> urine leukocytes, and a smear's «Лейкоцити» must not
     # inherit it.
     excluded = sorted(foreign_categories(raw_name, family))
+    raw_name = _specimen_qualified(raw_name, family, specimen)
+    normalized = normalized_key(raw_name)
     alias_row = connection.execute(
         f"""SELECT c.id, c.preferred_unit, c.category FROM concept_aliases a
            JOIN concepts c ON c.id = a.concept_id
@@ -954,6 +956,25 @@ def ensure_concept(
     return concept_id, preferred_unit
 
 
+def _specimen_qualified(raw_name: str, family: str | None, specimen: str | None) -> str:
+    """The name an auto concept is kept under: the printed label, plus the
+    material when the label alone would merge two different measurements.
+
+    Concept names are unique, so a urine culture's «Lactobacillus spp.» (per
+    mL) and a stool culture's (per g) were one series, a smear's «Епітелій»
+    took the urinalysis concept of that name, and the vaginal and cervical
+    readings of one smear were one series.  Stool rows take «(кал)», which is
+    also the name EskuLab's coprogram concepts already carry; smear rows take
+    their sampling site («VAGINA»).  Urine and blood keep the bare label.
+    """
+    if family == "stool" and specimen_family(raw_name) != "stool":
+        return f"{raw_name} (кал)"
+    site = collapse_space(specimen or "")
+    if family == "smear" and site and f"({site})".casefold() not in raw_name.casefold():
+        return f"{raw_name} ({site})"
+    return raw_name
+
+
 def _inferred_category(
     normalized: str, clinical_type: str | None, context: str | None, family: str | None = None
 ) -> str:
@@ -966,11 +987,23 @@ def _inferred_category(
         return "stool"
     if family == "smear":
         return "microbiology"
-    if any(token in normalized for token in ("сеч", "епітел", "циліндр", "бактері", "кристал", "urine")) or (
-        context and any(token in normalized_key(context) for token in ("сеч", "urine"))
+    if family == "urinalysis" or _URINE_WORD.search(normalized) or any(
+        token in normalized for token in ("епітел", "циліндр", "бактері", "кристал")
     ):
         return "urinalysis"
+    # The report's title is the weakest evidence and yields to the row's own
+    # material: an order titled «Амінокислоти (... в сироватці) · Сечовина»
+    # filed 39 serum amino acids as urinalysis, «сеч» being the first letters
+    # of «Сечовина» (urea).  Words, not substrings, and only when the row
+    # names no specimen of its own.
+    if family is None and context and _URINE_WORD.search(normalized_key(context)):
+        return "urinalysis"
     return "unmapped"
+
+
+#: Urine, as a word: «сеча», «сечі», «сечовий осад», "urine" -- not «сечовина»
+#: (urea) or «сечова кислота» (uric acid), which are blood chemistry.
+_URINE_WORD = re.compile(r"\bсеч(?:а|і|у|ею|ов(?!ин|а\s+кислот|ої\s+кислот)\w*)?\b|\burine", re.I)
 
 
 def _store_defined_concept(
@@ -1014,6 +1047,10 @@ def _store_defined_concept(
     return concept_id, preferred_unit
 
 
+#: The catalogue's concepts, whose category no row's inference may change.
+_DEFINED_CONCEPT_IDS = frozenset(stable_concept_id(str(definition["name"])) for definition in CONCEPT_DEFINITIONS)
+
+
 def _store_unmapped_concept(
     connection: sqlite3.Connection, raw_name: str, normalized: str, value_type: str, category: str,
     unit_raw: str | None,
@@ -1035,7 +1072,15 @@ def _store_unmapped_concept(
         concept_id = existing["id"]
         preferred_unit = existing["preferred_unit"] or preferred_unit
         resolved_type = existing["value_type"] if existing["value_type"] == value_type else "mixed"
-        resolved_category = category if existing["category"] == "unmapped" and category != "unmapped" else existing["category"]
+        # An auto concept's category is an inference, and a better one replaces
+        # it: 39 serum amino acids kept the «urinalysis» a substring of the
+        # title once gave them.  A defined concept's category is the catalogue's.
+        # ponytail: the last row read wins for a label two specimens share
+        # under one name; `_specimen_qualified` keeps the known ones apart.
+        defined = existing["id"] in _DEFINED_CONCEPT_IDS
+        resolved_category = existing["category"] if defined else (
+            category if category != "unmapped" or existing["category"] == "urinalysis" else existing["category"]
+        )
         connection.execute(
             "UPDATE concepts SET category=?, value_type=?, preferred_unit=COALESCE(preferred_unit, ?) WHERE id=?",
             (resolved_category, resolved_type, preferred_unit, concept_id),

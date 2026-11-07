@@ -135,9 +135,10 @@ def test_a_synevo_department_gives_way_to_the_tests_printed_under_it():
     assert extract_title(text, "synevo-3600000001.pdf", "laboratory") == (
         "Аналіз калу на кишкові паразити (метод концентрування Parasep) · Копрограма"
     )
-    # A section that names its tests stays, and later pages add nothing to it.
+    # A department with its results straight under it is titled by them: the
+    # paper holds those tests, the department names none of them.
     biochemistry = SYNEVO_HEAD + "Біохімія Індикатор зони підвищеної уваги\nХолестерин 6.27 ммоль/л <5.2\n"
-    assert extract_title(biochemistry, "synevo-3600000001.pdf", "laboratory") == "Біохімія"
+    assert extract_title(biochemistry, "synevo-3600000001.pdf", "laboratory") == "Холестерин"
     urine = SYNEVO_HEAD + (
         "Аналіз сечі загальний (ЗАС + ручна мікроскопія осаду) Індикатор зони підвищеної уваги\n"
         "Колір жовтий жовтий\n" + SYNEVO_HEAD.split("Дата замовлення")[0] + "Показник Результат Од. Референтний інтервал\n"

@@ -51,8 +51,12 @@ _HYPHEN_BREAK = re.compile(r"(?<=\w)- (?=\w)")
 # HBsAg, TSH, MCV, MCH, MCHC, MPV, PDW, RDW-SD and ESR went missing from two
 # Synevo panels.  So: add a unit only with a source line that proves it, and
 # keep longer forms ahead of the shorter ones they contain.
+# «мМО/мл» (milli-IU per mL, exactly IU/L) is Synevo's beta-hCG unit:
+#     β-ХГЛ загальний (хоріонічний < 0.1 мМО/мл Невагітні жінки: ≤1.0
+# Absent, the report's only result was dropped and the lab's own record of it
+# was the one copy left.
 UNIT_PATTERN = (
-    r"ммоль/л|мкмоль/л|мкмоль\/л|мкМО/мл|нг/мл|пг/мл|мг/дл|г/дл|г/л|мг/л|мкг/мл|мкг/л|"
+    r"ммоль/л|мкмоль/л|мкмоль\/л|мкМО/мл|мМО/мл|нг/мл|пг/мл|мг/дл|г/дл|г/л|мг/л|мкг/мл|мкг/л|"
     r"ммо/л|мМО/л|мо/мл|мо/л|мекв/л|од/л|Од/л|ОД/л|пмоль/л|нмоль/л|"
     r"клітин/мкл|тис/мкл|кл/мкл|цл/мкл|мл|"
     r"х\s*10\*\d+/л|10\^\d+/L|10\^\d+|секунди|сек|мм/год\.?|F/л|fL|фл|pg|%|індекс|коефіцієнт|"
@@ -83,6 +87,12 @@ UNIT_PATTERN = (
     # so the unit stayed glued to the name and `unit_raw` was empty.
     r"г/мл|в\s*п/з|"
     r"kUA/L|kU/L|КУО/г|COI|R|AI|пг|"
+    # A urine culture counts colonies per millilitre, not per gram (EskuLab
+    # J0008, Synevo's urogenital culture):
+    #     Lactobacillus spp. 1.0 x 10^3 КУО/мл Не виявлено
+    #     Ступінь бактеріурії 1,0*10^3 КУО/мл
+    # Absent, a culture count printed as a plain row was dropped.
+    r"КУО/мл|"
     # Synevo prints free T4 in nanograms per decilitre, insulin in micro-units
     # and the CA 15-3 / CA 125 tumour markers in units per millilitre:
     #     Тироксин вільний (T4 вільний) 1.35 нг/дл Діти:
@@ -544,7 +554,10 @@ def valid_analyte_name(name: str) -> bool:
     folded = name.casefold()
     return (
         len(name) >= 2
-        and name[0].isalpha()
+        # «16 генотип», the HPV type a genotyping row names, is the one name
+        # that opens on a digit; failing here, it took the line above as its
+        # first words («Аналізатор: CFX-96 (BioRad, США) 18 генотип»).
+        and (name[0].isalpha() or bool(_GENOTYPE_NUMBER.match(name)))
         and any(char.isalpha() for char in name)
         # Fragments of a reference interval that wrapped onto their own line.
         # "рівень;" is the tail of "високий рівень" and was read as an analyte
@@ -574,7 +587,13 @@ CATEGORICAL_VALUE = (
 # result row -- "Бензилпеніцилін 1 од Стійкий" -- but the number is the disk
 # potency and the verdict after it is the finding.  Reading it as a value of
 # 1.0 would publish a meaningless number and silently drop the resistance.
-SUSCEPTIBILITY_VERDICT = r"помірно\s*чутлив\w*|чутлив\w*|стійк\w*|резистентн\w*"
+# The verdict is an adjective («Чутливий», «Стійка», «резистентні»); the noun
+# is not one.  A J1008 heading that wraps after «із визначенням чутливостей»
+# ended on «чутливостей» and was sent to review as an unknown antibiotic.
+SUSCEPTIBILITY_VERDICT = (
+    r"помірно\s*чутлив(?:ий|а|е|і)(?!\w)|чутлив(?:ий|а|е|і)(?!\w)|стійк(?:ий|а|е|і)(?!\w)"
+    r"|резистентн(?:ий|а|е|і)(?!\w)"
+)
 
 
 def has_result_header(text: str) -> bool:
@@ -1655,7 +1674,7 @@ def parse_allergy_panel(text: str, page_number: int, words: list | None = None) 
 #: The shortest name «.+?» could take never ends in a blank (the gap would
 #: have had it) unless it is one blank alone, so the name is written as
 #: exactly that: one blank, or anything ending in a non-blank.
-_COLONY_POWER_ROW = re.compile(r"^(?P<name>[^\S\n]|[^\n]*?\S)\s++10\^(?P<power>\d+)\s+КУО/г$", re.I)
+_COLONY_POWER_ROW = re.compile(r"^(?P<name>[^\S\n]|[^\n]*?\S)\s++10\^(?P<power>\d+)\s+(?P<unit>КУО/(?:г|мл))$", re.I)
 
 
 def parse_microbiology_narrative(text: str, page_number: int) -> list[ParsedObservation]:
@@ -1697,7 +1716,7 @@ def parse_microbiology_narrative(text: str, page_number: int) -> list[ParsedObse
                 ParsedObservation(
                     raw_name=count.group("name").strip(" ,-:"),
                     value_numeric=float(10 ** int(count.group("power"))),
-                    value_text=None, comparator=None, unit_raw="КУО/г",
+                    value_text=None, comparator=None, unit_raw=count.group("unit"),
                     reference_text=None, reference_low=None, reference_high=None,
                     page_number=page_number, evidence_text=line, confidence=0.86,
                 )
@@ -2872,11 +2891,9 @@ class _EskulabStool:
 
     def flush(self) -> None:
         if self.name and self.value:
-            found = _eskulab_observation(
-                f"{self.name} (кал)", self.value, "", [self.band], self.page_number
-            )
+            found = _eskulab_observation(self.name, self.value, "", [self.band], self.page_number)
             if found is not None:
-                self.observations.append(found)
+                self.observations.append(replace(found, specimen="кал"))
         self.name = self.value = self.band = ""
 
     def read_name(self, first: str, result: str, reference: str) -> None:
@@ -2918,11 +2935,10 @@ class _EskulabStool:
             self.subheading = result
             return
         found = _eskulab_observation(
-            f"{self.parent} {self.subheading}".strip() + " (кал)",
-            result, "", [self.parent_band], self.page_number,
+            f"{self.parent} {self.subheading}".strip(), result, "", [self.parent_band], self.page_number,
         )
         if found is not None:
-            self.observations.append(found)
+            self.observations.append(replace(found, specimen="кал"))
         self.subheading = ""
 
 
@@ -2936,11 +2952,13 @@ def parse_eskulab_stool(words: list, page_number: int) -> list[ParsedObservation
     nested parent look alike from the left margin; what separates them is that
     the parent states a reference and a wrapped fragment states nothing.
 
-    Every name is qualified with the specimen, because on this table they are
+    Every row carries the specimen «кал», because on this table the names are
     not qualified at all: «Колір», «Лейкоцити», «Еритроцити» and «Слиз» are
-    printed bare and resolve straight onto the urine concepts of the same name.
-    A stool colour of «коричневий» filed as a urine colour is brown urine, and
-    stool leukocytes would join the urinary series and be judged against it.
+    printed bare and would resolve straight onto the urine concepts of the same
+    name.  A stool colour of «коричневий» filed as a urine colour is brown
+    urine.  The specimen binds the concept (``concepts.concept_for_alias``), so
+    the name stays as printed: appending « (кал)» to it put a label on the
+    record that no report carries.
     """
     # The panel heading names its own material -- "F9014 Копрограма (матеріал:
     # Приносний матеріал, кал)" -- and it is prose, so it spans the columns and
@@ -3741,9 +3759,10 @@ def parse_partner_coprogram(words: list, page_number: int) -> list[ParsedObserva
     Every cell is centred on its row, so a cell that wraps spreads above and
     below the name: «Дорослі: оформлений; Діти:» sits over «Форма», and
     «допускається неоформлений.» under it.  Each line belongs to the name
-    nearest it; the cells are joined top to bottom.  Names are qualified with
-    the specimen, as on EskuLab's own coprogram, or «Колір» and «Лейкоцити»
-    resolve onto the urine concepts of the same name.
+    nearest it; the cells are joined top to bottom.  Rows carry the specimen,
+    as on EskuLab's own coprogram, or «Колір» and «Лейкоцити» resolve onto the
+    urine concepts of the same name.  The unit column («кількість в п/з») is
+    kept with the text result it qualifies (``finalise``).
     """
     lines = _word_lines(words)
     header = next(
@@ -3775,9 +3794,9 @@ def parse_partner_coprogram(words: list, page_number: int) -> list[ParsedObserva
         name, result, unit, reference = (collapse_space(" ".join(cell)) for cell in cells)
         if not result:
             continue  # the «30511 Копрограма» heading
-        found = _eskulab_observation(f"{name} (кал)", result, unit, [reference], page_number)
+        found = _eskulab_observation(name, result, unit, [reference], page_number)
         if found is not None:
-            observations.append(found)
+            observations.append(replace(found, specimen="кал"))
     return observations
 
 
@@ -3920,6 +3939,8 @@ def parse_synevo_sediment(words: list, page_number: int) -> list[ParsedObservati
 _SYNEVO_INLINE_NORM = re.compile(r"^(?P<value>.+?)\s*(?P<norm>\(в нормі[^)]*\))$", re.I)
 _SYNEVO_GENOTYPE = re.compile(r"^(?:гомозиготне|гетерозиготне)\s+носійство$", re.I)
 _SYNEVO_NUMBER = re.compile(rf"(?P<comparator>[<>≤≥])?\s*(?P<number>{_DECIMAL})")
+#: A named method in a test heading: «(метод концентрування Parasep)».
+_SYNEVO_HEADING_METHOD = re.compile(r"\(метод\s[^()]*?(?P<method>[A-Z][A-Za-z-]+)\)")
 
 
 def _synevo_unitless_rows(lines: list, columns: tuple[float, float, float]) -> list[tuple[int, list[int], str | None]]:
@@ -3938,6 +3959,7 @@ def _synevo_unitless_rows(lines: list, columns: tuple[float, float, float]) -> l
     )
     rows: list[tuple[int, list[int], str | None]] = []
     heading: str | None = None
+    in_heading = False
     for index in range(header + 1 if header is not None else len(lines), len(lines)):
         line = lines[index]
         text = collapse_space(" ".join(word[3] for word in line))
@@ -3947,13 +3969,20 @@ def _synevo_unitless_rows(lines: list, columns: tuple[float, float, float]) -> l
         open_name = bool(rows) and _unclosed_bracket(
             " ".join(word[3] for row_line in rows[-1][1] for word in lines[row_line] if word[0] < value_from)
         )
-        # «pH» opens lowercase; a wrapped name tail («найпростіших») has no capital.
-        if any(char.isupper() for char in name.split(" ")[0]) and not open_name:
-            if not any(word[0] >= value_from for word in line):
+        # «pH» opens lowercase; a wrapped name tail («найпростіших») has no
+        # capital; «16 генотип» has none either and is a row of its own.
+        if (any(char.isupper() for char in name.split(" ")[0]) or _GENOTYPE_NUMBER.match(name)) and not open_name:
+            in_heading = not any(word[0] >= value_from for word in line)
+            if in_heading:
                 heading = name  # a section heading: «Копрограма»
             rows.append((index, [index], heading))
         elif rows:
             rows[-1][1].append(index)
+            if in_heading and name:
+                # The heading wraps: «Аналіз калу на кишкові паразити (метод» /
+                # «концентрування Parasep)».
+                heading = f"{heading} {name}"
+                rows[-1] = (rows[-1][0], rows[-1][1], heading)
     return rows
 
 
@@ -3987,6 +4016,12 @@ def parse_synevo_unitless(words: list, page_number: int) -> list[ParsedObservati
         value = collapse_space(" ".join(cells["value"]))
         if not value or cells["unit"] or not valid_analyte_name(name):
             continue
+        method = _SYNEVO_HEADING_METHOD.search(heading or "")
+        if method:
+            # «Яйця гельмінтів» under «Аналіз калу на кишкові паразити (метод
+            # концентрування Parasep)» and again under «Копрограма» are two
+            # tests of one sample by two methods; the bare name made them one.
+            name = f"{name} ({method.group('method')})"
         reference = _synevo_block(lines, first, columns) or None
         inline = _SYNEVO_INLINE_NORM.match(value) if not reference else None
         if inline:
@@ -4674,9 +4709,22 @@ METHOD_NOTE_RE = re.compile(
 _METHOD_INTERVAL_RE = re.compile(r"\d\s*[-–]\s*\d|[<>≤≥]\s*\d|\bдо\s+\d")
 
 
+#: A line that explains the scale the result is on: BD FocalPoint's quintile
+#: rank and its percentage each print one in brackets («... алгоритми для
+#: визначення відповідного рангу препарату у відсотковому співвідношенні ...»).
+#: It says what the number means, which is the printed reference; the rank
+#: kept its line (it happens to hold «від 1-го ... до 5-го») and the
+#: percentage lost its own to the «визначення» in it.
+_SCALE_EXPLANATION_RE = re.compile(r"\bранг", re.I)
+
+
 def method_note(line: str) -> bool:
     """A reference line that names a method, reagent or analyser and gives no interval."""
-    return bool(METHOD_NOTE_RE.search(line)) and not _METHOD_INTERVAL_RE.search(line)
+    return (
+        bool(METHOD_NOTE_RE.search(line))
+        and not _METHOD_INTERVAL_RE.search(line)
+        and not _SCALE_EXPLANATION_RE.search(line)
+    )
 
 
 #: A line opening with an asterisk is either a citation («*Згідно наданих
@@ -4893,6 +4941,12 @@ def _synevo_by_column(
 #: and the column header «Індикатор зони підвищеної уваги» in the reference
 #: one, so it was stored as a result.  A package is never an analyte.
 _SYNEVO_PACKAGE = re.compile(r"^Пакет\s*№\s*\d+", re.I)
+#: The same column header beside any test heading that wraps: «Загальний
+#: аналіз крові (Клінічний аналіз крові автоматизований з» over «формулою +
+#: ручна лейкоформула)» put the «з» in the result column, and the heading was
+#: stored as a result «з» with the header as its reference.  A row whose only
+#: reference is the header is a heading, whatever its name.
+_SYNEVO_FLAG_HEADER = re.compile(r"Індикатор\s+зони\s+підвищеної\s+уваги", re.I)
 #: The specimen Synevo prints in front of one row's name: «Аналіз крові:
 #: Швидкість осідання еритроцитів (ШОЕ, ESR)».  It is the material, not part
 #: of the analyte's name; left on, the ESR filed under a name no other
@@ -4907,6 +4961,18 @@ _GENE_VARIANT = re.compile(
 #: name is the heading above it: «Вовчаковий антикоагулянт» / «Скринінговий
 #: тест 37.9 сек» / «Підтверджуючий тест 34.3 сек».
 _SUBTEST_NAME = re.compile(r"^(?:скринінгов\w*|підтверджуюч\w*)\s+тест\w*$", re.I)
+#: A genotype row that names only the type: «16 генотип».
+_GENOTYPE_NUMBER = re.compile(r"^\d+\s+генотип$", re.I)
+
+
+def _test_heading_above(lines: list, index: int, value_from: float) -> str | None:
+    """The test a row is printed under, its bracketed description left off:
+    the nearest line above that is all name column and opens on a capital."""
+    for line in reversed(lines[:index]):
+        text = collapse_space(" ".join(word[3] for word in line))
+        if text[:1].isupper() and not any(word[0] >= value_from for word in line):
+            return collapse_space(re.sub(r"\(.*$", "", text)).strip(" ,.;:") or None
+    return None
 
 
 def without_specimen_label(name: str) -> str:
@@ -4934,7 +5000,7 @@ def _synevo_rows_in_place(observations: list[ParsedObservation], words: list) ->
     finished: list[ParsedObservation] = []
     claimed: set[int] = set()
     for item in observations:
-        if _SYNEVO_PACKAGE.match(item.raw_name):
+        if _SYNEVO_PACKAGE.match(item.raw_name) or _SYNEVO_FLAG_HEADER.fullmatch(item.reference_text or ""):
             continue
         changes: dict[str, object] = {}
         name = without_specimen_label(item.raw_name)
@@ -4958,6 +5024,13 @@ def _synevo_rows_in_place(observations: list[ParsedObservation], words: list) ->
                 name = f"{name} ({variant['gene']} {collapse_space(variant['variant'])})"
             elif heading and _SUBTEST_NAME.match(name):
                 name = f"{heading}, {name[:1].lower()}{name[1:]}"
+            elif _GENOTYPE_NUMBER.match(name):
+                # «16 генотип» under «ПЛР. ВПЛ ВКР (генотипування 16, 18, ...)»,
+                # which wraps over three lines: a concept named «16 генотип»
+                # says nothing about what was typed.  «ПЛР. ВПЛ ВКР, 16
+                # генотип» is also the name the lab's own record gives the row.
+                test = _test_heading_above(lines, index, columns[0])
+                name = f"{test}, {name}" if test else name
             tail = _wrapped_unit_tail(item.unit_raw, lines, index, columns)
             if tail:
                 changes["unit_raw"] = f"{item.unit_raw} {tail}"
@@ -5266,6 +5339,10 @@ def _numeric_reading(item: ParsedObservation, reference: str | None, bounds: Ref
     return None
 
 
+#: A per-field microscopy unit: «в п/з», «кількість в п/з».
+_PER_FIELD_UNIT = re.compile(r"\bв\s*п/з$", re.I)
+
+
 def finalise(
     item: ParsedObservation, age_years: int | None = None, sex: str | None = None
 ) -> ParsedObservation:
@@ -5301,7 +5378,12 @@ def finalise(
     # mg/dL scale.  Dropped, the store filled in the concept's own unit
     # instead, and ketones read on a mg/dL pad were labelled mmol/L.
     on_scale = dipstick_threshold(reference) is not None
-    if item.value_numeric is None and item.unit_raw and not on_scale and not re.search(r"\d", item.value_text or ""):
+    # So does a microscopy count per field of view: «поодинокі в препараті» in
+    # a column headed «кількість в п/з» is a few cells per field, and the
+    # unit is what says it was counted per field and not per microlitre.
+    per_field = bool(item.unit_raw and _PER_FIELD_UNIT.search(item.unit_raw))
+    if (item.value_numeric is None and item.unit_raw and not on_scale and not per_field
+            and not re.search(r"\d", item.value_text or "")):
         changes["unit_raw"] = None
     if item.specimen is None:
         found = _NAME_SPECIMEN.search(item.raw_name)
@@ -5451,19 +5533,20 @@ def _antibiogram_material(observations: list[ParsedObservation]) -> list[ParsedO
     """An antibiogram continued over a page break keeps its isolate's material.
 
     The second page reprints «Антибіотики/Антимікотики <organism>» and
-    nothing about the specimen, which was named on the page before.
+    nothing about the specimen, which was named on the page before.  The
+    material is the one of the nearest antibiogram of that isolate above:
+    one order can test the same organism from urine and from stool.
     """
-    material = {
-        item.note: item.specimen
-        for item in observations
-        if item.note and item.section == item.note and item.specimen
-    }
-    return [
-        replace(item, specimen=material[item.note])
-        if item.note and item.section == item.note and not item.specimen and item.note in material
-        else item
-        for item in observations
-    ]
+    material: dict[str, str] = {}
+    carried: list[ParsedObservation] = []
+    for item in observations:
+        if item.note and item.section == item.note:
+            if item.specimen:
+                material[item.note] = item.specimen
+            elif item.note in material:
+                item = replace(item, specimen=material[item.note])
+        carried.append(item)
+    return carried
 
 
 #: A trailing «, <unit>» or specimen phrase is presentation, not identity:

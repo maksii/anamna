@@ -370,12 +370,12 @@ PARTNER_COPROGRAM = [
 def test_the_partner_laboratorys_coprogram_page_is_read():
     parsed = by_name("EskuLab", "laboratory", page(PARTNER_COPROGRAM, 2))
     assert {name: (item.value_numeric, item.value_text, item.reference_text) for name, item in parsed.items()} == {
-        "Форма (кал)": (None, "оформлений", "Дорослі: оформлений; Діти: допускається неоформлений."),
-        "Колір (кал)": (None, "коричневий", "коричневий"),
-        "Запах (кал)": (None, "специфічний без особливостей", "каловий"),
-        "Реакція (рН) (кал)": (6.75, None, "6,75-7,5"),
-        "Домішки (кал)": (None, "залишки неперетравленої їжі в незначній кількості", None),
-        "Лейкоцити (кал)": (None, "поодинокі в препараті", "поодинокі у п/з"),
+        "Форма": (None, "оформлений", "Дорослі: оформлений; Діти: допускається неоформлений."),
+        "Колір": (None, "коричневий", "коричневий"),
+        "Запах": (None, "специфічний без особливостей", "каловий"),
+        "Реакція (рН)": (6.75, None, "6,75-7,5"),
+        "Домішки": (None, "залишки неперетравленої їжі в незначній кількості", None),
+        "Лейкоцити": (None, "поодинокі в препараті", "поодинокі у п/з"),
     }
     assert {item.specimen for item in parsed.values()} == {"кал"}
 
@@ -392,5 +392,5 @@ def test_a_second_ticked_answer_is_part_of_the_coprogram_result():
         (325.2, "їжі@28.3-40.0"),
     ]
     parsed = by_name("EskuLab", "laboratory", page(lines))
-    assert parsed["Запах (кал)"].value_text == "специфічний, каловий"
-    assert parsed["Залишки неперетравленої їжі (кал)"].value_text == "невелика к-сть."
+    assert parsed["Запах"].value_text == "специфічний, каловий"
+    assert parsed["Залишки неперетравленої їжі"].value_text == "невелика к-сть."
