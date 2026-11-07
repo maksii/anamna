@@ -88,6 +88,11 @@ ORDER_PATTERNS = [
     r"Ідентифікаційний номер зразка:(?:[^\d\n]*\n){0,2}[^\d\n]*(\d{8,12})\b",
     # Synevo's illustrated companion report: «Штрих-код <barcode>-<suffix>».
     r"Штрих-код\s+(\d{8,12})-\d+\b",
+    # The partner clinic's SILAB print: «№ замовл.: <order>», which OCR reads
+    # as «Мезамовл.:», «Ne замовл.», «Nesamosn.:».  Its 2026 print gives the
+    # barcode beside the client's name instead.
+    r"(?:замовл|samosn)[^\s\d]*\s*(\d{8,12})\b",
+    r"^Клієнт:[^\n\d]*(\d{10})\b",
 ]
 #: How lab sync names a laboratory's download: «eskulab-<order>.pdf»,
 #: «synevo-<barcode>-1.pdf», «ekspert-<order>.pdf».  The number is the lab's
@@ -130,6 +135,8 @@ def extract_date(text: str, filename: str) -> str | None:
             r"Дата візиту:\s*(\d{2})[./](\d{2})[./](\d{4})",
             # The companion report prints the label without its colon.
             r"Дата замовлення:?\s*(\d{2})[./](\d{2})[./](\d{4})",
+            # Synevo's own print for the partner clinic: the sampling day.
+            r"Дата забору матеріалу:\s*(\d{2})[./](\d{2})[./](\d{4})",
             r"Зам\s*овлення:\s*\S+\s*/\s*(\d{2})[./](\d{2})[./](\d{4})",
             r"Дата обстеження:\s*(\d{2})[./](\d{2})[./](\d{4})",
             r"^Дата:\s*(\d{2})[./](\d{2})[./](\d{4})",
@@ -188,7 +195,11 @@ _DMY = r"(\d{2})[./](\d{2})[./](\d{4})"
 _HM = r"(?:,?[ \t]+(\d{1,2}):(\d{2}))?"
 #: Labelled sample-collection moments, most specific first.
 COLLECTED_PATTERNS = [
-    re.compile(rf"Дата замовлення:?\s*{_DMY}{_HM}", re.I),  # Synevo
+    # Synevo, which prints the date with dots.  The partner clinic's SILAB
+    # form prints the order with slashes («11/08/2021 14:20»), and there the
+    # order is not the draw: one smear was taken the day before it was ordered.
+    re.compile(r"Дата замовлення:?\s*(\d{2})\.(\d{2})\.(\d{4})" + _HM, re.I),
+    re.compile(rf"Дата забору матеріалу:\s*{_DMY}{_HM}", re.I),  # Synevo, a partner clinic's copy
     re.compile(rf"Дата здачі аналізу:\s*{_DMY}{_HM}", re.I),  # St Paraskeva forms
     re.compile(rf"ЗАБІР КРОВІ\s+(?:НАДРУКОВАНИЙ НА\s+)?{_DMY}", re.I),  # ALEX²
     re.compile(rf"Дата операції:?\s*{_DMY}", re.I),  # pathology: when tissue was taken
@@ -198,6 +209,7 @@ ISSUED_PATTERNS = [
     re.compile(rf"Час виконання:\s*{_DMY}{_HM}", re.I),  # EskuLab, older header
     re.compile(rf"Дата виконання:\s*{_DMY}{_HM}", re.I),  # EskuLab, 2026 header
     re.compile(rf"Дата видруку:?\s*{_DMY}{_HM}", re.I),  # Synevo companion report
+    re.compile(rf"Дата результату:[\s|]*{_DMY}{_HM}", re.I),  # partner clinic's SILAB print, 2025 on
     re.compile(rf"ЗАБІР КРОВІ\s+НАДРУКОВАНИЙ НА\s+{_DMY}\s+{_DMY}", re.I),  # ALEX², two columns
     re.compile(rf"НАДРУКОВАНИЙ НА\s+{_DMY}", re.I),
 ]
@@ -770,6 +782,48 @@ def _labelled_study_title(lines: list[str], clinical_type: str) -> str | None:
     return _xray_title(lines)
 
 
+#: The tests a SILAB print («Мати та дитина», Synevo's copy of it) heads its
+#: sections with, as (what OCR still reads of the heading, the heading as
+#: printed).  Scanned, the heading arrives as «Аналіз yir мазка» or broken over
+#: two lines, so the printed form is taken from here once its words are seen.
+SILAB_HEADINGS = (
+    # Synevo's copy names the order «… + ручна мікроскопія …» above the
+    # section it prints as «… + мікроскопія …»: one test, one title.
+    (re.compile(r"^Аналіз сечі загальний \(ЗАС \+ ручна"), "Аналіз сечі загальний (ЗАС + ручна мікроскопія осаду)"),
+    (re.compile(r"^Аналіз сечі загальний \(ЗАС \+ мікроскопія"), "Аналіз сечі загальний (ЗАС + мікроскопія осаду)"),
+    (re.compile(r"^Аналіз \S{1,4} мазка на мікрофлору"), "Аналіз у/г мазка на мікрофлору (на склі)"),
+    (re.compile(r"^Цитологія на атипові клітини"), "Цитологія на атипові клітини (зішкріб, мазок на склі)"),
+    (re.compile(r"^\d+\. Панель цитологічних досліджень$"), None),
+    (re.compile(r"^ПЛР\. ВПЛ \S{3} \(генотипування, якісне"), "ПЛР. ВПЛ ВКР (генотипування, якісне визначення)"),
+    (
+        re.compile(r"^ПЛР\. ВПЛ \S{3} \(генотипування 16, 18"),
+        "ПЛР. ВПЛ ВКР (генотипування 16, 18, 31, 33, 35, 39, 45, 51, 52, 56, 58, 59, 66, 68, у/г зішкріб, "
+        "кількісне визначення)",
+    ),
+    (re.compile(r"^ПАП.тест методом рідинної цитології"), "ПАП-тест методом рідинної цитології"),
+    (
+        re.compile(r"^Бакпосів на мікрофлору \(урогенітальний\) \+ антибіотикограма"),
+        "Бакпосів на мікрофлору (урогенітальний) + антибіотикограма (у разі виявлення умовно-патогенної та "
+        "патогенної мікрофлори)",
+    ),
+)
+SILAB_PRINT_RE = re.compile(r"silab|mdclinics|неомед|neomed", re.I)
+
+
+def _silab_title(text: str, lines: list[str]) -> str | None:
+    if not SILAB_PRINT_RE.search(text):
+        return None
+    found: list[str] = []
+    for line in lines:
+        for pattern, heading in SILAB_HEADINGS:
+            name = (heading or line) if pattern.search(line) else None
+            if name and name not in found and not (name.startswith("Аналіз сечі") and any(
+                item.startswith("Аналіз сечі") for item in found
+            )):
+                found.append(name)
+    return joined_title(found) or None
+
+
 def _keyword_title(lines: list[str]) -> str | None:
     for line in lines:
         if TITLE_STOP_RE.search(line):
@@ -828,6 +882,9 @@ def extract_title(text: str, filename: str, clinical_type: str) -> str:
     candidates = (
         lambda: _eskulab_title(lines),
         lambda: _heading_block_title(lines),
+        # Before Synevo's own reader: a scan whose table header OCR read clean
+        # would otherwise be titled by the heading under it as OCR spelt it.
+        lambda: _silab_title(text, lines),
         lambda: _synevo_title(lines),
         lambda: _synevo_companion_title(text),
         lambda: _polycheck_title(text, lines),
@@ -870,6 +927,12 @@ LABORATORY_TOKENS = (
     "електроліти крові",
     "носійства гену hla",
     "аутоімунна стандартна",
+    # The partner clinic «Мати та дитина» prints its results out of SILAB, its
+    # laboratory information system, which every page's footer names; read
+    # from a scan, the heading and the table header are often lost to OCR.
+    "інформаційної системи silab",
+    "видача результатів аналізів",
+    "референтний інтервал",
 )
 #: Text that only a report carrying result values prints.
 RESULT_PRESENT_TOKENS = (
@@ -879,6 +942,9 @@ RESULT_PRESENT_TOKENS = (
     "ro/ss-a 52", "показники одиниці результати", "форма № 225/о", "форма № 228/о",
     # POLYCHECK's class legend, printed under the allergen rows.
     "антитіла відсутні",
+    # A SILAB print's table header, a smear's closing grade, and the footer
+    # of a print that is the results themselves.
+    "референтний інтервал", "ступінь чистоти", "інформаційної системи silab",
 )
 RESULT_TYPES = frozenset({"laboratory", "microbiology", "allergy"})
 

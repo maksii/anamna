@@ -13,6 +13,7 @@ import pdfplumber
 from PIL import Image, ImageOps
 from pypdf import PdfReader
 import pypdfium2 as pdfium
+import pypdfium2.raw as pdfium_c
 
 from ..config import ROOT
 from .text import text_sha256
@@ -261,7 +262,56 @@ def ocr_pdf_page(pdf_path: Path, page_index: int) -> str:
                 bitmap.to_pil().convert("RGB").save(target)
             finally:
                 bitmap.close()
-        return ocr_layout_rows(target, FULL_PAGE_PSM) or ocr_image(target, FULL_PAGE_PSM)
+            source = _embedded_scan(page, scale)
+        rendered = _read_scan(target)
+        if source is None:
+            return rendered
+        source_target = Path(directory) / "source.png"
+        _enlarged(source.convert("L")).save(source_target)
+        own = _read_scan(source_target)
+        # The raw pixels carry no orientation of their own: a scan placed
+        # rotated or mirrored in some way the matrix check missed reads as
+        # noise, and less of it than the upright render.
+        return own if len("".join(own.split())) >= len("".join(rendered.split())) else rendered
+
+
+def _read_scan(path: Path) -> str:
+    return ocr_layout_rows(path, FULL_PAGE_PSM) or ocr_image(path, FULL_PAGE_PSM)
+
+
+def _enlarged(image: Image.Image) -> Image.Image:
+    """A small picture enlarged by a whole factor (at most 3) toward `SMALL_IMAGE_EDGE`.
+
+    A Telegram photo arrives at about 1280 px: a phone screenshot of a report
+    then carries 6 px letters, which tesseract reads as nothing at all.
+    """
+    factor = min(3, SMALL_IMAGE_EDGE // max(image.size))
+    if factor > 1:
+        return image.resize((image.width * factor, image.height * factor), Image.LANCZOS)
+    return image
+
+
+def _embedded_scan(page, scale: float):
+    """The page's largest image as its own pixels, when the render would shrink it, else None.
+
+    A clinic portal printed from a browser places a 1170x1653 px screenshot in
+    a 312x441 pt box: rendered at `scale` that is fewer pixels than the
+    picture has, so the page read lost the values the picture still carried.
+    Only an image placed upright and unmirrored is read this way; any other
+    placement is the render's to read.
+    """
+    images = list(page.get_objects(filter=(pdfium_c.FPDF_PAGEOBJ_IMAGE,), max_depth=1))
+    if not images or page.get_rotation():
+        return None
+    image = max(images, key=lambda item: item.get_px_size()[0] * item.get_px_size()[1])
+    width, height = image.get_px_size()
+    a, b, c, d, _, _ = image.get_matrix().get()
+    if b or c or a <= 0 or d <= 0 or (a * scale >= width and d * scale >= height):
+        return None
+    try:
+        return image.get_bitmap(render=False).to_pil()
+    except pdfium.PdfiumError:
+        return None
 
 
 def page_word_positions(page) -> list[tuple[float, float, float, str]]:
@@ -354,15 +404,7 @@ def extract_document(path: Path, run_ocr: bool = True) -> dict[str, object]:
             if run_ocr:
                 target = Path(directory) / f"page-{index + 1}.png"
                 with ImageOps.exif_transpose(image) as upright:
-                    page = upright.convert("L")
-                    # A Telegram photo arrives at about 1280 px: a phone
-                    # screenshot of a report then carries 6 px letters, which
-                    # tesseract reads as nothing at all.  Enlarging to about
-                    # the size of a rendered PDF page brings the text back.
-                    scale = min(3, SMALL_IMAGE_EDGE // max(page.size))
-                    if scale > 1:
-                        page = page.resize((page.width * scale, page.height * scale), Image.LANCZOS)
-                    page.save(target)
+                    _enlarged(upright.convert("L")).save(target)
                 ocr_text = ocr_layout_rows(target, FULL_PAGE_PSM) or ocr_image(target, FULL_PAGE_PSM)
             pages.append(
                 {
