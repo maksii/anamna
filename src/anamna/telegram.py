@@ -747,7 +747,8 @@ class TelegramService:
                 MIN(u.notified_state) notified_state,MAX(t.received_at) last_received,l.locale
             FROM telegram_uploads u JOIN telegram_updates t ON t.update_id=u.update_id
             JOIN telegram_links l ON l.owner_user_id=u.owner_user_id AND l.chat_id=u.chat_id
-            WHERE u.notified_state<>'done' GROUP BY u.owner_user_id,u.chat_id,u.batch_id""").fetchall():
+            WHERE u.notified_state<>'done' GROUP BY u.owner_user_id,u.chat_id,u.batch_id
+            ORDER BY MIN(t.received_at),first_update""").fetchall():
             jobs = db.execute("SELECT * FROM upload_jobs WHERE owner_user_id=? AND batch_id=? ORDER BY created_at,rowid", (batch["owner_user_id"], batch["batch_id"])).fetchall()
             if not jobs:
                 continue
