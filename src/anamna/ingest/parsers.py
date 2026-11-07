@@ -14,7 +14,7 @@ from .text import collapse_space, parse_decimal
 # the files it names.  Two changes reached `main` without a bump -- 196 lines of
 # new rules in 4472233, and the Latin unit spellings below -- so every row those
 # produced is indistinguishable from a row the previous parser produced.
-PARSER_VERSION = "2026.11.07-3"
+PARSER_VERSION = "2026.11.07-4"
 
 #: The kinds of report this module reads values out of.  Everything else --
 #: ultrasound, MRI, consultation, pathology, radiology -- it returns nothing
@@ -143,7 +143,8 @@ class ParsedObservation:
     vendor_interpretation: str | None = None
     #: The numeric token exactly as printed («1,80», «0.40»), so the number of
     #: decimals the laboratory reported survives `float()`.  `None` when the
-    #: stored value is not that token (a folded density, a colony power).
+    #: stored value is not that token (a folded density); a colony count keeps
+    #: the count as printed, «1.0 x 10^5».
     value_printed: str | None = None
     #: The material the row was measured in («цільна кров», «сироватка
     #: крові», «сеча») where the report prints it as its own phrase.
@@ -1479,6 +1480,66 @@ def _total_ige(text: str, page_number: int) -> ParsedObservation | None:
     )
 
 
+#: Biocheck's POLYCHECK food panel («Харчова 20-I»): code, allergen, class
+#: and specific IgE per line -- «f17 Лісовий горіх 1 0 .52», «f02 Молоко 0
+#: <0.15».  The text layer splits a decimal at its point («0 .52»).  The
+#: unit is printed only in the table-header image, «IgE [kU/l]».
+_POLYCHECK_PAGE = re.compile(r"Biocheck|POLYCHECK", re.I)
+_POLYCHECK_ROW = re.compile(
+    r"^(?P<code>[a-z]{1,2}\d{1,3})\s+(?P<name>\S.*?)\s+(?P<cls>[0-6])\s+"
+    r"(?P<comparator><)?\s*(?P<value>\d+(?:\s?[.,]\s?\d+)?)$"
+)
+#: The class legend, classes 0-6: «0 <0.35 Антитіла відсутні … 6 >= 100 …».
+_POLYCHECK_BAND = re.compile(
+    r"(?<![\d.])(?P<cls>[0-6])\s+(?P<range>(?:<|>=|≥)\s*\d+(?:[.,]\d+)?|\d+(?:[.,]\d+)?\s*-\s*<?\s*\d+(?:[.,]\d+)?)"
+    r"\s+(?P<label>[^\d<>=≥]+?)(?=\s+[0-6]\s+(?:[<>≥]|\d)|$)"
+)
+POLYCHECK_UNIT = "kU/L"
+
+
+def parse_polycheck_panel(text: str, page_number: int) -> list[ParsedObservation]:
+    """Each allergen of a POLYCHECK panel, with its class kept.
+
+    The reading follows the autoimmune chip from the same maker: the value
+    keeps its comparator, the reference is the legend's class-0 band, the
+    class gives the laboratory's reading, and the legend line of the row's
+    own class is kept as the row's note.  Allergen codes («f17», «k202»)
+    are printed names and are kept verbatim.
+    """
+    if not _POLYCHECK_PAGE.search(text):
+        return []
+    lines = [collapse_space(item) for item in text.splitlines() if collapse_space(item)]
+    bands = _autoimmune_bands(lines, _POLYCHECK_BAND)
+    negative = bands.get(0)
+    observations: list[ParsedObservation] = []
+    for line in lines:
+        row = _POLYCHECK_ROW.match(line)
+        if not row:
+            continue
+        printed = re.sub(r"\s", "", row.group("value"))
+        value = parse_decimal(printed)
+        if value is None:
+            continue
+        klass = int(row.group("cls"))
+        band = bands.get(klass)
+        observations.append(
+            ParsedObservation(
+                raw_name=f"{row.group('code')} {row.group('name')}", value_numeric=value, value_text=None,
+                comparator=row.group("comparator"), unit_raw=POLYCHECK_UNIT,
+                reference_text=negative[0] if negative else None, reference_low=None,
+                reference_high=negative[2] if negative else None, reference_high_inclusive=False,
+                page_number=page_number, evidence_text=line, confidence=0.95, value_printed=printed,
+                # The legend calls class 0 «Антитіла відсутні» and every class
+                # above it a concentration of antibodies, «Дуже низька» first:
+                # class 1 is a sensitisation, where the autoimmune chip's
+                # class 1 is «гранична норма».
+                vendor_interpretation="within_vendor_range" if klass == 0 else "positive",
+                note=f"{klass} {band[0]}" if band else None,
+            )
+        )
+    return observations
+
+
 def parse_allergy_panel(text: str, page_number: int, words: list | None = None) -> list[ParsedObservation]:
     if ALEX_UNIT not in text or not re.search(r"Позначення\s+E/M\s+Алерген", text, re.I):
         return []
@@ -1708,11 +1769,13 @@ _AUTOIMMUNE_TAIL = re.compile(
 )
 
 
-def _autoimmune_bands(lines: list[str]) -> dict[int, tuple[str, float | None, float | None]]:
+def _autoimmune_bands(
+    lines: list[str], pattern: re.Pattern[str] = _AUTOIMMUNE_BAND
+) -> dict[int, tuple[str, float | None, float | None]]:
     """The legend: class -> (printed band, low, high)."""
     bands: dict[int, tuple[str, float | None, float | None]] = {}
     for line in lines:
-        for band in _AUTOIMMUNE_BAND.finditer(line):
+        for band in pattern.finditer(line):
             limits = re.findall(_DECIMAL, band.group("range"))
             numbers = [parse_decimal(item) for item in limits]
             printed = collapse_space(f"{band.group('range')} {band.group('label')}").replace("«", "<")
@@ -2100,6 +2163,9 @@ ESKULAB_END = re.compile(
     re.I,
 )
 
+#: The page number, printed by itself at the foot of the reference column.
+ESKULAB_PAGE_FOOTER = re.compile(r"^Сторінка\s+\d+\s+з\s+\d+$", re.I)
+
 #: The specimen, printed under the analyte name.  It is normally indented, but
 #: when it wraps the tail returns to the left margin, where it is
 #: indistinguishable by position from a name that wrapped.  A closed vocabulary
@@ -2200,6 +2266,7 @@ def _eskulab_reference_split(words: list, edge: float) -> tuple[float, float] | 
 
     splits: dict[float, int] = {}
     lefts: dict[float, int] = {}
+    starts: dict[float, int] = {}
     for top in sorted(lines):
         row = sorted(lines[top])
         vote(lefts, row[0][0])
@@ -2207,12 +2274,24 @@ def _eskulab_reference_split(words: list, edge: float) -> tuple[float, float] | 
         for x0, x1 in row:
             if previous is not None and x0 - previous >= ESKULAB_CELL_GAP:
                 vote(splits, x0)
+            vote(starts, x0)
             previous = x1
     if not splits or not lefts:
         return None
-    split, count = max(splits.items(), key=lambda item: (item[1], -item[0]))
+
+    # A wide gap proves a column starts there; the lines that agree with it
+    # need not have one.  A left-column label that runs almost to the right
+    # one leaves two points («Новонароджені (1 день):» / «Дорослі: 4.11 -
+    # 5.89») -- an ordinary space -- yet its right-hand word starts on the
+    # same x to a tenth of a point.  Counting only wide gaps found two such
+    # lines per block, one short of a column, and the newborn label took the
+    # adults' interval.
+    def support(x: float) -> int:
+        return sum(count for start, count in starts.items() if abs(start - x) <= ESKULAB_COLUMN_TOLERANCE)
+
+    split = max(splits, key=lambda x: (support(x), splits[x], -x))
     left, _ = max(lefts.items(), key=lambda item: (item[1], item[0]))
-    if count < ESKULAB_COLUMN_VOTES or left >= split - ESKULAB_CELL_GAP:
+    if support(split) < ESKULAB_COLUMN_VOTES or left >= split - ESKULAB_CELL_GAP:
         return None
     return left, split
 
@@ -2239,10 +2318,15 @@ def _eskulab_reference_split(words: list, edge: float) -> tuple[float, float] | 
 #: range is admitted only when it is a whole-number range all the way through:
 #: the trailing guard is what keeps «2,59-3,34» one interval rather than «2,5»
 #: meeting «9-3,34», and «5.83-34.5» from becoming «5.8» and «3-34.5».
+#: The fourth is a number meeting an age band written with an exclusive upper
+#: age, «1-<12 р.»: oestradiol's «Період овуляції: 32.1-517» runs into the next
+#: column's «1-<12 р.: <15.0» and comes back as «32.1-5171-<12», the ovulation
+#: band ending at 5171 and the children's band losing its label.
 ESKULAB_GLUE = re.compile(
     r"(?<=\d)(?=[^\W\d_])"
     r"|(?<=[^\W\d_])(?=[<>≤≥])"
     r"|(?<=[.,]\d)(?=\d+[.,]\d|\d{1,3}[-–—]\d{1,3}(?![\d.,]))"
+    r"|(?<=\d)(?=\d{1,2}[-–—]<)"
 )
 
 
@@ -2294,6 +2378,11 @@ def _eskulab_rows(
     for top in sorted(lines):
         row = sorted(lines[top])
         if any(x0 < edge < x1 for x0, x1, _, _ in row for edge in boundaries):
+            continue
+        # «Сторінка 1 з 3» on a line of its own sits inside the reference
+        # column, below the page's last row, and was stored as the end of
+        # that row's interval («жінки < 100.0 чоловіки < 26.4 Сторінка 1 з 3»).
+        if ESKULAB_PAGE_FOOTER.match(" ".join(text for _, _, _, text in row)):
             continue
         rows.append(_eskulab_row(row, boundaries, measured))
     return rows
@@ -2424,12 +2513,16 @@ def _eskulab_observation(
     # An empty result with no unit and no legend is a section heading
     # («Фізико-хімічні властивості»), which is not a finding at all.
     negative = ESKULAB_NEGATIVE.match(joined) if (unit and joined) else None
-    if negative is None:
+    # A dash in every column -- «Каламутність(рівень) (C-CLOUD) - - -» -- is
+    # the analyser's reading against a reference that is itself a dash: no
+    # turbidity, as printed.  A heading prints no unit and no reference.
+    printed_dash = unit is not None and joined == "-"
+    if negative is None and not printed_dash:
         return None
     return ParsedObservation(
         raw_name=name,
         value_numeric=None,
-        value_text=negative.group(1),
+        value_text=negative.group(1) if negative else "-",
         comparator=None,
         unit_raw=None if unit == "-" else unit,
         reference_text=band,
@@ -2456,6 +2549,15 @@ def _eskulab_header(rows: list[tuple[list[str], list[str], float]]) -> int | Non
         ),
         None,
     )
+
+
+def _eskulab_material(text: str) -> str | None:
+    """The specimen a «цільна кров ЗАК» / «Приносний матеріал, сеча» line names."""
+    material = collapse_space(text)
+    phrase = SPECIMEN_PHRASE.search(material) or re.search(
+        r"сироватка\s+крові|цільна\s+кров|плазма|сироватка|сеча|кал", material, re.I
+    )
+    return phrase.group(0) if phrase else None
 
 
 class _EskulabPanel:
@@ -2486,11 +2588,7 @@ class _EskulabPanel:
                 [p for column in self.reference for p in column], self.page_number,
             )
             if found is not None:
-                material = collapse_space(" ".join(self.specimen))
-                phrase = SPECIMEN_PHRASE.search(material) or re.search(
-                    r"сироватка\s+крові|цільна\s+кров|плазма|сироватка|сеча|кал", material, re.I
-                )
-                self.observations.append(replace(found, specimen=phrase.group(0) if phrase else None))
+                self.observations.append(replace(found, specimen=_eskulab_material(" ".join(self.specimen))))
         self.name = self.result = self.unit = ""
         self.reference = []
         self.specimen = []
@@ -2567,7 +2665,52 @@ def parse_eskulab(words: list, page_number: int) -> list[ParsedObservation]:
     for cells, segments, indent in rows[header + 1 :]:
         panel.read(cells, segments, indent)
     panel.flush()
-    return panel.observations
+    return panel.observations + _eskulab_notes(words, page_number)
+
+
+#: The free-text notes row a blood count or urinalysis closes with:
+#: «Примітки (зак) Токсигенна зернистість окремих нейтрофілів.»  It usually
+#: prints «-»; when it prints anything else that is a finding of the smear.
+_ESKULAB_NOTES = re.compile(r"^Примітки\b", re.I)
+
+
+def _eskulab_notes(words: list, page_number: int) -> list[ParsedObservation]:
+    """Each notes row that says something, as a text result.
+
+    The note runs straight across the result, unit and reference columns, so
+    `_eskulab_rows` drops the line as prose, and `ESKULAB_END` ends the panel
+    on its label: the one morphology finding of a blood count was stored
+    nowhere.  Words right of the name column on the label's line, and on the
+    lines that continue it there, are the note.
+    """
+    lines = _word_lines(words)
+    observations: list[ParsedObservation] = []
+    for index, line in enumerate(lines):
+        if line[0][0] >= ESKULAB_NAME_INDENT or not _ESKULAB_NOTES.match(line[0][3]):
+            continue
+        label = collapse_space(" ".join(word[3] for word in line if word[0] < ESKULAB_PANEL_COLUMNS[0]))
+        note = [word[3] for word in line if word[0] >= ESKULAB_PANEL_COLUMNS[0]]
+        specimen = None
+        for following in lines[index + 1 : index + 4]:
+            if following[0][0] >= ESKULAB_PANEL_COLUMNS[0]:
+                note.extend(word[3] for word in following)
+                continue
+            text = " ".join(word[3] for word in following)
+            if _eskulab_specimen(text):
+                specimen = _eskulab_material(text)
+            break
+        value = collapse_space(" ".join(note))
+        if not value or value == "-":
+            continue
+        observations.append(
+            ParsedObservation(
+                raw_name=label, value_numeric=None, value_text=value, comparator=None,
+                unit_raw=None, reference_text=None, reference_low=None, reference_high=None,
+                page_number=page_number, evidence_text=f"{label} {value}", confidence=0.94,
+                specimen=specimen,
+            )
+        )
+    return observations
 
 
 def eskulab_leading_reference(words: list) -> str | None:
@@ -2675,11 +2818,19 @@ class _EskulabStool:
             if reference and self.name:
                 self.band = f"{self.band} {reference}".strip()
             return
+        if not self.parent:
+            # A flat row with a second answer under its first: «Запах» ticks
+            # «специфічний» and, on the line below, «каловий».  Both are the
+            # result; keeping only the first published a stool odour the
+            # laboratory had qualified.
+            if self.name and self.value:
+                self.value = f"{self.value}, {result}"
+                if reference:
+                    self.band = f"{self.band} {reference}".strip()
+            return
         # Inside a nested block the result column alternates sub-heading and
         # quantity.  Naming the quantities is what tells the two apart --
         # counting alone mis-pairs the moment a sub-heading wraps.
-        if not self.parent:
-            return
         if not ESKULAB_STOOL_QUANTITY.match(result):
             self.subheading = result
             return
@@ -3258,24 +3409,31 @@ def parse_visit_measurements(pages: list[dict[str, object]]) -> list[ParsedObser
     return observations
 
 
-#: A colony count, printed as a mantissa and a power of ten: "1.0 x 10^2 КУО/г".
-#: The power's digits are taken whole and the unit runs to the end of the
-#: cell, so the two never compete for a digit.  A cell that ends on the power
-#: («1.0 x 10^23») has always read its last digit as the unit, the way
-#: «\d+\s*\S+$» backs off; that shape is its own pattern, tried second.
-_ESKULAB_COLONY_HEAD = r"^(?P<mantissa>\d+(?:[.,]\d+)?)\s*[xх×]\s*10\^"
-ESKULAB_COLONY_COUNT = re.compile(_ESKULAB_COLONY_HEAD + r"(?P<power>\d++)\s*(?P<unit>\S++)$")
-_ESKULAB_COLONY_POWER_END = re.compile(_ESKULAB_COLONY_HEAD + r"(?P<power>\d+)(?P<unit>\d)$")
+#: The microbiology table: «Мікроорганізм@28 Результат@243.8 Референтні@378.4».
+#: Organism names end by 207.5 («E.сoli із зміненими властивостями») and the
+#: result column starts at 243.8; counts end by 340.9 («… КУО/мл»).
+ESKULAB_CULTURE_COLUMNS = (220.0, 375.0)
 
+#: A colony count the result column prints: «1.0 x 10^7 КУО/г», «<1.0 x 10^5
+#: КУО/г», and the bacteriuria line's «1,0*10^3 КУО/мл».  The comparator is
+#: part of the reading: «<1.0 x 10^5» is the assay's floor, not a count.
+_CULTURE_COUNT = re.compile(
+    r"^(?P<comparator>[<>≤≥])?\s*(?P<printed>(?P<mantissa>\d+(?:[.,]\d+)?)\s*[xх×*]\s*10\^(?P<power>\d+))"
+    r"(?:\s*(?P<unit>КУО(?:/\S+)?))?$",
+    re.I,
+)
 
-def _eskulab_colony_count(cell: str) -> re.Match[str] | None:
-    """A colony count cell.  The power-ended shape is the whole power but its
-    last digit, which «\\d+» reaches only once the whole power has failed."""
-    return ESKULAB_COLONY_COUNT.match(cell) or _ESKULAB_COLONY_POWER_END.match(cell)
+#: «Ступінь бактеріурії 1,0*10^3 КУО/мл»: a count printed inside the name column.
+_CULTURE_INLINE_COUNT = re.compile(
+    r"^(?P<name>[^\W\d_][^\d]*?)\s+(?P<count>\d+(?:[.,]\d+)?\s*[xх×*]\s*10\^\d+\s*КУО/\S+)$", re.I
+)
 
+#: «(матеріал: Приносний матеріал, кал)», printed under each section heading
+#: or at the end of its last line.
+_CULTURE_MATERIAL = re.compile(r"\(матеріал:\s*(?:приносний\s+матеріал,\s*)?(?P<specimen>[^()]+?)\s*(?:\)|$)", re.I)
 
-#: The microbiology table: «Мікроорганізм виявлено@28 … Результат@243.8».
-ESKULAB_CULTURE_COLUMNS = (200.0,)
+#: «Антибіотики/Антимікотики Staphylococcus epidermidis»: whose antibiogram follows.
+_CULTURE_ANTIBIOGRAM_HEAD = re.compile(r"^Антибіотики/Антимікотики\b\s*(?P<organism>.*)$", re.I)
 
 #: An antibiogram row: the antibiotic, an optional disk potency, and the
 #: verdict -- «Бензилпеніцилін 1 од Стійкий».  The potency is what the paper
@@ -3289,80 +3447,254 @@ ESKULAB_ANTIBIOGRAM = re.compile(
 )
 
 
+def _culture_row(
+    name: str, result: str, reference: str, page_number: int, specimen: str | None
+) -> ParsedObservation | None:
+    """One organism row: a colony count, or a printed «не виявлено»."""
+    name = collapse_space(name)
+    if not valid_analyte_name(name):
+        return None
+    evidence = collapse_space(f"{name} {result} {reference}")
+    count = _CULTURE_COUNT.match(result)
+    if count:
+        mantissa = parse_decimal(count.group("mantissa"))
+        if mantissa is None:
+            return None
+        return ParsedObservation(
+            raw_name=name, value_numeric=mantissa * (10 ** int(count.group("power"))), value_text=None,
+            comparator=count.group("comparator"), unit_raw=count.group("unit"),
+            # A power-of-ten reference yields no bounds (`POWER_NOTATION_RE`);
+            # the printed text is kept whole.
+            reference_text=reference or None, reference_low=None, reference_high=None,
+            page_number=page_number, evidence_text=evidence, confidence=0.97,
+            value_printed=collapse_space(count.group("printed")), specimen=specimen,
+        )
+    if not re.match(r"^(?:не\s+)?виявлен\w*", result, re.I):
+        return None
+    return ParsedObservation(
+        raw_name=name, value_numeric=None, value_text=collapse_space(result), comparator=None,
+        unit_raw=None, reference_text=reference or None, reference_low=None, reference_high=None,
+        page_number=page_number, evidence_text=evidence, confidence=0.96, specimen=specimen,
+    )
+
+
+def _antibiogram_row(
+    line: str, page_number: int, specimen: str | None, organism: str | None
+) -> ParsedObservation | None:
+    match = ESKULAB_ANTIBIOGRAM.match(line)
+    if not match:
+        return None
+    name = collapse_space(match.group("name")).strip(" ,.:;")
+    if not valid_analyte_name(name):
+        return None
+    # The organism goes in the note and the section: the verdict is about
+    # that isolate, and two isolates on one page each have an «Амікацин».
+    return ParsedObservation(
+        raw_name=name, value_numeric=None, value_text=collapse_space(match.group("verdict")),
+        comparator=None, unit_raw=None, reference_text=None, reference_low=None, reference_high=None,
+        page_number=page_number, evidence_text=line, confidence=0.95,
+        specimen=specimen, note=organism, section=organism,
+    )
+
+
+class _EskulabCulture:
+    """A microbiology page read top to bottom: sections, organism rows, antibiograms."""
+
+    def __init__(self, page_number: int) -> None:
+        self.page_number = page_number
+        self.observations: list[ParsedObservation] = []
+        self.specimen: str | None = None
+        self.organism: str | None = None
+        self.in_table = False
+        # The row a name-column line with nothing else on it continues
+        # («Escherichia coli з нормальними» / «властивостями»).
+        self.open_row: int | None = None
+
+    def read(self, line: list[tuple[float, float, float, str]]) -> None:
+        text = collapse_space(" ".join(word[3] for word in line))
+        material = _CULTURE_MATERIAL.search(text)
+        if material:
+            self.specimen, self.organism, self.in_table = collapse_space(material.group("specimen")), None, False
+            return
+        head = _CULTURE_ANTIBIOGRAM_HEAD.match(text)
+        if head:
+            self.organism = collapse_space(head.group("organism")) or self.organism
+            self.in_table = False
+            return
+        if ESKULAB_SECTION.match(text):
+            self.organism, self.specimen, self.in_table = None, None, False
+            return
+        antibiotic = _antibiogram_row(text, self.page_number, self.specimen, self.organism)
+        if antibiotic is not None:
+            self.observations.append(antibiotic)
+            self.in_table, self.open_row = False, None
+            return
+        if text.startswith("Мікроорганізм") and _RESULT_HEADING in text:
+            self.in_table, self.open_row = True, None
+            return
+        if line[0][0] >= ESKULAB_CULTURE_COLUMNS[0] and any(item.raw_name == text for item in self.observations):
+            # The organism's own antibiogram sub-heading, printed off the
+            # margin with no label: «Staphylococcus aureus» again.
+            self.organism, self.in_table, self.open_row = text, False, None
+            return
+        if self.in_table:
+            self._read_table_line(line)
+
+    def _read_table_line(self, line: list[tuple[float, float, float, str]]) -> None:
+        name_to, result_to = ESKULAB_CULTURE_COLUMNS
+        if any(x0 < edge < x1 for x0, x1, _, _ in line for edge in ESKULAB_CULTURE_COLUMNS):
+            # Prose runs across the columns: the commentary under a table
+            # («Виявлений збудник … є контамінантом»), a signature.  The
+            # table is over.
+            self.in_table, self.open_row = False, None
+            return
+        name = collapse_space(" ".join(word[3] for word in line if word[0] < name_to))
+        result = collapse_space(" ".join(word[3] for word in line if name_to <= word[0] < result_to))
+        reference = collapse_space(" ".join(word[3] for word in line if word[0] >= result_to))
+        if name and result:
+            row = _culture_row(name, result, reference, self.page_number, self.specimen)
+            self.observations.extend([row] if row is not None else [])
+            self.open_row = len(self.observations) - 1 if row is not None else None
+            return
+        inline = _CULTURE_INLINE_COUNT.match(name) if name and not reference else None
+        if inline:
+            row = _culture_row(inline.group("name"), inline.group("count"), "", self.page_number, self.specimen)
+            self.observations.extend([row] if row is not None else [])
+            self.open_row = None
+            return
+        if name and not reference and self.open_row is not None:
+            item = self.observations[self.open_row]
+            joined = f"{item.raw_name} {name}"
+            self.observations[self.open_row] = replace(
+                item, raw_name=joined, evidence_text=item.evidence_text.replace(item.raw_name, joined, 1)
+            )
+
+
 def parse_eskulab_culture(words: list, page_number: int) -> list[ParsedObservation]:
     """Read the organisms a culture grew, and the antibiogram under them.
 
-    The colony counts come off the two-column table.  The susceptibility
-    verdicts are read from the rebuilt text lines instead, because the longest
-    antibiotic names span the x=200 column boundary («Триметоприм-
-    сульфаметоксазол» ends at 202.8) and `_eskulab_rows` drops any row a word
-    crosses -- reading only the column rows silently lost that verdict.  The
+    One page can carry several sections -- a urine culture, then a stool
+    dysbacteriosis culture -- each naming its own material under its
+    heading.  Every row takes the material of the section it sits in and
+    every susceptibility verdict the isolate whose antibiogram it is in;
+    taking the page's first material put a stool isolate's resistances on the
+    urine culture.  The table has three columns, organism, result and
+    reference: read as two, every row with a reference was lost, the
+    abnormal Staphylococcus counts among them.  A count is kept as printed
+    («1.0 x 10^7»), comparator and all.
+
+    The verdicts are read from the rebuilt text lines rather than by column,
+    because the longest antibiotic names span the column boundary
+    («Триметоприм-сульфаметоксазол» ends at 202.8), and the antibiogram is
+    read on a page of its own too: it runs on past the page break under its
+    «Антибіотики/Антимікотики <organism>» heading and nothing else.  The
     verdict is stored as text and the disk potency is never a value: storing
     «Бензилпеніцилін 1 од» as 1.0 would publish a meaningless number and drop
     the resistance, which is the finding that changes an antibiotic choice.
     """
-    rows = _eskulab_rows(words, ESKULAB_CULTURE_COLUMNS)
+    lines = _word_lines(words)
+    texts = [" ".join(word[3] for word in line) for line in lines]
+    if not any(text.startswith("Мікроорганізм") or _CULTURE_ANTIBIOGRAM_HEAD.match(text) for text in texts):
+        return []
+    culture = _EskulabCulture(page_number)
+    for line in lines:
+        culture.read(line)
+    return culture.observations
+
+
+#: The express urine microbiology checklist (J1008, J1014): a group label at
+#: the margin («Мікроорганізми:»), the organism at 189.9 and the answer at
+#: 483.2 -- «Escherichia coli … Не виявлено».
+ESKULAB_EXPRESS_COLUMNS = (180.0, 470.0)
+_EXPRESS_ANSWER = re.compile(r"^(?:не\s+)?виявлен\w*$", re.I)
+
+
+def parse_eskulab_express(words: list, page_number: int) -> list[ParsedObservation]:
+    """Each organism of an express microbiology checklist, with its answer.
+
+    The page has no results table -- a lone «Результат» heading and then one
+    line per organism -- so nothing read it and all ten results of the urinary
+    panel were lost.  A line is a result when its middle column names
+    something and its answer column says «Виявлено» or «Не виявлено»; «не
+    визначається» against the susceptibility lines is no result.
+    """
+    lines = _word_lines(words)
+    if not any([word[3] for word in line] == [_RESULT_HEADING] for line in lines):
+        return []
+    label_to, answer_from = ESKULAB_EXPRESS_COLUMNS
+    specimen: str | None = None
+    observations: list[ParsedObservation] = []
+    for line in lines:
+        material = _CULTURE_MATERIAL.search(collapse_space(" ".join(word[3] for word in line)))
+        if material:
+            specimen = collapse_space(material.group("specimen"))
+            continue
+        name = collapse_space(" ".join(word[3] for word in line if label_to <= word[0] < answer_from))
+        answer = collapse_space(" ".join(word[3] for word in line if word[0] >= answer_from))
+        if not (name and _EXPRESS_ANSWER.match(answer)) or not valid_analyte_name(name):
+            continue
+        observations.append(
+            ParsedObservation(
+                raw_name=name, value_numeric=None, value_text=answer, comparator=None, unit_raw=None,
+                reference_text=None, reference_low=None, reference_high=None, page_number=page_number,
+                evidence_text=f"{name} {answer}", confidence=0.95, specimen=specimen,
+            )
+        )
+    return observations
+
+
+#: The partner laboratory's coprogram, attached to an EskuLab order as a page
+#: of its own: «Показники@100.8 Результат@249.3 Од. виміру@352.4 Реф.
+#: значення@451.1».  Names end by 175.4, results run 212.8-335.0 (centred),
+#: units 349.6-408.6 and references start at 424.3.
+PARTNER_COPROGRAM_COLUMNS = (200.0, 345.0, 420.0)
+_PARTNER_COPROGRAM_HEADER = ["Показники", "Результат", "Од.", "виміру", "Реф.", "значення"]
+_PARTNER_COPROGRAM_END = re.compile(r"^(?:КОМЕНТАР|Керівник|Результати досліджень)", re.I)
+
+
+def parse_partner_coprogram(words: list, page_number: int) -> list[ParsedObservation]:
+    """The rows of the partner laboratory's coprogram form.
+
+    Every cell is centred on its row, so a cell that wraps spreads above and
+    below the name: «Дорослі: оформлений; Діти:» sits over «Форма», and
+    «допускається неоформлений.» under it.  Each line belongs to the name
+    nearest it; the cells are joined top to bottom.  Names are qualified with
+    the specimen, as on EskuLab's own coprogram, or «Колір» and «Лейкоцити»
+    resolve onto the urine concepts of the same name.
+    """
+    lines = _word_lines(words)
     header = next(
-        (
-            index
-            for index, (cells, _, _) in enumerate(rows)
-            if cells[0].startswith("Мікроорганізм") and cells[1].startswith(_RESULT_HEADING)
-        ),
+        (index for index, line in enumerate(lines) if [word[3] for word in line] == _PARTNER_COPROGRAM_HEADER),
         None,
     )
     if header is None:
         return []
+    name_to = PARTNER_COPROGRAM_COLUMNS[0]
+    body: list[list[tuple[float, float, float, str]]] = []
+    for line in lines[header + 1 :]:
+        if _PARTNER_COPROGRAM_END.match(line[0][3]):
+            break
+        body.append(line)
+    anchors = [index for index, line in enumerate(body) if line[0][0] < name_to]
+    if not anchors:
+        return []
+    groups: dict[int, list[list[tuple[float, float, float, str]]]] = {anchor: [] for anchor in anchors}
+    for line in body:
+        top = line[0][2]
+        nearest = min(anchors, key=lambda anchor: abs(body[anchor][0][2] - top))
+        groups[nearest].append(line)
     observations: list[ParsedObservation] = []
-    for cells, _, _ in rows[header + 1 :]:
-        name, result = cells
-        count = _eskulab_colony_count(result)
-        if not count or not valid_analyte_name(name):
-            continue
-        mantissa = parse_decimal(count.group("mantissa"))
-        if mantissa is None:
-            continue
-        observations.append(
-            ParsedObservation(
-                raw_name=collapse_space(name),
-                value_numeric=mantissa * (10 ** int(count.group("power"))),
-                value_text=None,
-                comparator=None,
-                unit_raw=count.group("unit"),
-                reference_text=None,
-                reference_low=None,
-                reference_high=None,
-                page_number=page_number,
-                evidence_text=collapse_space(f"{name} {result}"),
-                confidence=0.97,
-            )
-        )
-    lines: dict[float, list[tuple[float, str]]] = {}
-    for x0, _x1, top, text in words:
-        key = next((seen for seen in lines if abs(seen - top) <= 2.0), top)
-        lines.setdefault(key, []).append((x0, text))
-    for top in sorted(lines):
-        line = collapse_space(" ".join(text for _, text in sorted(lines[top])))
-        match = ESKULAB_ANTIBIOGRAM.match(line)
-        if not match:
-            continue
-        name = collapse_space(match.group("name")).strip(" ,.:;")
-        if not valid_analyte_name(name):
-            continue
-        observations.append(
-            ParsedObservation(
-                raw_name=name,
-                value_numeric=None,
-                value_text=collapse_space(match.group("verdict")),
-                comparator=None,
-                unit_raw=None,
-                reference_text=None,
-                reference_low=None,
-                reference_high=None,
-                page_number=page_number,
-                evidence_text=line,
-                confidence=0.95,
-            )
-        )
+    for anchor in anchors:
+        cells: list[list[str]] = [[], [], [], []]
+        for line in sorted(groups[anchor], key=lambda item: item[0][2]):
+            for x0, _x1, _top, text in line:
+                cells[sum(1 for edge in PARTNER_COPROGRAM_COLUMNS if x0 >= edge)].append(text)
+        name, result, unit, reference = (collapse_space(" ".join(cell)) for cell in cells)
+        if not result:
+            continue  # the «30511 Копрограма» heading
+        found = _eskulab_observation(f"{name} (кал)", result, unit, [reference], page_number)
+        if found is not None:
+            observations.append(found)
     return observations
 
 
@@ -4176,13 +4508,13 @@ def _us_soft_tissue(flat: str, lines: list[str], page_number: int) -> list[Parse
 KNOWN_ANTIBIOTICS = (
     "Азитроміцин", "Азтреонам", "Амікацин", "Амоксицилін", "Амоксицилін-клавуланова кислота",
     "Ампіцилін", "Ампіцилін-сульбактам", "Бензилпеніцилін", "Ванкоміцин", "Гентаміцин",
-    "Даптоміцин", "Доксициклін", "Еритроміцин", "Ертапенем", "Іміпенем", "Кларитроміцин",
+    "Даптоміцин", "Доксициклін", "Доріпенем", "Еритроміцин", "Ертапенем", "Іміпенем", "Кларитроміцин",
     "Кліндаміцин", "Колістин", "Левофлоксацин", "Лінезолід", "Меропенем", "Міноциклін",
     "Моксифлоксацин", "Нетилміцин", "Нітрофурантоїн", "Норфлоксацин", "Оксацилін",
     "Офлоксацин", "Піперацилін", "Піперацилін-тазобактам", "Рифампіцин", "Рокситроміцин",
     "Тейкопланін", "Тетрациклін", "Тигециклін", "Тобраміцин", "Триметоприм-сульфаметоксазол",
     "Фосфоміцин", "Фузидова кислота", "Фуразидин", "Хлорамфенікол", "Цефаклор", "Цефазолін",
-    "Цефалексин", "Цефепім", "Цефіксим", "Цефоперазон", "Цефоперазон-сульбактам",
+    "Цефалексин", "Цефепім", "Цефокситин", "Цефіксим", "Цефоперазон", "Цефоперазон-сульбактам",
     "Цефотаксим", "Цефподоксим", "Цефтазидим", "Цефтазидим-авібактам", "Цефтазидим-авіабактам",
     "Цефтаролін", "Цефтолозан-тазобактам", "Цефтріаксон", "Цефуроксим", "Ципрофлоксацин",
 )
@@ -4315,6 +4647,8 @@ def _eskulab_page(
         parse_eskulab(words, page_number)
         + parse_eskulab_stool(words, page_number)
         + parse_eskulab_culture(words, page_number)
+        + parse_eskulab_express(words, page_number)
+        + parse_partner_coprogram(words, page_number)
     )
     if table or eskulab_table_page(words):
         return _review_antibiotics(
@@ -4453,6 +4787,12 @@ def parse_source_text(
     st_paraskeva = parse_st_paraskeva(text, page_number)
     if st_paraskeva:
         return st_paraskeva
+    # Checked before the type: the POLYCHECK panel prints its field labels as
+    # pictures, so the same page is typed «allergy» or «laboratory» depending
+    # on what the classifier can read, and is the same panel either way.
+    polycheck = parse_polycheck_panel(text, page_number)
+    if polycheck:
+        return polycheck
     if clinical_type == "allergy":
         return parse_allergy_panel(text, page_number, words)
     # EskuLab draws a table, and the generic passes read the parts of it that
@@ -4594,7 +4934,11 @@ _NAME_SPECIMEN = re.compile(
 def _printed_token(item: ParsedObservation) -> str | None:
     if item.value_numeric is None:
         return None
-    if item.value_printed and parse_decimal(item.value_printed) == item.value_numeric:
+    if item.value_printed and (
+        parse_decimal(item.value_printed) == item.value_numeric
+        # A colony count as printed, «1.0 x 10^5»: no decimal token equals it.
+        or POWER_NOTATION_RE.search(item.value_printed)
+    ):
         return item.value_printed
     evidence = item.evidence_text or ""
     start = len(item.raw_name) if evidence.startswith(item.raw_name) else 0
@@ -4686,7 +5030,8 @@ def finalise(
     * a named negative/equivocal/positive scale gives the band's reading;
     * this patient's band of a demographic block, when the caller knows the
       patient (DOCB-02);
-    * a text result carries no unit (CLIN-30);
+    * a text result carries no unit (CLIN-30), except the unit of the printed
+      «+» scale a dipstick pad was read on;
     * the printed numeric token, and the specimen named in the label.
     """
     changes, reference = _blood_group_changes(item)
@@ -4703,7 +5048,12 @@ def finalise(
         reference_low_inclusive=bounds.low_inclusive, reference_high_inclusive=bounds.high_inclusive,
         vendor_interpretation=reading, value_printed=_printed_token(item),
     )
-    if item.value_numeric is None and item.unit_raw and not re.search(r"\d", item.value_text or ""):
+    # A pad read on a printed concentration scale keeps that scale's unit:
+    # «не виявлені» beside «мг/дл» and «10 = + 30 = ++» is a position on a
+    # mg/dL scale.  Dropped, the store filled in the concept's own unit
+    # instead, and ketones read on a mg/dL pad were labelled mmol/L.
+    on_scale = dipstick_threshold(reference) is not None
+    if item.value_numeric is None and item.unit_raw and not on_scale and not re.search(r"\d", item.value_text or ""):
         changes["unit_raw"] = None
     if item.specimen is None:
         found = _NAME_SPECIMEN.search(item.raw_name)
@@ -4845,7 +5195,27 @@ def parse_document(
             # The previous page's last block, continued over the break.
             _carry_leading_reference(observations, page_words, int(page["page_number"]))
         observations.extend(_page_rows(vendor, clinical_type, page, columns_own_page, issues))
+    observations = _antibiogram_material(observations)
     return [finalise(item, age_years, sex) for item in _distinct_rows(observations)]
+
+
+def _antibiogram_material(observations: list[ParsedObservation]) -> list[ParsedObservation]:
+    """An antibiogram continued over a page break keeps its isolate's material.
+
+    The second page reprints «Антибіотики/Антимікотики <organism>» and
+    nothing about the specimen, which was named on the page before.
+    """
+    material = {
+        item.note: item.specimen
+        for item in observations
+        if item.note and item.section == item.note and item.specimen
+    }
+    return [
+        replace(item, specimen=material[item.note])
+        if item.note and item.section == item.note and not item.specimen and item.note in material
+        else item
+        for item in observations
+    ]
 
 
 #: A trailing «, <unit>» or specimen phrase is presentation, not identity:
