@@ -50,7 +50,14 @@ from ..health import applicable_reference_bounds
 from ..ingest import intake
 from ..ingest.classifier import joined_title
 from ..ingest.extract import file_sha256
-from ..ingest.parsers import ParsedObservation, reference_bounds
+from ..ingest.parsers import (
+    ParsedObservation,
+    method_note,
+    reference_bounds,
+    reference_limits,
+    without_specimen_label,
+)
+from ..ingest.text import collapse_space
 from ..derived import refresh_derived_observations
 from ..ingest.pipeline import (
     PARSER_VERSION,
@@ -93,8 +100,16 @@ STALE_RUN = timedelta(minutes=30)
 #: «file»: EskuLab's result is an attachment (a coprogram, a food-allergen
 #: panel as its own PDF), so the row names a file, not a value.
 INFO_RESULT_TYPES = frozenset({"none", "json", "flora", "cytology", "info", "file"})
-#: A lab's free-text remark on the panel («Примітки (зак)»), not a measurement.
-_NOTE_ROW_RE = re.compile(r"^\s*(примітк|коментар|comment|note)", re.I)
+#: A lab's free-text remark on the panel («Примітки (зак)»), not a measurement;
+#: nor is the signature of whoever read a smear («Виконавець цитологічного
+#: аналізу»), nor a smear's sampling-site heading («ТОЧКА 2» / «VAGINA»).
+_NOTE_ROW_RE = re.compile(r"^\s*(примітк|коментар|comment|note|виконавець|точка\s*\d+\s*$)", re.I)
+#: «ТОЧКА 2» / «VAGINA»: the site every following smear row was taken from.
+_SITE_ROW_RE = re.compile(r"^\s*точка\s*\d+\s*$", re.I)
+#: The smear's closing grade, printed as a conclusion: «Висновок» / «Ступінь
+#: чистоти III».  The analyte is the purity grade; a bare «Висновок» would
+#: merge with every other report's conclusion.
+_GRADE_RESULT_RE = re.compile(r"^(?P<name>Ступінь\s+чистоти)\s+(?P<grade>[IVXІХ]+|\d)$", re.I)
 CLASSES = ("match", "value_mismatch", "unit_mismatch", "name_mismatch", "missing", "extra", "info")
 
 ERROR_OFF = "labsync.error_off"
@@ -1032,6 +1047,13 @@ def _find_observation(row: dict, pool: list[dict], lab_loose: Counter, obs_loose
         candidates = [obs for obs in free if obs["_key"] == glued]
     if not candidates and lab_loose.get(loose) == 1 and obs_loose.get(loose) == 1:
         candidates = [obs for obs in free if obs["_loose"] == loose]
+    if not candidates and len(key) >= 8:
+        # The report names the row by the heading it was printed beneath
+        # («Метілентетрагідрофолатредуктаза (MTHFR 677 C>T)», «Вовчаковий
+        # антикоагулянт, скринінговий тест»); the lab's row keeps the bare
+        # name.  Equal names pair in page order, so the two MTHFR rows do too.
+        candidates = [obs for obs in free
+                      if obs["_key"].endswith("," + key) or obs["_key"].startswith(key + "(")]
     if number is not None:
         exact = [obs for obs in candidates
                  if obs["value_numeric"] is not None and _same_number(float(obs["value_numeric"]), number)]
@@ -1505,34 +1527,39 @@ def _record_line(row: dict) -> str:
 
 
 #: A line of the lab's reference block that says how it was measured
-#: («Безціанидовий SLS-метод», «Виконано на аналізаторі ...»), not what is normal.
-_METHOD_NOTE_RE = re.compile(r"метод|аналізатор|реагент|тест-систем|обладнан|^\s*виконано", re.I)
-_INTERVAL_RE = re.compile(r"\d\s*[-–]\s*\d|[<>≤≥]\s*\d|\bдо\s+\d")
+#: («Безціанидовий SLS-метод», «Виконано на аналізаторі ...», «Лейкоцити
+#: визначаються за активністю лейкоцитестерази.»), not what is normal.  One
+#: predicate with the PDF reader's (`parsers.method_note`).
+_method_note = method_note
 
 
-def _method_note(line: str) -> bool:
-    return bool(_METHOD_NOTE_RE.search(line)) and not _INTERVAL_RE.search(line)
-
-
-def _record_value(row: dict) -> ParsedObservation | None:
+def _record_value(row: dict, site: str | None = None) -> ParsedObservation | None:
     """A lab row as a value, or None for a heading, a descriptive block
-    (microbiology, cytology — kept in the record file, not split into values)
-    or a row with no result."""
+    (microbiology, cytology — kept in the record file, not split into values),
+    a note, a signature or a row with no result.  ``site`` is the smear
+    sampling site the rows above named («ТОЧКА 2» / «VAGINA»)."""
     result = row["result"]
     if (not row["test"] or result in {"", "-", "—"} or row["resulttype"] in INFO_RESULT_TYPES
-            or _PLACEHOLDER_RE.search(result)):
+            or _PLACEHOLDER_RE.search(result) or _NOTE_ROW_RE.match(str(row["test"]))):
         return None
     sign, number = parse_result(result)
     norm = "; ".join(line for line in row["norm"] if not _method_note(line)) or None
-    low, high = _bounds(norm)
+    limits = reference_limits(norm)
+    name = without_specimen_label(str(row["test"]))
+    value_text = None if number is not None else result
+    grade = _GRADE_RESULT_RE.match(str(result).strip()) if name.strip().casefold() == "висновок" else None
+    if grade:
+        name, value_text = collapse_space(grade["name"]), grade["grade"]
     return ParsedObservation(
-        raw_name=row["test"], value_numeric=number, value_text=None if number is not None else result,
-        comparator=sign, unit_raw=row["units"] or None, reference_text=norm, reference_low=low,
-        reference_high=high, page_number=1, evidence_text=_record_line(row), confidence=0.9,
+        raw_name=name, value_numeric=number, value_text=value_text,
+        comparator=sign, unit_raw=row["units"] or None, reference_text=norm, reference_low=limits.low,
+        reference_high=limits.high, page_number=1, evidence_text=_record_line(row), confidence=0.9,
         extraction_method=LAB_RECORD,
+        reference_low_inclusive=limits.low_inclusive, reference_high_inclusive=limits.high_inclusive,
         # The lab's own "out of range" is the vendor's reading here: there is
         # no printed report for the bounds to speak for.
         vendor_interpretation=_lab_reading(row, {}, number) if row["state"] == "critical" else None,
+        specimen=site,
     )
 
 
@@ -1567,6 +1594,30 @@ def _retitle_lab_records(settings: Settings, connection) -> int:
     return changed
 
 
+def _record_values(rows: list[dict]) -> list[tuple[dict, ParsedObservation | None]]:
+    """Every row with the value it files as (None: not a value), in order.
+
+    A smear prints its sampling site as a row of its own -- «ТОЧКА 2» /
+    «VAGINA», then the seven readings taken there, then «ТОЧКА 3» / «CERVIX»
+    and the same seven again.  Stored as results, the site lines were values
+    and the fourteen readings below them carried no site, so the vaginal and
+    cervical leukocytes could not be told apart.  The site is each reading's
+    specimen instead, up to the next site or the conclusion.
+    """
+    site: str | None = None
+    out: list[tuple[dict, ParsedObservation | None]] = []
+    for row in rows:
+        test = str(row.get("test") or "")
+        if _SITE_ROW_RE.match(test):
+            site = collapse_space(str(row.get("result") or "")) or None
+            out.append((row, None))
+            continue
+        if test.strip().casefold().startswith("висновок"):
+            site = None
+        out.append((row, _record_value(row, site)))
+    return out
+
+
 def _record_day(order: dict) -> str | None:
     days = sorted(order.get("dates") or [])
     day = days[0] if days else str(order.get("ordered_at") or "")[:10]
@@ -1577,7 +1628,7 @@ def _file_lab_record(settings, connection, user_id: str, key: str, patient_id: s
                      rows: list[dict]) -> str | None:
     """File an order's rows as the lab's record of it; the document id, or
     None when no row carries a value.  The caller commits."""
-    values = [(row, parsed) for row in rows if (parsed := _record_value(row)) is not None]
+    values = [(row, parsed) for row, parsed in _record_values(rows) if parsed is not None]
     if not values:
         return None
     lab, order_id, day, now = provider(key), str(order["order_id"]), _record_day(order), utc_now()
@@ -2055,7 +2106,9 @@ def _undo_lab_flag(connection, user_id: str, key: str, order_id: str, obs: dict)
         comparator=stored["comparator"], unit_raw=stored["unit_raw"],
         reference_text=stored["vendor_reference_text"], reference_low=stored["vendor_reference_low"],
         reference_high=stored["vendor_reference_high"], page_number=stored["page_number"] or 1,
-        evidence_text=stored["evidence_text"] or "", confidence=stored["confidence"] or 0.0),
+        evidence_text=stored["evidence_text"] or "", confidence=stored["confidence"] or 0.0,
+        reference_low_inclusive=stored["vendor_reference_low_inclusive"] != 0,
+        reference_high_inclusive=stored["vendor_reference_high_inclusive"] != 0),
         stored["concept_id"])
     connection.execute(
         "UPDATE observations SET vendor_interpretation=?, vendor_interpretation_source=NULL WHERE id=?",
@@ -2155,11 +2208,57 @@ def _clean_record_references(connection) -> int:
         if len(kept) == len(lines):
             continue
         norm = "; ".join(kept) or None
-        low, high = _bounds(norm)
+        limits = reference_limits(norm)
         connection.execute(
-            "UPDATE observations SET vendor_reference_text=?, vendor_reference_low=?, vendor_reference_high=? WHERE id=?",
-            (norm, low, high, row["id"]))
+            "UPDATE observations SET vendor_reference_text=?, vendor_reference_low=?, vendor_reference_high=?, "
+            "vendor_reference_low_inclusive=?, vendor_reference_high_inclusive=? WHERE id=?",
+            (norm, limits.low, limits.high, int(limits.low_inclusive), int(limits.high_inclusive), row["id"]))
         changed += 1
+    return changed
+
+
+def _refresh_record_values(settings: Settings, connection) -> int:
+    """Read every stored lab record's rows again with :func:`_record_values`.
+
+    Records filed before it kept a smear's «ТОЧКА n» site lines, its reader's
+    signature and the panel's «Примітка» as values, left the site off the
+    readings under it, the specimen label in the ESR's name and a purity
+    grade under «Висновок».  The rows are the record's own file, so nothing is
+    guessed: a stored value is paired with its row by the row's own line (in
+    order, so the vaginal and cervical «Еритроцити: не виявлені» keep apart).
+    A value that is no longer one is deleted, and one that is renamed is
+    updated, only while nobody has ruled on it ('extracted').  The concept
+    follows the new name on the next semantic repair.
+    """
+    changed = 0
+    for document in connection.execute(
+            "SELECT id, source_path FROM documents WHERE extraction_strategy=?", (LAB_RECORD,)).fetchall():
+        try:
+            payload = json.loads(resolve_source_path(settings, str(document["source_path"])).read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            continue
+        stored = connection.execute(
+            "SELECT id, raw_name, value_text, specimen, evidence_text, verification_status FROM observations "
+            "WHERE document_id=? AND extraction_method=? ORDER BY rowid", (document["id"], LAB_RECORD)).fetchall()
+        unused = list(stored)
+        for row, parsed in _record_values(payload.get("rows") or []):
+            if not row.get("test"):
+                continue
+            line = _record_line(row)
+            match = next((obs for obs in unused if obs["evidence_text"] == line), None)
+            if match is None:
+                continue
+            unused.remove(match)
+            if match["verification_status"] != "extracted":
+                continue
+            if parsed is None:
+                connection.execute("DELETE FROM observations WHERE id=?", (match["id"],))
+                changed += 1
+            elif (parsed.raw_name, parsed.value_text, parsed.specimen) != (
+                    match["raw_name"], match["value_text"], match["specimen"]):
+                connection.execute("UPDATE observations SET raw_name=?, value_text=?, specimen=? WHERE id=?",
+                                   (parsed.raw_name, parsed.value_text, parsed.specimen, match["id"]))
+                changed += 1
     return changed
 
 
@@ -2170,10 +2269,11 @@ def recheck(settings: Settings) -> dict[str, int]:
     document with no values at the one holding its results, then
     :func:`apply_check` per order."""
     summary = {"orders": 0, "relinked": 0, "units": 0, "units_undone": 0, "flags": 0, "flags_undone": 0, "tasks": 0,
-               "references": 0, "titles": 0}
+               "references": 0, "titles": 0, "record_values": 0}
     with transaction(settings) as connection:
         summary["units_undone"] = undo_unfit_units(connection)
         summary["references"] = _clean_record_references(connection)
+        summary["record_values"] = _refresh_record_values(settings, connection)
         summary["titles"] = _retitle_lab_records(settings, connection)
         for row in connection.execute(
                 """SELECT * FROM lab_orders WHERE state IN ('imported', 'linked') AND document_id IS NOT NULL

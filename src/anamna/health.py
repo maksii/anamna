@@ -431,6 +431,10 @@ UNIT_SYNONYMS = {
     "10^12/л": _TERA_PER_L,
     "10^9клітин/л": _GIGA_PER_L,
     "10^9 клітин/л": _GIGA_PER_L,
+    # Synevo prints the red count's unit as «10^12» over «клітин/л»; read
+    # whole, it must fold where «10^12» does or the RBC trend splits in two.
+    "10^12клітин/л": _TERA_PER_L,
+    "10^12 клітин/л": _TERA_PER_L,
     # Coagulation times print the bare Cyrillic letter where other reports
     # print «сек»; both are seconds. Cyrillic «с» casefolds to itself, so this
     # cannot collide with a Latin "c".
@@ -811,8 +815,14 @@ _NEWBORN_RE = re.compile(r"новонарод|newborn|neonat", re.I)
 #: interval followed by a real age, and dropping it took the only paediatric
 #: band ALT had.
 _TIME_UNIT = r"(?:днів|день|дня|тижн|тиж\b|міс\b|місяц|рок|рік|роки|год\.)"
+#: A comparator opens the next band's label only after a blank: «38-153
+#: ≥18 років: 42-156» is a 2-17-year band followed by the adults' label, and
+#: reading «≥18 років» as the tail of an age took the amino acids' 2-17 band
+#: away and left the adult one unpaired -- none of 39 amino acids got a range.
+#: A dash still continues the age («0 - <1 року»), and so does a comparator
+#: written hard against the number.
 _AGE_NOT_INTERVAL_RE = re.compile(
-    rf"^\s*(?:{_TIME_UNIT}|[-–—<>≤≥]+\s*\d{{1,3}}\s*{_TIME_UNIT})",
+    rf"^(?:\s*{_TIME_UNIT}|\s*[-–—]+\s*[<>≤≥]?\s*\d{{1,3}}\s*{_TIME_UNIT}|[<>≤≥]+\s*\d{{1,3}}\s*{_TIME_UNIT})",
     re.I,
 )
 
@@ -829,6 +839,9 @@ _POPULATION_RE = re.compile(
             _ADULT_RE.pattern,
             r"\(\s*[чж]\s*\)",
             r"\d{1,3}\s*[-–—]\s*\d{1,3}\s*" + _YEAR_UNIT,
+            # «≥18 років» names its population by the bound: started at the
+            # word, the qualifier kept only «років» and lost the age.
+            r"[<>≤≥]\s*\d{1,3}\s*" + _YEAR_UNIT,
         )
     ),
     re.I,
