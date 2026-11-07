@@ -924,8 +924,8 @@ def _lab_reading(row: dict, obs: dict, number: float | None, age: int | None = N
     value = number if number is not None else obs.get("value_numeric")
     if value is not None:
         for low, high in ((obs.get("vendor_reference_low"), obs.get("vendor_reference_high")),
-                          applicable_reference_bounds(obs.get("vendor_reference_text"), age, sex),
-                          applicable_reference_bounds(" ".join(row.get("norm") or []), age, sex)):
+                          applicable_reference_bounds(obs.get("vendor_reference_text"), age, sex, float(value)),
+                          applicable_reference_bounds(" ".join(row.get("norm") or []), age, sex, float(value))):
             if low is not None and float(value) <= float(low):
                 return "low"
             if high is not None and float(value) >= float(high):
@@ -933,7 +933,7 @@ def _lab_reading(row: dict, obs: dict, number: float | None, age: int | None = N
     return "borderline"
 
 
-def _band_limits(text: object, age: int | None, sex: str | None) -> ReferenceLimits:
+def _band_limits(text: object, age: int | None, sex: str | None, value: float | None = None) -> ReferenceLimits:
     """The band a reference text states for this person, with whether each
     bound is part of it («5.5 - 7.0» includes 5.5, «< 35» excludes 35)."""
     text = collapse_space(str(text or ""))
@@ -942,10 +942,10 @@ def _band_limits(text: object, age: int | None, sex: str | None) -> ReferenceLim
     plain = reference_limits(text)
     if plain.low is not None or plain.high is not None:
         return plain
-    band = applicable_band(text, age, sex)
+    band = applicable_band(text, age, sex, value)
     if band is not None:
         return reference_limits(band.rsplit(":", 1)[-1])
-    low, high = applicable_reference_bounds(text, age, sex)
+    low, high = applicable_reference_bounds(text, age, sex, value)
     # A sex clause loses its signs on the way: a strict one anywhere in the
     # text keeps a value on the bound outside, as the stricter reading.
     inclusive = not re.search(r"[<>](?!=)", text)
@@ -968,8 +968,8 @@ def _inside_printed_band(obs: dict, row: dict, age: int | None, sex: str | None)
     stored = ReferenceLimits(obs.get("vendor_reference_low"), obs.get("vendor_reference_high"),
                              obs.get("vendor_reference_low_inclusive") != 0,
                              obs.get("vendor_reference_high_inclusive") != 0)
-    for limits in (stored, _band_limits(obs.get("vendor_reference_text"), age, sex),
-                   _band_limits(" ".join(row.get("norm") or []), age, sex)):
+    for limits in (stored, _band_limits(obs.get("vendor_reference_text"), age, sex, float(value)),
+                   _band_limits(" ".join(row.get("norm") or []), age, sex, float(value))):
         if limits.low is not None or limits.high is not None:
             return _holds(float(value), limits)
     return False
