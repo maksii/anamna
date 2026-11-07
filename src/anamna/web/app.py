@@ -925,14 +925,16 @@ _LEADING_BOUND_RE = re.compile(r"^\s*((?:[<>≤≥]\s*)?-?\d+(?:[.,]\d+)?)")
 _RANGE_TAIL_RE = re.compile(r"\s*[-–—]\s*-?\d+(?:[.,]\d+)?")
 
 
-def reference_display(reference: str | None, age: int | None, sex: str | None) -> str:
+def reference_display(
+    reference: str | None, age: int | None, sex: str | None, value: float | None = None
+) -> str:
     """The laboratory's printed interval, in the reader's language.
 
     Some printed intervals carry a source-language annotation - `<3.0 - для
     груп низького ризику`.  In English mode the numbers stay and the untranslated
     commentary goes, rather than the whole thing arriving as Cyrillic.
     """
-    text = display_reference(reference, age, sex)
+    text = display_reference(reference, age, sex, value)
     if get_locale() == "uk":
         # The value beside it reads «2,5»; the interval must not read «0.5–5.0».
         return _DECIMAL_POINT_RE.sub(",", text)
@@ -959,7 +961,7 @@ def _vendor_bounds(row, age: int | None, sex: str | None):
     low, high = row["vendor_reference_low"], row["vendor_reference_high"]
     reading = row["vendor_interpretation"]
     if low is None and high is None:
-        low, high = applicable_reference_bounds(row["vendor_reference_text"], age, sex)
+        low, high = applicable_reference_bounds(row["vendor_reference_text"], age, sex, row["value_numeric"])
         bare = re.fullmatch(r"\s*(-?\d+(?:[.,]\d+)?)\s*", str(row["vendor_reference_text"] or ""))
         if low is None and high is None and bare and row["value_numeric"] is not None:
             # A reference printed as a bare number ("0.0" beside atypical
@@ -967,7 +969,7 @@ def _vendor_bounds(row, age: int | None, sex: str | None):
             # limit of that number -- not "no reference" / "No comparison".
             high = float(bare.group(1).replace(",", "."))
     elif not reference_applies(row["vendor_reference_text"], age, sex) and (
-        (low, high) != applicable_reference_bounds(row["vendor_reference_text"], age, sex)
+        (low, high) != applicable_reference_bounds(row["vendor_reference_text"], age, sex, row["value_numeric"])
     ):
         # A block printed for several populations fails as a whole («Діти …
         # Чоловіки: 4.0 - 5.0 Жінки …»); the parser now stores this patient's
@@ -1506,8 +1508,8 @@ def _row_reference_display(row, age: int | None, sex: str | None, unit: str | No
             return restated
         if row.get("vendor_reference_text"):
             # Could not be restated: say which unit the printed numbers are in.
-            return f"{reference_display(row['vendor_reference_text'], age, sex)} ({display_unit(str(row['converted_from']))})"
-    return reference_display(row["vendor_reference_text"], age, sex)
+            return f"{reference_display(row['vendor_reference_text'], age, sex, row.get('value_numeric'))} ({display_unit(str(row['converted_from']))})"
+    return reference_display(row["vendor_reference_text"], age, sex, row.get("value_numeric"))
 
 
 def _same_day_key(row: dict[str, object]) -> str:

@@ -159,9 +159,10 @@ COPROGRAM_CELL = [
 ]
 
 
-def test_a_normal_printed_inside_the_result_cell_is_not_a_reference():
+def test_a_normal_printed_inside_the_result_cell_is_the_rows_reference():
+    """Round-2 review: the bracket is where the coprogram prints this row's norm."""
     row = by_name(COPROGRAM_CELL)["Лейкоцити (копрограма)"]
-    assert (row.value_text, row.reference_text) == ("не виявлені", None)
+    assert (row.value_text, row.reference_text) == ("не виявлені", "в нормі - не виявлені")
 
 
 # --- 3. A reference block runs past prose, footnotes and citations --------------------

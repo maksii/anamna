@@ -736,7 +736,7 @@ def test_a_patients_band_from_a_multi_population_block_is_shown_and_others_hidde
 
     block = "Діти: <1 року: 3.0 - 5.4 1-12 років: 3.9 - 5.3 Дорослі: Чоловіки: 4.0 - 5.0 Жінки: 3.5 - 4.7"
     row = {"vendor_reference_low": 4.0, "vendor_reference_high": 5.0, "vendor_interpretation": "high",
-           "vendor_reference_text": block}
+           "vendor_reference_text": block, "value_numeric": 5.06}
     # RBC 5.06 against the laboratory's male 4.0-5.0: the bounds stand.
     assert _vendor_bounds(row, 34, "male") == (4.0, 5.0, "high")
     # The same stored bounds are not this woman's band.
