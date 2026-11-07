@@ -6194,6 +6194,17 @@ _SILAB_GENOTYPE = re.compile(rf"^(?P<type>\d{{2}}) генотип (?P<value>{_S_
 _SILAB_QUINTILE = re.compile(r"^Квінтильний ранг препарату за (?P<rank>[1-5]) Автоматизована система\b")
 #: The tail as OCR reads it: «технологією ВО РосаїРоїпі» is BD FocalPoint.
 _SILAB_QUINTILE_TAIL = re.compile(r"^технологією \S{2} \S+")
+#: The same slide's percentile rank, printed and wrapped the same way.
+_SILAB_PERCENTILE = re.compile(r"^Відсоток квінтильного рангу за (?P<percent>\d{1,3}) ?% Автоматизована система\b")
+#: The Bethesda 2014 conclusion: «Лабораторний висновок ПАП-тесту за <result>»
+#: over «класифікацією BETHESDA 2014 (<its Ukrainian gloss>)».  Only the
+#: negative result is known to this reader; its gloss is OCR's weakest line
+#: («iHmpaenimenianbHux»), so the line is recognised by its shape and the
+#: result stored in the words the lab prints.
+_SILAB_BETHESDA = re.compile(
+    r"^Лабораторний висновок ПАП.тесту за NILM \(тип (?P<grade>II|ІІ|I|І|III|ІІІ), запальний тип мазка\) ?"
+    r"/ ?Negative for Intraepithelial Lesion or Malignancy$", re.I)
+_SILAB_BETHESDA_TAIL = re.compile(r"^класифікацією \S{6,9} 2014 \(негативні відносно \S+ уражень і злоякісності\)\.?$")
 
 
 def _silab_clean(line: str) -> str:
@@ -6404,6 +6415,28 @@ def parse_silab_page(
                 observations.append(_silab_observation(
                     "Квінтильний ранг препарату за технологією BD FocalPoint", found.group("rank"), None, None,
                     f"{line} {lines[index + 1]}", page_number,
+                ))
+                state["quintile"] = found.group("rank")
+                continue
+            found = _SILAB_PERCENTILE.match(line)
+            if found and index + 1 < len(lines) and _SILAB_QUINTILE_TAIL.match(lines[index + 1]):
+                # The rank is the fifth the percentage falls in (rank 4 with
+                # 77 %): a percentage outside it is a digit OCR lost («7 %»).
+                # ponytail: only read beside a rank read on the same print.
+                rank, percent = state.get("quintile"), int(found.group("percent"))
+                if rank and (int(rank) - 1) * 20 < percent <= int(rank) * 20:
+                    observations.append(_silab_observation(
+                        "Відсоток квінтильного рангу за технологією BD FocalPoint", str(percent), "%", None,
+                        f"{line} {lines[index + 1]}", page_number,
+                    ))
+                continue
+            found = _SILAB_BETHESDA.match(line)
+            if found and index + 1 < len(lines) and _SILAB_BETHESDA_TAIL.match(lines[index + 1]):
+                observations.append(_silab_observation(
+                    "Лабораторний висновок ПАП-тесту за класифікацією BETHESDA 2014",
+                    f"NILM (тип {found.group('grade')}, запальний тип мазка) /Negative for Intraepithelial Lesion "
+                    "or Malignancy (негативні відносно інтраепітеліальних уражень і злоякісності)",
+                    None, None, f"{line} {lines[index + 1]}", page_number,
                 ))
                 continue
         row = _silab_row(section, line, _silab_cells(lines, index, section), page_number, site)

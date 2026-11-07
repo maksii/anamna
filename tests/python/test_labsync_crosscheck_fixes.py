@@ -439,3 +439,29 @@ def test_a_lab_flag_the_printed_band_contradicts_is_not_adopted(tmp_path: Path, 
     assert (after["vendor_interpretation"], after["vendor_interpretation_source"]) == ("within_vendor_range", None)
     labsync.sync(settings, user_id, "eskulab", inline=True)
     assert observation(settings, obs_id)["vendor_interpretation_source"] is None
+
+
+def test_a_lab_flag_over_a_row_that_prints_no_interval_is_not_adopted(tmp_path: Path, monkeypatch):
+    """A cell count printed with «-» as its reference, in an order whose API
+    marks every row "critical": no interval points a direction and the paper
+    flags nothing, so no "borderline"; one adopted earlier is taken back on
+    the recheck.  The lab's own record files no reading for it either."""
+    settings, user_id, _ = make(tmp_path)
+    document_id = seed_doc(settings, user_id, vendor="EskuLab", order="9704", day="2022-01-10", values=[
+        ("Сперматозоїди в мкл (SPERM)", 0.0, "кл/мкл", None)])
+    obs_id = f"{document_id}-0"
+    set_reference(settings, obs_id, "-", None, None, None)
+    rows = {"9704": [lab_row("Сперматозоїди в мкл (SPERM)", "0.0", "кл/мкл", state="critical", norm="{-}")]}
+    connect_eskulab(settings, user_id, monkeypatch, eskulab_routes([order(9704, ready=1, total=1)], rows))
+    stub_intake(monkeypatch, settings, user_id, {})
+    labsync.sync(settings, user_id, "eskulab", inline=True)
+    assert observation(settings, obs_id)["vendor_interpretation_source"] is None
+    with connect(settings) as connection:  # as round 3 found it
+        connection.execute("UPDATE observations SET vendor_interpretation='borderline', "
+                           "vendor_interpretation_source='lab_record' WHERE id=?", (obs_id,))
+    labsync.recheck(settings)
+    after = observation(settings, obs_id)
+    assert after["vendor_interpretation"] != "borderline" and after["vendor_interpretation_source"] is None
+    parsed = labsync._record_value(lab_row("Сперматозоїди в мкл (SPERM)", "0.0", "кл/мкл", state="critical",
+                                           norm=["-"]))
+    assert parsed.vendor_interpretation is None
