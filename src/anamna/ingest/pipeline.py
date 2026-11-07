@@ -3181,7 +3181,7 @@ def _reread_parse(connection: sqlite3.Connection, document, analysis: Analysis) 
 
 def _refuse_emptying(
     connection: sqlite3.Connection, document, classification: Classification, parsed_with_context: list,
-    document_id: str,
+    document_id: str, issues: list[ParseIssue] | None = None,
 ) -> None:
     stored_rows = connection.execute(
         "SELECT COUNT(*) FROM observations WHERE document_id=? AND COALESCE(entry_source, 'document')='document'",
@@ -3197,6 +3197,10 @@ def _refuse_emptying(
         and not parsed_with_context
         and not document["duplicate_of_document_id"]
         and not chose_unparsed_kind
+        # The parser recognised a companion summary of another report, whose
+        # values that report holds: an empty reading here is the answer, not
+        # a broken one, and the old rows are its interleaved columns.
+        and not any(issue.kind == COMPANION_SUMMARY for issue in issues or [])
     ):
         # The same guard as OCR's, for the parser: a document that held
         # results and now reads as holding none has not lost them --
@@ -3598,7 +3602,7 @@ def reingest_document(
             # the classification only, and its result decides whether this
             # re-read may go ahead at all.
             parsed_with_context, issues = _reread_parse(connection, document, analysis)
-            _refuse_emptying(connection, document, classification, parsed_with_context, document_id)
+            _refuse_emptying(connection, document, classification, parsed_with_context, document_id, issues)
             date_by_person = _date_is_human(document)
             _update_reread_document(connection, document, analysis, document_id, date_by_person)
             preserved = [
@@ -3717,7 +3721,12 @@ def reingest_document(
                 ]
             )
             index_search(connection, document_id, owner_user_id, search_content)
-            reasons = _reread_value_reasons(
+            # A companion summary holds nothing of its own: its old rows were
+            # interleaved columns, so "vanished" would send a person looking
+            # for values that the report it summarises already holds.
+            companion = not parsed_with_context and any(issue.kind == COMPANION_SUMMARY for issue in issues)
+            issues = [issue for issue in issues if issue.kind != COMPANION_SUMMARY]
+            reasons = [reason_part("review.companion_summary")] if companion else _reread_value_reasons(
                 appeared, vanished, sum(current_values.values()), changed_items, orphaned_items
             )
             _audit_reread_refresh(connection, owner_user_id, document_id, reference_items, date_moves)

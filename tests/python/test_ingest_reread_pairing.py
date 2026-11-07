@@ -298,6 +298,26 @@ def test_a_document_that_had_values_and_now_reads_none_is_refused(tmp_path: Path
     assert [row["id"] for row in rows(settings)] == [row["id"] for row in before]
 
 
+def test_a_companion_summary_the_parser_recognised_may_empty_the_document(
+        tmp_path: Path, rescanner, monkeypatch):
+    """A lab's illustrated summary of another report: the parser now knows it
+    holds nothing of its own, so its old interleaved rows go."""
+    from anamna.ingest.parsers import COMPANION_SUMMARY, ParseIssue
+
+    settings, user_id, _ = build(tmp_path)
+    rescanner([], pages=[page(1)])
+
+    def companion(classification_, per_page_, pages_, *, issues=None, **_):
+        issues.append(ParseIssue(1, COMPANION_SUMMARY, "", ""))
+        return []
+
+    monkeypatch.setattr(pipeline, "parse_pages", companion)
+    pipeline.reingest_document(settings, user_id, "doc-1")
+    with connect(settings) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM observations WHERE document_id='doc-1'").fetchone()[0] == 0
+    assert list(parts_of(open_task(settings))) == ["review.companion_summary"]
+
+
 def test_the_queue_reports_a_refused_reread_with_its_reason(tmp_path: Path, rescanner):
     from anamna.ingest import intake
 
