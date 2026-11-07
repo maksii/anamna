@@ -10,6 +10,7 @@ from functools import lru_cache
 from .config import ID_NAMESPACE_PREFIX
 from .db import utc_now
 from .i18n import get_locale, t, translate_phrase
+from .ingest.classifier import PATIENT_LABEL_RE, VISIT_SECTION_RES
 from .ingest.parsers import (
     DEMOGRAPHIC_REFERENCE_RE,
     NON_NORMAL_BAND_RE,
@@ -40,7 +41,7 @@ HEALTH_AREAS: list[dict[str, object]] = [
     {"id": "infection", "name": "Infection & microbiology", "short": "Infection", "categories": {"infection", "microbiology"}, "description": "Cultures, organisms and infection markers"},
     {"id": "ent", "name": "ENT & sinuses", "short": "ENT", "categories": set(), "description": "Ear, nose, throat and sinus imaging"},
     {"id": "skin", "name": "Skin", "short": "Skin", "categories": set(), "description": "Dermatology consultations and skin findings"},
-    {"id": "brain", "name": "Brain & nervous system", "short": "Brain", "categories": set(), "description": "Brain recordings such as the EEG (electroencephalogram, a recording of the brain's electrical activity) and their conclusions"},
+    {"id": "brain", "name": "Brain & nervous system", "short": "Brain", "categories": set(), "description": "Brain recordings such as the EEG (electroencephalogram, a recording of the brain's electrical activity), and visits for headaches and other nervous-system complaints"},
     {"id": "body", "name": "Body composition", "short": "Body", "categories": {"device_body", "body"}, "description": "Weight, body mass index, body fat and lean mass"},
     {"id": "activity", "name": "Activity & fitness", "short": "Activity", "categories": {"device_activity", "device_fitness"}, "description": "Movement, exercise, energy and cardio fitness"},
     {"id": "mobility", "name": "Mobility & gait", "short": "Mobility", "categories": {"device_mobility"}, "description": "Walking speed, step length, steadiness and asymmetry"},
@@ -1487,16 +1488,26 @@ NARRATIVE_TYPES = {
 _STUDIES: tuple[tuple[str, str, tuple[str, ...], frozenset[str] | None, re.Pattern[str]], ...] = tuple(
     (key, title, areas, frozenset(types) if types else None, re.compile(pattern, re.I))
     for key, title, areas, types, pattern in (
-        ("consult_neurology", "Neurology consultation", ("spine",), {"consultation"}, r"невролог|neurolog"),
+        ("consult_neurology", "Neurology consultation", ("spine",), {"consultation"}, r"невролог|невропатолог|neurolog"),
         ("consult_orthopaedic", "Orthopedic consultation", ("joints",), {"consultation"}, r"ортопед|травматолог|orthop"),
         ("consult_vaccination", "Family doctor consultation", ("immunity",), {"consultation"}, r"вакцин|бустрікс|boostrix|vaccin"),
         # A specialist's note quotes the scans it reviewed («УЗД ОЧП …»,
         # «дуплекс сонних артерій»): the specialty decides, before any study.
         ("consult_cardiology", "Cardiology consultation", ("heart",), {"consultation"}, r"кардіолог|cardiolog"),
         ("consult_dermatology", "Dermatology consultation", ("skin",), {"consultation"}, r"дерматолог|dermatolog"),
+        ("consult_allergy", "Allergy consultation", ("allergy",), {"consultation"}, r"алерголог|allergolog|allergist"),
+        ("consult_gastro", "Gastroenterology consultation", ("digestive",), {"consultation"}, r"гастроентеролог|gastroenterolog"),
+        ("consult_endocrine", "Endocrinology consultation", ("thyroid",), {"consultation"}, r"ендокринолог|endocrinolog"),
+        # A general physician's note has no organ of its own: its diagnosis
+        # (or, with none entered, its complaints) decides.
+        ("consult_gp", "General practitioner consultation", (), {"consultation"}, r"терапевт|therapist|internist"),
+        ("breath_test", "Breath test for small-intestinal bacterial overgrowth", ("digestive",), None,
+         r"дихальн\w*\s+(?:\w{1,3}\s+)?тест|дата\s+проведення\s+тесту|gastrolyzer|breath\s+test"),
         ("echo", "Echocardiogram", ("heart",), None, r"дослідження\s+серця|узд\s+серця|ехокардіо|echocardiog"),
         ("carotid_duplex", "Carotid and vertebral artery ultrasound", ("heart",), None, r"сонних|carotid|вертебральних\s+артері"),
         ("thyroid_us", "Thyroid ultrasound", ("thyroid",), None, r"щитоподібн|щитовидн|thyroid"),
+        ("gi_us", "Gastrointestinal tract ultrasound", ("digestive",), {"ultrasound"}, r"шлунково\s*-?\s*кишков"),
+        ("egd", "Upper GI endoscopy (EGD)", ("digestive",), None, r"гастродуоденоскоп|панендоскоп"),
         ("abdominal_us", "Abdominal ultrasound", ("liver", "kidneys"), None, r"черевної\s+порожнини|abdominal"),
         ("soft_tissue_us", "Soft-tissue ultrasound", ("joints",), None, r"м['’]яких\s+тканин|soft[- ]tissue"),
         ("salivary_us", "Salivary-gland and cervical-node ultrasound", ("ent",), None, r"слинн|salivary"),
@@ -1536,10 +1547,35 @@ _ORGAN_AREAS: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
         # By the specialty that wrote it: «шкіра» alone is a line of every
         # general examination («Шкіра: чиста»).
         ("skin", r"\bдерматол|\bdermatol"),
-        # «головного мозку», never the «спинного мозку» of a spine scan.
-        ("brain", r"\bголовн\w*\s+мозк|\bbrain\b|\bенцефал|\bеег\b|\beeg\b"),
+        # «головного мозку», never the «спинного мозку» of a spine scan; a
+        # headache («Головний біль», «біль голови») is the nervous system's.
+        ("brain", r"\bголовн\w*\s+(?:мозк|біл|бол)|\b(?:біл|бол)\w*\s+голов|\bbrain\b|\bенцефал|\bеег\b|\beeg\b|\bheadache"),
+        ("metabolism", r"\bгіпоглік|\bгіперглік|\bцукров\w*\s+діабет|\bhypoglyc|\bhyperglyc|\bdiabet"),
     )
 )
+#: An ICD-10 code's chapter names the body system a diagnosis is about
+#: (WHO ICD-10, 2019 edition): «K52.9» the digestive system, «L20-L30» the
+#: skin.  Only chapters with an area of their own; a code in Cyrillic
+#: letters («К52.9») is the same code.
+_ICD_CODE_RE = re.compile(r"(?<![\w.])([A-ZКМЕІ])(\d{2})(?:\.\d{1,2})?(?![\w])")
+_ICD_LETTERS = str.maketrans("КМЕІ", "KMEI")
+_ICD_CHAPTERS: tuple[tuple[str, int, int, str], ...] = (
+    ("E", 0, 7, "thyroid"), ("E", 10, 16, "metabolism"), ("G", 0, 99, "brain"), ("I", 0, 99, "heart"),
+    ("J", 0, 99, "lungs"), ("K", 70, 87, "liver"), ("K", 0, 99, "digestive"), ("L", 0, 99, "skin"),
+    ("M", 40, 54, "spine"), ("M", 0, 25, "joints"), ("N", 0, 39, "kidneys"),
+)
+
+
+def _diagnosis_areas(summary: str) -> tuple[str, ...]:
+    """The areas a written diagnosis names, by organ word and by ICD-10 code."""
+    areas = [area for area, pattern in _ORGAN_AREAS if pattern.search(summary)]
+    for letter, number in _ICD_CODE_RE.findall(summary):
+        letter = letter.translate(_ICD_LETTERS)
+        area = next((area for chapter, low, high, area in _ICD_CHAPTERS
+                     if chapter == letter and low <= int(number) <= high), None)
+        if area and area not in areas:
+            areas.append(area)
+    return tuple(areas)
 #: A visit that gave a vaccine («Необхідність імунізації», «Вакцинації»):
 #: filed under immunity alone -- «Гепатиту А+В» names the vaccine, not the liver.
 _VACCINATION_VISIT = re.compile(r"необхідн\w*\s+імунізац|\bвакцинаці[їя]\b|\bvaccination\b", re.I)
@@ -1556,12 +1592,27 @@ _GENERIC_TITLES = {
 # «Висновок:» over its description and closes with «Висновок:» over the
 # radiologist's verdict.
 _CONCLUSION_LABELS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"(?:гістологічн\w*\s+)?(?:висновок(?:\s+лікаря)?|buchobok|заключення|impression|conclusion)\s*[:：]", re.I),
+    re.compile(r"(?:гістологічн\w*\s+)?(?:висновок|buchobok|заключення)(?:\s+лікаря)?\s*[:：]|(?:impression|conclusion)\s*[:：]", re.I),
     re.compile(r"(?:уз|узд|мр)[- ]?ознаки\s*[:：]", re.I),
-    re.compile(r"(?:попередн|заключн|остаточн|клінічн)\w*\s+діагноз\s*[:：]|^\s*діагноз\s*[:：]", re.I | re.M),
+    # Form 028/о prints its field label in a column beside the value, so text
+    # extraction reads «Діагноз основний: G44.2 …», «Діагноз» / «основний: …»
+    # or «основний: K52.9 …» / «Діагноз синдром …» / «супутній: L20-L30 …».
+    # «основний:» and «супутній:» are kept in the text (zero width): they say
+    # which diagnosis is which.
+    re.compile(
+        r"(?:попередн|заключн|остаточн|клінічн)\w*\s+діагноз\s*[:：]|^\s*діагноз\s*[:：]"
+        r"|^\s*діагноз\s*$|^\s*діагноз\s+(?=основний\s*[:：])|^(?=\s*основний\s*[:：])"
+        # Expert's later template: «по МКХ-10 (Основний): -. Опис: <diagnosis>».
+        r"|\bпо\s+мкх-?10\s*\(\s*основний\s*\)\s*[:：]",
+        re.I | re.M,
+    ),
     re.compile(r"kardia\s+advanced\s+determination\s*[:：]", re.I),
     re.compile(r"^\s*огляд\s*(?:[:：]\s*)?$", re.I | re.M),
+    # Expert's X-ray: the radiologist's reading under «Результат:».
+    re.compile(r"^\s*результат\s*[:：]\s*$", re.I | re.M),
 )
+#: Which clinical types each label above is read in; a label not listed is read in any.
+_CONCLUSION_LABEL_TYPES = {4: {None, "consultation"}, 5: {None, "radiology_xray", "radiology_mri"}}
 
 _CONCLUSION_END = re.compile(
     r"\n\s*(?:рекомендовано|рекомендації|рекомендую)\b|\bрекомендовано\s*[:：]"
@@ -1571,6 +1622,12 @@ _CONCLUSION_END = re.compile(
     r"|\bмедична\s+сестра|\bзображень\s*[:：]|\bед\s*[-–]\s*\d|\bnotes\b|\*\s*kardia|\bназва\s+послуги"
     r"|\bсторінка\s+\d|\bлабораторні\s+дослідження|\bпризначене\s+лікування|\bконсультації\s+спеціалістів"
     r"|\bінші\s+дослідження|\bвисновок\s+(?:\w+\s+)?не\s+(?:є|являєть)|\bскарги\b"
+    # Form 028/о: the field under the diagnosis.
+    r"|\bдані\s+лабораторних\s+та\b"
+    # An eHealth diagnostic report's sign-off.
+    r"|\bрезультати\s+інтерпретовано|\bдата\s+та\s+час\s+формування"
+    # Expert's breath test: «Коментар: рекомендовано консультація …» is advice.
+    r"|\bкоментар\s*[:：]\s*(?=рекоменд)"
     # An eHealth visit note: the diagnosis is followed by the vaccines given
     # («Вакцинації», «Назва вакцини …») and the plan («Призначення»), which
     # are the record of the visit, not its conclusion.
@@ -1579,7 +1636,8 @@ _CONCLUSION_END = re.compile(
 )
 
 _RECOMMENDATION_LABEL = re.compile(
-    r"\bрекомендовано(?:\s+(?:обстеження|лікування))?\s*[:：]|^\s*(?:рекомендовано|рекомендації)\b|\bплан\s+обстеження\s*[:：]"
+    r"\bрекомендовано(?:\s+(?:обстеження|лікування))?\s*[:：]|^\s*(?:рекомендовано|рекомендації)\b(?:\s+і\s+лікування\b)?"
+    r"|\bплан\s+обстеження\s*[:：]|\bкоментар\s*[:：]\s*(?=рекоменд)"
     r"|\bпризначене\s+лікування(?:\s+та\s+рекомендації)?\s*[:：]|^\s*призначення\s*$"
     # Zero-width: the label says what the schedule under it is, so it stays.
     r"|^(?=\s*рекомендована\s+вакцинація\b)",
@@ -1594,7 +1652,11 @@ _RECOMMENDATION_END = re.compile(
     r"\bдо\s+(?:відома|уваги)|\bпідпис|\bдата\s+(?:дослідження|обстеження)|\bдата\s*[:：]"
     r"|\bлікар(?:[-‐]\w+)?\s*[:_]|\bлікар\s+пояснив|\bсторінка\s+\d|\bзалиште\s+відгук"
     r"|\bвхід\s+в\s+особистий|\bпацієнт\s*[:：]|\bмедикаментозне\s+лікування|\bмедична\s+сестра"
-    r"|\bінші\s+дослідження|\bрезультати\s+(?:ультразвукового\s+)?досліджен|\bзображень\s*[:：]",
+    r"|\bінші\s+дослідження|\bрезультати\s+(?:ультразвукового\s+)?досліджен|\bзображень\s*[:：]"
+    # Form 028/о: the services the clinic books, then the next visit.
+    r"|\bрекомендовані\s+послуги|\bдата\s+наступної\s+консультації"
+    # Expert's X-ray: the effective dose, the radiologist and the disclaimer.
+    r"|\bед\s*[-–=]\s*\d|п\.?\s?і\.?\s?б\.?\s+лікаря|\bне\s+є\s+остаточним",
     re.I,
 )
 
@@ -1604,13 +1666,13 @@ _RECOMMENDATION_END = re.compile(
 _LETTERHEAD_LINE = re.compile(
     r"www\.|https?://|@\w|\.com\.ua|\+\s*38\s*\(?0\d|поліклініка\s+№|№\s*\d+\s+від\s+\d|\bтел\b|тел\.|\(0\d{2}\)|\bм\.\s*львів|\bвул\.|\bпросп|проспект\s+\w+"
     r"|\bтзов\b|\bтов\b|\bліцензія|\bєдрпоу|юр\.\s*адреса|контакт|прізвище|\bпіб\b|п\.і\.[бп]"
-    r"|\bпацієнт\w*\s*[:：]|\bpatient\s*[:：]|prepared\s+for|дата\s+народження|date\s+of\s+birth|№\s*(?:пацієнта|медичної)"
+    r"|\bпацієнт\w*\s*[:：]|\bpatient\s*[:：]|prepared\s+for|дата\s+народження|date\s+of\s+birth|№\s*(?:пацієнта|медичної)|амбулаторна\s+карта"
     r"|історія\s*(?:№|хвороби)|\bвік\s*[:：]|скерува|ким\s+скерований|\bпідпис|\bлікар\b|\bдиректор|допоможіть\s+лікарні"
     r"|напишіть\s+свої|з\s+повагою|особистий\s+кабінет|до\s+відома|до\s+уваги|не\s+є\s+(?:остаточним|клінічним)?\s*діагноз"
     r"|потребу\w*\s+консультації|своїм\s+власним|лікар\s+пояснив|я\s+розумію|підтверджую|^\s*я,\s|сторінка\s+\d"
     r"|залиште\s+відгук|наведіть\s+камеру|\^|\[embedded\s+image|обстеження\s+проведено\s+на|апарат|медична\s+сестра"
     r"|отримано|дата\s+завантаження|пристрій\s*[:：]|частина\s+тіла|^\s*id\s*[:：]|^\s*стать\s*[:：]|^\s*тип\s*[:：]"
-    r"|copyright|©|alivecor|confidential|medical\s+system|японія|toshiba|siemens|simens|magnetom|лаборант|_{4,}|^\s*\d+\s+(?:of|з)\s+\d+\s*$|ехеалth|ehealth|описание",
+    r"|вкажіть\s+основний\s+діагноз|copyright|©|alivecor|confidential|medical\s+system|японія|toshiba|siemens|simens|magnetom|лаборант|_{4,}|^\s*\d+\s+(?:of|з)\s+\d+\s*$|ехеалth|ehealth|описание",
     re.I,
 )
 
@@ -1622,10 +1684,10 @@ _LETTERHEAD_LINE = re.compile(
 _ATTENTION_TERMS: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
     (family, re.compile(pattern, re.I))
     for family, pattern in (
-        ("colorectal_polyp", r"аденом|поліп(?!ектом)|зубчаст|adenoma|\bpolyp"),
+        ("colorectal_polyp", r"аденом(?!іоз)|поліп(?!ектом)|зубчаст|adenoma|\bpolyp"),
         ("fatty_liver", r"стеатоз|гепатоз|гепатомегал|ліпоматоз|дифузн\w*\s+змін\w*\s+(?:паренхіми\s+)?(?:печінки|підшлунков)|steatosis|hepatomegaly"),
         ("cholestasis", r"холестаз|сладж|cholestasis|sludge"),
-        ("thyroid_nodule", r"(?:вузл|вузол)(?![^.;]*шморл)|nodule"),
+        ("thyroid_nodule", r"(?:вузл|вузол)(?![^.;]*(?:шморл|міом))|nodule"),
         ("spine_disc", r"\bкил[аиі]|гриж|екструз|секвестр|конфлікт|спондиліт|сакроіле|спондилоартрит|сколіоз|торакалг|люмб\w*алг|радикулопат|hernia|extrusion"),
         ("lv_mass", r"гіпертрофі|(?:підвищ|збільш)\w*\s+індекс\w*\s+маси\s+міокарда|hypertroph"),
         ("lipoma", r"ліпом(?!атоз)|lipoma"),
@@ -1716,8 +1778,13 @@ def _is_noise_line(line: str) -> bool:
 _OPEN_CONJUNCTION = re.compile(r"(?<![^\W\d_])(?:або|чи|та|і|й|or|and)$", re.I)
 
 
+#: A clinic's social handle or web address printed in the margin
+#: («@lviv_medical_center») is not part of what the doctor wrote.
+_HANDLE_RE = re.compile(r"(?<![\w.])@[A-Za-z_][\w.]*|https?://\S+|\bwww\.\S+")
+
+
 def _clean_block(text: str) -> str:
-    lines = [line.strip(" \t") for line in text.splitlines()]
+    lines = [line.strip(" \t") for line in _HANDLE_RE.sub("", text).splitlines()]
     lines = [line for line in lines if line.strip()]
     # Stamp and signature debris trails a scanned conclusion («coe ЄЖЕНОЮ», «Ry»).
     while lines and _is_noise_line(lines[-1]):
@@ -1741,22 +1808,62 @@ def _clean_block(text: str) -> str:
 def _conclusion_span(text: str, clinical_type: str | None = None) -> tuple[int, int, int] | None:
     """(label start, conclusion start, conclusion end) of the report's own conclusion."""
     for index, pattern in enumerate(_CONCLUSION_LABELS):
-        if index == 4 and clinical_type not in {None, "consultation"}:
+        if clinical_type not in _CONCLUSION_LABEL_TYPES.get(index, {clinical_type}):
             continue
         matches = list(pattern.finditer(text))
         for match in (reversed(matches) if index == 0 else matches):
+            if clinical_type == "consultation" and index == 0 and _quoted_in_history(text, match.start()):
+                continue
             start = match.end()
             end_match = _CONCLUSION_END.search(text, start)
             end = end_match.start() if end_match else len(text)
-            if len(_clean_block(text[start:end])) >= 4:
+            if len(_conclusion_text(text[start:end])) >= 4:
                 return match.start(), start, min(end, start + 3000)
     return None
+
+
+def _quoted_in_history(text: str, position: int) -> bool:
+    """Whether `position` sits in a visit note's complaints or history, where
+    a «Висновок:» is a quoted study («Дихальний тест від …: Висновок: …»)."""
+    sections = [
+        (found.start(), name) for name, pattern in VISIT_SECTION_RES.items()
+        for found in pattern.finditer(text, 0, position)
+    ]
+    return bool(sections) and max(sections)[1] in {"complaints", "history"}
+
+
+#: What form 028/о leaves inside a diagnosis: its own field label read into
+#: the value («Діагноз синдром …»), and the software's placeholder where no
+#: diagnosis was entered («Вкажіть основний діагноз у програмі !»), which is
+#: not a diagnosis.
+_FORM_DIAGNOSIS_NOISE = re.compile(r"^\s*діагноз(?!\s*[:：])\s*|^.*вкажіть\s+основний\s+діагноз.*$", re.I | re.M)
+_MAIN_DIAGNOSIS_LABEL = re.compile(r"^\s*основний\s*[:：]\s*", re.I | re.M)
+_CODED_DIAGNOSIS_LINE = re.compile(r"(?:(?:[Оо]сновний|[Сс]упутній)\s*[:：]\s*)?[A-ZКМЕІ]\d{2}(?:\.\d{1,2})?(?:-[A-Z]\d{2})?\s")
+
+
+def _conclusion_text(block: str) -> str:
+    """A conclusion block as stored: cleaned, form noise out, a repeated line said once."""
+    # «-. Опис:»: no code was chosen, the description follows.
+    block = _FORM_DIAGNOSIS_NOISE.sub("", re.sub(r"^\s*-\s*\.?\s*Опис\s*[:：]\s*", "", block, flags=re.I))
+    if not re.search(r"супутн\w*\s*[:：]", block, re.I):
+        # «основний:» alone names nothing the reader needs.
+        block = _MAIN_DIAGNOSIS_LABEL.sub("", block)
+    lines = list(dict.fromkeys(line.strip() for line in block.splitlines() if line.strip()))
+    # A line opening with an ICD-10 code is one coded diagnosis; the line
+    # after it is the next one, whatever its case («K52.9 … неуточнений» /
+    # «синдром надмірного бактерійного росту.»).
+    lines = [
+        f"{line};" if index + 1 < len(lines) and _CODED_DIAGNOSIS_LINE.match(line)
+        and not re.search(r"[.,;:!?(\-]$", line) and not _OPEN_CONJUNCTION.search(line) else line
+        for index, line in enumerate(lines)
+    ]
+    return _clean_block("\n".join(lines))
 
 
 def _extract_clinical_assessment(text: str, clinical_type: str | None = None) -> str | None:
     """The report's own conclusion, verbatim, from its labelled block only."""
     span = _conclusion_span(text.replace("\xad", "-"), clinical_type)
-    return _clean_block(text.replace("\xad", "-")[span[1]:span[2]]) if span else None
+    return _conclusion_text(text.replace("\xad", "-")[span[1]:span[2]]) if span else None
 
 
 #: A contact phone, «Тел.: 0501234567» or a bare «+380501234567».
@@ -1959,9 +2066,25 @@ def _pages_by_report(rows: list[sqlite3.Row]) -> dict[tuple[str, str | None], li
     return reports
 
 
+#: A visit note whose doctor entered no diagnosis (form 028/о's placeholder
+#: stands in its place) is still a visit: what the person came with is what
+#: it records.  Kept with its label, so it never reads as a diagnosis.
+_COMPLAINTS_LABEL = re.compile(r"^[ \t]*скарги\b", re.I | re.M)
+_COMPLAINTS_END = re.compile(r"^[ \t]*(?:анамнез|об['’]єктивн|діагноз|дані\s+лабораторних|рекоменд)", re.I | re.M)
+
+
+def _complaints_span(text: str) -> tuple[int, int, int] | None:
+    label = _COMPLAINTS_LABEL.search(text)
+    if not label:
+        return None
+    end = _COMPLAINTS_END.search(text, label.end())
+    end_at = end.start() if end else min(len(text), label.end() + 600)
+    return (label.start(), label.start(), end_at) if len(_clean_block(text[label.end():end_at])) >= 4 else None
+
+
 def _report_summary(text: str, span: tuple[int, int, int] | None) -> str:
     """The report's conclusion, cleaned, with a restated diagnosis said once."""
-    summary = _clean_block(text[span[1]:span[2]]) if span else ""
+    summary = _conclusion_text(text[span[1]:span[2]]) if span else ""
     # eHealth marks its required fields with «*»; it is form furniture.
     summary = re.sub(r"\*(?=[\s;,.]|$)", "", summary)
     # A working diagnosis confirmed word for word as the clinical one is
@@ -1972,18 +2095,43 @@ def _report_summary(text: str, span: tuple[int, int, int] | None) -> str:
     return summary
 
 
+_EMPTY_FIELD_RE = re.compile(r"^[^\n:]{2,40}[:：][ \t]*$", re.M)
+
+
 def _report_filing(
     first: sqlite3.Row, clinical_type: str, text: str, span: tuple[int, int, int] | None, summary: str
 ) -> tuple[str, str, tuple[str, ...]]:
-    """(study key, title, health areas) a report is filed under."""
-    header = " ".join((first["document_title"] or "", first["original_filename"] or "", text[: span[0]] if span else text[:2000]))
-    study = _study_for(header, clinical_type)
+    """(study key, title, health areas) a report is filed under.
+
+    A consultation is the specialty its heading names, filed by what its
+    diagnosis names; never by the history it quotes («вірусний гепатит
+    заперечує», «УЗД ЩЗ: …», «серцебиття» among the complaints), so its
+    header is only the text above the patient line.
+    """
+    names = f"{first['document_title'] or ''} {first['original_filename'] or ''}"
+    if clinical_type == "consultation":
+        patient = PATIENT_LABEL_RE.search(text)
+        body = text[: patient.start()] if patient else ""
+    else:
+        # An exam template's empty field («Щитовидна залоза:») names an organ
+        # nobody described; it never files the report.
+        body = _EMPTY_FIELD_RE.sub("", text[: span[0]] if span else text[:2000])
+    study = _study_for(f"{names} {body}", clinical_type)
+    diagnosed = _diagnosis_areas(summary)
+    # «Гепатиту А+В» in a vaccination visit names the vaccine, not the liver.
+    vaccination = clinical_type == "consultation" and _VACCINATION_VISIT.search(f"{summary} {text}")
+    if study:
+        key, title, areas = study
+        if key.startswith("consult_") and key != "consult_vaccination" and diagnosed and not vaccination:
+            return key, title, diagnosed
+        if areas:
+            return study
+    if vaccination:
+        return "consult_vaccination", "Family doctor consultation", ("immunity",)
     if study:
         return study
-    filing = f"{first['document_title'] or ''} {first['original_filename'] or ''} {summary or text[:2000]}"
-    areas = tuple(area for area, pattern in _ORGAN_AREAS if pattern.search(filing))
-    if clinical_type == "consultation" and _VACCINATION_VISIT.search(f"{summary} {text}"):
-        return "consult_vaccination", "Family doctor consultation", ("immunity",)
+    filing = f"{names} {summary or text[:2000]}"
+    areas = tuple(dict.fromkeys((*(area for area, pattern in _ORGAN_AREAS if pattern.search(filing)), *diagnosed)))
     return f"generic:{clinical_type}", _GENERIC_TITLES.get(clinical_type, "Clinical report"), areas
 
 
@@ -2016,7 +2164,15 @@ def _report_body_end(text: str, span: tuple[int, int, int] | None) -> int:
     if not rec:
         return span[2]
     rec_end = _RECOMMENDATION_END.search(text, rec.end())
-    return rec_end.start() if rec_end else len(text)
+    return _sentence_start(text, rec_end.start()) if rec_end else len(text)
+
+
+def _sentence_start(text: str, index: int) -> int:
+    """Where the sentence holding `index` starts: an end marker found inside a
+    line («Своїм підписом підтверджую:») must not leave its first words behind."""
+    line_start = text.rfind("\n", 0, index) + 1
+    ends = [found.end() for found in re.finditer(r"[.;:!?]\s", text[line_start:index])]
+    return line_start + (ends[-1] if ends else 0)
 
 
 def _summary_fields(summary: str, original: str) -> dict[str, object]:
@@ -2045,10 +2201,15 @@ def _report_candidate(
     texts = [_page_text(page) for page in pages]
     text = "\n".join(texts)
     span = _conclusion_span(text, clinical_type)
+    if span is None and clinical_type == "consultation":
+        span = _complaints_span(text)
     summary = _report_summary(text, span)
     recommendations = _extract_recommendations(text, span[2]) if span else ""
     study_key, title, areas = _report_filing(first, clinical_type, text, span, summary)
-    if not areas:
+    # Only an image set is filed without a written conclusion (its finding
+    # points at the pictures); any other report with nothing read stays a
+    # review task, not an empty finding filed by a word on its page.
+    if not areas or (not summary and clinical_type != "diagnostic_image"):
         return None
     sides = _named_sides(first)
     if study_key in {"knee_mri", "elbow_mri"} and len(sides) == 1:
