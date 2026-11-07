@@ -72,6 +72,7 @@ _PAIRS = {
     "batch_more_one": ("And {count} more file: the upload queue in Anamna lists it.", "І ще {count} файл: його видно в черзі завантажень Anamna."),
     "batch_more_few": ("And {count} more files: the upload queue in Anamna lists them.", "І ще {count} файли: їх видно в черзі завантажень Anamna."),
     "batch_more_many": ("And {count} more files: the upload queue in Anamna lists them.", "І ще {count} файлів: їх видно в черзі завантажень Anamna."),
+    "photo_compressed": ("Some files came as photos, which Telegram shrinks to about 1280 pixels, so small print may not be read correctly. Next time, send the original as a file (paperclip, then File).", "Деякі файли надійшли як фото, а Telegram зменшує фото приблизно до 1280 пікселів, тож дрібний текст може прочитатися з помилками. Наступного разу надсилайте оригінал як файл (скріпка, потім «Файл»)."),
     "batch_review": ("Values stay provisional until you check them against the original in Anamna. Open a document below to start.", "Зчитані значення залишаються попередніми, доки ви не звірите їх з оригіналом в Anamna. Відкрийте документ нижче, щоб почати."),
     "file_waiting": ("{name}: waiting in the queue", "{name}: чекає в черзі"),
     "file_reading": ("{name}: being read now", "{name}: зараз читається"),

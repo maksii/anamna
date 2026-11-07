@@ -91,6 +91,10 @@ Telegram delivers an album, a multi-forward or a gallery selection as one
 update per file, possibly concurrently, out of order and, after a restart,
 again. The bot handles them as one upload:
 
+- **Photos are small.** Telegram recompresses anything sent as a photo to about
+  1280 px. OCR enlarges such images twice before reading them, and the summary
+  of a batch with a photo advises sending the original as a file next time.
+
 - **Exactly once.** The inbox is keyed by `update_id` in SQLite, so a retried
   or redelivered update (including across a process restart) adds no job and
   no reply. Two workers never claim the same update.

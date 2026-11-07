@@ -794,6 +794,10 @@ class TelegramService:
             text += "\n" + t_plural("telegram.batch_more", len(shown) - SUMMARY_LINES)
         if counts["added"]:
             text += "\n\n" + message("batch_review", locale)
+        # Telegram recompresses anything sent as a photo to about 1280 px;
+        # small print on a phone screenshot then reads back as noise.
+        if any(job["filename"] == "photo.jpg" and job["state"] == "done" for job in shown):
+            text += "\n\n" + message("photo_compressed", locale)
         buttons = self._document_buttons(db, owner, documents)
         url = self._url(db, "/upload")
         if url:

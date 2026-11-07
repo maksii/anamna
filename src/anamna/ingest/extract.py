@@ -42,6 +42,9 @@ FULL_PAGE_PSM = "3"
 #: A scan is embedded at whatever size the phone produced.  Anything much past
 #: this on the long edge costs minutes of OCR for no extra characters.
 PAGE_RENDER_LONG_EDGE = 3000
+#: An image whose long edge is under half this is enlarged by a whole factor
+#: (at most 3) before OCR.
+SMALL_IMAGE_EDGE = 2600
 #: Below this many native characters a page carries no readable text of its own,
 #: and whatever it does carry is in the picture.  The same number the classifier
 #: uses to call a document `ocr_required`, so the two cannot disagree about which
@@ -351,7 +354,15 @@ def extract_document(path: Path, run_ocr: bool = True) -> dict[str, object]:
             if run_ocr:
                 target = Path(directory) / f"page-{index + 1}.png"
                 with ImageOps.exif_transpose(image) as upright:
-                    upright.convert("RGB").save(target)
+                    page = upright.convert("L")
+                    # A Telegram photo arrives at about 1280 px: a phone
+                    # screenshot of a report then carries 6 px letters, which
+                    # tesseract reads as nothing at all.  Enlarging to about
+                    # the size of a rendered PDF page brings the text back.
+                    scale = min(3, SMALL_IMAGE_EDGE // max(page.size))
+                    if scale > 1:
+                        page = page.resize((page.width * scale, page.height * scale), Image.LANCZOS)
+                    page.save(target)
                 ocr_text = ocr_layout_rows(target, FULL_PAGE_PSM) or ocr_image(target, FULL_PAGE_PSM)
             pages.append(
                 {

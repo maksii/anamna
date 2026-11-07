@@ -912,6 +912,7 @@ def test_album_of_mixed_files_is_one_batch_one_acknowledgement_and_one_summary(l
     assert "letter.docx: not added. Use PDF, JPEG, PNG, TIFF or ZIP." in summary
     assert "huge.pdf: not added. The file is empty or exceeds 20 MB." in summary
     assert "Values stay provisional" in summary
+    assert "came as photos" not in summary, "files sent as files get no photo hint"
     labels = [button["text"] for row in sent[1]["reply_markup"]["inline_keyboard"] for button in row]
     assert "Undo this upload" in labels and lab_title in labels
     # The copy in the album left no bytes behind: only the record's own files remain.
@@ -969,6 +970,29 @@ def test_acknowledgement_waits_until_files_stop_arriving(ledger, monkeypatch):
     with connect(settings) as db:
         assert db.execute("SELECT COUNT(DISTINCT batch_id) FROM upload_jobs").fetchone()[0] == 2
     assert messages_after(settings, before)[-1]["text"].startswith("Received 1 file.")
+
+
+def test_photo_summary_advises_sending_the_original_as_a_file(ledger):
+    """Telegram shrinks a photo to about 1280 px; the summary says so and how to avoid it."""
+    import io
+    from PIL import Image
+    from anamna.ingest.intake import drain_now
+    settings, owner, _, api, service = ledger
+    link(service, owner)
+    while service.deliver_one():
+        pass
+    before = len(outputs(settings))
+    buffer = io.BytesIO()
+    Image.new("RGB", (59, 128), "white").save(buffer, "JPEG")
+    api.files["shot"] = buffer.getvalue()
+    service.receive(incoming(30, photo=[{"file_id": "shot", "file_size": len(api.files["shot"])}]))
+    run_inbox(service)
+    service.notify_uploads()
+    drain_now(settings)
+    service.notify_uploads()
+    summary = messages_after(settings, before)[-1]["text"]
+    assert "Upload finished" in summary
+    assert "Some files came as photos, which Telegram shrinks to about 1280 pixels" in summary
 
 
 def test_concurrent_out_of_order_and_retried_updates_accept_each_file_once(ledger):

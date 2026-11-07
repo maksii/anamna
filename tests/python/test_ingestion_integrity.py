@@ -119,13 +119,13 @@ def test_changed_comparator_or_measurement_date_is_reported_for_review(ledger, m
 
 def test_tiff_pages_are_ocrd_separately_with_their_original_page_numbers(tmp_path, monkeypatch):
     source = tmp_path / "two-pages.tiff"
-    first = Image.new("RGB", (40, 50), "red")
-    second = Image.new("RGB", (40, 50), "blue")
+    first = Image.new("RGB", (40, 50), "white")
+    second = Image.new("RGB", (40, 50), "black")
     first.save(source, save_all=True, append_images=[second])
 
     def read_frame(path, psm):
         with Image.open(path) as image:
-            return "first page" if image.convert("RGB").getpixel((0, 0)) == (255, 0, 0) else "second page"
+            return "first page" if image.convert("L").getpixel((0, 0)) > 128 else "second page"
 
     monkeypatch.setattr(extract, "ocr_layout_rows", read_frame)
     extracted = extract.extract_document(source)
@@ -147,12 +147,29 @@ def test_image_orientation_is_applied_before_ocr(tmp_path, monkeypatch):
 
     def read_frame(path, psm):
         with Image.open(path) as normalized:
-            assert normalized.size == (60, 40)
+            width, height = normalized.size
+            assert width * 2 == height * 3
             assert normalized.getexif().get(274, 1) == 1
         return "upright medical record"
 
     monkeypatch.setattr(extract, "ocr_layout_rows", read_frame)
     assert extract.extract_document(source)["pages"][0]["ocr_text"] == "upright medical record"
+
+
+def test_small_photo_is_enlarged_before_ocr(tmp_path, monkeypatch):
+    """A Telegram photo (1280 px) is read at twice its size; a full-size scan as it is."""
+    seen = []
+
+    def read_frame(path, psm):
+        with Image.open(path) as frame:
+            seen.append(frame.size)
+        return "text"
+
+    monkeypatch.setattr(extract, "ocr_layout_rows", read_frame)
+    for name, size in (("telegram.jpg", (590, 1280)), ("scan.jpg", (2480, 3508))):
+        Image.new("RGB", size, "white").save(tmp_path / name)
+        extract.extract_document(tmp_path / name)
+    assert seen == [(1180, 2560), (2480, 3508)]
 
 
 def test_scanned_page_with_a_logo_uses_whole_page_ocr(tmp_path, monkeypatch):
