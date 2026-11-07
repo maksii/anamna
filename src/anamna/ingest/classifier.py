@@ -198,12 +198,12 @@ ISSUED_PATTERNS = [
     re.compile(rf"Час виконання:\s*{_DMY}{_HM}", re.I),  # EskuLab, older header
     re.compile(rf"Дата виконання:\s*{_DMY}{_HM}", re.I),  # EskuLab, 2026 header
     re.compile(rf"Дата видруку:?\s*{_DMY}{_HM}", re.I),  # Synevo companion report
+    re.compile(rf"ЗАБІР КРОВІ\s+НАДРУКОВАНИЙ НА\s+{_DMY}\s+{_DMY}", re.I),  # ALEX², two columns
+    re.compile(rf"НАДРУКОВАНИЙ НА\s+{_DMY}", re.I),
     # POLYCHECK prints its «Дата видруку» label as a picture; the date stands
     # alone on its line, followed by the Biocheck software version:
     # «18.11.2024 (V. 6.01.21 )».
     re.compile(rf"^{_DMY}\s*\(V\.\s*\d", re.M),
-    re.compile(rf"ЗАБІР КРОВІ\s+НАДРУКОВАНИЙ НА\s+{_DMY}\s+{_DMY}", re.I),  # ALEX², two columns
-    re.compile(rf"НАДРУКОВАНИЙ НА\s+{_DMY}", re.I),
 ]
 ESKULAB_ORDER_DATE_RE = re.compile(rf"Зам\s*овлення:\s*\S+\s*/\s*{_DMY}", re.I)
 SAMPLING_TIME_RE = re.compile(r"Час відбору:\s*(\d{1,2}):(\d{2})", re.I)
