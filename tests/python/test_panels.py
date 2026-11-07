@@ -172,6 +172,9 @@ PANEL_LESS_CONCEPTS = (
     "peak-systolic-velocity-internal-carotid-artery", "peak-systolic-velocity-external-carotid-artery",
     "peak-systolic-velocity-vertebral-artery", "vertebral-artery-diameter",
     "soft-tissue-lesion-largest-diameter", "soft-tissue-lesion-smaller-diameter",
+    # Tumour markers: read against a known cancer or a pelvic mass, not a body
+    # system, so no area panel claims them; their metric pages explain that.
+    "cancer-antigen-125-ca-125", "cancer-antigen-15-3-ca-15-3", "human-epididymis-protein-4-he4",
 )
 
 

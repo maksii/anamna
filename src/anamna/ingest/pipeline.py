@@ -42,6 +42,7 @@ from .parsers import (
     PARSED_CLINICAL_TYPES,
     PARSER_VERSION,
     ParsedObservation,
+    COMPANION_SUMMARY,
     ParseIssue,
     has_result_header,
     parse_document,
@@ -103,6 +104,9 @@ LEGACY_REASONS: dict[str, str] = {
     "review.no_values_found": (
         "Extraction found no values on a report of a kind the parser does read; "
         "check the pages for results it missed."
+    ),
+    "review.companion_summary": (
+        "An illustrated summary of results the lab issues with a report; its values are read from that report."
     ),
     REVIEW_RESCANNED_N: (
         "Re-read with parser {version}: verify {count} observation(s) the earlier parse did not produce."
@@ -1788,6 +1792,8 @@ def _ingest_review_reasons(
     issues: list[ParseIssue],
 ) -> list[dict[str, object]]:
     review_reasons = []
+    companion = any(issue.kind == COMPANION_SUMMARY for issue in issues)
+    issues = [issue for issue in issues if issue.kind != COMPANION_SUMMARY]
     if duplicate_id:
         review_reasons.append(reason_part("review.duplicate"))
     if doses:
@@ -1799,7 +1805,8 @@ def _ingest_review_reasons(
     if observations:
         review_reasons.append(reason_part(REVIEW_VERIFY_N, count=len(observations)))
     elif not (doses or duplicate_id):
-        review_reasons.append(_nothing_read_reason(classification))
+        review_reasons.append(reason_part("review.companion_summary") if companion
+                              else _nothing_read_reason(classification))
     review_reasons.extend(issue_parts(issues))
     return review_reasons
 

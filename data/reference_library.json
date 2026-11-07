@@ -331,6 +331,18 @@
       "access_note": "Read via the open PMC copy on 2026-08-06 because diabetesjournals.org and link.springer.com both refuse scripted fetches. Verbatim C-peptide statements: «A C-peptide test is only indicated in people receiving insulin treatment.»; «A random sample (with concurrent glucose) within 5 h of eating can replace a formal C-peptide stimulation test.»; «Persistent C-peptide >600 pmol/l (non-fasting) is strongly suggestive of type 2 diabetes and people with C-peptide in this range are often able to replace insulin with other agents.»; «C-peptide values 200-600 pmol/l are usually consistent with type 1 diabetes or maturity-onset diabetes of the young (MODY).»; «Results showing very low levels (<80 pmol/l) do not need to be repeated.» Every one of these is conditional on insulin treatment and on a non-fasting sample with a paired glucose, which is why none of them is written into a band in this file."
     },
     {
+      "id": "ada-insulin-std-2007",
+      "region": "US",
+      "publisher": "American Diabetes Association, Insulin Standardization Workgroup",
+      "name": "Standardization of insulin immunoassays: report of the American Diabetes Association Workgroup (Marcovina S et al., Clin Chem 2007;53(4):711-716)",
+      "url": "https://pubmed.ncbi.nlm.nih.gov/17272483/",
+      "identifier": "doi:10.1373/clinchem.2006.082214; PMID 17272483",
+      "reviewed_at": "2026-11-07",
+      "official": true,
+      "kind": "study",
+      "access_note": "Abstract read through NCBI E-utilities 2026-11-07. «Currently, lack of standardization of insulin assays hinders efforts to achieve consistent measures for treatment guidelines.» Twelve commercial methods from 9 manufacturers: among-assay CVs «ranged from 12% to 66%, with a median value of 24%»; a common insulin reference preparation «failed to improve harmonization of results among assays»."
+    },
+    {
       "id": "ada-soc-2026",
       "region": "US",
       "publisher": "American Diabetes Association",
@@ -610,6 +622,18 @@
       "official": true,
       "kind": "guideline",
       "access_note": "ard.bmj.com returns HTTP 403 to scripted fetches; citation verified on the NIH PubMed record."
+    },
+    {
+      "id": "asco-breast-followup-2013",
+      "region": "US",
+      "publisher": "American Society of Clinical Oncology (ASCO)",
+      "name": "Breast cancer follow-up and management after primary treatment: ASCO clinical practice guideline update (Khatcheressian JL et al., J Clin Oncol 2013;31(7):961-965)",
+      "url": "https://pubmed.ncbi.nlm.nih.gov/23129741/",
+      "identifier": "doi:10.1200/JCO.2012.45.9859; PMID 23129741",
+      "reviewed_at": "2026-11-07",
+      "official": true,
+      "kind": "guideline",
+      "access_note": "ascopubs.org returns HTTP 403 to scripted fetches; the abstract was read through NCBI E-utilities on 2026-11-07. Recommendation verbatim: the use of blood counts, chemistry panels, imaging «and/or tumor markers (carcinoembryonic antigen, CA 15-3, and CA 27.29) is not recommended for routine follow-up in an otherwise asymptomatic patient with no specific findings on clinical examination». Follow-up is history, physical examination and mammography."
     },
     {
       "id": "ase-carotid-imt-2008",
@@ -1514,6 +1538,18 @@
       "access_note": "Full PDF (50 pages) read 2026-11-07. «A normal spleen weighs 150 g and is approximately 11 -12 cm in craniocaudal length and is 3 -4 cm thick.» «There is a wide range of normal spleen sizes, from very small to large organs.» Spleen length and width in young athletes «correlates with length and gender» (Spielmann): men taller than 2 m had a mean length of 13.2 cm (maximum 16.2 cm), women about 2 m tall 11.2 cm (maximum 14.0 cm). The chapter says «it is important to know at which splenic size the organ is considered enlarged» but states no such limit. Teaching material published by the European federation of ultrasound societies, not a guideline, hence official false."
     },
     {
+      "id": "egtm-ovarian-2016",
+      "region": "EU",
+      "publisher": "European Group on Tumour Markers (EGTM)",
+      "name": "Clinical Use of Cancer Biomarkers in Epithelial Ovarian Cancer: Updated Guidelines From the European Group on Tumor Markers (Sölétormos G et al., Int J Gynecol Cancer 2016;26(1):43-51)",
+      "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC4679342/",
+      "identifier": "doi:10.1097/IGC.0000000000000586; PMID 26588231",
+      "reviewed_at": "2026-11-07",
+      "official": true,
+      "kind": "guideline",
+      "access_note": "Open PMC copy and the PubMed abstract read 2026-11-07. Abstract: because of its low sensitivity (50-62% for early-stage disease) and limited specificity, «CA125 is not recommended as a screening test in asymptomatic women»; HE4, more specific than CA125 «especially in premenopausal women», «may be considered either alone or as part of the risk of ovarian malignancy algorithm, in the differential diagnosis of pelvic masses»; CA125 should monitor response to first-line chemotherapy by the Gynecological Cancer Intergroup criterion (at least a 50% reduction from a pretreatment sample of 70 kU/L or greater); a randomised trial found early chemotherapy on a rising CA125 had no effect on survival, yet EGTM states post-therapy monitoring «should occur, especially if the patient is a candidate for secondary cytoreductive surgery». Full text: «The reference interval for CA125 is 35 kU/L or less»; raised values occur «in healthy premenopausal women during menses, in pregnancy» and with ovarian cysts, endometriosis, adenomyosis, leiomyomas and peritoneal, pleural, liver, renal and cardiac disease; serial samples from one patient should be measured in the same laboratory. HE4 in healthy women ranges about 60-150 pmol/L, is higher in women over 49 than under 40, and renal failure is «The most important source of false-positive results». Filed under EU: a European expert group (one US co-author)."
+    },
+    {
       "id": "eln-morphology-2010",
       "region": "EU",
       "publisher": "European LeukemiaNet, Morphology Faculty (network WP10)",
@@ -1774,6 +1810,30 @@
       "identifier": "doi:10.1097/HJH.0000000000003480",
       "reviewed_at": "2026-08-03",
       "official": true
+    },
+    {
+      "id": "esmo-early-breast-2024",
+      "region": "EU",
+      "publisher": "European Society for Medical Oncology (ESMO)",
+      "name": "Early breast cancer: ESMO Clinical Practice Guideline for diagnosis, treatment and follow-up (Loibl S et al., Ann Oncol 2024;35(2):159-182)",
+      "url": "https://doi.org/10.1016/j.annonc.2023.11.016",
+      "identifier": "doi:10.1016/j.annonc.2023.11.016; PMID 38101773",
+      "reviewed_at": "2026-11-07",
+      "official": true,
+      "kind": "guideline",
+      "access_note": "annalsofoncology.org returns HTTP 403 to scripted fetches; the citation was verified through the PubMed record on 2026-11-07 and the follow-up recommendation through a search of the Annals of Oncology full text: in asymptomatic patients, laboratory tests («blood counts, routine chemistry, tumour marker assessment») or other imaging «are not recommended [I, D]»."
+    },
+    {
+      "id": "esmo-ovarian-2023",
+      "region": "EU",
+      "publisher": "European Society for Medical Oncology (ESMO)",
+      "name": "Newly diagnosed and relapsed epithelial ovarian cancer: ESMO Clinical Practice Guideline for diagnosis, treatment and follow-up (González-Martín A et al., Ann Oncol 2023;34(10):833-848)",
+      "url": "https://doi.org/10.1016/j.annonc.2023.07.011",
+      "identifier": "doi:10.1016/j.annonc.2023.07.011; PMID 37597580",
+      "reviewed_at": "2026-11-07",
+      "official": true,
+      "kind": "guideline",
+      "access_note": "annalsofoncology.org and esmo.org return HTTP 403/404 to scripted fetches; the citation was verified through the PubMed record (NCBI E-utilities) on 2026-11-07 and the CA-125 sentences through a published verbatim excerpt of the guideline: «Measurement of serum cancer antigen 125 (CA-125) aids diagnosis and is elevated in ∼85% of patients with advanced disease.» CA-125 «is only elevated in ∼50% of» FIGO stage I cases; elevated CA-125 «is not specific to ovarian cancer» and occurs with non-gynaecological malignancies and benign conditions (endometriosis, ovarian cysts); ultrasound-based models (IOTA Simple Rules, ADNEX) are preferable to CA-125, HE4 or ROMA for distinguishing benign from malignant ovarian tumours. No reference interval is given."
     },
     {
       "id": "eta-subclinical-2013",
@@ -2907,6 +2967,18 @@
       "source_access": "Full text fetched and read. Колонка обстежень включає «дослідження калу на виявлення гіменолепідозу та яєць гостриків (ентеробіозу) у зішкребку з прианальних складок» — при попередньому медогляді та надалі 1 раз на рік для працівників харчової та переробної промисловості й суміжних груп. Це єдина чинна українська нормативна вимога до планового дослідження калу на яйця гельмінтів, і вона професійна, а не популяційна."
     },
     {
+      "id": "moz-nakaz-195-2025",
+      "region": "UA",
+      "publisher": "Міністерство охорони здоров’я України",
+      "name": "Стандарт медичної допомоги «Рак молочної залози» (2025)",
+      "url": "https://moz.gov.ua/storage/uploads/5cfe436a-564a-4369-a846-139ee6d74533/dn_195_03022025_dod.pdf",
+      "identifier": "Наказ МОЗ України від 03.02.2025 № 195",
+      "reviewed_at": "2026-11-07",
+      "official": true,
+      "kind": "standard",
+      "access_note": "Official PDF downloaded from moz.gov.ua and its text extracted 2026-11-07 (title page: «СТАНДАРТ МЕДИЧНОЇ ДОПОМОГИ РАК МОЛОЧНОЇ ЗАЛОЗИ», Наказ МОЗ від 03 лютого 2025 року № 195). Розділ IV «Подальше спостереження», критерії якості, п. 3: «у безсимптомних пацієнтів лабораторні або візуалізаційні тести (аналіз крові, рентген грудної клітки, сканування кісток, УЗД печінки, КТ, ФДГ-ПЕТ-КТ) або будь-які пухлинні маркери як CA15-3 або CEA, призначати не рекомендовано». П. 4 nevertheless lists «Са15-3» among the laboratory tests for asymptomatic patients on endocrine therapy, to watch for adverse effects, where the patient cannot be examined clinically. Staging of metastatic disease lists «онкомаркери» without naming a value. No numeric CA 15-3 limit appears in the document."
+    },
+    {
       "id": "moz-nakaz-1967-2022",
       "region": "UA",
       "publisher": "Міністерство охорони здоров’я України",
@@ -2999,6 +3071,18 @@
       "identifier": "Наказ МОЗ України від 06.11.2014 № 826",
       "reviewed_at": "2026-08-03",
       "official": true
+    },
+    {
+      "id": "moz-nakaz-869-2021",
+      "region": "UA",
+      "publisher": "Міністерство охорони здоров’я України / ДП «Державний експертний центр МОЗ України»",
+      "name": "Уніфікований клінічний протокол первинної, вторинної (спеціалізованої), третинної (високоспеціалізованої) медичної допомоги «Гіперплазія ендометрія» (2021)",
+      "url": "https://www.dec.gov.ua/wp-content/uploads/2021/05/2021_869_ykpmd_gipendom_dor.pdf",
+      "identifier": "Наказ МОЗ України від 05.05.2021 № 869",
+      "reviewed_at": "2026-11-07",
+      "official": true,
+      "kind": "clinical_protocol",
+      "access_note": "Official ДЕЦ PDF downloaded and its text extracted 2026-11-07; the PDF's title page leaves the order number blank, and the number and date (05.05.2021 № 869) are taken from the file name and the МОЗ announcement. Verbatim: «перед початком лікування АГ у жінок зі збереженням фертильності необхідно провести аналіз на пухлинний маркер яєчників CA 125, візуалізацію органів малого тазу за допомогою ТВ УЗД та (або) дифузійно-зваженої МРТ, щоб виключити супутній рак яєчників та інвазивний РЕ». CA 125 appears only in this exclusion role; no interval is given."
     },
     {
       "id": "moz-nakaz-89-2016",
@@ -4017,6 +4101,30 @@
       "access_note": "Official NCI PDF fetched (the old ctep.cancer.gov URL now redirects to dctd.cancer.gov) and its text extracted; page 83, Investigations. 'Neutrophil count decreased: <LLN - 1500/mm3; <LLN - 1.5 x 10e9 /L | <1500 - 1000/mm3; <1.5 - 1.0 x 10e9 /L | <1000 - 500/mm3; <1.0 - 0.5 x 10e9 /L | <500/mm3; <0.5 x 10e9 /L' (grades 1-4). 'Lymphocyte count decreased: <LLN - 800/mm3; <LLN - 0.8 x 10e9/L | <800 - 500/mm3 | <500 - 200/mm3 | <200/mm3'. 'Lymphocyte count increased: - | >4000/mm3 - 20,000/mm3 | >20,000/mm3'. These are toxicity grades for cancer treatment, defined relative to each laboratory's lower limit of normal where one applies; CTCAE publishes no reference interval of its own."
     },
     {
+      "id": "nci-tumor-markers-factsheet",
+      "region": "US",
+      "publisher": "National Cancer Institute (NIH)",
+      "name": "Tumor Markers (fact sheet, reviewed 7 December 2023)",
+      "url": "https://www.cancer.gov/about-cancer/diagnosis-staging/diagnosis/tumor-markers-fact-sheet",
+      "identifier": null,
+      "reviewed_at": "2026-11-07",
+      "official": true,
+      "kind": "patient_information",
+      "access_note": "Fetched 2026-11-07. «having an elevated level of a tumor marker does not mean that someone has cancer»; «Noncancerous conditions can sometimes cause an increase in the level of a tumor marker»; measurements «are usually combined with the results of other tests». Page reviewed 7 December 2023."
+    },
+    {
+      "id": "nci-tumor-markers-list",
+      "region": "US",
+      "publisher": "National Cancer Institute (NIH)",
+      "name": "Tumor Markers in Common Use (reviewed 7 December 2023)",
+      "url": "https://www.cancer.gov/about-cancer/diagnosis-staging/diagnosis/tumor-markers-list",
+      "identifier": null,
+      "reviewed_at": "2026-11-07",
+      "official": true,
+      "kind": "patient_information",
+      "access_note": "Fetched 2026-11-07. CA-125: ovarian cancer, blood, «To help in diagnosis, assessment of response to treatment, and evaluation of recurrence». CA15-3/CA27.29: breast cancer, blood, «To assess whether treatment is working or if the cancer has recurred». HE4: ovarian cancer, blood, «To plan cancer treatment, assess disease progression, and monitor for recurrence». No reference values are given."
+    },
+    {
       "id": "ngsp-ifcc",
       "region": "US",
       "publisher": "National Glycohemoglobin Standardization Program (NGSP), the CDC-linked US HbA1c standardisation programme",
@@ -4186,7 +4294,7 @@
       "reviewed_at": "2026-11-07",
       "official": true,
       "kind": "guideline",
-      "access_note": "Recommendations chapter fetched 2026-11-07. Soft tissue sarcoma in adults: «1.11.4 Consider an urgent, direct access ultrasound scan to assess for soft tissue sarcoma in adults with an unexplained lump that is increasing in size.» «1.11.5 Consider a suspected cancer pathway referral for adults if they have ultrasound scan findings that are suggestive of soft tissue sarcoma or if ultrasound findings are uncertain and clinical concern persists.» Children and young people (1.11.6-1.11.7): a very urgent ultrasound for an unexplained lump that is increasing in size, and a very urgent referral (within 48 hours) on suggestive or uncertain findings. NG12 gives no size threshold; growth is the trigger."
+      "access_note": "Recommendations chapter fetched 2026-11-07. Soft tissue sarcoma in adults: «1.11.4 Consider an urgent, direct access ultrasound scan to assess for soft tissue sarcoma in adults with an unexplained lump that is increasing in size.» «1.11.5 Consider a suspected cancer pathway referral for adults if they have ultrasound scan findings that are suggestive of soft tissue sarcoma or if ultrasound findings are uncertain and clinical concern persists.» Children and young people (1.11.6-1.11.7): a very urgent ultrasound for an unexplained lump that is increasing in size, and a very urgent referral (within 48 hours) on suggestive or uncertain findings. NG12 gives no size threshold; growth is the trigger. CA125 (read 2026-11-07 through nice.org.uk search results and the April 2026 update log, because the recommendation pages return HTTP 403 to scripted fetches): recommendations 1.5.6-1.5.9 and 1.5.11 were amended in April 2026 to age-specific CA125 thresholds for women aged 40 or over with persistent symptoms suggestive of ovarian cancer (unchanged at 35 U/ml for ages 40 to 49), and serum CA125 is not to be used in isolation for decision making. These are referral triggers for symptomatic people, not reference intervals."
     },
     {
       "id": "nice-ng136",
@@ -4306,6 +4414,18 @@
       "identifier": "NIDDK health information, urologic diseases",
       "reviewed_at": "2026-08-03",
       "official": true
+    },
+    {
+      "id": "niddk-insulin-std-2010",
+      "region": "US",
+      "publisher": "National Institute of Diabetes and Digestive and Kidney Diseases (NIH) / American Diabetes Association Insulin Standardization Workgroup",
+      "name": "Insulin assay standardization: leading to measures of insulin sensitivity and secretion for practical clinical care (Staten MA et al., Diabetes Care 2010;33(1):205-206)",
+      "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC2797975/",
+      "identifier": "doi:10.2337/dc09-1206; PMID 20040676",
+      "reviewed_at": "2026-11-07",
+      "official": true,
+      "kind": "study",
+      "access_note": "Open PMC copy read 2026-11-07. Commercial assays «produce a range of values for the same samples»; results «are not translatable to other laboratories or studies due to the lack of standardization of insulin assays»; cut-off values «can then be determined» only once standardisation is achieved. Recommends reporting in SI units (pmol/L)."
     },
     {
       "id": "niddk-kidney-stones",
@@ -4637,6 +4757,18 @@
       "official": true
     },
     {
+      "id": "pcos-guideline-2023",
+      "region": "EU",
+      "publisher": "International PCOS Network, published on behalf of the European Society of Human Reproduction and Embryology (ESHRE)",
+      "name": "Recommendations from the 2023 International Evidence-based Guideline for the Assessment and Management of Polycystic Ovary Syndrome (Teede HJ et al., Hum Reprod 2023;38(9):1655-1679)",
+      "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10477934/",
+      "identifier": "doi:10.1093/humrep/dead156",
+      "reviewed_at": "2026-11-07",
+      "official": true,
+      "kind": "guideline",
+      "access_note": "Open PMC copy read 2026-11-07. Practice points 1.9.12 and 3.1.10: insulin resistance is a pathophysiological factor in PCOS, but «clinically available insulin assays are of limited clinical relevance and should not be used in routine care». Glycaemic status is assessed by OGTT, fasting glucose or HbA1c. Filed under EU because it is published on behalf of ESHRE with the European Society of Endocrinology as a partner; ASRM and the Endocrine Society (US) are also partners and the lead funder is Australia's NHMRC."
+    },
+    {
       "id": "phc-ua-physical-activity-2021",
       "region": "UA",
       "publisher": "Центр громадського здоров’я МОЗ України",
@@ -4928,6 +5060,18 @@
       "official": true,
       "kind": "guideline",
       "access_note": "Read 2026-11-06. Screening recommended for women 65 years or older and for postmenopausal women younger than 65 at increased risk (Grade B); evidence insufficient for men (I statement). Bone measurement test: «dual-energy x-ray absorptiometry (DXA) at a central site (eg, total hip, femoral neck, or lumbar spine)». Bioimpedance is not mentioned as a bone measurement."
+    },
+    {
+      "id": "uspstf-ovarian-2018",
+      "region": "US",
+      "publisher": "U.S. Preventive Services Task Force",
+      "name": "Ovarian Cancer: Screening (final recommendation statement, 13 February 2018) - Grade D",
+      "url": "https://www.uspreventiveservicestaskforce.org/uspstf/recommendation/ovarian-cancer-screening",
+      "identifier": "USPSTF 2018, Grade D",
+      "reviewed_at": "2026-11-07",
+      "official": true,
+      "kind": "guideline",
+      "access_note": "Fetched 2026-11-07. «The USPSTF recommends against screening for ovarian cancer in asymptomatic women.» (Grade D). Screening with CA-125 testing, transvaginal ultrasound or both «does not reduce ovarian cancer mortality» and causes «many false-positive results, which can lead to unnecessary surgical interventions». In UKCTOCS (CA-125 interpreted by the ROCA algorithm), 44.2% of women without ovarian cancer had a positive result at some point across rounds."
     },
     {
       "id": "uspstf-statin-2022",
@@ -10151,13 +10295,13 @@
       "agreement": "concordant",
       "divergence_note": null,
       "bands": [],
-      "short_description": "Free T4 is the unbound, active form of the main thyroid hormone circulating in blood. Neither the American nor the European thyroid societies publish a universal interval for it: both write their guidance as 'free T4 within the reference range' and leave the numbers to the laboratory. The ATA states that there are 'significant inter-laboratory differences at any given time and intra-laboratory differences over time', and the IFCC committee that is standardising the test estimates that standardisation will shift free T4 results by as much as 80%. No universal reference interval exists for this test: results depend on the analyser, reagent and calibration used, so the interval printed on your own laboratory report is the one that governs.",
+      "short_description": "Free T4 is the unbound, active form of the main thyroid hormone circulating in blood. Neither the American nor the European thyroid societies publish a universal interval for it: both write their guidance as 'free T4 within the reference range' and leave the numbers to the laboratory. The ATA states that there are 'significant inter-laboratory differences at any given time and intra-laboratory differences over time', and the IFCC committee that is standardising the test estimates that standardisation will shift free T4 results by as much as 80%. No universal reference interval exists for this test: results depend on the analyser, reagent and calibration used, so the interval printed on your own laboratory report is the one that governs. Laboratories report free T4 in pmol/L or in ng/dL; 1 ng/dL equals 12.87 pmol/L (from the molar mass of thyroxine), and this record restates ng/dL readings in pmol/L so that one trend holds both.",
       "why_it_matters": "It is read together with TSH to separate thyroid problems from pituitary ones and to judge severity.",
       "retest_interval_months": null,
       "retest_rationale": null,
       "uk": {
         "name": "Вільний тироксин (вТ4)",
-        "short_description": "Вільним Т4 називають незв’язану, активну форму основного гормону щитоподібної залози в крові. Ні американське, ні європейське тиреоїдні товариства не публікують для нього універсального інтервалу: обидва пишуть у рекомендаціях «вТ4 у межах референтного інтервалу» і залишають цифри лабораторії. ATA наголошує на значних відмінностях між лабораторіями, а також у межах однієї лабораторії з часом. Комітет IFCC, який стандартизує цей аналіз, оцінює, що після стандартизації результати вТ4 можуть зміститися аж на 80%. Універсального референтного інтервалу для цього аналізу немає: результат залежить від аналізатора, реагенту та калібрування. Тому орієнтуйтеся на інтервал, надрукований у бланку вашої лабораторії.",
+        "short_description": "Вільним Т4 називають незв’язану, активну форму основного гормону щитоподібної залози в крові. Ні американське, ні європейське тиреоїдні товариства не публікують для нього універсального інтервалу: обидва пишуть у рекомендаціях «вТ4 у межах референтного інтервалу» і залишають цифри лабораторії. ATA наголошує на значних відмінностях між лабораторіями, а також у межах однієї лабораторії з часом. Комітет IFCC, який стандартизує цей аналіз, оцінює, що після стандартизації результати вТ4 можуть зміститися аж на 80%. Універсального референтного інтервалу для цього аналізу немає: результат залежить від аналізатора, реагенту та калібрування. Тому орієнтуйтеся на інтервал, надрукований у бланку вашої лабораторії. Лабораторії повідомляють вільний Т4 у пмоль/л або в нг/дл; 1 нг/дл дорівнює 12,87 пмоль/л (за молярною масою тироксину), тож тут результати в нг/дл перераховано в пмоль/л, щоб усі показники були в одній серії.",
         "why_it_matters": "Його оцінюють разом із ТТГ: так лікар розуміє, де проблема, у щитоподібній залозі чи в гіпофізі, і наскільки вона серйозна.",
         "band_labels": {}
       }
@@ -31004,6 +31148,139 @@
         "no_target_reason": "Нормального розміру для утворення не існує. Офіційний розмір для направлення (понад 5 см за українським стандартом 2023 року щодо сарком м’яких тканин і за критеріями доцільності ACR) стосується діаметра, який у стадіюванні пухлин означає найбільший вимір («у найбільшому вимірі»), тому він стосується найбільшого діаметра (там його пояснено), а не цього. Менше число зберігається, щоб стежити за змінами з часом.",
         "retest_rationale": "Планового інтервалу УЗД для утворення доброякісного вигляду не встановлено; повторне УЗД потрібне, якщо утворення росте, болить, стає твердим чи нерухомим (NICE NG12).",
         "jurisdiction_note": "Україна: Стандарт медичної допомоги «Саркоми м’яких тканин кінцівок та тулуба» (наказ МОЗ від 10.08.2023 № 1434) застосовує критерій 5 см до діаметра поверхневого утворення і стадіює пухлини за найбільшим виміром; для другого, меншого діаметра нічого не встановлює. США: критерії доцільності ACR 2022 так само говорять про діаметр понад 5 см. ЄС: NICE NG12 орієнтується на ріст, а не на розмір."
+      }
+    },
+    {
+      "concept_id": "insulin",
+      "unit": "mIU/L",
+      "kind": "no_universal_target",
+      "source_ids": [
+        "ada-insulin-std-2007",
+        "niddk-insulin-std-2010",
+        "ada-soc-2026",
+        "pcos-guideline-2023",
+        "moz-nakaz-1300-2024",
+        "dec-kn-diabet-2024",
+        "dec-kn-ozhyrinnya-dorosli-2023"
+      ],
+      "regions_covered": [
+        "US",
+        "EU",
+        "UA"
+      ],
+      "agreement": "concordant",
+      "divergence_note": null,
+      "jurisdiction_note": "Ukrainian sources were read in Ukrainian: Наказ МОЗ № 1300 (2024) diagnoses diabetes and prediabetes by glucose and HbA1c only; the 2024 diabetes guideline notes that in type 2 diabetes «може бути нормальний або підвищений рівень інсуліну»; the 2023 obesity guideline lists insulin only qualitatively («Інсулін ↑ Інсулінорезистентність»). None gives an insulin interval.",
+      "bands": [],
+      "no_universal_target_reason": "Insulin immunoassays are not standardised. The ADA workgroup found the among-assay CV for the same samples ranged from 12% to 66% (median 24%), and the NIH-led follow-up states results are not translatable between laboratories; cut-offs can be set only once assays are standardised. Diabetes is diagnosed by glucose and HbA1c in US and Ukrainian criteria alike, and the 2023 international PCOS guideline says insulin assays should not be used in routine care. Any curated interval would be one assay's numbers applied to another's.",
+      "short_description": "Insulin is the hormone the pancreas releases to move glucose from the blood into cells. A fasting insulin level is sometimes ordered to look for insulin resistance, but no guideline uses it to diagnose anything: diabetes and prediabetes are diagnosed from glucose and HbA1c, both in the American Diabetes Association's Standards of Care and in Ukraine's type 2 diabetes protocol (Наказ МОЗ № 1300, 2024). The reason is the test itself. An American Diabetes Association workgroup compared twelve commercial insulin methods on the same samples and found the spread between them (coefficient of variation) ranged from 12% to 66%, with a median of 24%, and the NIH-led follow-up concluded that insulin results are not translatable between laboratories until assays are standardised. The 2023 international PCOS guideline, published with the European Society of Human Reproduction and Embryology, states that clinically available insulin assays are of limited clinical relevance and should not be used in routine care. There is therefore no universal reference interval: read a result against the range printed by the laboratory that measured it, and together with the glucose from the same sample. Laboratories write the unit as µU/mL (мкОд/мл), µIU/mL (мкМО/мл) or mIU/L; for insulin these are the same number, so this record keeps them in one series.",
+      "why_it_matters": "Insulin means something only beside the glucose it is responding to, and on an unstandardised assay a single value rarely changes what a doctor would do. Fasting glucose and HbA1c are the tests that decide whether someone has prediabetes or diabetes.",
+      "retest_interval_months": null,
+      "retest_rationale": "No source sets a repeat interval for insulin, and the 2023 PCOS guideline advises against insulin assays in routine care. The tests that are repeated are glucose or HbA1c: yearly with prediabetes and at least every 3 years when normal, per Наказ МОЗ № 1300 (2024).",
+      "uk": {
+        "name": "Інсулін",
+        "short_description": "Інсулін це гормон, який підшлункова залоза виділяє, щоб глюкоза з крові потрапила в клітини. Інсулін натще іноді призначають, щоб пошукати інсулінорезистентність, але жодна настанова не діагностує за ним жодного стану: діабет і предіабет встановлюють за глюкозою та HbA1c і в стандартах Американської діабетичної асоціації (ADA), і в українському протоколі «Цукровий діабет 2 типу у дорослих» (наказ МОЗ № 1300, 2024). Причина в самому аналізі. Робоча група ADA порівняла дванадцять комерційних методів визначення інсуліну на тих самих зразках: розкид між ними (коефіцієнт варіації) становив від 12% до 66%, у середньому (медіана) 24%. Подальша робота під керівництвом NIH дійшла висновку, що результати інсуліну неможливо переносити з лабораторії в лабораторію, доки методи не стандартизовано. Міжнародна настанова 2023 року щодо синдрому полікістозних яєчників, опублікована разом з Європейським товариством репродукції людини та ембріології (ESHRE), прямо зазначає, що наявні аналізи на інсулін мають обмежене клінічне значення і не повинні використовуватися в рутинній практиці. Тому універсального референтного інтервалу немає: оцінюйте результат за нормою лабораторії, яка робила аналіз, і разом із глюкозою з того самого зразка. Лабораторії пишуть одиницю як мкОд/мл, мкМО/мл або мМО/л; для інсуліну це те саме число, тож тут усі результати показано однією серією.",
+        "why_it_matters": "Інсулін має сенс лише поруч із глюкозою, на яку він реагує, а при нестандартизованому методі одне значення рідко змінює рішення лікаря. Чи є предіабет або діабет, вирішують глюкоза натще та HbA1c.",
+        "retest_rationale": "Жодне джерело не встановлює, як часто повторювати аналіз на інсулін, а настанова 2023 року щодо СПКЯ не радить рутинно його визначати. Повторюють глюкозу або HbA1c: щороку при предіабеті та щонайменше раз на 3 роки, якщо результати нормальні (наказ МОЗ № 1300, 2024).",
+        "band_labels": {}
+      }
+    },
+    {
+      "concept_id": "cancer-antigen-125-ca-125",
+      "unit": "U/mL",
+      "kind": "no_universal_target",
+      "source_ids": [
+        "nci-tumor-markers-factsheet",
+        "nci-tumor-markers-list",
+        "uspstf-ovarian-2018",
+        "egtm-ovarian-2016",
+        "esmo-ovarian-2023",
+        "nice-ng12",
+        "moz-nakaz-869-2021"
+      ],
+      "regions_covered": [
+        "US",
+        "EU",
+        "UA"
+      ],
+      "agreement": "concordant",
+      "divergence_note": null,
+      "jurisdiction_note": "US, EU and UA sources agree that CA 125 is not a screening test and give no interval of their own beyond the conventional 35 U/mL limit EGTM calls the reference interval. No current Ukrainian ovarian cancer standard was found: the oncology protocols of Наказ МОЗ № 554 of 17.09.2007 lost force on 01.09.2023, and dec.gov.ua searches for «яєчник» and «рак яєчника» on 2026-11-07 returned no medical-technological document on ovarian cancer. The Ukrainian source cited uses CA 125 only to help exclude a concurrent ovarian cancer before fertility-sparing treatment of endometrial hyperplasia.",
+      "bands": [],
+      "no_universal_target_reason": "CA 125 is a disease marker, not a measure of health. Its guideline uses are monitoring response and recurrence in diagnosed ovarian cancer and, in women with symptoms, deciding whether to scan; screening people without symptoms is recommended against (USPSTF Grade D; EGTM). The 35 U/mL limit is assay-specific and is crossed in healthy women during menstruation and pregnancy and in many benign conditions, so a curated band would override the laboratory's own assay limit and raise alarms that mean nothing. The laboratory's printed range is the right comparison, and serial values should come from one laboratory.",
+      "short_description": "CA 125 (cancer antigen 125) is a protein that many ovarian cancers release into the blood. Its main use is in a person already diagnosed with ovarian cancer: a falling level suggests treatment is working, and a rising one can be an early sign that the disease has returned. It is not a screening test. The US Preventive Services Task Force recommends against screening women without symptoms, because screening with CA 125 and ultrasound did not reduce deaths and produced many false positives that led to unnecessary surgery; the European Group on Tumour Markers (EGTM) agrees, since CA 125 is raised in only about half of early-stage cancers. A raised value is not a diagnosis: CA 125 also rises during menstruation and pregnancy, with endometriosis, ovarian cysts, fibroids and adenomyosis, and with inflammation of the abdominal or chest lining and liver, kidney or heart disease. The 35 U/mL upper limit most laboratories print is the reference interval EGTM gives, but results depend on the assay, so compare each result with the limit printed by the laboratory that measured it and keep a series in one laboratory. In the UK, NICE uses CA 125 only in women aged 40 or over with persistent symptoms, with age-specific thresholds for arranging an ultrasound, and says not to use it in isolation.",
+      "why_it_matters": "In someone treated for ovarian cancer, the trend of CA 125 helps the oncology team judge response and spot recurrence. In someone without that diagnosis, a value above the laboratory's limit is a reason to talk to a doctor about symptoms and timing (for example a test taken during a period), not evidence of cancer, and a normal value does not rule cancer out.",
+      "retest_interval_months": null,
+      "retest_rationale": "No source sets a schedule for people without ovarian cancer, and USPSTF recommends against screening. After treatment the oncology team sets the timing: EGTM uses CA 125 to follow first-line chemotherapy (a fall of at least 50% from a pre-treatment level of 70 U/mL or more counts as a response) and favours monitoring afterwards, while noting that a randomised trial found starting chemotherapy early on a rising CA 125 did not improve survival.",
+      "uk": {
+        "name": "Онкомаркер CA 125",
+        "short_description": "CA 125 (раковий антиген 125) це білок, який багато пухлин яєчників виділяють у кров. Головне його застосування стосується людей, у яких рак яєчників уже діагностовано: зниження рівня свідчить, що лікування діє, а зростання може бути раннім сигналом повернення хвороби. Це не скринінговий тест. Робоча група з профілактичних послуг США (USPSTF) не рекомендує скринінг жінок без симптомів, бо скринінг за CA 125 і УЗД не зменшив смертності, натомість дав багато хибнопозитивних результатів і непотрібних операцій. Європейська група з онкомаркерів (EGTM) теж не радить CA 125 для скринінгу, бо на ранніх стадіях раку він підвищений лише приблизно в половини хворих. Підвищений рівень не є діагнозом: CA 125 зростає також під час менструації та вагітності, при ендометріозі, кістах яєчників, міомі та аденоміозі, при запаленні очеревини чи плеври, хворобах печінки, нирок і серця. Верхня межа 35 Од/мл, яку друкує більшість лабораторій, відповідає референтному інтервалу EGTM, але результат залежить від методу, тож порівнюйте його з межею лабораторії, яка робила аналіз, і повторні аналізи робіть в одній лабораторії. У Великій Британії NICE використовує CA 125 лише в жінок від 40 років зі стійкими симптомами, з віковими порогами для призначення УЗД, і радить не ухвалювати рішень лише за ним.",
+        "why_it_matters": "У людини, яку лікували від раку яєчників, динаміка CA 125 допомагає онкологу оцінити відповідь на лікування і вчасно помітити рецидив. У людини без такого діагнозу значення понад межу лабораторії це привід обговорити з лікарем симптоми і обставини аналізу (наприклад, кров здали під час менструації), а не доказ раку. Нормальне значення рак теж не виключає.",
+        "retest_rationale": "Для людей без раку яєчників жодне джерело не встановлює графіка повторення, а USPSTF не рекомендує скринінг. Після лікування терміни визначає онколог: EGTM використовує CA 125 для контролю першої лінії хіміотерапії (відповіддю вважають зниження щонайменше на 50% від рівня до лікування 70 Од/мл і вище) і радить спостереження надалі, хоча й зазначає, що в рандомізованому дослідженні раннє призначення хіміотерапії за зростанням CA 125 не покращило виживаності.",
+        "band_labels": {}
+      }
+    },
+    {
+      "concept_id": "cancer-antigen-15-3-ca-15-3",
+      "unit": "U/mL",
+      "kind": "no_universal_target",
+      "source_ids": [
+        "nci-tumor-markers-factsheet",
+        "nci-tumor-markers-list",
+        "asco-breast-followup-2013",
+        "esmo-early-breast-2024",
+        "moz-nakaz-195-2025"
+      ],
+      "regions_covered": [
+        "US",
+        "EU",
+        "UA"
+      ],
+      "agreement": "divergent",
+      "divergence_note": "ASCO (US) and ESMO (EU) recommend against tumour markers, CA 15-3 included, in the follow-up of people without symptoms after early breast cancer, and Ukraine's standard says the same in its quality criterion 3. Criterion 4 of the same Ukrainian standard nevertheless lists CA 15-3 among the blood tests for people on endocrine therapy who cannot be examined clinically. Both readings are recorded; neither is turned into a number.",
+      "jurisdiction_note": "No international (INT) body was cited: the EGTM breast cancer guideline (2017), which other papers describe as the one group favouring serial CA 15-3, could not be read in full (HTTP 403) and is not cited.",
+      "bands": [],
+      "no_universal_target_reason": "CA 15-3 is a marker of known breast cancer, not of health. No guideline publishes an interval for it; the limit on a report belongs to that laboratory's assay. Guidelines in all three jurisdictions advise against measuring it in people without symptoms after treatment, and none uses it for screening or diagnosis, so any curated band would judge results the guidelines say should not be collected in the first place.",
+      "short_description": "CA 15-3 (cancer antigen 15-3) is a protein that many breast cancers shed into the blood. The US National Cancer Institute lists its use as checking whether treatment is working or whether breast cancer has come back. It is not used to screen for breast cancer or to diagnose it, and a raised level on its own does not mean cancer. After treatment of early breast cancer, ASCO (US), ESMO (Europe) and Ukraine's breast cancer standard (Наказ МОЗ № 195, 2025) all advise against measuring tumour markers such as CA 15-3 in people who have no symptoms; follow-up relies on visits, examination and yearly mammography. The Ukrainian standard does list CA 15-3 among the blood tests for people on endocrine therapy who cannot be examined in person. There is no universal reference interval: the limit printed on the report is specific to that laboratory's assay, and a series should come from the same laboratory.",
+      "why_it_matters": "For someone being treated for breast cancer, especially when it has spread, a rising or falling CA 15-3 is one of the signals the oncology team reads together with imaging. For anyone else, a result outside the laboratory's range is a question for a doctor, not a finding in itself.",
+      "retest_interval_months": null,
+      "retest_rationale": "No schedule exists for people without breast cancer, and after treatment of early breast cancer ASCO, ESMO and the Ukrainian standard recommend against routine tumour markers in people without symptoms. When it is used, the treating oncologist sets the timing.",
+      "uk": {
+        "name": "Онкомаркер CA 15-3",
+        "short_description": "CA 15-3 (раковий антиген 15-3) це білок, який багато пухлин молочної залози виділяють у кров. Національний інститут раку США називає його призначення так: перевірити, чи діє лікування, і чи не повернулася хвороба. Для скринінгу чи діагностики раку молочної залози його не використовують, і підвищений рівень сам по собі не означає раку. Після лікування раннього раку молочної залози ASCO (США), ESMO (Європа) і український стандарт «Рак молочної залози» (наказ МОЗ № 195, 2025) не рекомендують визначати онкомаркери, зокрема CA 15-3, у людей без симптомів: спостереження складається з візитів, огляду і щорічної мамографії. Водночас український стандарт згадує CA 15-3 серед аналізів крові для пацієнтів на ендокринній терапії, яких неможливо оглянути. Універсального референтного інтервалу немає: межа в бланку відповідає методу конкретної лабораторії, тому повторні аналізи краще робити в одній лабораторії.",
+        "why_it_matters": "Для людини, яка лікується від раку молочної залози, особливо з метастазами, зростання чи зниження CA 15-3 це один із сигналів, які онколог оцінює разом із візуалізацією. Для всіх інших результат поза межами лабораторії це питання до лікаря, а не знахідка сама по собі.",
+        "retest_rationale": "Для людей без раку молочної залози графіка немає, а після лікування раннього раку ASCO, ESMO і український стандарт не рекомендують рутинно визначати онкомаркери в людей без симптомів. Якщо аналіз потрібен, терміни визначає онколог.",
+        "band_labels": {}
+      }
+    },
+    {
+      "concept_id": "human-epididymis-protein-4-he4",
+      "unit": "pmol/L",
+      "kind": "no_universal_target",
+      "source_ids": [
+        "nci-tumor-markers-list",
+        "egtm-ovarian-2016",
+        "esmo-ovarian-2023"
+      ],
+      "regions_covered": [
+        "US",
+        "EU"
+      ],
+      "agreement": "concordant",
+      "divergence_note": null,
+      "jurisdiction_note": "No Ukrainian source interprets HE4. dec.gov.ua was searched for «HE4», «яєчник» and «рак яєчника» on 2026-11-07 and returned no medical-technological document on ovarian cancer; the oncology protocols of Наказ МОЗ № 554 of 17.09.2007 lost force on 01.09.2023.",
+      "bands": [],
+      "no_universal_target_reason": "HE4 is used to judge a pelvic mass already found on imaging and to follow known ovarian cancer, not to describe health. Its normal level rises with age, laboratories print age- and menopause-specific limits for their own assay, and reduced kidney function raises it more than anything else. A single curated band would be wrong for most of the people it was applied to.",
+      "short_description": "HE4 (human epididymis protein 4) is a protein raised in many epithelial ovarian cancers. The US National Cancer Institute lists it for planning treatment, assessing progression and monitoring for recurrence of ovarian cancer. It is usually reported with CA 125, and the two are combined with menopausal status into the ROMA score, used to judge whether a pelvic mass seen on ultrasound is more likely benign or malignant. The European Group on Tumour Markers says HE4 may be considered for that purpose, especially before menopause, because it is more specific than CA 125; ESMO's 2023 ovarian cancer guideline prefers ultrasound-based models (IOTA) over CA 125, HE4 or ROMA for that distinction. It is not a screening test. HE4 rises with age (in healthy women roughly 60 to 150 pmol/L, higher after 49 than before 40) and, most of all, with reduced kidney function, the most important cause of false-positive results. There is no universal interval: the age-specific limits printed by the laboratory govern.",
+      "why_it_matters": "A raised HE4 matters mainly in a person with a pelvic mass or known ovarian cancer, read together with CA 125, imaging and kidney function. Without those, a value outside the laboratory's range is a reason to check kidney function and talk to a doctor, not a sign of cancer by itself.",
+      "retest_interval_months": null,
+      "retest_rationale": "No source sets a repeat interval. HE4 is measured when a doctor is assessing a pelvic mass or following treated ovarian cancer, and the treating team sets the timing.",
+      "uk": {
+        "name": "Онкомаркер HE4 (епідидимальний білок людини 4)",
+        "short_description": "HE4 (епідидимальний білок людини 4) це білок, рівень якого підвищується при багатьох епітеліальних пухлинах яєчників. Національний інститут раку США називає його призначення: планування лікування, оцінка прогресування і контроль рецидиву раку яєчників. Зазвичай його визначають разом із CA 125, а з урахуванням менопаузального статусу обидва показники об’єднують в індекс ROMA, який допомагає оцінити, чи утвір у малому тазі, виявлений на УЗД, імовірніше доброякісний чи злоякісний. Європейська група з онкомаркерів (EGTM) вважає, що HE4 можна застосовувати з цією метою, особливо до менопаузи, бо він специфічніший за CA 125, а настанова ESMO 2023 щодо раку яєчників для такого розмежування віддає перевагу ультразвуковим моделям (IOTA) перед CA 125, HE4 і ROMA. Це не скринінговий тест. HE4 зростає з віком (у здорових жінок приблизно від 60 до 150 пмоль/л, після 49 років вищий, ніж до 40) і найбільше при зниженій функції нирок, яка є головною причиною хибнопозитивних результатів. Універсального інтервалу немає: орієнтуйтеся на вікові межі, надруковані лабораторією.",
+        "why_it_matters": "Підвищений HE4 має значення насамперед у людини з утвором у малому тазі або з уже відомим раком яєчників, і його оцінюють разом із CA 125, візуалізацією та функцією нирок. Без цього значення поза межами лабораторії це привід перевірити нирки і поговорити з лікарем, а не ознака раку саме по собі.",
+        "retest_rationale": "Жодне джерело не встановлює інтервалу повторення. HE4 визначають, коли лікар оцінює утвір у малому тазі або спостерігає за пролікованим раком яєчників, і терміни визначає лікар.",
+        "band_labels": {}
       }
     }
   ]

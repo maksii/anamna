@@ -67,6 +67,7 @@ PHRASES: dict[str, str] = {
     "Glucose control": "Вуглеводний обмін",
     "Blood chemistry": "Біохімія крові",
     "Pancreas": "Підшлункова залоза",
+    "Tumour markers": "Онкомаркери",
     "Kidney function": "Функція нирок",
     "Urinalysis": "Аналіз сечі",
     "Thyroid": "Щитоподібна залоза",

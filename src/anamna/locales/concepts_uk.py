@@ -5,6 +5,10 @@
 # (D, B12, IgE, HLA-B27, organism names) stay Latin, and apostrophes are U+2019.
 CONCEPT_NAMES_UK: dict[str, str] = {
     'C-peptide': 'С-пептид',
+    'Insulin': 'Інсулін',
+    'Cancer antigen 125 (CA 125)': 'Онкомаркер CA 125',
+    'Cancer antigen 15-3 (CA 15-3)': 'Онкомаркер CA 15-3',
+    'Human epididymis protein 4 (HE4)': 'Онкомаркер HE4 (епідидимальний білок людини 4)',
     'Non-HDL cholesterol': 'Холестерин не-ЛПВЩ',
     'Apolipoprotein A1': 'Аполіпопротеїн A1',
     'Apolipoprotein B': 'Аполіпопротеїн B',

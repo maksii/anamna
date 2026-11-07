@@ -14,7 +14,7 @@ from .text import collapse_space, parse_decimal
 # the files it names.  Two changes reached `main` without a bump -- 196 lines of
 # new rules in 4472233, and the Latin unit spellings below -- so every row those
 # produced is indistinguishable from a row the previous parser produced.
-PARSER_VERSION = "2026.11.07-2"
+PARSER_VERSION = "2026.11.07-3"
 
 #: The kinds of report this module reads values out of.  Everything else --
 #: ultrasound, MRI, consultation, pathology, radiology -- it returns nothing
@@ -75,14 +75,22 @@ UNIT_PATTERN = (
     # unit leaked into the reference text.
     r"Ery/µL|Leu/µL|"
     # Expert Hospital's urinalysis prints its unit after the name, behind a
-    # comma (result 1746647):
+    # comma (result N1):
     #     Питома вага, г/мл 1,035 від 1,01 до 1,03
     #     Лейкоцити (WBC), в п/з 0-1 0-5
     #     Еритроцити змінені, в п/з 0 0-2
     # «в п/з» is «в полі зору», per high-power field.  Neither was accepted,
     # so the unit stayed glued to the name and `unit_raw` was empty.
     r"г/мл|в\s*п/з|"
-    r"kUA/L|kU/L|КУО/г|COI|R|AI|пг|Од"
+    r"kUA/L|kU/L|КУО/г|COI|R|AI|пг|"
+    # Synevo prints free T4 in nanograms per decilitre, insulin in micro-units
+    # and the CA 15-3 / CA 125 tumour markers in units per millilitre:
+    #     Тироксин вільний (T4 вільний) 1.35 нг/дл Діти:
+    #     Інсулін 6.45 мкОд/мл 2.6 - 24.9
+    #     Онкомаркер молочної залози (СА 15-3) 17.4 Од/мл <26.2
+    # Absent, all three rows were dropped without a trace.  Ahead of bare «Од»,
+    # which both of the last two contain.
+    r"нг/дл|мкОд/мл|Од/мл|Од"
 )
 # «мкМО/л» is deliberately absent.  Read literally it is µIU/L, one thousandth
 # of «мкМО/мл» (µIU/mL), which the pattern does accept and folds to mIU/L.  A
@@ -473,7 +481,7 @@ def valid_analyte_name(name: str) -> bool:
 CATEGORICAL_VALUE = (
     r"помірночутливий|резистентний|стійкий|чутливий|не виявлено|не виявлений|не виявлена|не виявлені|негативний|позитивний|"
     # «в нормі» is the locative Expert Hospital prints on its dipstick pads --
-    # «Глюкоза, ммоль/л в нормі» (result 1746647) -- and without it the whole
+    # «Глюкоза, ммоль/л в нормі» (result N1) -- and without it the whole
     # row vanished: no observation, no review task.
     r"прозора|каламутна|бурштиновий|жовтий|сліди|в нормі|норма|нормальний|нормальна"
 )
@@ -1088,6 +1096,9 @@ def _bracket_tail(name: str, line: str, depth: int) -> str | None:
     return None
 
 
+_CLOSED_CODE = re.compile(r"^\([^()\s]{2,12}\)$")
+
+
 def _label_tail_words(following: list[str], *, lowercase_allowed: bool) -> list[str]:
     """The words that finish a label ending on a comma or a full stop."""
     words: list[str] = []
@@ -1099,6 +1110,11 @@ def _label_tail_words(following: list[str], *, lowercase_allowed: bool) -> list[
                 and _LOWER_WORD.match(token)
                 and token.strip(",") not in _NOT_A_NAME_WORD
             )
+            if words and lowercase_allowed and _CLOSED_CODE.match(token):
+                # The abbreviation closing a lowercase run: «Пероксидаза
+                # щитоподібної залози,» / «антитіла (АТПО) Метод: ...».
+                words.append(token)
+                return words
             if not (lower or _CAPS_WORD.match(token)):
                 break
             words.append(token)
@@ -2070,7 +2086,7 @@ ESKULAB_ROW_NOISE = re.compile(r"^Час відбору", re.I)
 #: What separates one panel from the next, and the table from the page.  A
 #: report of several panels prints all of this *between* them, mid-page: its
 #: own header row, its own signature block, then the next panel's heading.
-#: Order 20417735 puts three panels on page 2 alone, so treating any of it as
+#: Order N2 puts three panels on page 2 alone, so treating any of it as
 #: the end of the table lost every panel below the first -- eleven of them
 #: across twelve pages.  None of it belongs to an analyte either, which is how
 #: «Сторінка 1 з 3» reached a reference interval, so a row matching this ends
@@ -2391,7 +2407,7 @@ def _eskulab_observation(
         return None
     # The whole printed block is kept, every band of it.  Reducing it here to
     # the one line beginning «Дорослі» threw away the rest of what the
-    # laboratory published -- including, on eleven analytes in order 20417735,
+    # laboratory published -- including, on eleven analytes in order N2,
     # the only band that described this patient, because the adult row is
     # headed «Чоловіки» or «Дорослі (ч)» and not «Дорослі» at all.  Choosing
     # among the bands is `health.applicable_band`'s job: it knows the reader's
@@ -2500,7 +2516,7 @@ class _EskulabPanel:
         if first and not value and self.name and specimen:
             self.specimen.append(first)
         # A second table, printed inside the rows the reference column wraps
-        # over.  Order 20417735 puts the Панченков/Вестергрен conversion under
+        # over.  Order N2 puts the Панченков/Вестергрен conversion under
         # the ESR result: its heading crosses the column boundaries and is
         # dropped, but its body is two clean columns and was read as more of the
         # ESR reference -- «Чоловіки 17-50р: <15мм/год ... 1-20 20-40 40-70
@@ -3487,6 +3503,7 @@ def parse_synevo_sediment(words: list, page_number: int) -> list[ParsedObservati
 #: The norm Synevo sometimes prints inside the result cell itself:
 #: «не виявлені (в нормі - не виявлені)».
 _SYNEVO_INLINE_NORM = re.compile(r"^(?P<value>.+?)\s*(?P<norm>\(в нормі[^)]*\))$", re.I)
+_SYNEVO_GENOTYPE = re.compile(r"^(?:гомозиготне|гетерозиготне)\s+носійство$", re.I)
 _SYNEVO_NUMBER = re.compile(rf"(?P<comparator>[<>≤≥])?\s*(?P<number>{_DECIMAL})")
 
 
@@ -3559,11 +3576,13 @@ def parse_synevo_unitless(words: list, page_number: int) -> list[ParsedObservati
         inline = _SYNEVO_INLINE_NORM.match(value)
         if inline and not reference:
             value, reference = inline.group("value"), inline.group("norm")
-        if not reference:
+        if not reference and not _SYNEVO_GENOTYPE.match(value):
             # A result row prints its norm; a line with none is a panel heading
             # or a note in the result column («Звіт з описом лабораторних
             # показників | Ваш результат готовий ...»), and stays with the
-            # text passes as before.
+            # text passes as before.  The exception is a genotype, printed
+            # under its own PCR heading with no norm: «ПЛР. Фолатний цикл.
+            # MTRR (66 A>G)» over «Гомозиготне носійство».
             continue
         number = _SYNEVO_NUMBER.fullmatch(value)
         # A block of several lines is a labelled scale (coprogram pH: «7. 0 -
@@ -4403,6 +4422,22 @@ def _synevo_by_column(
     return [item for item in observations if item.evidence_text not in section_text] + sediment
 
 
+#: The page footer of Synevo's illustrated companion report («звіт з описом
+#: лабораторних показників»): «<patient> / Пакет № <n> (...) / <date> /
+#: cтор. <page>», the «c» Latin.  That PDF re-presents the results of a report the
+#: record already holds, as one card per analyte and then two summary tables
+#: printed side by side.  Read as text the tables interleave: the patient's
+#: name became part of an analyte label, free T4 was stored under «HBsAg», and
+#: one row's reference took the next column's tumour marker.  Nothing on it is
+#: a reading the main report lacks, so none of it is read.
+#: The ParseIssue kind that says a page is such a companion: the pipeline
+#: then explains the empty document instead of reporting missed results.
+COMPANION_SUMMARY = "companion_summary"
+SYNEVO_SUMMARY_FOOTER = re.compile(
+    r"/\s*Пакет\s*№\s*\d+[^/\n]*/\s*\d{2}\.\d{2}\.\d{4}\s*/\s*[cс]тор\.\s*\d+\s*$", re.M
+)
+
+
 def parse_source_text(
     vendor: str,
     clinical_type: str,
@@ -4411,6 +4446,10 @@ def parse_source_text(
     words: list | None = None,
     issues: list[ParseIssue] | None = None,
 ) -> list[ParsedObservation]:
+    if SYNEVO_SUMMARY_FOOTER.search(text):
+        if issues is not None:
+            issues.append(ParseIssue(page_number, COMPANION_SUMMARY, "", ""))
+        return []
     st_paraskeva = parse_st_paraskeva(text, page_number)
     if st_paraskeva:
         return st_paraskeva

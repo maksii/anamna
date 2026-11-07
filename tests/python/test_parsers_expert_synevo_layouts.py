@@ -132,7 +132,7 @@ def test_synevo_block_gives_this_patients_bounds_when_the_patient_is_known():
 # --- DOCB-03 / DOCB-17 / DOCB-11 / DOCA-17: Expert's wrapped cells, printed labels ---
 
 EXPERT_HEADER_237 = (237.3, "ПОКАЗНИК@148 РЕЗУЛЬТАТ@350 НОРМА@480")
-#: n46, result 4990429 (2025-02-15), HbA1c with its scale wrapped around it.
+#: n46, result N6 (2025-02-15), HbA1c with its scale wrapped around it.
 EXPERT_HBA1C = [
     (210.1, "Пацієнт:@34 Петренко@79 Іван@139 Петрович,@184 14.03.1990@249 р.н.@307 15.02.2025@507"),
     EXPERT_HEADER_237,
@@ -161,7 +161,7 @@ def test_expert_hba1c_reference_is_the_printed_scale_and_its_evidence_the_row():
 
 
 def test_expert_hba1c_on_a_report_printing_another_reference_keeps_that_one():
-    """n60, result 4278929: «4.0 - 5.7», where a constant three-band scale was stored."""
+    """n60, result N9: «4.0 - 5.7», where a constant three-band scale was stored."""
     page = layout([
         (171.3, "ПОКАЗНИК@143 РЕЗУЛЬТАТ@355 НОРМА@494"),
         (183.3, "Глікований@17 гемоглобін@70 (HbA1C)@129 5.60%@366 4.0@470 -@485 5.7@490"),
@@ -238,7 +238,7 @@ def test_a_share_of_another_analyte_is_not_a_bound():
 
 
 def test_expert_cholesterol_scale_wrapped_round_its_value_is_read_whole():
-    """n58, result 4278351: the reference was NULL, the scale wrapped above and below."""
+    """n58, result N10: the reference was NULL, the scale wrapped above and below."""
     page = layout([
         (171.3, "ПОКАЗНИК@143 РЕЗУЛЬТАТ@355 НОРМА@494"),
         (195.3, "Ліпопротеїди@17 високої@74 щільності,@106 ммоль/л@151 1,51@371 від@495 1,04@510"),
@@ -305,7 +305,7 @@ def test_dipstick_scales_state_their_first_positive_tier():
 
 
 def test_positive_leukocyte_pad_is_flagged():
-    """n16, EskuLab order 6458615: «Лейкоцити (C-LEU) 25 кл/мкл», the scale's «+»."""
+    """n16, EskuLab order N11: «Лейкоцити (C-LEU) 25 кл/мкл», the scale's «+»."""
     row = next(iter(parse_document(
         "Synevo", "laboratory",
         [text_page("Показник Результат\nЛейкоцити (C-LEU) 25 кл/мкл не виявлені 25 = + 75 = ++ 500 = +++")],
@@ -315,7 +315,7 @@ def test_positive_leukocyte_pad_is_flagged():
 
 
 EXPERT_HEADER_171 = (171.3, "ПОКАЗНИК@143 РЕЗУЛЬТАТ@355 НОРМА@494")
-#: n79, result 4239932 (2025-09-16), three rows of the urinalysis.
+#: n79, result N3 (2025-09-16), three rows of the urinalysis.
 EXPERT_URINE = [
     EXPERT_HEADER_171,
     (383.1, "нормальний@460 або@515 сліди@532 в@557"),
@@ -342,7 +342,7 @@ def test_expert_urinalysis_scales_judge_their_pads():
 
 # --- DOCC-03: the autoimmune chip ----------------------------------------------
 
-#: n67, result 4231424: the chip as OCR reads it (stored OCR text, verbatim lines).
+#: n67, result N12: the chip as OCR reads it (stored OCR text, verbatim lines).
 AUTOIMMUNE_OCR = """[Embedded image region 1]
 діапазон 1 2 з 4
 антигени LY]
@@ -382,7 +382,7 @@ def test_autoimmune_chip_keeps_comparator_class_and_legend():
 
 
 def test_ocr_misread_antibiotic_is_filed_under_the_known_name_and_unknowns_go_to_review():
-    """n68, result 4234006: «ImineHem резистентний» became its own antibiotic."""
+    """n68, result N13: «ImineHem резистентний» became its own antibiotic."""
     ocr = (
         "Результат дослідження\nАнтибіотик\nPseudomonas aeruginosa\n"
         "Піперацилін-тазобактам помірночутливий\nImineHem резистентний\n"
@@ -403,7 +403,7 @@ ALEX_HEADER = (64.4, "Позначення@40 E/M@204 Алерген@234 Сім�
 
 
 def test_alex_wrapped_common_name_and_wrapped_code_are_rejoined():
-    """n69, ALEX² 0913486433: «Aca m» lost its name, «Подорожник ланцетолистий» its code."""
+    """n69, ALEX² N14: «Aca m» lost its name, «Подорожник ланцетолистий» its code."""
     pages = [
         layout([
             ALEX_HEADER,
@@ -456,7 +456,7 @@ def test_blood_group_answer_list_is_not_a_reference_and_its_value_is_one_spellin
 
 
 def test_eskulab_specimen_line_becomes_the_rows_specimen():
-    """Doc 97, EskuLab 41327644: «цільна кров ЗАК» printed under every blood-count row."""
+    """Doc 97, EskuLab N15: «цільна кров ЗАК» printed under every blood-count row."""
     page = layout([
         (212.5, "Показник@28 Результат@231 Одиниці@316 Референтні@417 значення@481"),
         (234.7, "Гемоглобін@28 (HGB)@84 155@249 г/л@331 Жінки:@378 120-150@406"),
@@ -499,7 +499,7 @@ def test_a_reference_block_over_a_page_break_is_read_whole():
 
 
 def test_hbsag_label_keeps_the_tail_that_wrapped_under_its_value():
-    """n74, result 4239683 (DOCC-33)."""
+    """n74, result N16 (DOCC-33)."""
     page = layout([
         (171.3, "ПОКАЗНИК@143 РЕЗУЛЬТАТ@355 НОРМА@494"),
         (207.3, "Швидкий@17 тест@58 для@77 виявлення@94 антитіл@142 до@174 вірусу@187 гепатиту@214 С@251 Негативний@354 Негативний@465 результат@517"),
@@ -615,7 +615,7 @@ def test_thyroid_volumes_and_abdominal_sizes_with_their_printed_norms():
 def test_expert_wrapped_mid_code_and_unprinted_liver_units_stay_fixed():
     """DOCB-15 (MID# wrapped under its value) and DOCB-16 (no unit printed -> none stored).
 
-    n44, result 4990429 p1 and n41, result 4990466 p1, word geometry verbatim.
+    n44, result N6 p1 and n41, result N17 p1, word geometry verbatim.
     """
     page = layout([
         (171.3, "ПОКАЗНИК@145 РЕЗУЛЬТАТ@358 НОРМА@495"),

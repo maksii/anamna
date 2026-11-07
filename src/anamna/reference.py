@@ -235,6 +235,12 @@ UNIT_CONVERSIONS[("mean-corpuscular-hemoglobin-concentration", "g/l", "g/dl")] =
 # a factor of 16.9 apart, which corroborates the molar-mass figure.
 UNIT_CONVERSIONS[("urine-urobilinogen", _MG_DL, "umol/l")] = 16.9
 UNIT_CONVERSIONS[("urine-urobilinogen", "umol/l", _MG_DL)] = 1.0 / 16.9
+# Free thyroxine: Synevo prints ng/dL on one panel and pmol/L on another.
+# Thyroxine C15H11I4NO4, molar mass 776.87 g/mol (PubChem CID 5819), so
+# 1 ng/dL = 10 ng/L / 776.87 g/mol = 12.87 pmol/L -- the factor of the
+# AMA Manual of Style SI conversion table ("Thyroxine, free: ng/dL x 12.87").
+UNIT_CONVERSIONS[("free-thyroxine", "ng/dl", "pmol/l")] = 12.87
+UNIT_CONVERSIONS[("free-thyroxine", "pmol/l", "ng/dl")] = 1.0 / 12.87
 
 # Same number, different label: the per-concept table lives beside the unit
 # synonyms in health.py, which also folds the stored unit on the way in.

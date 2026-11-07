@@ -703,7 +703,9 @@ UNKNOWN_VENDOR = "Unknown vendor"
 _VENDOR_RULES: tuple[tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], str, str | None], ...] = (
     (("kardia", "alivecor"), (), (), "Kardia", "https://www.alivecor.com/"),
     (("garmin connect",), (), (), "Garmin Connect", "https://connect.garmin.com"),
-    (("сінево", "synevo"), ("__synevo__",), (), "Synevo", "https://www.synevo.ua"),
+    # «synevo-<order>.pdf» is how lab sync names a Synevo download; the
+    # illustrated companion report it fetches prints no lab name at all.
+    (("сінево", "synevo"), ("__synevo__", "synevo-"), (), "Synevo", "https://www.synevo.ua"),
     (("esculab.com", "елаб"), ("__eskulab__",), ("Apache FOP",), "EskuLab", "https://esculab.com"),
     # Medical centre «Veselka», operated by ТзОВ «Повноділ»; its
     # vaccination card prints only the operator's name.

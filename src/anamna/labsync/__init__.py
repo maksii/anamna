@@ -89,7 +89,11 @@ STALE_RUN = timedelta(minutes=30)
 #: Result types that are not one number or one word: section headings,
 #: microbiology (JSON with comments), coprogram arrays, cytology text and
 #: method notes.  Shown for information and never counted as a mismatch.
-INFO_RESULT_TYPES = frozenset({"none", "json", "flora", "cytology", "info"})
+#: «file»: EskuLab's result is an attachment (a coprogram, a food-allergen
+#: panel as its own PDF), so the row names a file, not a value.
+INFO_RESULT_TYPES = frozenset({"none", "json", "flora", "cytology", "info", "file"})
+#: A lab's free-text remark on the panel («Примітки (зак)»), not a measurement.
+_NOTE_ROW_RE = re.compile(r"^\s*(примітк|коментар|comment|note)", re.I)
 CLASSES = ("match", "value_mismatch", "unit_mismatch", "name_mismatch", "missing", "extra", "info")
 
 ERROR_OFF = "labsync.error_off"
@@ -1022,7 +1026,7 @@ def _find_observation(row: dict, pool: list[dict], lab_loose: Counter, obs_loose
 def _check_row(row: dict, pool: list[dict], lab_loose: Counter, obs_loose: Counter) -> dict:
     sign, number = parse_result(row["result"])
     is_info = (row["resulttype"] in INFO_RESULT_TYPES or row["result"] in {"", "-", "—"}
-               or bool(_PLACEHOLDER_RE.search(row["result"])))
+               or bool(_PLACEHOLDER_RE.search(row["result"])) or bool(_NOTE_ROW_RE.match(str(row["test"] or ""))))
     obs = _find_observation(row, pool, lab_loose, obs_loose, number)
     if obs is not None:
         obs["_used"] = True

@@ -67,7 +67,7 @@ CONCEPT_DEFINITIONS: list[dict[str, object]] = [
     {"name": "Atherogenic coefficient", "category": "lipids", "unit": "ratio", "aliases": ["коефіцієнт атерогенності", "коефіцієнт атерогенності (ка)", "atherogenic coefficient", "atherogenic index"]},
     {"name": "Thyroid stimulating hormone", "category": "thyroid", "unit": "mIU/L", "aliases": ["тиреотропний гормон (tsh)", "тиреотропний гормон. високочутливий, біотин-незалежний", "тиреотропний гормон", "ттг", "tsh"]},
     {"name": "Free triiodothyronine", "category": "thyroid", "unit": "pmol/L", "aliases": ["трийодтиронін вільний (ft3)", "ft3"]},
-    {"name": "Free thyroxine", "category": "thyroid", "unit": "pmol/L", "aliases": ["тироксин вільний (ft4)", "ft4"]},
+    {"name": "Free thyroxine", "category": "thyroid", "unit": "pmol/L", "aliases": ["тироксин вільний (ft4)", "тироксин вільний (t4 вільний)", "ft4"]},
     {"name": "Ferritin", "category": "iron", "unit": "ng/mL", "aliases": ["феритин", "ferritin"]},
     {"name": "Serum iron", "category": "iron", "unit": "µmol/L", "aliases": ["залізо", "залізо (сироватка крові)", "iron"]},
     {"name": "25-hydroxyvitamin D", "category": "vitamins", "unit": "ng/mL", "aliases": ["total 25-hydroxyvitamin d", "вітамін д (25-гідроксивітамін d, 25", "вітамін д (25-гідроксивітамін d, 25-(oh)d)", "загальний вітамін d (25-гідроксивітамін d)", "25-гідроксивітамін d (вітамін d загальний)", "25-oh vitamin d", "vitamin d", "вітамін d загальний"]},
@@ -101,7 +101,7 @@ CONCEPT_DEFINITIONS: list[dict[str, object]] = [
     {"name": "Meropenem susceptibility", "category": "microbiology", "unit": None, "value_type": "text", "aliases": ["меропенем"]},
     {"name": "Piperacillin-tazobactam susceptibility", "category": "microbiology", "unit": None, "value_type": "text", "aliases": ["піперацилін-тазобактам"]},
     {"name": "Tobramycin susceptibility", "category": "microbiology", "unit": None, "value_type": "text", "aliases": ["тобраміцин"]},
-    # The EskuLab throat-culture antibiogram (order 13368192) names 33
+    # An EskuLab throat-culture antibiogram names 33
     # antibiotics; every one needs a definition here or its verdict lands on a
     # learned Ukrainian-only concept.
     {"name": "Azithromycin susceptibility", "category": "microbiology", "unit": None, "value_type": "text", "aliases": ["азитроміцин"]},
@@ -215,7 +215,7 @@ CONCEPT_DEFINITIONS: list[dict[str, object]] = [
     {"name": "Alpha-amylase", "category": "pancreas", "unit": "U/L", "aliases": ["амілаза альфа", "α-амілаза", "альфа-амілаза", "амілаза"]},
     {"name": "Lipase", "category": "pancreas", "unit": "U/L", "aliases": ["ліпаза", "lipase"]},
     {"name": "Thyroglobulin antibodies", "category": "thyroid", "unit": "IU/mL", "aliases": ["антитіла до тиреоглобуліну (attg)"]},
-    {"name": "Thyroid peroxidase antibodies", "category": "thyroid", "unit": "IU/mL", "aliases": ["антитіла до тиреопероксидази (a-tpo)"]},
+    {"name": "Thyroid peroxidase antibodies", "category": "thyroid", "unit": "IU/mL", "aliases": ["антитіла до тиреопероксидази (a-tpo)", "пероксидаза щитоподібної залози, антитіла (атпо)", "атпо"]},
     {"name": "Parathyroid hormone", "category": "hormones", "unit": "pg/mL", "aliases": ["паратгормон (птг 1-84).", "паратгормон (птг 1-84). високоспецифічний. біоінтактний", "паратгормон (птг 1-84)", "паратгормон", "pth"]},
     {"name": "Total testosterone", "category": "hormones", "unit": "nmol/L", "aliases": ["тестостерон загальний (т загальний", "тестостерон загальний (т загальний, сироватка)", "тестостерон загальний"]},
     {"name": "Urine appearance", "category": "urinalysis", "unit": None, "value_type": "text", "aliases": ["прозорість", "urine clarity"]},
@@ -426,12 +426,23 @@ CONCEPT_DEFINITIONS: list[dict[str, object]] = [
     {"name": "Ku antibodies", "category": "autoimmune", "unit": "kU/L", "aliases": ["ku"]},
     {"name": "Sm antibodies", "category": "autoimmune", "unit": "kU/L", "aliases": ["sm"]},
     {"name": "U1-snRNP antibodies", "category": "autoimmune", "unit": "kU/L", "aliases": ["u1-snrnp"]},
-    # Introduced by EskuLab order 20417735: a protein electrophoresis, an
+    # Introduced by one EskuLab order: a protein electrophoresis, an
     # apolipoprotein set, a coagulation panel and a manual differential, none
     # of which this record had a definition for.  Without one each landed on a
     # concept named after its Ukrainian label, which the English page then
     # printed in Ukrainian and no reference guidance could attach to.
     {"name": "C-peptide", "category": "pancreas", "unit": "ng/mL", "aliases": ["с-пептид"]},
+    # Synevo prints insulin in «мкОд/мл» on one panel and «мкМО/мл» on
+    # another: the same WHO-calibrated quantity, made one unit for this concept
+    # only by ``health.CONCEPT_UNIT_ALIASES``.
+    {"name": "Insulin", "category": "metabolic", "unit": "mIU/L", "aliases": ["інсулін", "insulin", "fasting insulin"]},
+    # Tumour markers.  Synevo writes the CA 125 code three ways («(СА-125)»,
+    # «(СА 125)», «СА125» in a two-column table), with a Cyrillic «СА» the
+    # homoglyph fold in ``label_key`` matches to the Latin "CA".  Unnamed, each
+    # spelling started its own series.
+    {"name": "Cancer antigen 125 (CA 125)", "category": "tumour_markers", "unit": "U/mL", "aliases": ["онкомаркер яєчників (са-125)", "онкомаркер яєчників (са 125)", "онкомаркер яєчників (са125)", "са-125", "са 125", "са125", "cancer antigen 125"]},
+    {"name": "Cancer antigen 15-3 (CA 15-3)", "category": "tumour_markers", "unit": "U/mL", "aliases": ["онкомаркер молочної залози (са 15-3)", "онкомаркер молочної залози (са15-3)", "са 15-3", "са15-3", "cancer antigen 15-3"]},
+    {"name": "Human epididymis protein 4 (HE4)", "category": "tumour_markers", "unit": "pmol/L", "aliases": ["онкомаркер he4", "ранній онкомаркер раку яєчників he-4 антиген", "ранній онкомаркер раку яєчників he-4", "ранній онкомаркер раку яєчників", "he4", "he-4", "human epididymis protein 4"]},
     {"name": "Non-HDL cholesterol", "category": "lipids", "unit": "mmol/L", "aliases": ["холестерин не-лпвщ"]},
     {"name": "Apolipoprotein A1", "category": "lipids", "unit": "g/L", "aliases": ["аполіпопротеїн а1"]},
     {"name": "Apolipoprotein B", "category": "lipids", "unit": "g/L", "aliases": ["аполіпопротеїн в"]},

@@ -235,7 +235,7 @@ PANELS: list[Panel] = [
         short="Glucose",
         description="Fasting glucose and the three-month average carried by glycated hemoglobin.",
         area_id="metabolism",
-        member_names=("Blood glucose", "Hemoglobin A1c", "C-peptide"),
+        member_names=("Blood glucose", "Hemoglobin A1c", "C-peptide", "Insulin"),
     ),
     Panel(
         id="liver",

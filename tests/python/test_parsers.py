@@ -194,7 +194,7 @@ def test_categorical_parser_rejects_embedded_numeric_reference_lines():
 
 
 def test_expert_urinalysis_microscopy_and_dipstick_rows_are_not_swallowed():
-    """Five of thirty rows on urinalysis 4239932 vanished without a trace.
+    """Five of thirty rows on urinalysis N3 vanished without a trace.
 
     Each line below is verbatim from the source page.  «в нормі» was missing
     from CATEGORICAL_VALUE, and no pass accepted an HPF range (0-1, 0-0-1,
@@ -223,7 +223,7 @@ def test_expert_urinalysis_microscopy_and_dipstick_rows_are_not_swallowed():
 
 
 def test_expert_unit_behind_a_comma_is_split_off_the_name():
-    """Result 4239932 printed «<name>, <unit>» and the unit stayed in the name.
+    """Result N3 printed «<name>, <unit>» and the unit stayed in the name.
 
     Lines verbatim from the page.  The hospital's own structured record names
     these «Питома вага» in «г/мл», «Лейкоцити (WBC)» in «в п/з», «Лейкоцити в
@@ -264,8 +264,8 @@ def test_expert_unit_behind_a_comma_is_split_off_the_name():
 def test_expert_wrapped_mid_label_keeps_its_code_and_unit():
     """The MID rows wrap, and the line under the value says which one it was.
 
-    Text as pdfplumber stores it for results 4278372 (code wrapped below) and
-    4990495 (code on the first line, unit alone below).  The name's first line
+    Text as pdfplumber stores it for results N4 (code wrapped below) and
+    N5 (code on the first line, unit alone below).  The name's first line
     is identical for the count and the fraction, so without the tail a 0.7
     ×10⁹/L count and an 11 % fraction become one analyte with no unit -- the
     Synevo RDW-SD/RDW-CV trap in another laboratory's layout.
@@ -401,7 +401,7 @@ def test_synevo_rdw_tail_on_the_next_line_separates_sd_from_cv():
 
 
 def test_hybrid_pdf_uses_embedded_table_without_conflating_native_text():
-    native = "ЕКСПЕРТ Результати дослідження №4990429"
+    native = "ЕКСПЕРТ Результати дослідження №1000001"
     ocr = """
     Назва дослідження Результат Одиниці вимірювання Референтні значення
     Kanin (ioHi30BaHUN) (K) сироватка крові 5.9 ммоль/л 3.8-5.0
@@ -562,6 +562,7 @@ UNIT_SPELLINGS = {
     "10^12/L": "10^12/L",
     "IU/mL": "IU/mL",
     "U/L": "од/л",
+    "U/mL": "Од/мл",
     "cells/µL": "кл/мкл",
     "fL": "фл",
     "g/L": "г/л",
@@ -833,7 +834,7 @@ def test_eskulab_adult_band_wins_over_the_paediatric_one_beside_the_value():
 
     The parser keeps the whole printed block now rather than reducing it to the
     line beginning «Дорослі» -- that reduction threw away every band an adult
-    row is headed «Чоловіки» or «Дорослі (ч)» instead, which on order 41015004
+    row is headed «Чоловіки» or «Дорослі (ч)» instead, which on order N7
     was the only band eleven analytes had.  Choosing among them moved to
     `applicable_band`, which knows the reader's age and sex; what must not
     change is which interval the reader ends up measured against.
@@ -910,7 +911,7 @@ CULTURE_ROWS = [
     {"name": "Staphylococcus aureus", "result": "1.0 x 10^2 КУО/г"},
     # The organism's own antibiogram sub-heading, printed in the right column.
     {"result": "Staphylococcus aureus"},
-    # Antibiogram rows, verbatim from throat culture 40095487: with a disk
+    # Antibiogram rows, verbatim from throat culture N8: with a disk
     # potency, without one, with EUCAST's increased-exposure qualifier, and
     # with the potency wrapped onto its own line.
     {"name": "Азитроміцин", "result": "Чутливий"},
@@ -924,7 +925,7 @@ CULTURE_ROWS = [
 
 
 def test_eskulab_culture_reads_the_count_and_the_antibiogram_verdicts():
-    """40095487 held 33 susceptibility verdicts and the record held none of them.
+    """N8 held 33 susceptibility verdicts and the record held none of them.
 
     The skip was deliberate once -- the verdicts had no concepts -- and then
     stale: the same verdicts from an Expert Hospital culture were already
@@ -1024,7 +1025,7 @@ def test_eskulab_reads_every_panel_on_a_page_not_just_the_first():
     """A report of many panels prints a signature block between each pair.
 
     Treating that as the end of the table stopped the parser at the first panel
-    of every page — eleven of the twelve panels in order 41015004 — and what
+    of every page — eleven of the twelve panels in order N7 — and what
     was left of each page then fell through to the parser that reads it as flat
     text.
     """
@@ -1247,7 +1248,7 @@ def test_eskulab_centred_single_column_reference_is_not_split_in_two():
 
 
 def test_eskulab_second_table_under_a_row_is_not_read_as_more_of_its_reference():
-    """Order 41015004 prints the Панченков/Вестергрен conversion under the ESR
+    """Order N7 prints the Панченков/Вестергрен conversion under the ESR
     result.  Its heading crosses the column boundaries and is dropped, but its
     body is two clean columns and was collected as more of the ESR reference --
     a sex-specific limit trailed by seven intervals from another method."""
@@ -1308,7 +1309,7 @@ def test_two_numbers_touching_across_a_column_boundary_are_separated():
     one, which an ordinary interval crossing the same x does not look like.
 
     What starts across the boundary is as often an *age* as a value, and an age
-    band is written in whole numbers.  Order 41015004 prints «Жінки 12-17
+    band is written in whole numbers.  Order N7 prints «Жінки 12-17
     років: <24.0» hard against «1-3 років: <33.0» and «... <25.0» against «6-12
     років: <47.0»; requiring the following number to carry a decimal missed
     both, so ALT's 1-3-years band and AST's 6-12-years band were unreachable --
@@ -1335,7 +1336,7 @@ def test_two_numbers_touching_across_a_column_boundary_are_separated():
 
 
 def test_a_band_named_above_optimal_is_not_the_patients_reference():
-    """The LDL block on order 41015004, verbatim.
+    """The LDL block on order N7, verbatim.
 
     «висок…» and «підвищ…» miss both «вище оптимального рівня» and «Верхній
     пороговий рівень», so the band immediately *over* the optimum was taken as

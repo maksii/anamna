@@ -2137,6 +2137,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Review the image evidence; text read from an image is never accepted as a clinical fact automatically.",
         "uk": "Перегляньте зображення: текст, розпізнаний на зображенні, ніколи не стає клінічним фактом автоматично.",
     },
+    "review.companion_summary": {
+        "en": "This is the lab's illustrated summary of a report's results. Its values are read from the report itself, so nothing here is entered twice; check that the report is in your record.",
+        "uk": "Це ілюстрований підсумок результатів, який лабораторія додає до звіту. Значення зчитуються з самого звіту, тож тут нічого не дублюється; перевірте, що звіт є у вашій картці.",
+    },
     "review.no_values_found": {
         "en": "Extraction found no values on a report of a kind the parser does read; check the pages for results it missed.",
         "uk": "Програма не знайшла жодного значення, хоча документи такого типу вона вміє зчитувати. Перевірте, чи на сторінках немає пропущених результатів.",

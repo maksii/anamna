@@ -209,7 +209,7 @@ EXPERT_CBC = [
 
 
 def test_expert_blood_count_with_referentni_znachennya_header_is_read():
-    """Order 152726 printed «РЕФЕРЕНТНІ ЗНАЧЕННЯ» where other panels print «НОРМА»; the
+    """One Ekspert blood count printed «РЕФЕРЕНТНІ ЗНАЧЕННЯ» where other panels print «НОРМА»; the
     header was matched word for word, so 27 results yielded nothing at all."""
     rows = rows_by_name("Expert Hospital", EXPERT_CBC)
     assert (rows["Лейкоцити (WBC)"].value_numeric, rows["Лейкоцити (WBC)"].unit_raw) == (10.05, "х 10*9/л")
@@ -229,3 +229,102 @@ def test_expert_referentni_znachennya_header_also_reaches_the_text_passes():
     rows = {row.raw_name: row for row in parse_document("Expert Hospital", "laboratory", [page])}
     assert rows["Лейкоцити (WBC)"].value_numeric == 10.05
     assert rows["ШОЕ"].value_numeric == 4.0
+
+
+# --- Synevo units the allowlist lacked, and the rows they took with them -------
+
+
+SYNEVO_TEXT_HEADER = "Показник Результат Од. Референтний інтервал\n"
+
+
+def synevo_text_rows(body):
+    page = {"page_number": 1, "native_text": SYNEVO_TEXT_HEADER + body, "ocr_text": ""}
+    return {row.raw_name: row for row in parse_document("Synevo", "laboratory", [page])}
+
+
+def test_synevo_rows_in_ng_dl_micro_units_and_units_per_ml_are_read():
+    """«нг/дл», «мкОд/мл» and «Од/мл» were not in the unit allowlist, so free T4, insulin
+    and the CA 15-3 / CA 125 markers were dropped with no observation and no review task."""
+    rows = synevo_text_rows(
+        "Тироксин вільний (T4 вільний) 1.22 нг/дл Дорослі: 0.93 - 1.7\n"
+        "Інсулін 6.45 мкОд/мл 2.6 - 24.9\n"
+        "Онкомаркер молочної залози (СА 15-3) 17.4 Од/мл <26.2\n"
+        "Онкомаркер яєчників (СА 125) 18.3 Од/мл <35.0\n"
+    )
+    assert (rows["Тироксин вільний (T4 вільний)"].value_numeric, rows["Тироксин вільний (T4 вільний)"].unit_raw) == (1.22, "нг/дл")
+    assert (rows["Інсулін"].value_numeric, rows["Інсулін"].unit_raw) == (6.45, "мкОд/мл")
+    assert (rows["Інсулін"].reference_low, rows["Інсулін"].reference_high) == (2.6, 24.9)
+    assert (rows["Онкомаркер молочної залози (СА 15-3)"].value_numeric, rows["Онкомаркер молочної залози (СА 15-3)"].reference_high) == (17.4, 26.2)
+    assert rows["Онкомаркер яєчників (СА 125)"].unit_raw == "Од/мл"
+
+
+def test_new_cyrillic_units_fold_onto_their_latin_spelling_only():
+    from anamna.reference import canonical_unit
+
+    assert canonical_unit("нг/дл") == canonical_unit("ng/dL")
+    assert canonical_unit("Од/мл") == canonical_unit("U/mL")
+    assert canonical_unit("мкОд/мл") == canonical_unit("µU/mL")
+    # Micro-units are not micro-international units in general; that
+    # equivalence is per assay, so it is not a global fold.
+    assert canonical_unit("мкОд/мл") != canonical_unit("мкМО/мл")
+    # Bare «Од» stays "units" and «Од/л» stays U/L.
+    assert canonical_unit("Од") == "units"
+    assert canonical_unit("Од/л") == canonical_unit("U/L")
+
+
+def test_synevo_comma_label_takes_the_abbreviation_after_its_lowercase_tail():
+    """«Пероксидаза щитоподібної залози,» / «антитіла (АТПО) Метод: ...»: the tail stopped at
+    the bracket, so the row was named without the abbreviation the lab files it under."""
+    rows = synevo_text_rows(
+        "Пероксидаза щитоподібної залози, < 9 МО/мл <34.0\n"
+        "антитіла (АТПО) Метод: Електрохемілюмінесцентний аналіз\n"
+    )
+    row = rows["Пероксидаза щитоподібної залози, антитіла (АТПО)"]
+    assert (row.comparator, row.value_numeric, row.reference_high) == ("<", 9.0, 34.0)
+
+
+def test_synevo_genotype_under_its_own_pcr_heading_is_read():
+    """A genotype printed under its PCR heading with no norm («ПЛР. Фолатний цикл. MTRR
+    (66 A>G)» over «Гомозиготне носійство») was dropped: the column reader skips a row with
+    no reference, and the categorical vocabulary does not know the phrase."""
+    rows = rows_by_name("Synevo", [
+        SYNEVO_HEADER,
+        (152.0, "ПЛР.@69 Фолатний@89.6 цикл.@130.6 MTRR@153.4 (66@178.1 A>G)@191.6"),
+        (167.0, "Гомозиготне@251.8 носійство@299.6"),
+        (185.0, "Примітка:@75"),
+    ])
+    assert rows["ПЛР. Фолатний цикл. MTRR (66 A>G)"].value_text == "Гомозиготне носійство"
+
+
+def test_synevo_illustrated_companion_report_yields_no_rows():
+    """The companion PDF re-presents the main report as two summary tables side by side.
+    Read as text the columns interleave: a patient's name joined an analyte label and free
+    T4 was stored under «HBsAg».  Every value is in the main report, so none is read here."""
+    page = {
+        "page_number": 10,
+        "ocr_text": "",
+        "native_text": (
+            "Інформація про клієнта Kоагуляція Результат Норма\n"
+            "ПІБ Пацієнт Тестовий Протромбіновий час 12.4 9.8 - 12.1 сек\n"
+            "HBsAg 0.372 T4 вільний 1.22 0.93-1.7\n"
+            "Лужна фосфатаза 49 35-104 Од/л CA15-3 17.4 <26.2 Од/мл\n"
+            "Пацієнт Тестовий / Пакет № 100 (Тестовий пакет) / 01.01.2000 / cтор. 10\n"
+        ),
+    }
+    issues: list = []
+    assert parse_document("Synevo", "laboratory", [page], issues=issues) == []
+    # The empty document says what it is, not that the parser missed a panel.
+    from anamna.ingest.pipeline import _ingest_review_reasons
+
+    reasons = _ingest_review_reasons(None, [], 0, None, issues)
+    assert [reason["key"] for reason in reasons] == ["review.companion_summary"]
+
+
+def test_synevo_spellings_of_free_t4_and_anti_tpo_resolve_to_their_concepts():
+    """Read but unmapped, each would start a nameless concept of its own beside the one the
+    record already files these analytes under."""
+    from anamna.ingest.concepts import concept_for_alias
+
+    assert concept_for_alias("Тироксин вільний (T4 вільний)", "numeric")["name"] == "Free thyroxine"
+    tpo = concept_for_alias("Пероксидаза щитоподібної залози, антитіла (АТПО)", "numeric")
+    assert tpo["name"] == "Thyroid peroxidase antibodies"

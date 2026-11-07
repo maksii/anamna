@@ -147,6 +147,7 @@ CATEGORY_LABELS = {
     "chemistry": "Blood chemistry",
     "liver": "Liver",
     "pancreas": "Pancreas",
+    "tumour_markers": "Tumour markers",
     "renal": "Kidney function",
     "urinalysis": "Urinalysis",
     "thyroid": "Thyroid",
@@ -271,6 +272,14 @@ UNIT_TRANSLATIONS = {
     "10*9/л": _GIGA_PER_L,
     "10*12/л": _TERA_PER_L,
     "г/дл": "g/dL",
+    # The Cyrillic spellings of ng/dL, µU/mL and U/mL, exactly: free T4,
+    # insulin and the CA 15-3 / CA 125 markers on Synevo panels.  Micro-units
+    # are deliberately not folded onto mIU/L here: the two are equal only for
+    # assays calibrated to an international standard (insulin is one), so
+    # that equivalence belongs to a per-concept alias, not to every analyte.
+    "нг/дл": "ng/dL",
+    "мкод/мл": "µU/mL",
+    "од/мл": "U/mL",
     # Millilitres: in UNIT_PATTERN and therefore parsed, but absent here, so a
     # delivered urine volume printed «мл» canonicalised to «мл» while its
     # concept declared "mL" -- the same quantity failing to compare with itself.
@@ -335,6 +344,9 @@ _UNIT_REVERSE["miu/l"] = "мМО/л"
 # Same reason: «МО» is an abbreviation of «міжнародні одиниці» and is printed
 # in capitals, which the casefolded lookup key cannot carry.
 _UNIT_REVERSE["iu/l"] = "МО/л"
+# «мкОд/мл» as the laboratory prints it, not «мкод/мл».  Keyed as casefold()
+# leaves "µU/mL" (µ becomes U+03BC).
+_UNIT_REVERSE["μu/ml"] = "мкОд/мл"
 # Device units: decibels keep their capital B («дБА», not «дба»); a bare count
 # reads as pieces («326 шт.», not «326 кількість»); Apple's physical-effort
 # unit had no Ukrainian form at all.
@@ -481,6 +493,13 @@ CONCEPT_UNIT_ALIASES: dict[tuple[str, str], str] = {
     # stays minutes, which is why this is scoped here and not a synonym.
     ("resting-respiratory-rate", "/хв"): _BREATHS_PER_MIN,
     ("resting-respiratory-rate", "min"): _BREATHS_PER_MIN,
+    # Insulin «мкОд/мл» (µU/mL) and «мкМО/мл» (µIU/mL, folded to mIU/L): by
+    # prefix arithmetic 1 µU/mL = 1 mU/L, and on an insulin immunoassay the
+    # "unit" is the international unit of the WHO insulin reference
+    # preparation the method is calibrated to, so the two labels carry the
+    # same number.  Not folded globally: elsewhere "U" is an enzyme or an
+    # arbitrary assay unit and is no international unit at all.
+    ("insulin", "uu/ml"): "miu/l",
 }
 
 # Merged only after the reverse map is built, deliberately.  Folding has to

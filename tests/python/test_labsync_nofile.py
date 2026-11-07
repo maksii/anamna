@@ -21,7 +21,7 @@ from test_labsync import make, router, seed_doc, stub_intake
 from test_labsync_ekspert import FAMILY, PASSWORD, PROFILE, TOKENS
 
 ANTIGEN = "sars-cov-2-antigen"
-NOFILE = {"id": 315169, "name": '"Тест на визначення антигену SARS-CoV-2"', "category": "lab",
+NOFILE = {"id": 100169, "name": '"Тест на визначення антигену SARS-CoV-2"', "category": "lab",
           "status": "Внесено результати", "status_code": "ResultSubmitted", "date": "2025-09-18T08:36:00",
           "result_date": "2025-09-18T09:10:00", "has_file": False, "has_abnormal_results": False}
 INDICATORS = [{"id": 1, "name": "Антиген SARS-CoV-2", "value": "не виявлено", "unit": None,
@@ -54,7 +54,7 @@ def sync(settings, user_id, monkeypatch, analysis: dict, indicators=INDICATORS) 
 
 def state(settings) -> dict:
     with connect(settings) as connection:
-        order = dict(connection.execute("SELECT * FROM lab_orders WHERE order_id='315169'").fetchone())
+        order = dict(connection.execute("SELECT * FROM lab_orders WHERE order_id='100169'").fetchone())
         documents = [dict(row) for row in connection.execute(
             "SELECT id, extraction_strategy, mime_type, duplicate_of_document_id, source_path, order_identifier, "
             "report_date FROM documents ORDER BY imported_at, rowid")]
@@ -79,18 +79,18 @@ def test_a_finished_order_with_no_pdf_is_filed_once_as_the_labs_record(tmp_path:
     [record] = now["documents"]
     assert now["order"]["document_id"] == record["id"]
     assert (record["extraction_strategy"], record["mime_type"]) == ("lab_api", "application/json")
-    assert (record["order_identifier"], record["report_date"]) == ("315169", "2025-09-18")
+    assert (record["order_identifier"], record["report_date"]) == ("100169", "2025-09-18")
     # Mapped through the same alias path a PDF row takes; provisional, never verified.
     assert now["values"] == [{"document_id": record["id"], "concept_id": ANTIGEN, "value_text": "не виявлено",
                               "observed_at": "2025-09-18", "verification_status": "extracted",
                               "extraction_method": "lab_api", "vendor_interpretation": "within_vendor_range"}]
     stored = json.loads(Path(record["source_path"]).read_text(encoding="utf-8"))
-    assert stored["order_id"] == "315169" and stored["rows"][0]["result"] == "не виявлено"
+    assert stored["order_id"] == "100169" and stored["rows"][0]["result"] == "не виявлено"
     assert stored["no_file_reason"] == "labsync.unavailable_nofile"
     with connect(settings) as connection:
         task = connection.execute("SELECT state, reason_key FROM review_tasks WHERE entity_id=?",
                                   (record["id"],)).fetchone()
-        tracked = connection.execute("SELECT * FROM lab_orders WHERE order_id='315169'").fetchone()
+        tracked = connection.execute("SELECT * FROM lab_orders WHERE order_id='100169'").fetchone()
         # The record IS the lab&#39;s rows: no "matches the lab record" over itself.
         assert labsync.check_order(connection, user_id, tracked) is None
     assert (task["state"], task["reason_key"]) == ("open", "review.verify_n")
@@ -128,13 +128,13 @@ def test_a_second_sync_changes_nothing_and_an_amended_record_replaces_the_old(tm
 def test_a_pdf_the_lab_attaches_later_takes_the_order_over(tmp_path: Path, monkeypatch):
     settings, user_id, _ = connected(tmp_path, monkeypatch)
     calls = stub_intake(monkeypatch, settings, user_id, {
-        "ekspert-315169.pdf": {"vendor": "Expert Hospital", "order": "315169", "day": "2025-09-18",
+        "ekspert-100169.pdf": {"vendor": "Expert Hospital", "order": "100169", "day": "2025-09-18",
                                "values": [("Антиген SARS-CoV-2", "не виявлено", None, "within_vendor_range")]},
     })
     sync(settings, user_id, monkeypatch, NOFILE)
     record = state(settings)["order"]["document_id"]
     summary = sync(settings, user_id, monkeypatch, {**NOFILE, "has_file": True})
-    assert calls == ["ekspert-315169.pdf"] and summary["imported"] == 1
+    assert calls == ["ekspert-100169.pdf"] and summary["imported"] == 1
     now = state(settings)
     pdf = next(doc for doc in now["documents"] if doc["id"] != record)
     assert now["order"]["state"] == "imported" and now["order"]["document_id"] == pdf["id"]
@@ -147,7 +147,7 @@ def test_a_pdf_the_lab_attaches_later_takes_the_order_over(tmp_path: Path, monke
             "SELECT COUNT(*) FROM audit_events WHERE action='labsync_lab_record_retired' AND entity_id=?",
             (record,)).fetchone()[0] == 1
     assert sync(settings, user_id, monkeypatch, {**NOFILE, "has_file": True})["already"] == 1
-    assert calls == ["ekspert-315169.pdf"]
+    assert calls == ["ekspert-100169.pdf"]
 
 
 def test_a_report_the_person_uploads_takes_the_order_over_too(tmp_path: Path, monkeypatch):
@@ -155,7 +155,7 @@ def test_a_report_the_person_uploads_takes_the_order_over_too(tmp_path: Path, mo
     stub_intake(monkeypatch, settings, user_id, {})
     sync(settings, user_id, monkeypatch, NOFILE)
     record = state(settings)["order"]["document_id"]
-    uploaded = seed_doc(settings, user_id, vendor="Expert Hospital", order="315169", day="2025-09-18",
+    uploaded = seed_doc(settings, user_id, vendor="Expert Hospital", order="100169", day="2025-09-18",
                         values=[("Антиген SARS-CoV-2", "не виявлено", None, "within_vendor_range")])
     assert sync(settings, user_id, monkeypatch, NOFILE)["linked"] == 1
     now = state(settings)
@@ -200,9 +200,9 @@ def test_any_provider_whose_order_carries_rows_but_no_file_is_filed_the_same_way
 
 @pytest.mark.parametrize("locale, heading, state_text, source_text", [
     ("en", "Reported by the lab&#39;s online service. No PDF issued", "in your record, no PDF",
-     "Reported by the lab&#39;s online service · order 315169 · no PDF issued"),
+     "Reported by the lab&#39;s online service · order 100169 · no PDF issued"),
     ("uk", "Результати з онлайн-сервісу лабораторії, без PDF", "у картці, без PDF",
-     "Дані онлайн-сервісу лабораторії · замовлення 315169 · PDF не видано"),
+     "Дані онлайн-сервісу лабораторії · замовлення 100169 · PDF не видано"),
 ])
 def test_the_pages_say_where_the_values_came_from(tmp_path: Path, monkeypatch, locale, heading, state_text,
                                                   source_text):
@@ -212,7 +212,7 @@ def test_the_pages_say_where_the_values_came_from(tmp_path: Path, monkeypatch, l
     record = state(settings)["order"]["document_id"]
     client.cookies.set("anamna_lang", locale)
     page = client.get(f"/documents/{record}").text
-    assert heading in page and "315169" in page and 'id="lab-record"' in page
+    assert heading in page and "100169" in page and 'id="lab-record"' in page
     assert 'data-source-viewer' not in page and f'/documents/{record}/rescan' not in page
     profile = client.get("/profile?tab=connections").text
     card = profile[profile.index('id="lab-ekspert"'):]

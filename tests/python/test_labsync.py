@@ -224,6 +224,8 @@ def test_cross_check_classifies_every_row_and_observation():
         row("Ширина розподілу (RDW-CV)", "12.1", "%"),
         row("Посів", '{"a":1}', resulttype="json"),
         row("Примітки", "-"),
+        row("Примітки (зак)", "Токсигенна зернистість окремих нейтрофілів."),
+        row("Копрограма", "a_1.pdf", resulttype="file"),
     ]
     observations = [
         obs("Гемоглобін (HGB)", 151.0, "г/л"),
@@ -246,9 +248,11 @@ def test_cross_check_classifies_every_row_and_observation():
     assert by_name["Ширина розподілу (RDW-SD)"]["cls"] == "missing"
     assert by_name["Ширина розподілу (RDW-CV)"]["cls"] == "match"
     assert by_name["Посів"]["cls"] == "info" and by_name["Примітки"]["cls"] == "info"
+    # A remark and an attached file are not values the PDF could be missing.
+    assert by_name["Примітки (зак)"]["cls"] == "info" and by_name["Копрограма"]["cls"] == "info"
     assert by_name["Сміття"]["cls"] == "extra"
     assert result["counts"] == {"match": 4, "value_mismatch": 1, "unit_mismatch": 1, "name_mismatch": 0,
-                                "missing": 1, "extra": 1, "info": 2, "flag": 1, "reference_differs": 0}
+                                "missing": 1, "extra": 1, "info": 4, "flag": 1, "reference_differs": 0}
 
 
 def test_cross_check_pairs_cut_names_and_recognises_descriptive_blocks():
