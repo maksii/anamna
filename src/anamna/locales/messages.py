@@ -1602,6 +1602,40 @@ MESSAGES: dict[str, dict[str, str]] = {
         "uk": "Ці знімки екрана надіслано разом, і вони показують один звіт: на них те саме замовлення, або один продовжує інший. Значення кожного перевіряються окремо. Якщо знімок належить до іншого звіту, від'єднайте його.",
     },
     "dup.not_part": {"en": "Not part of this report", "uk": "Це не частина цього звіту"},
+    "dup.rel_person_part_of": {"en": "Page or part of the report", "uk": "Сторінка або частина звіту"},
+    "dup.rel_person_has_part": {
+        "en": "Page or part of this report, linked by a person:",
+        "uk": "Сторінка або частина цього звіту, приєднана людиною:",
+    },
+    "dup.person_parts_explain": {
+        "en": "A person linked these files as pages or parts of one report, for example phone photos of its pages. Each file keeps its own pages and values. The report shows the pages of its parts, and checking the report checks its parts too. A re-read never undoes this link; the \"Not part of this report\" button does.",
+        "uk": "Людина приєднала ці файли як сторінки або частини одного звіту, наприклад фото його сторінок з телефона. Кожен файл зберігає власні сторінки та значення. У звіті видно сторінки його частин, а перевірка звіту перевіряє і їх. Повторне читання не скасовує цей зв'язок, а кнопка «Це не частина цього звіту» скасовує.",
+    },
+    "dup.part_pages": {"en": "Pages of {title}", "uk": "Сторінки документа {title}"},
+    "dup.part_heading": {"en": "Part of another report", "uk": "Частина іншого звіту"},
+    "dup.part_help": {
+        "en": "Use this when this file is one page or part of a report already in the record, for example a second photo of a printed report. Both files stay; the report shows this file's pages, and checking the report checks this file too. You can undo it here or on the report.",
+        "uk": "Скористайтеся цим, якщо файл є сторінкою або частиною звіту, який уже є в записі, наприклад друге фото надрукованого звіту. Обидва файли залишаються; у звіті видно сторінки цього файла, а перевірка звіту перевіряє і цей файл. Скасувати можна тут або у звіті.",
+    },
+    "dup.part_report": {"en": "Report this file belongs to", "uk": "Звіт, до якого належить цей файл"},
+    "dup.part_choose": {"en": "Choose a report", "uk": "Виберіть звіт"},
+    "dup.part_action": {"en": "Link as part of this report", "uk": "Приєднати як частину цього звіту"},
+    "dup.part_review_note": {
+        "en": "This file is part of a report, and checking that report checks this file too:",
+        "uk": "Цей файл є частиною звіту, і перевірка того звіту перевіряє і цей файл:",
+    },
+    "dup.parts_review_note_one": {
+        "en": "Checking this report also checks its {count} linked part.",
+        "uk": "Перевірка цього звіту перевіряє і {count} приєднану частину.",
+    },
+    "dup.parts_review_note_few": {
+        "en": "Checking this report also checks its {count} linked parts.",
+        "uk": "Перевірка цього звіту перевіряє і {count} приєднані частини.",
+    },
+    "dup.parts_review_note_many": {
+        "en": "Checking this report also checks its {count} linked parts.",
+        "uk": "Перевірка цього звіту перевіряє і {count} приєднаних частин.",
+    },
     "dup.card_part": {
         "en": "Screenshot of one report sent in several parts. Open to see the other parts",
         "uk": "Знімок екрана звіту, надісланого кількома частинами. Відкрийте, щоб побачити інші частини",
@@ -1775,6 +1809,24 @@ MESSAGES: dict[str, dict[str, str]] = {
     "doc.conclusion_read_text": {"en": "Read the page text", "uk": "Відкрити текст сторінки"},
     "doc.finding_areas": {"en": "Concerns", "uk": "Стосується"},
     "doc.finding_more": {"en": "Show the whole passage", "uk": "Показати весь фрагмент"},
+    "doc.finding_correct": {"en": "Correct the text from the image", "uk": "Виправити текст за зображенням"},
+    "doc.finding_correct_help": {
+        "en": "When the text read from a photo has stray characters or missing words, write the conclusion as the image shows it. Your text is shown instead of what was read, is kept when the file is read again, and the text as read stays available.",
+        "uk": "Якщо в тексті, прочитаному з фото, є зайві символи або бракує слів, напишіть висновок так, як його видно на зображенні. Ваш текст показується замість прочитаного, зберігається під час повторного читання файла, а прочитаний текст залишається доступним.",
+    },
+    "doc.finding_summary_label": {"en": "Conclusion", "uk": "Висновок"},
+    "doc.finding_save": {"en": "Save the corrected text", "uk": "Зберегти виправлений текст"},
+    "doc.finding_revert": {"en": "Undo the correction", "uk": "Скасувати виправлення"},
+    "doc.finding_corrected_badge": {"en": "Corrected by a person", "uk": "Виправлено людиною"},
+    "doc.finding_corrected_by": {
+        "en": "Written from the image of the report by {name}, {date}.",
+        "uk": "Текст записано за зображенням звіту: {name}, {date}.",
+    },
+    "doc.finding_corrected_help": {
+        "en": "Corrected from the image of the report by a person.",
+        "uk": "Виправлено людиною за зображенням звіту.",
+    },
+    "doc.finding_read_text": {"en": "Show the text as read", "uk": "Показати прочитаний текст"},
     "doc.finding_as_printed_uk": {
         "en": "As printed in the report, in Ukrainian. No English summary has been written for it.",
         "uk": "Як надруковано в документі, українською.",

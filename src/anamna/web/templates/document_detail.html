@@ -28,6 +28,8 @@
     <span class="eyebrow">{{ t('documents.review_state') }}</span>
     <h2>{{ t('documents.review_' ~ review_task.state) }}</h2>
     <p data-review-line>{{ review_task.line_text }}</p>
+    {% if relations.person_part_of %}<p>{{ t('dup.part_review_note') }} <a href="/documents/{{ relations.person_part_of.id }}#review-status">{{ relations.person_part_of.title_text }}</a></p>
+    {% elif relations.person_parts %}<p>{{ plural_t('dup.parts_review_note', relations.person_parts|length) }}</p>{% endif %}
   </div>
   {% if not viewing %}
   <form class="review-actions" method="post" action="/documents/{{ document.id }}/review">
@@ -105,9 +107,32 @@
           {% else %}
           <p class="an-doc-finding__text">{{ finding.text }}</p>
           {% endif %}
+          {% if finding.recommendations %}<p class="an-doc-finding__areas"><b>{{ t('area.finding_recommended') }}:</b> {{ finding.recommendations }}</p>{% endif %}
           {% if finding.areas %}<p class="an-doc-finding__areas"><b>{{ t('doc.finding_areas') }}:</b> {{ finding.areas|join(', ') }}</p>{% endif %}
+          {% if finding.corrected %}<p class="an-field-help an-doc-finding__corrected"><span class="pill">{{ t('doc.finding_corrected_badge') }}</span> {{ finding.corrected_text or t('doc.finding_corrected_help') }}</p>{% endif %}
+          {% if finding.read_text and finding.read_text != finding.text %}
+          <details class="an-doc-finding__original"><summary>{{ t('doc.finding_read_text') }}</summary><blockquote>{{ finding.read_text }}</blockquote></details>
+          {% endif %}
           {% if finding.show_original %}
           <details class="an-doc-finding__original"><summary>{{ t('area.source_wording') }}</summary><blockquote>{{ finding.original_text }}</blockquote></details>
+          {% endif %}
+          {% if not viewing %}
+          {#- OCR of a phone photo can leave debris in a conclusion no parser
+              can undo; a person reads the image and writes what it says. -#}
+          <details class="an-doc-finding__original an-doc-finding__edit">
+            <summary>{{ t('doc.finding_correct') }}</summary>
+            <form method="post" action="/documents/{{ document.id }}/findings" class="an-classify-form">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              {% for id in finding.ids %}<input type="hidden" name="finding_id" value="{{ id }}">{% endfor %}
+              <p class="an-field-help">{{ t('doc.finding_correct_help') }}</p>
+              <label>{{ t('doc.finding_summary_label') }}<textarea name="summary" rows="5" maxlength="6000" required>{{ finding.text }}</textarea></label>
+              <label>{{ t('area.finding_recommended') }}<textarea name="recommendations" rows="3" maxlength="6000">{{ finding.recommendations }}</textarea></label>
+              <div class="an-reread-actions">
+                <button class="primary" name="action" value="correct" type="submit">{{ t('doc.finding_save') }}</button>
+                {% if finding.corrected %}<button class="secondary" name="action" value="revert" type="submit" formnovalidate>{{ t('doc.finding_revert') }}</button>{% endif %}
+              </div>
+            </form>
+          </details>
           {% endif %}
         </li>
         {% endfor %}
@@ -243,6 +268,31 @@
           cannot be read at all, and which re-reading cannot rescue. -#}
       <span class="eyebrow">{{ t('doc.details_heading') }}</span>
       {{ classify_form(document, document_kinds, known_vendors, csrf_token, '/documents/' ~ document.id) }}
+
+      {% if part_candidates or relations.person_part_of %}
+      <h3 id="part-of-report">{{ t('dup.part_heading') }}</h3>
+      <p class="an-field-help">{{ t('dup.part_help') }}</p>
+      {% if relations.person_part_of %}
+      <p>{{ t('dup.rel_person_part_of') }} <a href="/documents/{{ relations.person_part_of.id }}">{{ relations.person_part_of.title_text }}</a></p>
+      <form method="post" action="/documents/{{ document.id }}/duplicate" class="inline-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="other_id" value="{{ relations.person_part_of.id }}">
+        <button class="secondary" name="action" value="keep_both" type="submit">{{ t('dup.not_part') }}</button>
+      </form>
+      {% endif %}
+      {% if part_candidates %}
+      <form method="post" action="/documents/{{ document.id }}/duplicate" class="an-classify-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label>{{ t('dup.part_report') }}
+          <select name="primary_id" required>
+            <option value="">{{ t('dup.part_choose') }}</option>
+            {% for other in part_candidates %}<option value="{{ other.id }}">{{ other.title_text }} · {{ other.date_text }} · {{ other.original_filename }}</option>{% endfor %}
+          </select>
+        </label>
+        <button class="secondary" name="action" value="part" type="submit">{{ t('dup.part_action') }}</button>
+      </form>
+      {% endif %}
+      {% endif %}
 
       <span class="eyebrow">{{ t('doc.maintenance') }}</span>
       {#- Nothing was read from a lab record's file, so there is nothing to
