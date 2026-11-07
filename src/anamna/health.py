@@ -1656,7 +1656,10 @@ _STUDIES: tuple[tuple[str, str, tuple[str, ...], frozenset[str] | None, re.Patte
         ("carotid_duplex", "Carotid and vertebral artery ultrasound", ("heart",), None, r"сонних|carotid|вертебральних\s+артері"),
         ("thyroid_us", "Thyroid ultrasound", ("thyroid",), None, r"щитоподібн|щитовидн|thyroid"),
         ("gi_us", "Gastrointestinal tract ultrasound", ("digestive",), {"ultrasound"}, r"шлунково\s*-?\s*кишков"),
-        ("abdominal_us", "Abdominal ultrasound", ("liver", "kidneys"), None, r"черевної\s+порожнини|abdominal"),
+        # UltraMed's photographed protocol keeps no title in OCR; its organ
+        # headings («ПІДШЛУНКОВА ЗАЛОЗА.») name the study.
+        ("abdominal_us", "Abdominal ultrasound", ("liver", "kidneys"), None,
+         r"черевної\s+порожнини|abdominal|підшлункова\s+залоза\s*[.:]"),
         ("soft_tissue_us", "Soft-tissue ultrasound", ("joints",), None, r"м['’]яких\s+тканин|soft[- ]tissue"),
         ("salivary_us", "Salivary-gland and cervical-node ultrasound", ("ent",), None, r"слинн|salivary"),
         ("breast_us", "Breast ultrasound", ("reproductive",), None, r"грудн\w*\s+залоз|молочн\w*\s+залоз|breast"),
@@ -1691,9 +1694,15 @@ _ORGAN_AREAS: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
     (area, re.compile(pattern, re.I))
     for area, pattern in (
         ("heart", r"\bсерц|\bcardi|\bheart"),
-        ("liver", r"\bпечін|\bliver|\bгепат|\bпідшлунков|\bpancrea"),
-        ("kidneys", r"\bнир[кц]|\bkidney|\brenal|\bсечов"),
-        ("digestive", r"\bкиш|\bintestin|\bшлун[ок]|\bstomach|\bілеїт|\bколіт"),
+        # «органів черевної порожнини» is the abdominal study's own phrase,
+        # read through OCR debris («черевної З ої порожнини»).
+        ("liver", r"\bпечін|\bliver|\bгепат|\bпідшлунков|\bpancrea|\bчеревн\w*\s+(?:\S+\s+){0,3}?порожнин"),
+        ("kidneys", r"\bнир(?:[кц]|ок\b)|\bkidney|\brenal|\bсечов"),
+        # A working diagnosis is often an abbreviation alone: «СПК? СНБР?»
+        # (irritable bowel syndrome, small intestinal bacterial overgrowth),
+        # «ГЕРХ» (gastro-oesophageal reflux disease).
+        ("digestive", r"\bкиш|\bintestin|\bшлун[ок]|\bstomach|\bілеїт|\bколіт|\bспк\b|\bснбр\b|\bсибр\b|\bгерх\b|\bibs\b|\bsibo\b"
+         r"|\bанальн|\bгеморо|\bпроктолог|\bproctolog|\bhaemorrhoid|\bhemorrhoid"),
         ("spine", r"\bхреб|\bspin|\blumbar|\bcervical spine"),
         # A lipoma is a soft-tissue lump wherever it sits («ліпоми лівої
         # верхньої кінцівки»); «кінцівк» itself is in every consultation's
@@ -1755,7 +1764,13 @@ _GENERIC_TITLES = {
 # «Висновок:» over its description and closes with «Висновок:» over the
 # radiologist's verdict.
 _CONCLUSION_LABELS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"(?:гістологічн\w*\s+)?(?:висновок|buchobok|заключення)(?:\s+лікаря)?\s*[:：]|(?:impression|conclusion)\s*[:：]", re.I),
+    # OCR of a photo loses the colon («Заключення Кисти лівого яйника: …», a
+    # capital follows the label) or the first letter («аключення:»).
+    re.compile(
+        r"(?:гістологічн\w*\s+)?(?:висновок|buchobok|з?аключення)(?:\s+лікаря)?\s*[:：]|(?:impression|conclusion)\s*[:：]"
+        r"|^[ \t]*заключення(?=[ \t]+(?-i:[А-ЯІЇЄҐ]))",
+        re.I | re.M,
+    ),
     re.compile(r"(?:уз|узд|мр)[- ]?ознаки\s*[:：]", re.I),
     # Form 028/о prints its field label in a column beside the value, so text
     # extraction reads «Діагноз основний: G44.2 …», «Діагноз» / «основний: …»
@@ -1764,9 +1779,13 @@ _CONCLUSION_LABELS: tuple[re.Pattern[str], ...] = (
     # which diagnosis is which.
     re.compile(
         r"(?:попередн|заключн|остаточн|клінічн)\w*\s+діагноз\s*[:：]|^\s*діагноз\s*[:：]"
+        # Written the other way round («ДІАГНОЗ КЛІНІЧНИЙ:», «Діагноз
+        # попередній:»), and form 110's «Основний діагноз:» (OCR «Осчовний»).
+        r"|діагноз\s+(?:попередн|заключн|остаточн|клінічн)\w*\s*[:：]|(?<![^\W\d_])ос[нч]овн\w*\s+діагноз\s*[:：]"
         r"|^\s*діагноз\s*$|^\s*діагноз\s+(?=основний\s*[:：])|^(?=\s*основний\s*[:：])"
         # Expert's later template: «по МКХ-10 (Основний): -. Опис: <diagnosis>».
-        r"|\bпо\s+мкх-?10\s*\(\s*основний\s*\)\s*[:：]",
+        # OCR may read МКХ in Latin letters («MKX-10»).
+        r"|\bпо\s+[мm][кk][хx]-?10\s*\(\s*основний\s*\)\s*[:：]",
         re.I | re.M,
     ),
     re.compile(r"kardia\s+advanced\s+determination\s*[:：]", re.I),
@@ -1774,19 +1793,23 @@ _CONCLUSION_LABELS: tuple[re.Pattern[str], ...] = (
     # Expert's X-ray: the radiologist's reading under «Результат:».
     re.compile(r"^\s*результат\s*[:：]\s*$", re.I | re.M),
     # A colposcopy protocol's verdict («Діагноз кольпоскопічний: ...»).
-    re.compile(r"діагноз\s+кольпоскопічн\w*\s*[:：]", re.I),
+    re.compile(r"діагноз\s+кол\s?ьпоскопічн\w*\s*[:：]", re.I),
 )
 #: Which clinical types each label above is read in; a label not listed is read in any.
 _CONCLUSION_LABEL_TYPES = {4: {None, "consultation"}, 5: {None, "radiology_xray", "radiology_mri"}}
 
 _CONCLUSION_END = re.compile(
-    r"\n\s*(?:рекомендовано|рекомендації|рекомендую)\b|\bрекомендовано\s*[:：]"
+    # A numbered form section («7. Рекомендації:») as well as a bare label.
+    r"\n\s*(?:\d{1,2}\.\s*)?(?:рекомендовано|рекомендації|рекомендую)\b|\bрекомендовано\s*[:：]"
     r"|\bрекомендовано\s+(?:обстеження|лікування)|\bдо\s+(?:відома|уваги)"
-    r"|\bдата\s+(?:дослідження|обстеження|візиту)|\bдата\s*[:：]|\bплан\s+обстеження|\bпідпис"
+    r"|\bдата\s+(?:дослідження|обстеження|візиту)|\bдат[аеє]\s*[:：]|\bплан\s+обстеження|\bпідпис"
     r"|\bрезультати\s+(?:ультразвукового\s+)?досліджен|\bлікар(?:[-‐]\w+)?\s*[:_]|\bлікар[-‐]патолог"
     r"|\bмедична\s+сестра|\bзображень\s*[:：]|\bед\s*[-–]\s*\d|\bnotes\b|\*\s*kardia|\bназва\s+послуги"
     r"|\bсторінка\s+\d|\bлабораторні\s+дослідження|\bпризначене\s+лікування|\bконсультації\s+спеціалістів"
     r"|\bінші\s+дослідження|\bвисновок\s+(?:\w+\s+)?не\s+(?:є|являєть)|\bскарги\b"
+    # Form 110/о: what was done follows the diagnosis («Дії: ексцизійна
+    # обробка ран»); a colposcopy protocol's empty fields under its verdict.
+    r"|\bдії\s*[:：]|\n[ \t]*(?:інші\s+ознаки|діагноз\s+клінічн\w*)[ \t]*(?=\n|$)"
     # Form 028/о: the field under the diagnosis.
     r"|\bдані\s+лабораторних\s+та\b"
     # An eHealth diagnostic report's sign-off.
@@ -1801,7 +1824,7 @@ _CONCLUSION_END = re.compile(
 )
 
 _RECOMMENDATION_LABEL = re.compile(
-    r"\bрекомендовано(?:\s+(?:обстеження|лікування))?\s*[:：]|^\s*(?:рекомендовано|рекомендації)\b(?:\s+і\s+лікування\b)?"
+    r"\bрекомендовано(?:\s+(?:обстеження|лікування))?\s*[:：]|^\s*(?:\d{1,2}\.\s*)?(?:рекомендовано|рекомендації)\b(?:\s+і\s+лікування\b)?"
     r"|\bплан\s+обстеження\s*[:：]|\bкоментар\s*[:：]\s*(?=рекоменд)"
     r"|\bпризначене\s+лікування(?:\s+та\s+рекомендації)?\s*[:：]|^\s*призначення\s*$"
     # Zero-width: the label says what the schedule under it is, so it stays.
@@ -1814,12 +1837,14 @@ _RECOMMENDATION_LABEL = re.compile(
 #: last one with no label of its own, above «Призначення».
 _VISIT_PROTOCOL_TABLE = re.compile(r"^№ дози.*(?:\n(?:доз\b|[1-9]\s|Здоров).*)*", re.M)
 _RECOMMENDATION_END = re.compile(
-    r"\bдо\s+(?:відома|уваги)|\bпідпис|\bдата\s+(?:дослідження|обстеження)|\bдата\s*[:：]"
+    r"\bдо\s+(?:відома|уваги)|\bпідпис|\bдата\s+(?:дослідження|обстеження)|\bдат[аеє]\s*[:：]"
     r"|\bлікар(?:[-‐]\w+)?\s*[:_]|\bлікар\s+пояснив|\bсторінка\s+\d|\bзалиште\s+відгук"
     r"|\bвхід\s+в\s+особистий|\bпацієнт\s*[:：]|\bмедикаментозне\s+лікування|\bмедична\s+сестра"
     r"|\bінші\s+дослідження|\bрезультати\s+(?:ультразвукового\s+)?досліджен|\bзображень\s*[:：]"
     # Form 028/о: the services the clinic books, then the next visit.
     r"|\bрекомендовані\s+послуги|\bдата\s+наступної\s+консультації"
+    # The doctor's dated sign-off: «25 квітня 2026 р. <doctor>», «Київ, 17 липня 2026 року».
+    r"|\b\d{1,2}\s+(?:січня|лютого|березня|квітня|травня|червня|липня|серпня|вересня|жовтня|листопада|грудня)\s+\d{4}\s*р"
     # Expert's X-ray: the effective dose, the radiologist and the disclaimer.
     r"|\bед\s*[-–=]\s*\d|п\.?\s?і\.?\s?б\.?\s+лікаря|\bне\s+є\s+остаточним",
     re.I,
@@ -1849,7 +1874,9 @@ _LETTERHEAD_LINE = re.compile(
 _ATTENTION_TERMS: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
     (family, re.compile(pattern, re.I))
     for family, pattern in (
-        ("colorectal_polyp", r"аденом(?!іоз)|поліп(?!ектом)|зубчаст|adenoma|\bpolyp"),
+        # A breast «фіброаденома» is no bowel adenoma; `finding_attention`
+        # also keeps the polyp of another organ out.
+        ("colorectal_polyp", r"(?<!фібро)аденом(?!іоз)|поліп(?!ектом)|зубчаст|(?<!fibro)adenoma|\bpolyp"),
         ("fatty_liver", r"стеатоз|гепатоз|гепатомегал|ліпоматоз|дифузн\w*\s+змін\w*\s+(?:паренхіми\s+)?(?:печінки|підшлунков)|steatosis|hepatomegaly"),
         ("cholestasis", r"холестаз|сладж|cholestasis|sludge"),
         ("thyroid_nodule", r"(?:вузл|вузол)(?![^.;]*(?:шморл|міом))|nodule"),
@@ -1867,6 +1894,14 @@ _NEGATED_CLAUSES = (
     re.compile(r"\bno\s+(?:evidence|sign)|\bnot\s+(?:seen|detected)", re.I),
 )
 _NEGATED_WORD = re.compile(r"(?:\bне|\bбез|\bno|\bnot)\s+$", re.I)
+#: A polyp or an adenoma of another organ: the endometrium, the cervix, the
+#: stomach, the gallbladder, the nose, the thyroid.  The colorectal
+#: explanation (polypectomy and colonoscopy intervals) answers none of them.
+_NOT_BOWEL = re.compile(
+    r"ендометр|цервік|\bматк|грудн\w*\s+залоз|молочн|шлунк|жовчн|носов|пазух|щитопод|гіпофіз"
+    r"|endometri|cervi|uter|breast|gastric|stomach|gallbladder|nasal|sinus|thyroid|pituitar",
+    re.I,
+)
 
 #: The cited sources behind each explanation (ids in data/reference_library.json).
 FINDING_EXPLANATION_SOURCES: dict[str, tuple[str, ...]] = {
@@ -1948,11 +1983,66 @@ _OPEN_CONJUNCTION = re.compile(r"(?<![^\W\d_])(?:або|чи|та|і|й|or|and)$
 _HANDLE_RE = re.compile(r"(?<![\w.])@[A-Za-z_][\w.]*|https?://\S+|\bwww\.\S+")
 
 
+#: A scale category alone on its line («TI-RADS 1») is the result, not debris.
+_SCALE_LINE = re.compile(r"\b(?:TI|BI|O|LI|PI)-?\s?RADS\s*:?\s*\d", re.I)
+#: A lower-case word or three finishing the sentence the line above left open
+#: («… кистозних змін обох» / «яйників,»; «… з лейкоцитарною» / «формулою»).
+_WRAPPED_TAIL = re.compile(r"[а-яіїєґ'’-]{3,}(?:\s+[а-яіїєґ'’-]+){0,2}[.,;]?")
+#: Ukrainian words (and units) of one or two letters.  Any other such token
+#: opening a line of a photographed page is the edge of the sheet beside it
+#: («ої збагачений», «С структурні», «Ai Гастропатія»).
+_SHORT_WORDS = frozenset(
+    "а б в г ж з і й л о у до на по за та як чи не ні її їх ця це ці то ще бо із зі зо де же мм см мл кг мг хв од".split()
+)
+#: Latin letters OCR puts for Cyrillic ones: «He збільшена» is «Не збільшена».
+_LOOKALIKE = str.maketrans("ABCEHIKMOPTXaceiopxy", "АВСЕНІКМОРТХасеіорху")
+
+
+def _margin_debris(token: str, following: str | None) -> bool:
+    """Whether a line's first token is OCR of the neighbouring sheet's edge.
+
+    Only a token of one or two letters qualifies, and never a two-letter
+    abbreviation («УЗ», «ЩЗ») or a letter before a figure («Т 36,6»).  A short
+    word stays unless, written in lower case, it runs into a capitalised one
+    («з На рентгенограмах»); anything else is debris before a word, and a
+    letter or two alone on a line (or after the line's full stop) is too,
+    unless it is a negation: «Не» wrapped onto a line of its own still says it.
+    """
+    if len(token) > 2 or not token.isalpha() or (len(token) == 2 and token.isupper()):
+        return False
+    word = token.translate(_LOOKALIKE).casefold()
+    if following is None:
+        return word not in {"не", "ні"}
+    if word in _SHORT_WORDS:
+        return token.islower() and following[:1].isupper()
+    return following[:1].isalpha()
+
+
+def _without_margin_debris(line: str) -> str:
+    tokens = line.split()
+    while tokens and _margin_debris(tokens[0], tokens[1] if len(tokens) > 1 else None):
+        tokens.pop(0)
+    # The right edge too: Latin letters after the sentence's full stop («… залози. ae»).
+    while len(tokens) > 1 and re.search(r"[.;!?]$", tokens[-2]) and tokens[-1].isascii() and _margin_debris(tokens[-1], None):
+        tokens.pop()
+    return " ".join(tokens)
+
+
 def _clean_block(text: str) -> str:
-    lines = [line.strip(" \t") for line in _HANDLE_RE.sub("", text).splitlines()]
-    lines = [line for line in lines if line.strip()]
-    # Stamp and signature debris trails a scanned conclusion («coe ЄЖЕНОЮ», «Ry»).
-    while lines and _is_noise_line(lines[-1]):
+    # OCR reads a table rule as «|», and «і» between two words («Фізичний |
+    # статевий спокій») or the Roman I of «І ст.» as one too.
+    text = re.sub(r"(?<=\s)\|(?=\s+ст\.)", "І", _HANDLE_RE.sub("", text))
+    text = re.sub(r"(?<=[^\W\d_] )\|(?= [а-яіїєґ])", "і", text)
+    text = re.sub(r"(?:^|(?<=\s))\|(?=\s|$)", " ", text, flags=re.M)
+    lines = [_without_margin_debris(line.strip(" \t")) for line in text.splitlines()]
+    lines = [line for line in lines if re.search(r"[^\W_]", line)]
+    while lines and not re.search(r"[^\W\d_]", lines[0]):
+        lines.pop(0)
+    # Stamp and signature debris trails a scanned conclusion («coe ЄЖЕНОЮ»,
+    # «Ry»); a wrapped last word or a scale category does not.
+    while lines and _is_noise_line(lines[-1]) and not _SCALE_LINE.search(lines[-1]) and not (
+        len(lines) > 1 and _WRAPPED_TAIL.fullmatch(lines[-1]) and re.search(r"[^\W\d_]$", lines[-2])
+    ):
         lines.pop()
     # A diagnosis list is one diagnosis per line («Сакроілеїт?» / «Паротит?»);
     # joined with bare spaces the question mark of one reads as belonging to
@@ -1982,9 +2072,18 @@ def _conclusion_span(text: str, clinical_type: str | None = None) -> tuple[int, 
             start = match.end()
             end_match = _CONCLUSION_END.search(text, start)
             end = end_match.start() if end_match else len(text)
+            if not end_match and _FORM_ICD_LABEL.match(text, match.start()):
+                # OCR lost form 028/о's label column, «Рекомендації і
+                # лікування» with it: the diagnosis ends with its own line.
+                line_end = re.search(r"[.!?][ \t]*(?=\n|$)", text[start:])
+                end = start + line_end.end() if line_end else end
             if len(_conclusion_text(text[start:end])) >= 4:
                 return match.start(), start, min(end, start + 3000)
     return None
+
+
+#: Expert's form 028/о diagnosis field, «по МКХ-10 (Основний): … Опис: …».
+_FORM_ICD_LABEL = re.compile(r"\bпо\s+[мm][кk][хx]-?10\s*\(\s*основний\s*\)\s*[:：]", re.I)
 
 
 def _quoted_in_history(text: str, position: int) -> bool:
@@ -2003,13 +2102,16 @@ def _quoted_in_history(text: str, position: int) -> bool:
 #: not a diagnosis.
 _FORM_DIAGNOSIS_NOISE = re.compile(r"^\s*діагноз(?!\s*[:：])\s*|^.*вкажіть\s+основний\s+діагноз.*$", re.I | re.M)
 _MAIN_DIAGNOSIS_LABEL = re.compile(r"^\s*основний\s*[:：]\s*", re.I | re.M)
+#: «Супутній: -» / «Супутній діагноз:» left empty says nothing.
+_EMPTY_COMORBIDITY = re.compile(r"^[ \t]*супутн\w*(?:[ \t]+діагноз)?[ \t]*[:：][ \t]*[-–—]?[ \t]*\.?[ \t]*$", re.I | re.M)
 _CODED_DIAGNOSIS_LINE = re.compile(r"(?:(?:[Оо]сновний|[Сс]упутній)\s*[:：]\s*)?[A-ZКМЕІ]\d{2}(?:\.\d{1,2})?(?:-[A-Z]\d{2})?\s")
 
 
 def _conclusion_text(block: str) -> str:
     """A conclusion block as stored: cleaned, form noise out, a repeated line said once."""
     # «-. Опис:»: no code was chosen, the description follows.
-    block = _FORM_DIAGNOSIS_NOISE.sub("", re.sub(r"^\s*-\s*\.?\s*Опис\s*[:：]\s*", "", block, flags=re.I))
+    block = _FORM_DIAGNOSIS_NOISE.sub("", re.sub(r"^\s*(?:-\s*\.?\s*)?Опис\s*[:：]\s*", "", block, flags=re.I))
+    block = _EMPTY_COMORBIDITY.sub("", block)
     if not re.search(r"супутн\w*\s*[:：]", block, re.I):
         # «основний:» alone names nothing the reader needs.
         block = _MAIN_DIAGNOSIS_LABEL.sub("", block)
@@ -2042,12 +2144,14 @@ _BLANK_REVISIT_RE = re.compile(
 )
 
 
-def _extract_recommendations(text: str, after: int = 0) -> str:
+def _extract_recommendations(text: str, after: int = 0, *, unlabelled: bool = False) -> str:
+    """The advice after `after`, under its label; with `unlabelled`, whatever
+    follows `after` when no label is printed (a form whose label column OCR lost)."""
     match = _RECOMMENDATION_LABEL.search(text, after)
     tables = [table.end() for table in _VISIT_PROTOCOL_TABLE.finditer(text, after, match.start() if match else len(text))]
-    if not match and not tables:
+    if not match and not tables and not unlabelled:
         return ""
-    start = tables[-1] if tables else match.end()
+    start = tables[-1] if tables else match.end() if match else after
     end_match = _RECOMMENDATION_END.search(text, start)
     block = text[start: end_match.start() if end_match else len(text)]
     lines = []
@@ -2112,7 +2216,8 @@ def _strip_letterhead(text: str, identity: tuple[str, ...] = ()) -> str:
     lines = [_without_letterhead(line) for line in lines]
     return "\n".join(
         line for line in lines
-        if re.search(r"[^\W\d_]", line)
+        # A line of figures alone is the body too: «Феритин 26 норма більше» / «30.».
+        if re.search(r"[^\W_]", line)
         and not any(token in search_key(line) or token in line for token in identity)
     )
 
@@ -2155,13 +2260,21 @@ def _language(text: str) -> str:
     return "uk" if cyrillic >= latin else "en"
 
 
-def finding_attention(summary: str | None) -> list[str]:
-    """The explanation families an abnormal conclusion names, in order."""
+def finding_attention(summary: str | None, areas: tuple[str, ...] = ()) -> list[str]:
+    """The explanation families an abnormal conclusion names, in order.
+
+    A polyp is colorectal only in the bowel: never in a clause naming another
+    organ («поліпу ендометрію»), nor in a report filed only under areas other
+    than the digestive tract (a pelvic or a breast ultrasound).
+    """
     families: list[str] = []
+    bowel = not areas or "digestive" in areas
     for clause in re.split(r"[.;\n]|\s[-–—]\s", summary or ""):
         if not clause.strip() or any(pattern.search(clause) for pattern in _NEGATED_CLAUSES):
             continue
         for family, pattern in _ATTENTION_TERMS:
+            if family == "colorectal_polyp" and (not bowel or _NOT_BOWEL.search(clause)):
+                continue
             for match in pattern.finditer(clause):
                 if not _NEGATED_WORD.search(clause[: match.start()]) and family not in families:
                     families.append(family)
@@ -2247,9 +2360,16 @@ def _complaints_span(text: str) -> tuple[int, int, int] | None:
     return (label.start(), label.start(), end_at) if len(_clean_block(text[label.end():end_at])) >= 4 else None
 
 
+#: An ICD-10 code whose letter OCR (or the typist) wrote in Cyrillic
+#: («К21.0»): stored with the Latin letter, the code the classification has.
+_CYRILLIC_ICD = re.compile(r"(?<![\w.])[АВСЕНІКМОРТХ](?=\d{2}(?:\.\d{1,2})?(?![\w]))")
+_ICD_LATIN = str.maketrans("АВСЕНІКМОРТХ", "ABCEHIKMOPTX")
+
+
 def _report_summary(text: str, span: tuple[int, int, int] | None) -> str:
     """The report's conclusion, cleaned, with a restated diagnosis said once."""
     summary = _conclusion_text(text[span[1]:span[2]]) if span else ""
+    summary = _CYRILLIC_ICD.sub(lambda found: found.group(0).translate(_ICD_LATIN), summary)
     # eHealth marks its required fields with «*»; it is form furniture.
     summary = re.sub(r"\*(?=[\s;,.]|$)", "", summary)
     # A working diagnosis confirmed word for word as the clinical one is
@@ -2277,6 +2397,9 @@ def _report_filing(
     if clinical_type == "consultation":
         patient = PATIENT_LABEL_RE.search(text)
         body = text[: patient.start()] if patient else ""
+        # Form 110/о names the specialty below the patient's lines
+        # («Спеціальность …, прізвище … лікаря-консультанта: травматолог»).
+        body += " ".join(re.findall(r"^.*(?:спеціальн|консультант).*$", text, re.I | re.M))
     else:
         # An exam template's empty field («Щитовидна залоза:») names an organ
         # nobody described; it never files the report.
@@ -2340,10 +2463,10 @@ def _sentence_start(text: str, index: int) -> int:
     return line_start + (ends[-1] if ends else 0)
 
 
-def _summary_fields(summary: str, original: str) -> dict[str, object]:
+def _summary_fields(summary: str, original: str, areas: tuple[str, ...] = ()) -> dict[str, object]:
     """Language, status and legibility of one conclusion."""
     language = _language(summary) if summary else "uk"
-    attention = finding_attention(summary)
+    attention = finding_attention(summary, areas)
     return {
         "summary_en": summary if language == "en" else "",
         "summary_uk": summary if language == "uk" else "",
@@ -2369,7 +2492,9 @@ def _report_candidate(
     if span is None and clinical_type == "consultation":
         span = _complaints_span(text)
     summary = _report_summary(text, span)
-    recommendations = _extract_recommendations(text, span[2]) if span else ""
+    recommendations = _extract_recommendations(
+        text, span[2], unlabelled=bool(_FORM_ICD_LABEL.match(text, span[0])) and not _CONCLUSION_END.search(text, span[1])
+    ) if span else ""
     study_key, title, areas = _report_filing(first, clinical_type, text, span, summary)
     # Only an image set is filed without a written conclusion (its finding
     # points at the pictures); any other report with nothing read stays a
@@ -2386,7 +2511,7 @@ def _report_candidate(
     if first["patient_id"] not in identities:
         identities[first["patient_id"]] = _identity_tokens(connection, first["patient_id"])
     original = _strip_letterhead(text[:body_end], identities[first["patient_id"]]) if summary else ""
-    fields = _summary_fields(summary, original)
+    fields = _summary_fields(summary, original, areas)
     return {
         "document_id": first["document_id"], "owner_user_id": first["owner_user_id"],
         "patient_id": first["patient_id"], "report_id": first["report_id"],
@@ -2423,7 +2548,10 @@ def _deduplicate_findings(candidates: list[dict[str, object]]) -> list[dict[str,
     candidates = [item for item in candidates if item["summary"] or item["document_id"] not in written_documents]
     groups: dict[tuple[object, ...], list[dict[str, object]]] = {}
     for item in candidates:
-        groups.setdefault((item["owner_user_id"], item["patient_id"], item["study"], item["finding_date"]), []).append(item)
+        # Two reports of one study whose dates are unknown are not one study:
+        # three InMed thyroid photos with no date read became one finding.
+        day = item["finding_date"] or item["document_id"]
+        groups.setdefault((item["owner_user_id"], item["patient_id"], item["study"], day), []).append(item)
     kept: list[dict[str, object]] = []
     for items in groups.values():
         pool = [item for item in items if item["summary"]] or items
@@ -2478,7 +2606,7 @@ def _area_finding(item: dict[str, object], area: str) -> dict[str, object]:
         if clause.strip() and (pattern.search(clause) or (
             area == areas[0] and not any(other and other.search(clause) for other in patterns)))
     ]
-    reasons = finding_attention(" ".join(own))
+    reasons = finding_attention(" ".join(own), (area,))
     text = " ".join(own) or summary
     return {
         **item,
