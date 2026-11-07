@@ -405,3 +405,25 @@ def test_an_adopted_flag_is_read_again_once_the_profile_says_who_the_person_is(t
     labsync.recheck(settings)
     after = observation(settings, obs_id)
     assert before != "low" and (after["vendor_interpretation"], after["vendor_interpretation_source"]) == ("low", "lab_record")
+
+
+def test_a_lab_flag_the_printed_band_contradicts_is_not_adopted(tmp_path: Path, monkeypatch):
+    """EskuLab's API marked a whole 2022 order "critical"; the paper prints no
+    flag and each value sits well inside its band.  No "borderline" over a
+    normal value, and one adopted earlier is taken back."""
+    settings, user_id, _ = make(tmp_path)
+    document_id = seed_doc(settings, user_id, vendor="EskuLab", order="9703", day="2026-01-10", values=[
+        ("Глюкоза", 5.0, "ммоль/л", "within_vendor_range")])
+    obs_id = f"{document_id}-0"
+    set_reference(settings, obs_id, "3.3-5.5", 3.3, 5.5)
+    rows = {"9703": [lab_row("Глюкоза", "5.0", "ммоль/л", state="critical", norm="{3.3-5.5#%}")]}
+    connect_eskulab(settings, user_id, monkeypatch, eskulab_routes([order(9703, ready=1, total=1)], rows))
+    stub_intake(monkeypatch, settings, user_id, {})
+    with connect(settings) as connection:  # as an earlier version left it
+        connection.execute("UPDATE observations SET vendor_interpretation='borderline', "
+                           "vendor_interpretation_source='lab_record' WHERE id=?", (obs_id,))
+    labsync.sync(settings, user_id, "eskulab", inline=True)
+    after = observation(settings, obs_id)
+    assert (after["vendor_interpretation"], after["vendor_interpretation_source"]) == ("within_vendor_range", None)
+    labsync.sync(settings, user_id, "eskulab", inline=True)
+    assert observation(settings, obs_id)["vendor_interpretation_source"] is None

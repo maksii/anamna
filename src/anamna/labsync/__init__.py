@@ -888,6 +888,21 @@ def _lab_reading(row: dict, obs: dict, number: float | None, age: int | None = N
     return "borderline"
 
 
+def _inside_printed_band(obs: dict, age: int | None, sex: str | None) -> bool:
+    """The value lies strictly inside the band the report prints for this person."""
+    value = obs.get("value_numeric")
+    if value is None:
+        return False
+    for low, high in ((obs.get("vendor_reference_low"), obs.get("vendor_reference_high")),
+                      applicable_reference_bounds(obs.get("vendor_reference_text"), age, sex)):
+        bounded = low is not None or high is not None
+        above_low = low is None or float(value) > float(low)
+        below_high = high is None or float(value) < float(high)
+        if bounded and above_low and below_high:
+            return True
+    return False
+
+
 def _lab_units(unit: str) -> set[str]:
     """Every canonical form the lab's spelling may stand for: as printed, and
     with explanatory words dropped."""
@@ -1974,6 +1989,13 @@ def _flag_from_lab(connection, user_id: str, key: str, order_id: str, item: dict
     item["lab_reading"] = _lab_reading(item["lab"], dict(person), None, _age(person),
                                        person["sex_at_birth"] if person["sex_at_birth"] in {"male", "female"}
                                        else None)
+    sex = person["sex_at_birth"] if person["sex_at_birth"] in {"male", "female"} else None
+    if item["lab_reading"] == "borderline" and _inside_printed_band(dict(person), _age(person), sex):
+        # The report's own band for this person holds the value, and the
+        # paper prints no flag: a "critical" the lab's API sets on a whole
+        # order (EskuLab, 2022) is not a statement about this value.  An
+        # edge value (pH 5.5 against «5.5 - 7.0») still takes the flag.
+        return _undo_lab_flag(connection, user_id, key, order_id, obs) if obs["from_lab"] else 0
     changed = connection.execute(
         """UPDATE observations SET vendor_interpretation=?, vendor_interpretation_source='lab_record'
             WHERE id=? AND owner_user_id=? AND (
