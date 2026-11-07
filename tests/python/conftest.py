@@ -24,6 +24,13 @@ def english_for_unlabelled_visits(monkeypatch):
     (`i18n.VISITOR_LOCALE`).  The web tests assert English copy, so a client
     that sets no language is English here; the shipped default is asserted by
     `test_a_first_visit_is_in_ukrainian_and_only_a_choice_is_remembered`."""
+    from anamna import i18n
     from anamna.web import app
 
     monkeypatch.setattr(app, "VISITOR_LOCALE", "en")
+    # A test that activates a language and fails before switching back left
+    # it set for every later test on that worker: English assertions then met
+    # Ukrainian labels, but only in a full parallel run.
+    token = i18n._locale.set(i18n.DEFAULT_LOCALE)
+    yield
+    i18n._locale.reset(token)
