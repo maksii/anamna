@@ -20339,6 +20339,39 @@
       "divergence_note": "The numeric threshold agrees across the US, the EU and two of the three Ukrainian documents: AUA/SUFU define microhaematuria as 3 or more red cells per high-power field, EFLM cites the same figure, Ukrainian guideline 00233 sets the upper recommended limit at 1-2 per field, and Ukrainian guideline 01056 (children) uses 3 or more. Ukrainian guideline 00237 (haematuria, 2017) words it as 'more than 3 red cells per field in sediment examination', so a count of exactly 3 is microhaematuria under AUA/SUFU and 01056 but not under 00237. That one-count disagreement is recorded rather than encoded: two overlapping bands would give the value 3 two verdicts, and the stricter reading is the one shared by the other three sources. The sources also differ in what they count - AUA/SUFU and 01056 a single properly collected specimen, 00233 a fasting first-morning sediment with a field of 0.12-0.17 µL - and AUA/SUFU explicitly do not accept a dipstick or an analyser count in place of microscopy."
     },
     {
+      "concept_id": "urine-erythrocytes-unchanged-per-microlitre",
+      "unit": "cells/µL",
+      "kind": "no_universal_target",
+      "source_ids": [
+        "eflm-urinalysis-2023",
+        "aua-sufu-microhematuria-2025",
+        "moz-nastanova-00233",
+        "moz-nastanova-00237",
+        "moz-nastanova-01056"
+      ],
+      "regions_covered": [
+        "US",
+        "EU",
+        "UA"
+      ],
+      "agreement": "divergent",
+      "bands": [],
+      "short_description": "Analyser count of red blood cells of normal (unchanged) shape per microlitre of unspun urine. It is the analyser's counterpart of the microscopy row that counts unchanged red cells per high-power field, but a microlitre is not a field and there is no conversion between the two, so they are kept as separate series. Automated urine particle counters use instrument- and laboratory-specific counting rules, calibration and cut-offs, so there is no universal reference interval. AUA/SUFU state that there is insufficient evidence on the accuracy of flow cytometry compared with microscopy and that microscopic quantification remains the referent standard. EFLM Recommendation 45 gives only \"a rough estimate\" of 10 (to 20) x 10^6/L (10-20 cells/µL) as the health-associated upper limit for all red cells in uncentrifuged morning urine, not for the unchanged fraction. The interval printed on your own laboratory's report is the one that applies to that report.",
+      "why_it_matters": "A particle count only becomes meaningful next to the counting rules and the reference limits of the instrument that produced it.",
+      "retest_interval_months": null,
+      "retest_rationale": null,
+      "uk": {
+        "name": "Еритроцити в сечі (незмінені), кл/мкл (аналізатор)",
+        "short_description": "Підрахунок аналізатором еритроцитів незміненої форми в мікролітрі нецентрифугованої сечі. Це аналог рядка мікроскопії, де незмінені еритроцити рахують у полі зору, але мікролітр не є полем зору і перерахунку між ними немає, тому це окремі ряди. Автоматичні аналізатори сечі рахують за правилами, калібруванням і порогами конкретного приладу та конкретної лабораторії, тож універсального референтного інтервалу немає. AUA/SUFU зазначають, що доказів точності проточної цитометрії порівняно з мікроскопією недостатньо, тож еталоном лишається підрахунок під мікроскопом. Рекомендація 45 EFLM наводить лише приблизну верхню межу для всіх еритроцитів у нецентрифугованій ранковій сечі: 10 (до 20) × 10⁶/л (10-20 кл/мкл), а не для незміненої частки. Для вашого результату діє інтервал, надрукований у бланку вашої лабораторії.",
+        "why_it_matters": "Кількість часток має сенс лише разом із правилами підрахунку й референтними межами аналізатора, який її визначив.",
+        "band_labels": {},
+        "jurisdiction_note": "Українські настанови наводять пороги проточної цитометрії для всіх еритроцитів, а не для незмінених. Настанова 00237: понад 15 × 10⁶ еритроцитів/л у дорослих; настанова 01056: ≥20 × 10⁶ еритроцитів/л у дітей; настанова 00233: верхня рекомендована межа приблизно 10-20 × 10⁶/л залежно від діурезу і методу. Порогу для незміненої частки не наводить жоден документ.",
+        "divergence_note": "Джерела США та ЄС не наводять порогу для кількості еритроцитів на мікролітр, визначеної аналізатором, а українські значення для всіх еритроцитів (15, 20 і 10-20 × 10⁶/л) між собою не збігаються. Розбіжність зафіксовано без усереднення, діапазону немає."
+      },
+      "jurisdiction_note": "Ukrainian guidelines give flow-cytometry thresholds for all red cells, not for the unchanged ones: 00237 (haematuria, 2017) more than 15 x 10^6/L in adults, 01056 (urinalysis in children, 2017) 20 x 10^6/L or more, and 00233 (urinalysis, 2017) an upper recommended limit of about 10-20 x 10^6/L that depends on diuresis and method. None gives a figure for the unchanged fraction.",
+      "divergence_note": "The US and EU sources give no per-microlitre threshold for an analyser red cell count, and the Ukrainian figures for all red cells (15, 20 and 10-20 x 10^6/L) disagree with each other. The disagreement is recorded, not averaged; the entry has no band."
+    },
+    {
       "concept_id": "urine-glucose",
       "unit": "mmol/L",
       "kind": "decision_threshold",

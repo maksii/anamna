@@ -77,7 +77,8 @@ def test_analyser_and_smear_differentials_are_separate_series(printed, expected)
         ("Еритроцити/гемоглобін (C-BLD)", "мг/дл", "не виявлені (-)", None, "Urine erythrocytes (dipstick)"),
         ("Еритроцити (за активністю пероксидази), кл/мкл", None, "негативний", None, "Urine erythrocytes (dipstick)"),
         ("Лейкоцити (WBC), в п/з", None, "0-1", "0-5", "Urine leukocytes per high-power field"),
-        ("Незмінені еритроцити (NL RBC)", "кл/мкл", None, None, "Urine erythrocytes, unchanged"),
+        # The analyser's unchanged cells are per microlitre, the microscopy's per field.
+        ("Незмінені еритроцити (NL RBC)", "кл/мкл", None, None, "Urine erythrocytes, unchanged (per microlitre)"),
         ("Еритроцити не змінені, в п/з", None, "0-0-1", "0-2", "Urine erythrocytes, unchanged"),
     ],
 )
