@@ -1,0 +1,1064 @@
+{#
+  Anamna component library.
+
+  Import WITH CONTEXT everywhere (the plural helper reads `locale`):
+      {% from "_components.html" import metric_card, panel_card with context %}
+
+  The markup here matches the vocabulary already in `static/app.css`
+  (`an-range-bar__track`, `an-status-chip__text`, `an-panel-member-row__name`, ...).
+  Status icons come from the stylesheet's `--st-icon` `::before` mask, so no macro
+  prints one itself - that would double it.
+
+  Rules honoured here so no page repeats them:
+    * status is never colour-only - the chip carries a text label and the CSS
+      adds a glyph keyed off `data-interpretation` / `data-state` / `data-authority`;
+    * the range bar is driven only by --band-start / --band-end / --position;
+    * a verdict whose curated interval disagrees with the laboratory's printed
+      range carries data-conflict="true" and shows both claims, attributed;
+    * nothing is computed here: values arrive pre-formatted and pre-localised.
+#}
+
+
+{# ---------------------------------------------------------------- plurals #}
+{#
+  Locale-correct plural form selection for keys stored as `<base>_one`,
+  `<base>_few`, `<base>_many`. English collapses to one/many; Ukrainian uses
+  the full Slavic rule. Presentation only.
+#}
+{%- macro plural_t(base, count) -%}
+  {%- set n = count|int -%}
+  {%- set ns = namespace(form='many') -%}
+  {%- if locale == 'uk' -%}
+    {%- if n % 10 == 1 and n % 100 != 11 -%}{%- set ns.form = 'one' -%}
+    {%- elif n % 10 in [2, 3, 4] and n % 100 not in [12, 13, 14] -%}{%- set ns.form = 'few' -%}
+    {%- endif -%}
+  {%- elif n == 1 -%}{%- set ns.form = 'one' -%}
+  {%- endif -%}
+  {{- t(base ~ '_' ~ ns.form, count=n|countfmt) -}}
+{%- endmacro -%}
+
+
+{# ------------------------------------------------------------ status chip #}
+{% macro status_chip(interpretation, label, conflict=false) -%}
+<em class="an-status-chip" data-interpretation="{{ interpretation }}"{% if conflict %} data-conflict="true" title="{{ t('verdict.conflict_body') }}"{% endif %}><span class="an-status-chip__text">{{ label }}{% if conflict %} · {{ t('verdict.conflict') }}{% endif %}</span></em>
+{%- endmacro %}
+
+
+{# ------------------------------------------------ three-state micro marker #}
+{#
+  The one glyph on a panel card's member strip that carries a verdict, so it is
+  also the only place a reader can ask what the verdict means. `title` says it
+  on hover, `aria-label` says the same thing to a screen reader, and a conflict
+  explains itself here rather than unrolling a paragraph under every card.
+
+  No `tabindex`: this sits inside the member link, and a focusable ornament
+  there bought a keyboard user 117 extra stops on /panels for a tooltip no
+  browser opens on focus. The `aria-label` is announced with the link it is
+  part of, which is where the verdict belongs.
+#}
+{% macro micro_mark(verdict) -%}
+{%- set conflicted = verdict.conflicts_with_vendor -%}
+{%- set explains = verdict.label ~ (' · ' ~ t('verdict.conflict') ~ ': ' ~ t('authority.explainer') if conflicted else '') -%}
+<em class="an-micro" data-interpretation="{{ verdict.interpretation }}"{% if conflicted %} data-conflict="true"{% endif %} role="img" title="{{ explains }}" aria-label="{{ explains }}"></em>
+{%- endmacro %}
+
+
+{# ----------------------------------------------------------- staleness chip #}
+{#
+  `no_interval` is the majority state - only a handful of analytes have a
+  published screening cadence - so "No screening interval" was printed in full
+  on nine cards out of ten, spending a line of every card to report that
+  nothing is due. It collapses to the crossed-clock glyph alone.
+
+  The glyph is still a non-colour channel for the state and the full label is
+  still the accessible name - but a tooltip is not an explanation on a phone,
+  where there is no hover and `title` never opens. So the collapsed chip is the
+  <summary> of a disclosure: one tap prints the label and the reason in full,
+  in flow. The other four states stay spelled out; they are rare enough to be
+  worth a line, and "Overdue" is exactly the word that must not need a tap.
+#}
+{% macro staleness_chip(staleness) -%}
+{%- if staleness and staleness.label -%}
+{%- if staleness.state == 'no_interval' -%}
+{%- set explains = staleness.label ~ ': ' ~ (staleness.condition_note or t('stale.no_interval_body')) -%}
+<details class="an-staleness-detail"><summary class="an-staleness-chip" data-state="no_interval" data-icon-only="true" aria-label="{{ explains }}"></summary><p class="an-staleness-chip__note">{{ explains }}</p></details>
+{%- elif staleness.state == 'never' -%}
+{#- "Never tested" is the one state whose card has nothing else on it to say
+    why it is empty, so the written body (stale.never_body) opens here rather
+    than existing only in the catalog. -#}
+<details class="an-staleness-detail"><summary class="an-staleness-chip" data-state="never"><span class="an-staleness-chip__text">{{ staleness.label }}</span></summary><p class="an-staleness-chip__note">{{ t('stale.never_body') }}</p></details>
+{%- else -%}
+<span class="an-staleness-chip" data-state="{{ staleness.state }}"><span class="an-staleness-chip__text">{{ staleness.label }}</span></span>
+{%- endif -%}
+{%- endif -%}
+{%- endmacro %}
+
+
+{# Fixed three-slot status strip: verdict | cadence | verification. Every card
+   shows all three; inactive slots are grey placeholders, active slots carry
+   their state colour and glyph. Replaces the old chip row that collapsed into
+   indistinguishable icon-only pills. #}
+{% macro state_strip(status_label, staleness, verification_active=false, verification_label='', verification_body='', interpretation='', panel_status='', conflict=false, show_verify=true) -%}
+{%- set verdict_value = panel_status or interpretation or 'unjudged' -%}
+{%- set verdict_inactive = verdict_value in ('unjudged', 'absent') -%}
+{%- set verdict_text = status_label ~ (' · ' ~ t('verdict.conflict') if conflict else '') -%}
+{%- set cadence = staleness if staleness and staleness.state else {'state': 'no_interval', 'label': t('stale.no_interval')} -%}
+{%- set cadence_inactive = cadence.state in ('fresh', 'no_interval') -%}
+{%- set verify_clear = t('state_strip.verify_clear') -%}
+{%- set verify_clear_title = t('state_strip.verify_clear_title') -%}
+<div class="an-state-strip" role="group" aria-label="{{ t('state_strip.aria') }}">
+  {% if conflict and not verdict_inactive -%}
+  <details class="an-state-slot an-state-slot--verdict an-state-slot--expand is-active"
+           {% if panel_status %}data-status="{{ panel_status }}"{% else %}data-interpretation="{{ interpretation }}"{% endif %}
+           data-conflict="true">
+    <summary class="an-state-slot__face"><span class="an-state-slot__text">{{ verdict_text }}</span></summary>
+    <p class="an-state-slot__note">{{ t('verdict.conflict_body') }}</p>
+  </details>
+  {%- else -%}
+  <span class="an-state-slot an-state-slot--verdict {{ 'is-active' if not verdict_inactive else 'is-inactive' }}"
+        {% if panel_status %}data-status="{{ panel_status }}"{% else %}data-interpretation="{{ interpretation }}"{% endif %}>
+    <span class="an-state-slot__face"><span class="an-state-slot__text">{{ verdict_text }}</span></span>
+  </span>
+  {%- endif -%}
+  {% if cadence.state == 'no_interval' -%}
+  {#- A conditional cadence that does not apply says which condition failed
+      ("the 3-month repeat is for an abnormal TSH"), not "nothing published". -#}
+  {%- set cadence_explains = cadence.label ~ ': ' ~ (cadence.condition_note or t('stale.no_interval_body')) -%}
+  <details class="an-state-slot an-state-slot--cadence an-state-slot--expand is-inactive" data-state="no_interval">
+    <summary class="an-state-slot__face"><span class="an-state-slot__text">{{ cadence.label }}</span></summary>
+    <p class="an-state-slot__note">{{ cadence_explains }}</p>
+  </details>
+  {%- elif cadence.state == 'never' -%}
+  <details class="an-state-slot an-state-slot--cadence an-state-slot--expand is-active" data-state="never">
+    <summary class="an-state-slot__face"><span class="an-state-slot__text">{{ cadence.label }}</span></summary>
+    <p class="an-state-slot__note">{{ t('stale.never_body') }}</p>
+  </details>
+  {%- else -%}
+  <span class="an-state-slot an-state-slot--cadence {{ 'is-active' if not cadence_inactive else 'is-inactive' }}"
+        data-state="{{ cadence.state }}">
+    <span class="an-state-slot__face"><span class="an-state-slot__text">{{ cadence.label }}</span></span>
+  </span>
+  {%- endif -%}
+  {% if not show_verify -%}
+  {%- elif verification_active -%}
+  <details class="an-state-slot an-state-slot--verify an-state-slot--expand is-active" data-verification="provisional">
+    <summary class="an-state-slot__face"><span class="an-state-slot__text">{{ verification_label }}</span></summary>
+    <p class="an-state-slot__note">{{ verification_body }}</p>
+  </details>
+  {%- else -%}
+  <span class="an-state-slot an-state-slot--verify is-inactive" title="{{ verify_clear_title }}">
+    <span class="an-state-slot__face"><span class="an-state-slot__text">{{ verify_clear }}</span></span>
+  </span>
+  {%- endif -%}
+</div>
+{%- endmacro %}
+
+
+{# --------------------------------------------------------- authority badge #}
+{% macro authority_badge(verdict, with_source=false) -%}
+<span class="an-authority-badge" data-authority="{{ verdict.authority }}" title="{{ t('authority.explainer') }}"><span class="an-authority-badge__text">{{ verdict.authority_label }}</span></span>
+{#- Guideline titles run to 200 characters. Printing the title and then
+    repeating it inside the link text produced an unreadable wall, so the title
+    appears once and the link is a short, constant affordance. -#}
+{%- if with_source and verdict.source_name %} <span class="an-authority-source">{% if verdict.source_url %}<a href="{{ verdict.source_url }}" target="_blank" rel="noreferrer" title="{{ verdict.source_name }}">{{ verdict.source_name }}</a>{% else %}{{ verdict.source_name }}{% endif %}</span>{% endif %}
+{%- endmacro %}
+
+
+{# --------------------------------------------------- collapsed verdict details #}
+{#
+  Everything that *explains* a verdict - the sentence naming where the value
+  sits, the shaded interval and who published it, a laboratory whose printed
+  range disagrees, and every other official position - folded behind one
+  summary line, closed by default. Printed open, these were the same three
+  paragraphs under every value on the page; the chip and the bar already
+  carry the state, so the prose is on demand.
+
+  A dispute is never hidden while closed: the summary line itself names it
+  and the details element carries data-conflict for the tint. The two claims
+  and the authority positions keep their old classes so the existing CSS
+  (and its dark-hero overrides) keep working unchanged.
+#}
+{% macro range_position_text(verdict) -%}
+{%- set prefix = 'verdict.target_' if not verdict.target_is_matched_band|default(true) else 'verdict.you_are_' -%}
+{{- t(prefix ~ ('above' if verdict.out_of_range_side == 'high' else 'below' if verdict.out_of_range_side == 'low' else 'within')) -}}
+{%- endmacro %}
+
+{% macro verdict_details(verdict) -%}
+{%- set positions = verdict.authority_positions | default([], true) -%}
+{%- set has_bar = verdict.position is defined and verdict.position is not none -%}
+{%- set disputed = verdict.conflicts_with_vendor or verdict.authorities_disagree -%}
+{%- if has_bar or verdict.conflicts_with_vendor or positions | length > 1 -%}
+<details class="an-verdict-details"{% if disputed %} data-conflict="true"{% endif %}>
+  <summary>{{ t('verdict.details') }}{% if verdict.conflicts_with_vendor %} · <b>{{ t('verdict.conflict') }}</b>{% elif verdict.authorities_disagree %} · <b>{{ t('authority.disagree_heading') }}</b>{% endif %}</summary>
+  <div class="an-verdict-details__body">
+    {% if has_bar %}
+    {%- set reading = range_position_text(verdict) -%}
+    {#- The shaded interval is cited to the body that published it, which is
+        not always the body whose band the value matched. -#}
+    {%- set shaded_source = verdict.target_source_name|default(verdict.source_name, true) -%}
+    {%- set shaded_url = verdict.target_source_url|default(verdict.source_url, true) -%}
+    <p class="an-verdict-details__reading">
+      <b>{{ reading }}</b>
+      <span>{{ t('verdict.shaded_is', range=verdict.target_range_text|default(verdict.range_text, true)) }}{% if shaded_source %} · {% if shaded_url %}<a href="{{ shaded_url }}" target="_blank" rel="noreferrer">{{ shaded_source }}</a>{% else %}{{ shaded_source }}{% endif %}{% endif %}</span>
+      {% if not verdict.target_is_matched_band|default(true) %}<span>{{ t('verdict.matched_category', label=verdict.band_label|default(verdict.label, true), range=verdict.range_text) }}</span>
+      {% elif verdict.out_of_range_side and verdict.band_label %}<span>{{ t('verdict.threshold_crossed', label=verdict.band_label) }}</span>{% endif %}
+    </p>
+    {#- The explainer is the same paragraph for every value, so it is printed
+        once per page; the badge's own title still carries it everywhere. -#}
+    <p class="an-verdict-details__authority">{{ authority_badge(verdict, true) }}{% if first_on_page is not defined or first_on_page('authority_explainer') %} <span class="an-verdict-details__explainer">{{ t('authority.explainer') }}</span>{% endif %}</p>
+    {% endif %}
+    {% if verdict.risk_note %}
+    <p class="an-verdict-details__reading" data-risk-context="{{ verdict.risk_context.cv_risk_basis if verdict.risk_context else '' }}"><span>{{ verdict.risk_note }}</span> <a href="/profile?tab=personal">{{ t('profile.cv_risk_category') }}</a></p>
+    {% endif %}
+    {% if verdict.conflicts_with_vendor %}
+    <div class="an-conflict-note" data-conflict="true">
+      <p>{{ t('verdict.conflict_body') }}</p>
+      <ul class="an-conflict-claims">
+        <li class="an-conflict-claim" data-authority="vendor">{{ t('verdict.conflict_lab', range=verdict.vendor_range_text, label=(verdict.vendor_status|default(verdict.vendor_interpretation, true))|statusfmt) }}</li>
+        <li class="an-conflict-claim" data-authority="curated">{{ t('verdict.conflict_official', publisher=verdict.source_name, range=verdict.range_text, label=verdict.label) }}</li>
+      </ul>
+    </div>
+    {% endif %}
+    {#- More than one official body has published a position on this value.
+        They genuinely disagree -- a fasting glucose of 5.61 mmol/L is
+        prediabetes to the ADA and to Ukraine's MOZ protocol, and normal to
+        the WHO. Showing only one would be editorialising. -#}
+    {% if positions | length > 1 %}
+    <div class="an-authorities{{ ' an-authorities--disagree' if verdict.authorities_disagree else '' }}"
+         {% if verdict.authorities_disagree %}data-conflict="true"{% endif %}>
+      <strong>{{ t('authority.multi_heading') if not verdict.authorities_disagree else t('authority.disagree_heading') }}</strong>
+      <p>{{ t('authority.multi_body') if not verdict.authorities_disagree else t('authority.disagree_body') }}</p>
+      <ul class="an-authority-list">
+        {% for item in positions %}
+        <li class="an-authority-item" data-interpretation="{{ item.interpretation }}">
+          {% if item.region %}<span class="an-authority-region">{{ item.region }}</span>{% endif %}
+          <span class="an-authority-publisher">{% if item.source_url %}<a href="{{ item.source_url }}" target="_blank" rel="noreferrer">{{ item.publisher }}</a>{% else %}{{ item.publisher }}{% endif %}</span>
+          <span class="an-authority-range">{{ item.range_text or item.label }}</span>
+          <em class="an-authority-verdict">{{ item.band_label or item.label }}</em>
+          {#- A body that deliberately sets no number says why, in place, on its
+              own full-width row of the grid. -#}
+          {% if item.interpretation == 'no_universal_target' and item.note %}<small class="an-authority-range" style="grid-column: 1 / -1; white-space: normal">{{ item.note }}</small>{% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+  </div>
+</details>
+{%- endif -%}
+{%- endmacro %}
+
+
+{# --------------------------------------------------------------- range bar #}
+{#
+  `position`, `band_start`, `band_end` are 0..1 fractions of the track, handed
+  to CSS as unitless custom properties. When `position` is None there is
+  nothing to place, so the explicit "no reference interval" variant is
+  rendered - never a track with a missing marker.
+#}
+{% macro range_bar(verdict, value_text='', unit='', expected_text='') -%}
+{%- set has_band = verdict.band_start is defined and verdict.band_start is not none -%}
+{%- set has_vendor_band = verdict.vendor_band_start is defined and verdict.vendor_band_start is not none -%}
+{%- set open_low = verdict.low is defined and verdict.low is none -%}
+{%- set open_high = verdict.high is defined and verdict.high is none -%}
+{% if verdict and verdict.position is defined and verdict.position is not none %}
+{#- The reading and the shaded interval are resolved once and then used by both
+    the accessible name and the visible text. Kept apart, they drifted: the
+    aria-label opened with a fixed "Position inside the reference interval"
+    while the sentence beneath it read "above this range", so a screen reader
+    announced an out-of-range ferritin as inside the interval - the same defect
+    the visible card had, surviving in the channel nobody looked at. -#}
+{%- set reading = range_position_text(verdict) -%}
+{%- set distinct_target = not verdict.target_is_matched_band|default(true) -%}
+{%- set shaded_range = verdict.target_range_text|default(verdict.range_text, true) -%}
+<div class="an-range-bar" data-interpretation="{{ verdict.interpretation }}"{% if verdict.conflicts_with_vendor %} data-conflict="true"{% endif %}{% if verdict.out_of_range_side %} data-out-of-range="{{ verdict.out_of_range_side }}"{% endif %}{% if open_low and open_high %} data-band-open="both"{% elif open_low %} data-band-open="low"{% elif open_high %} data-band-open="high"{% endif %}
+     style="--position:{{ verdict.position }}{% if has_band %};--band-start:{{ verdict.band_start }};--band-end:{{ verdict.band_end }}{% endif %}{% if has_vendor_band %};--vendor-band-start:{{ verdict.vendor_band_start }};--vendor-band-end:{{ verdict.vendor_band_end }}{% endif %}"
+     role="img"
+     aria-label="{{ reading }} · {{ value_text }}{% if unit %} {{ unit|unitfmt }}{% endif %} · {{ t('verdict.target_interval' if distinct_target else 'verdict.band_aria', range=shaded_range) }}{% if distinct_target %} · {{ t('verdict.matched_category', label=verdict.band_label|default(verdict.label, true), range=verdict.range_text) }}{% endif %}{% if verdict.conflicts_with_vendor %} · {{ t('verdict.vendor_band_aria', range=verdict.vendor_range_text) }}{% endif %} · {{ verdict.label }}">
+  <span class="an-range-bar__track" aria-hidden="true">
+    {% if has_vendor_band %}<span class="an-range-bar__band an-range-bar__band--vendor"></span>{% endif %}
+    {% if has_band %}<span class="an-range-bar__band"></span>{% endif %}
+    <span class="an-range-bar__marker"></span>
+  </span>
+  {#- Each label is positioned at the point on the track it names. Laying them
+      out with space-between pinned them to the track ENDS while the band sat at
+      0.2-0.8, so "360" appeared under the far right of the track -- exactly
+      where a clamped out-of-range marker also sits. The two then read as the
+      same place, which is nonsense. -#}
+  <span class="an-range-bar__ticks" aria-hidden="true">
+    {%- set tick_low = verdict.target_low_text|default('', true) or (verdict.target_low|default(none, true)|numfmt if verdict.target_low is defined and verdict.target_low is not none else '') -%}
+    {%- set tick_high = verdict.target_high_text|default('', true) or (verdict.target_high|default(none, true)|numfmt if verdict.target_high is defined and verdict.target_high is not none else '') -%}
+    {% if tick_low %}<span class="an-range-bar__tick" style="--at:{{ verdict.band_start|default(0, true) }}">{{ tick_low }}</span>{% endif %}
+    {% if tick_high %}<span class="an-range-bar__tick" style="--at:{{ verdict.band_end|default(1, true) }}">{{ tick_high }}</span>{% endif %}
+    <span class="an-range-bar__you" style="--at:{{ verdict.position }}"{% if verdict.out_of_range_side %} data-out-of-range="{{ verdict.out_of_range_side }}"{% endif %}>{{ value_text }}</span>
+  </span>
+  {#- The sentence naming where the value sits lives in the aria-label above
+      and, spelled out, inside verdict_details() - collapsed, because printed
+      under every bar it was the same line hundreds of times per page. -#}
+</div>
+{% if distinct_target %}
+<p class="an-verdict-details__reading" data-distinct-target="true">
+  <span>{{ t('verdict.target_interval', range=shaded_range) }}</span>
+  <span>{{ t('verdict.matched_category', label=verdict.band_label|default(verdict.label, true), range=verdict.range_text) }}</span>
+</p>
+{% endif %}
+{% elif expected_text %}
+{#- A qualitative result has no interval to draw, but the laboratory did say
+    what it expected ("Не виявлено"); "No reference interval" contradicted the
+    reference printed one line below. -#}
+<p class="an-range-bar an-range-bar--none" data-interpretation="{{ verdict.interpretation if verdict else 'unjudged' }}">
+  <span class="an-range-bar__track" aria-hidden="true"></span>
+  <span class="an-range-bar__ticks"><span>{{ t('verdict.lab_expected', text=expected_text) }}</span></span>
+</p>
+{% else %}
+<p class="an-range-bar an-range-bar--none" data-interpretation="unjudged">
+  <span class="an-range-bar__track" aria-hidden="true"></span>
+  <span class="an-range-bar__ticks"><span>{{ t('verdict.no_range') }}</span></span>
+</p>
+{% endif %}
+{%- endmacro %}
+
+
+{# ----------------------------------------------------------- trend indicator #}
+{#
+  The visible delta is unsigned (app.py formats abs(delta)) and the arrow is
+  decoration, so without the worded span a screen reader heard "0.9 mmol/L"
+  with no direction - and the since-date lived only in `title`, which never
+  opens on focus or touch. The visually-hidden span carries both; the visible
+  text is aria-hidden so nothing is announced twice.
+#}
+{% macro trend_chip(trend) -%}
+{% if trend %}<b class="trend an-trend {{ trend.direction }}" data-meaningful="{{ 'true' if trend.meaningful else 'false' }}"{% if trend.since_text %} title="{{ trend.since_text }}"{% endif %}><span class="an-trend-text">{{ t('trend.sr_' ~ trend.direction, amount=trend.delta_text) }}</span>{% if trend.since_text %}<span class="visually-hidden">, {{ trend.since_text }}</span>{% endif %}</b>{% endif %}
+{%- endmacro %}
+
+
+{# -------------------------------------------------------------- metric card #}
+{#
+  The single unit of every result grid in the app, and the only place one is
+  built. Live search asks the server for these same macros rather than cloning
+  a blank card and filling the slots it remembers - that is how a ferritin of
+  202 ng/mL came to show "Above range" over "Your result is inside this range".
+#}
+{#
+  An <article> with a stretched title link, not one big <a>: a details toggle
+  cannot legally (or clickably) live inside an anchor, and every tile owes the
+  reader the same collapsed "Details & sources" line the detail page has. The
+  ::after overlay on the title link keeps the whole card surface clickable;
+  the toggle and the tooltips sit above it on their own z-index.
+#}
+{% macro metric_card(card, level=3) -%}
+<article class="result-card an-metric-card" data-interpretation="{{ card.verdict.interpretation }}"{% if card.verdict.conflicts_with_vendor %} data-conflict="true"{% endif %}>
+  <div class="result-card-top">
+    <span class="an-metric-card__area">{{ card.area_name }}</span>
+    <div class="an-metric-card__chips">
+      {#- A device reading is a measurement, not a transcription: nothing to
+          verify, so no verify slot on its card (OPS-11). -#}
+      {{ state_strip(card.verdict.label, card.staleness, card.verification_status == 'extracted', card.verification_label, t('verify.provisional_body'), interpretation=card.verdict.interpretation, conflict=card.verdict.conflicts_with_vendor, show_verify=not card.is_device) }}
+    </div>
+  </div>
+  <h{{ level }}><a class="an-metric-card__link" href="{{ card.url }}">{{ card.name }}</a></h{{ level }}>
+  <div class="result-reading">
+    {#- The exact value rode only on `title`, which touch and keyboard never
+        see; the visually-hidden twin says the same thing in the tree. -#}
+    <strong{% if card.value_exact %} title="{{ t('metrics.exact_value', value=card.value_exact) }}"{% endif %}>{{ card.value_text }}{% if card.value_exact %}<span class="visually-hidden">, {{ t('metrics.exact_value', value=card.value_exact) }}</span>{% endif %}</strong>
+    <span>{{ card.unit|unitfmt }}</span>
+    <span>{{ trend_chip(card.trend) }}</span>
+  </div>
+  <div>{{ range_bar(card.verdict, card.value_text, card.unit) }}</div>
+  <div class="result-meta">
+    <span>{{ card.date_text }}</span>
+    <span>{{ card.vendor|phrase }}</span>
+    {% if card.sources_text %}<span>{{ card.sources_text }}</span>{% endif %}
+    <span>{{ plural_t('metric.points', card.count) }}</span>
+  </div>
+  {{ verdict_details(card.verdict) }}
+  <small><span>{{ card.category_label }}</span> · {{ t('metrics.view_history') }}</small>
+</article>
+{%- endmacro %}
+
+
+{# --------------------------------------------------------------- panel card #}
+{% macro panel_card(panel, level=3) -%}
+<article class="an-panel-card" data-status="{{ panel.status }}">
+  <header class="an-panel-card__head">
+    <div>
+      <span class="eyebrow">{{ panel.area_name }}</span>
+      <h{{ level }} class="an-panel-card__title"><a href="{{ panel.url }}">{{ panel.name }}</a></h{{ level }}>
+    </div>
+    <div class="an-panel-card__chips">
+      {%- set provisional = panel.members | selectattr('verification_status', 'equalto', 'extracted') | list -%}
+      {{ state_strip(panel.status_label, panel.staleness, provisional|length > 0, t('verify.provisional_chip'), t('verify.provisional_panel_body'), panel_status=panel.status) }}
+    </div>
+  </header>
+  {% if panel.short %}<p class="an-panel-card__lead">{{ panel.short }}</p>{% endif %}
+  {% if panel.members %}
+  <div class="an-panel-card__members">
+    {% for member in panel.members %}
+    <a class="an-panel-member" href="{{ member.url }}" data-interpretation="{{ member.verdict.interpretation }}"{% if member.verdict.conflicts_with_vendor %} data-conflict="true"{% endif %}>
+      <span class="an-panel-member__name">{{ member.name }}</span>
+      <span class="an-panel-member__value"{% if member.value_exact %} title="{{ t('metrics.exact_value', value=member.value_exact) }}"{% endif %}>{{ member.value_text }}{% if member.unit %} <small>{{ member.unit|unitfmt }}</small>{% endif %}{% if member.value_exact %}<span class="visually-hidden">, {{ t('metrics.exact_value', value=member.value_exact) }}</span>{% endif %}</span>
+      {{ micro_mark(member.verdict) }}
+      {#- When this value was measured. A number with no date reads as
+          current, which a two-year-old lipid panel is not. -#}
+      {% if member.date_text %}<small class="an-panel-member__date">{{ member.date_text }}</small>{% endif %}
+    </a>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="an-panel-card__lead">{{ t('panels.no_data_note') }}</p>
+  {% endif %}
+  {#- The disclosure that used to stand here was the same three sentences on
+      every disputed panel - seven copies of one paragraph on /panels, none of
+      them about this panel. The count below names the fact; each disputed
+      member's own marker explains it, and the count opens the explanation
+      on demand (tap, click or keyboard). -#}
+  <footer class="an-panel-card__footer">
+    <span>{{ t('panel.members_in_record' if panel.has_device_members else 'panel.coverage', present=panel.present_count, total=panel.member_count) }}{% if panel.flagged_count %} · {{ t('panel.flagged', count=panel.flagged_count) }}{% endif %}</span>
+    {% if panel.conflict_count %}
+    <details class="an-verdict-details an-panel-card__conflicts" data-conflict="true">
+      <summary>{{ t('panel.conflicts', count=panel.conflict_count) }}</summary>
+      <p class="an-verdict-details__body">{{ t('authority.explainer') }}</p>
+    </details>
+    {% endif %}
+    <a href="{{ panel.url }}">{{ t('panels.open') }}</a>
+  </footer>
+</article>
+{%- endmacro %}
+
+
+{# ------------------------------------------------------- panel detail row --#}
+{#
+  Six columns on a desktop, a stacked card below 720px - the stylesheet
+  reflows the grid, so this is a grid of labelled cells rather than a table
+  that would lose columns on a phone. The reference interval and the authority
+  badge live inside the row's collapsed verdict_details, not in cells of
+  their own: what stays visible is the value, the bar, the change and the date.
+#}
+{#- `context_name`: the panel whose page this row is on. Its name under every
+    row of that panel's own page said nothing, 46 times. -#}
+{% macro panel_member_row(row, context_name='') -%}
+<div class="an-panel-member-row" data-interpretation="{{ row.verdict.interpretation }}"{% if row.verdict.conflicts_with_vendor %} data-conflict="true"{% endif %}>
+  <div class="an-panel-member-row__name">
+    <a href="{{ row.url }}">{{ row.name }}</a>
+    {% if row.category_label != context_name %}<small>{{ row.category_label }}</small>{% endif %}
+  </div>
+  <div class="an-panel-member-row__value"{% if row.value_exact %} title="{{ t('metrics.exact_value', value=row.value_exact) }}"{% endif %}>{{ row.value_text }}{% if row.unit %} <small>{{ row.unit|unitfmt }}</small>{% endif %}{% if row.value_exact %}<span class="visually-hidden">, {{ t('metrics.exact_value', value=row.value_exact) }}</span>{% endif %}</div>
+  <div class="an-panel-member-row__bar">
+    {{ range_bar(row.verdict, row.value_text, row.unit) }}
+    {{ status_chip(row.verdict.interpretation, row.verdict.label, row.verdict.conflicts_with_vendor) }}
+  </div>
+  <div class="an-panel-member-row__delta" data-meaningful="{{ 'true' if row.trend and row.trend.meaningful else 'false' }}">
+    <span class="an-panel-member-row__label">{{ t('panel.th_delta') }}</span>
+    {% if row.trend %}{{ trend_chip(row.trend) }}{% else %}{{ t('panel.delta_first') }}{% endif %}
+  </div>
+  <div class="an-panel-member-row__date"><span class="an-panel-member-row__label">{{ t('panel.th_date') }}</span>{{ row.date_text }}</div>
+  <div class="an-panel-member-row__verify"><span class="status {{ row.verification_status }}">{{ row.verification_label }}</span></div>
+  {{ verdict_details(row.verdict) }}
+</div>
+{%- endmacro %}
+
+
+{# ---------------------------------------------------------------- sparkline #}
+{#
+  `spark.path` is a polyline point list in the route's 100×30 viewBox, and
+  `spark.band` carries the reference interval already in that same y space.
+  The band rect is placed through CSS geometry properties so no arithmetic
+  happens here.
+#}
+{% macro sparkline(spark, label='') -%}
+<svg class="an-sparkline" viewBox="0 0 100 30" preserveAspectRatio="none" role="img" aria-label="{{ label }}">
+  {% if spark.band %}<rect class="an-sparkline__band" x="0" width="100" style="--band-top:{{ spark.band.start }};--band-bottom:{{ spark.band.end }};y:calc(var(--band-top) * 1px);height:calc((var(--band-bottom) - var(--band-top)) * 1px)"/>{% endif %}
+  <polyline class="an-sparkline__line" points="{{ spark.path }}" vector-effect="non-scaling-stroke"/>
+</svg>
+{%- endmacro %}
+
+
+{# --------------------------------------------------------------- stat tile #}
+{% macro stat_tile(tile) -%}
+<a class="an-stat-tile" href="{{ tile.href }}" data-tone="{{ tile.tone }}">
+  <span class="an-stat-tile__value">{{ tile.value }}</span>
+  <span class="an-stat-tile__label">{{ tile.label }}</span>
+  {% if tile.note %}<span class="an-stat-tile__note">{{ tile.note }}</span>{% endif %}
+</a>
+{%- endmacro %}
+
+
+{# -------------------------------------------------------------- empty state #}
+{#
+  `level` was accepted and thrown away: every caller passed one believing it
+  produced a heading, and the outline of a page whose only content was an empty
+  state had nothing in it at all.
+
+  `next_url`/`next_label` exist because an empty state that does not say what to
+  do next is a dead end, and the emptiest page is exactly where a reader most
+  needs the way onward.
+#}
+{% macro empty_state(title, body, level=3, next_url='', next_label='') -%}
+<div class="an-empty-state">
+  <h{{ level }}>{{ title }}</h{{ level }}>
+  {% if body %}<p>{{ body }}</p>{% endif %}
+  {% if next_url and next_label %}<p><a class="an-empty-state__next" href="{{ next_url }}">{{ next_label }}</a></p>{% endif %}
+</div>
+{%- endmacro %}
+
+
+{# --------------------------------------------------------------- pagination #}
+{#
+  Every list that pages was handed a `page` mapping from `_pagination()` and no
+  template ever rendered one, so `/documents` showed 20 of 85 files with no way
+  to reach the other 65. One macro, so the next paged list cannot repeat it.
+#}
+{% macro pagination_nav(page) -%}
+{% if page and (page.prev_url or page.next_url) %}
+<nav class="an-pagination" aria-label="{{ t('pagination.aria') }}">
+  {% if page.prev_url %}<a class="an-pagination__step" rel="prev" href="{{ page.prev_url }}">{{ t('viewer.previous') }}</a>{% endif %}
+  <span class="an-pagination__range">{{ t('pagination.range', first=page.first|countfmt, last=page.last|countfmt, total=page.total|countfmt) }}</span>
+  {% if page.next_url %}<a class="an-pagination__step" rel="next" href="{{ page.next_url }}">{{ t('viewer.next') }}</a>{% endif %}
+</nav>
+{% endif %}
+{%- endmacro %}
+
+
+{# ------------------------------------------------------- extracted value row #}
+{#
+  One extracted observation shown next to the page it came from. Used by the
+  document bench and by the review queue, where the user is asked to certify
+  exactly these values.
+
+  Everything a decision needs is on the row: what the value was read as, what
+  the reference engine concluded from it, and where on the page it came from.
+  Certifying a number whose consequence is hidden a page away is not a check.
+
+  `next_url` is where the three write actions return to. Without it a
+  correction made halfway through an 85-file queue threw the reviewer back to
+  the document page and lost their place.
+#}
+{#
+  `viewer_id` is the source viewer this row's page link should land on. The
+  link used to be `#page-N` everywhere, which resolves to a real element on the
+  document page and to nothing at all on the review queue -- so the primary
+  control of the whole review flow was a link to nowhere the moment its click
+  handler did not run. It points at something on both pages now, and
+  `data-page` is what the handler reads.
+#}
+{% macro observation_row(item, csrf_token=none, next_url='', concept_list='', viewer_id='', lab_class='') -%}
+{% set state = item.verification_status %}
+{#- `data-obs-page`/`data-box` let the source viewer follow this list: the
+    page the value was printed on and, when the text layer placed it, its row
+    as fractions of the page (source-viewer.js draws the outline from them). -#}
+<article class="obs-item an-obs-item" id="observation-{{ item.id }}" data-verification="{{ state }}" data-obs-page="{{ item.page_number }}"{% if item.page_box %} data-box="{{ item.page_box|join(',') }}"{% endif %}>
+  <div class="obs-item-top">
+    <div>
+      <a href="/metrics/{{ item.concept_id }}"><strong>{{ item.canonical_name|conceptfmt }}</strong></a>
+      {% if item.extraction_method == 'derived_ckd_epi_2021' %}
+      <small>{{ t('doc.derived_egfr') }}</small>
+      {#- The printed name only when it says something the heading does not:
+          «Оригінальна назва: Серомукоїди» under «Серомукоїди» was a line of
+          nothing on every row. -#}
+      {% elif item.show_raw_name|default(true) and (item.raw_name|lower|trim) != (item.canonical_name|conceptfmt|lower|trim) %}
+      <small><b>{{ t('doc.original_label') }}:</b> {{ item.raw_name }}</small>
+      {% endif %}
+    </div>
+    <a class="obs-page" href="#{{ viewer_id if viewer_id else 'page-' ~ item.page_number }}" data-page="{{ item.page_number }}" title="{{ t('doc.show_page', page=item.page_number) }}">{{ t('doc.page_n', n=item.page_number) }}</a>
+  </div>
+  <div class="obs-item-result">
+    {#- No-break spaces keep "36 г/л" whole: a unit wrapped as "36 г/" / "л". -#}
+    <span class="result">{{ item.display_value }}&nbsp;<small>{{ (item.unit_text|unitfmt)|replace(' ', ' ') }}</small></span>
+    <span class="status {{ state }}">{{ state|statusfmt }}</span>
+    {%- if lab_class == 'match' %} <span class="pill an-pill--ok" title="{{ t('labsync.badge_match_title') }}">{{ t('labsync.badge_match') }}</span>{% endif %}
+  </div>
+  {#- What the reference engine made of this number, on the row where it is
+      being certified rather than on a page the reviewer has to go and find. -#}
+  {% if item.verdict %}
+  <div class="obs-verdict">
+    {{ status_chip(item.verdict.interpretation, item.verdict.label, item.verdict.conflicts_with_vendor) }}
+    {{ range_bar(item.verdict, item.display_value, item.unit_text, expected_text=item.vendor_reference_text|reffmt if item.value_numeric is none and item.vendor_reference_text else '') }}
+    {#- Which range judged this row, said once in words: a green chip over
+        "Not applicable to this age or sex" read as two contradicting claims. -#}
+    {% if item.verdict.authority == 'curated' and item.verdict.range_text and item.verdict.position is not none %}
+    <p class="obs-judged tiny muted">{{ t('verdict.judged_official', range=item.verdict.target_range_text|default(item.verdict.range_text, true), source=item.verdict.target_source_name|default(item.verdict.source_name, true)) }}</p>
+    {% elif item.verdict.authority == 'vendor' and item.verdict.position is not none %}
+    <p class="obs-judged tiny muted">{{ t('verdict.judged_lab', range=item.verdict.range_text) }}</p>
+    {% endif %}
+    {{ verdict_details(item.verdict) }}
+  </div>
+  {% endif %}
+  {#- The printed range the reader is actually measured against, which for a
+      block written for every age and sex at once is one band of many. The row
+      builder already picked that band using this patient's age and sex; the
+      bare filter cannot, because a Jinja filter is handed neither. When the
+      printed range does not describe this person and an official interval
+      judged instead, the "not applicable" line is dropped: the judged-by line
+      above already says what the value was compared with. -#}
+  {% set printed_reference = item.display_reference or item.vendor_reference_text|reffmt %}
+  {% if not (item.verdict and item.verdict.authority == 'curated' and printed_reference == t('ref.not_applicable')) %}
+  <p class="obs-ref">{{ printed_reference }}</p>
+  {% endif %}
+  {#- The exact line the parser read, on the row. The page image is a scroll
+      away on a phone, so without this the reviewer is asked to certify a
+      number against evidence that is not on the screen. -#}
+  {% if item.evidence_text %}
+  <p class="obs-evidence-line"><b>{{ t('doc.derived_from') if item.extraction_method == 'derived_ckd_epi_2021' else t('doc.evidence_line') }}:</b> <q>{{ item.evidence_text }}</q></p>
+  {% endif %}
+  {% if csrf_token %}
+  <div class="obs-actions">
+    <form class="obs-state" action="/observations/{{ item.id }}/state" method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="next" value="{{ next_url }}">
+      {% if state == 'rejected' %}
+      <button class="secondary" name="action" value="restore" type="submit">{{ t('obs.restore') }}</button>
+      {% else %}
+      {% if state == 'extracted' %}<button class="primary" name="action" value="verify" type="submit">{{ t('obs.verify') }}</button>{% endif %}
+      <button class="secondary" name="action" value="reject" type="submit" title="{{ t('obs.reject_hint') }}">{{ t('obs.reject') }}</button>
+      {% endif %}
+    </form>
+    <button type="button" class="secondary obs-report" data-report-issue data-observation-id="{{ item.id }}" title="{{ t('report.button_hint') }}">{{ t('report.button') }}</button>
+    <details class="edit-observation">
+      <summary>{{ t('doc.correct') }}</summary>
+      <form action="/observations/{{ item.id }}" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="next" value="{{ next_url }}">
+        <label>{{ t('doc.metric_name') }}<input name="raw_name" value="{{ item.raw_name }}" required></label>
+        {#- The printed label stays as printed; this is the metric it means.
+            Renaming the label to force a different mapping was the only lever
+            before, and it destroyed the provenance it was fighting. -#}
+        {% if concept_list %}
+        <label>{{ t('obs.maps_to') }}<input name="canonical_name" list="{{ concept_list }}" value="{{ item.picker_name }}" placeholder="{{ t('obs.maps_to_hint') }}"></label>
+        {% endif %}
+        <div class="edit-values">
+          {#- Seeded with the comparator as well as the number: `<0.01` is the
+              reading, and a correction aimed at the unit used to publish it as
+              a measured `0.01`. -#}
+          <label>{{ t('doc.numeric') }}<input name="value_numeric" inputmode="decimal" value="{{ item.edit_numeric|default(item.value_numeric|numfmt if item.value_numeric is not none else '', true) }}" aria-describedby="comparator-hint-{{ item.id }}"></label>
+          <label>{{ t('doc.text_value') }}<input name="value_text" value="{{ item.value_text or '' }}"></label>
+        </div>
+        <p class="an-field-hint" id="comparator-hint-{{ item.id }}">{{ t('obs.comparator_hint') }}</p>
+        <label>{{ t('doc.unit') }}<input name="unit_raw" value="{{ item.unit_raw or '' }}"></label>
+        <label>{{ t('doc.vendor_ref') }}<input name="vendor_reference_text" value="{{ item.vendor_reference_text or '' }}"></label>
+        <label>{{ t('obs.observed_at') }}<input name="observed_at" type="date" value="{{ item.observed_at[:10] if item.observed_at else '' }}"></label>
+        <label>{{ t('obs.evidence') }}<textarea name="evidence_text" rows="2">{{ item.evidence_text or '' }}</textarea></label>
+        <button class="secondary" type="submit">{{ t('doc.save') }}</button>
+      </form>
+    </details>
+  </div>
+  {% endif %}
+</article>
+{%- endmacro %}
+
+
+{# ------------------------------------------------- add a missed value form #}
+{#
+  A result the parser never saw is invisible everywhere in the application, and
+  certifying the rest of the page would quietly bless that gap. The row this
+  writes is marked as entered by hand so it never passes as an extraction.
+#}
+{% macro add_observation_form(document_id, csrf_token, pages, next_url='', concept_list='') -%}
+<details class="edit-observation add-observation">
+  <summary>{{ t('obs.add') }}</summary>
+  <form action="/documents/{{ document_id }}/observations" method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="next" value="{{ next_url }}">
+    <label>{{ t('doc.metric_name') }}<input name="raw_name" required placeholder="{{ t('obs.add_name_hint') }}"></label>
+    {% if concept_list %}
+    <label>{{ t('obs.maps_to') }}<input name="canonical_name" list="{{ concept_list }}" placeholder="{{ t('obs.maps_to_hint') }}"></label>
+    {% endif %}
+    <div class="edit-values">
+      <label>{{ t('doc.numeric') }}<input name="value_numeric" inputmode="decimal"></label>
+      <label>{{ t('doc.text_value') }}<input name="value_text"></label>
+    </div>
+    <div class="edit-values">
+      <label>{{ t('doc.unit') }}<input name="unit_raw"></label>
+      <label>{{ t('doc.th_page') }}<input name="page_number" type="number" min="1" max="{{ pages }}" value="1" required></label>
+    </div>
+    <label>{{ t('doc.vendor_ref') }}<input name="vendor_reference_text"></label>
+    <label>{{ t('obs.observed_at') }}<input name="observed_at" type="date"></label>
+    <label>{{ t('obs.evidence') }}<textarea name="evidence_text" rows="2" placeholder="{{ t('obs.evidence_hint') }}"></textarea></label>
+    <button class="secondary" type="submit">{{ t('obs.add_submit') }}</button>
+  </form>
+</details>
+{%- endmacro %}
+
+
+{# ---------------------------------------------------------- classify a file #}
+{#
+  Naming what a document is, wherever a person is looking at it.  This lived
+  only on the document page, so the review queue -- the one place somebody works
+  through every file in turn -- could show an MRI report with no values, say
+  "no structured observation was inferred", and offer nothing to do about it.
+  For a narrative report that is the whole of the work: the classifier's guess
+  at its kind, provider and date is the only structured thing it will ever have.
+#}
+{% macro classify_form(document, kinds, vendors, csrf_token, next_url, level=3) -%}
+<h{{ level }}>{{ t('classify.heading') }}</h{{ level }}>
+{% if document.classified_by == 'human' %}
+<p class="an-rescan__stale"><span class="pill">{{ t('classify.human_badge') }}</span></p>
+{% endif %}
+<form action="/documents/{{ document.id }}/classification" method="post" class="an-classify-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="next" value="{{ next_url }}">
+  <label>{{ t('classify.kind') }}
+    <select name="clinical_type" data-custom-choice="clinical_type_custom">
+      {% for kind in kinds %}
+      <option value="{{ kind.key }}" {{ 'selected' if document.clinical_type == kind.key else '' }}>{{ kind.label }}</option>
+      {% endfor %}
+      {% if document.clinical_type not in kinds|map(attribute='key')|list %}<option value="{{ document.clinical_type }}" selected>{{ document.clinical_type|enumfmt }}</option>{% endif %}
+      <option value="__custom__">{{ t('classify.kind_add') }}</option>
+    </select>
+  </label>
+  <label>{{ t('classify.vendor') }}
+    <select name="vendor" data-custom-choice="vendor_custom">
+      {% for name in vendors %}<option value="{{ name }}" {{ 'selected' if document.vendor_value == name else '' }}>{{ name|phrase }}</option>{% endfor %}
+      <option value="__custom__">{{ t('classify.vendor_add') }}</option>
+      <option value="__clear__" {{ 'selected' if document.vendor_value in ['', 'Unknown vendor', 'Unknown provider'] else '' }}>{{ t('classify.vendor_clear') }}</option>
+    </select>
+  </label>
+  <details class="an-classify-custom" data-classify-custom>
+    <summary>{{ t('classify.add_custom') }}</summary>
+    <label>{{ t('classify.kind_custom') }}<input name="clinical_type_custom" maxlength="100" placeholder="{{ t('classify.kind_custom_hint') }}"></label>
+    <label>{{ t('classify.vendor_custom') }}<input name="vendor_custom" maxlength="200" placeholder="{{ t('classify.vendor_custom_hint') }}"></label>
+  </details>
+  <label>{{ t('classify.date') }}
+    <input name="report_date" type="date" value="{{ document.report_date or '' }}">
+  </label>
+  <button class="secondary" type="submit">{{ t('classify.submit') }}</button>
+</form>
+{%- endmacro %}
+
+
+{# --------------------------------------------------- report a parser problem #}
+{#
+  One dialog per page, shared by every "Report a problem" button on it: a row's
+  button pre-selects its own value, the document-level button leaves the
+  selector on "the document itself". A correction fixes one number; this files
+  the evidence someone needs to fix the *importer*, so the handler snapshots
+  the extraction as it stands - which is why this is a report and not an edit.
+
+  Native <dialog>, same pattern as the AI hand-off in base.html: the browser
+  owns focus trapping and Esc. `report_categories` comes from template_context
+  and mirrors ISSUE_CATEGORIES in web/app.py.
+#}
+{% macro report_issue_modal(document_id, observations, csrf_token, next_url) -%}
+<dialog class="an-report-modal" id="an-report-dialog" aria-labelledby="an-report-title">
+  <form method="post" action="/documents/{{ document_id }}/issues">
+    <div class="an-report-modal__head">
+      <h2 id="an-report-title">{{ t('report.title') }}</h2>
+      <button type="button" class="an-report-modal__close" data-report-close aria-label="{{ t('report.cancel') }}"><span aria-hidden="true">×</span></button>
+    </div>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="next" value="{{ next_url }}">
+    <label>{{ t('report.target') }}
+      <select name="observation_id" data-report-target>
+        <option value="">{{ t('report.target_document') }}</option>
+        {% for item in observations %}
+        <option value="{{ item.id }}">{{ item.raw_name }}: {{ item.display_value }} {{ item.unit_text|unitfmt }} · {{ t('doc.page_n', n=item.page_number) }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>{{ t('report.category') }}
+      {#- The empty first option is what makes `required` fire.  Without it a
+          reporter who never opens the list files everything as the first
+          category, and this field is how the queue is triaged. -#}
+      <select name="category" required>
+        <option value="" selected disabled>{{ t('report.category_choose') }}</option>
+        {% for key, label in report_categories %}
+        <option value="{{ key }}">{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>{{ t('report.expected') }}<input name="expected_text" maxlength="500"></label>
+    <label>{{ t('report.description') }}<textarea name="description" rows="3" maxlength="2000" placeholder="{{ t('report.description_hint') }}"></textarea></label>
+    <div class="an-report-modal__actions">
+      <button type="button" class="secondary" data-report-close>{{ t('report.cancel') }}</button>
+      <button class="primary" type="submit">{{ t('report.submit') }}</button>
+    </div>
+  </form>
+</dialog>
+<script>
+(() => {
+  const dialog = document.getElementById("an-report-dialog");
+  if (!dialog) return;
+  const target = dialog.querySelector("[data-report-target]");
+  document.addEventListener("click", (event) => {
+    const opener = event.target.closest("[data-report-issue]");
+    if (opener) {
+      target.value = opener.dataset.observationId || "";
+      dialog.showModal();
+      return;
+    }
+    if (event.target.closest("[data-report-close]")) {
+      dialog.close();
+      return;
+    }
+    /* Clicking the backdrop closes it; a click inside the box also targets
+       the <dialog> element itself, so the box is excluded by geometry. */
+    if (event.target === dialog) {
+      const box = dialog.getBoundingClientRect();
+      const outside = event.clientX < box.left || event.clientX > box.right
+        || event.clientY < box.top || event.clientY > box.bottom;
+      if (outside) dialog.close();
+    }
+  });
+})();
+</script>
+{%- endmacro %}
+
+
+{# ------------------------------------------------------ filed problem reports #}
+{#
+  The reports already filed on this document, with the way to close the loop.
+  Rendered only when there is at least one: an empty "no problems reported"
+  block would advertise a rare action on every document.
+#}
+{% macro issue_report_list(reports, csrf_token, next_url) -%}
+{% if reports %}
+<section class="an-issue-list" id="issue-reports" aria-labelledby="issue-reports-title">
+  <h3 id="issue-reports-title">{{ t('report.list_heading') }}</h3>
+  {% for report in reports %}
+  <article class="an-issue" data-resolved="{{ 'true' if report.resolved else 'false' }}">
+    <div class="an-issue__top">
+      <strong>{{ report.category_label }}</strong>
+      <span class="status {{ 'verified' if report.resolved else 'extracted' }}">{{ report.status_label }}</span>
+    </div>
+    <p class="an-issue__target">{{ report.target_name }}{% if report.target_value %}: {{ report.target_value }}{% endif %}{% if report.page_number %} · {{ t('doc.page_n', n=report.page_number) }}{% endif %} · {{ report.created_text }}</p>
+    {% if report.expected_text %}<p class="an-issue__note"><b>{{ t('report.expected_label') }}:</b> {{ report.expected_text }}</p>{% endif %}
+    {% if report.description %}<p class="an-issue__note">{{ report.description }}</p>{% endif %}
+    {% if csrf_token %}
+    <form action="/issues/{{ report.id }}/state" method="post" class="inline-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="next" value="{{ next_url }}">
+      <button class="secondary" name="action" value="{{ 'reopen' if report.resolved else 'resolve' }}" type="submit">{{ t('report.reopen') if report.resolved else t('report.resolve') }}</button>
+    </form>
+    {% endif %}
+  </article>
+  {% endfor %}
+</section>
+{% endif %}
+{%- endmacro %}
+
+
+{# ------------------------------------------------------------- vaccinations #}
+{#
+  One dialog for every "add a vaccination" button on a page, filled in by
+  whichever button opened it.
+
+  Not one dialog per group: the picker holds seventy entries, and repeating it
+  eleven times is eleven times the markup for a form that is only ever open
+  once. The openers carry their pre-fill as `data-vax-*`, which is also what
+  makes the pre-fill honest - each button says what the *next* dose of that
+  particular vaccine looks like, worked out from the last one on file.
+#}
+{% macro vaccination_modal(csrf_token, vaccine_options, today, next_url='/vaccinations') -%}
+<dialog class="an-vax-modal" id="an-vax-dialog" aria-labelledby="an-vax-title">
+  <form class="an-vax-form" method="post" action="/vaccinations">
+    <div class="an-vax-modal__head">
+      <h2 id="an-vax-title">{{ t('vax.add_heading') }}</h2>
+      <button type="button" class="an-vax-modal__close" data-vax-close aria-label="{{ t('vax.cancel') }}"><span aria-hidden="true">&times;</span></button>
+    </div>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="next" value="{{ next_url }}">
+    {{ dose_fields(none, 'vax-modal', today) }}
+    <div class="an-vax-modal__actions">
+      <button type="button" class="secondary" data-vax-close>{{ t('vax.cancel') }}</button>
+      <button class="primary" type="submit">{{ t('vax.add_submit') }}</button>
+    </div>
+  </form>
+</dialog>
+<script>
+(() => {
+  const dialog = document.getElementById("an-vax-dialog");
+  if (!dialog) return;
+  const form = dialog.querySelector("form");
+  /* dataset key -> field name. Everything absent from an opener is cleared, so
+     the dialog never carries one vaccine's answers into another's. */
+  const FIELDS = {
+    vaxVaccine: "vaccine_code",
+    vaxProduct: "product_name",
+    vaxManufacturer: "manufacturer",
+    vaxTradeName: "trade_name",
+    vaxFacility: "facility",
+    vaxKind: "event_kind",
+    vaxDoseNumber: "dose_number",
+    vaxDosesInSeries: "doses_in_series",
+  };
+  document.addEventListener("click", (event) => {
+    const opener = event.target.closest("[data-vax-add]");
+    if (opener) {
+      form.reset();
+      for (const [key, name] of Object.entries(FIELDS)) {
+        const field = form.elements[name];
+        if (field) field.value = opener.dataset[key] || "";
+      }
+      dialog.showModal();
+      if (form.elements["occurred_on"]) form.elements["occurred_on"].focus();
+      return;
+    }
+    if (event.target.closest("[data-vax-close]")) {
+      dialog.close();
+      return;
+    }
+    /* Clicking the backdrop closes it; a click inside the box also targets the
+       <dialog> element itself, so the box is excluded by geometry. */
+    if (event.target === dialog) {
+      const box = dialog.getBoundingClientRect();
+      const outside = event.clientX < box.left || event.clientX > box.right
+        || event.clientY < box.top || event.clientY > box.bottom;
+      if (outside) dialog.close();
+    }
+  });
+})();
+</script>
+{%- endmacro %}
+
+
+{#
+  The dose form, shared by the add dialog and every correction form.
+
+  The vaccine picker is an input with a datalist, not a select element: the national
+  dictionary holds seventy products, and a select turns that into a scroll
+  through codes nobody can read. Each entry is `CODE - Disease · Disease`, which
+  a datalist filters on as the person types, so "tetanus" narrows it to the
+  products that cover tetanus. Whatever they type still arrives verbatim - a
+  datalist suggests, it does not constrain - and the handler keeps an
+  unrecognised entry as the product name rather than refusing it.
+#}
+{% macro dose_fields(dose, id_prefix, today) -%}
+<div class="an-vax-form__grid">
+  <label for="{{ id_prefix }}-date">{{ t('vax.field_date') }}
+    <input id="{{ id_prefix }}-date" name="occurred_on" type="date" required max="{{ today }}"
+           value="{{ dose.date if dose and dose.date else '' }}">
+  </label>
+  <label for="{{ id_prefix }}-kind">{{ t('vax.field_kind') }}
+    <select id="{{ id_prefix }}-kind" name="event_kind">
+      <option value="vaccination"{{ ' selected' if not dose or dose.event_kind == 'vaccination' else '' }}>{{ t('vax.kind_vaccination') }}</option>
+      <option value="revaccination"{{ ' selected' if dose and dose.event_kind == 'revaccination' else '' }}>{{ t('vax.kind_revaccination') }}</option>
+    </select>
+  </label>
+</div>
+
+<label for="{{ id_prefix }}-vaccine">{{ t('vax.field_vaccine') }}
+  <input id="{{ id_prefix }}-vaccine" name="vaccine_code" list="an-vaccine-list" autocomplete="off"
+         placeholder="{{ t('vax.field_vaccine_placeholder') }}"
+         value="{{ dose.vaccine_entry if dose and dose.vaccine_entry else '' }}">
+  <span class="an-field-help">{{ t('vax.field_vaccine_help') }}</span>
+</label>
+
+<div class="an-vax-form__grid">
+  <label for="{{ id_prefix }}-trade">{{ t('vax.field_trade_name') }} <span class="an-field-optional">{{ t('vax.optional') }}</span>
+    <input id="{{ id_prefix }}-trade" name="trade_name" maxlength="120"
+           value="{{ dose.trade_name if dose else '' }}">
+    <span class="an-field-help">{{ t('vax.field_trade_name_help') }}</span>
+  </label>
+  <label for="{{ id_prefix }}-manufacturer">{{ t('vax.field_manufacturer') }} <span class="an-field-optional">{{ t('vax.optional') }}</span>
+    <input id="{{ id_prefix }}-manufacturer" name="manufacturer" maxlength="200"
+           value="{{ dose.manufacturer if dose else '' }}">
+  </label>
+</div>
+
+<label for="{{ id_prefix }}-product">{{ t('vax.field_product') }} <span class="an-field-optional">{{ t('vax.optional') }}</span>
+  <input id="{{ id_prefix }}-product" name="product_name" maxlength="400"
+         value="{{ dose.product_name if dose else '' }}">
+</label>
+
+<div class="an-vax-form__grid">
+  <label for="{{ id_prefix }}-facility">{{ t('vax.field_facility') }} <span class="an-field-optional">{{ t('vax.optional') }}</span>
+    <input id="{{ id_prefix }}-facility" name="facility" maxlength="200"
+           value="{{ dose.facility if dose else '' }}">
+  </label>
+  <label for="{{ id_prefix }}-clinician">{{ t('vax.field_clinician') }} <span class="an-field-optional">{{ t('vax.optional') }}</span>
+    <input id="{{ id_prefix }}-clinician" name="clinician" maxlength="200"
+           value="{{ dose.clinician if dose else '' }}">
+  </label>
+</div>
+
+<div class="an-vax-form__grid">
+  <label for="{{ id_prefix }}-lot">{{ t('vax.field_lot') }} <span class="an-field-optional">{{ t('vax.optional') }}</span>
+    <input id="{{ id_prefix }}-lot" name="lot_number" maxlength="80"
+           value="{{ dose.lot_number if dose else '' }}">
+  </label>
+</div>
+
+<div class="an-vax-form__grid">
+  <label for="{{ id_prefix }}-dose-number">{{ t('vax.field_dose_number') }} <span class="an-field-optional">{{ t('vax.optional') }}</span>
+    <input id="{{ id_prefix }}-dose-number" name="dose_number" type="number" inputmode="numeric" min="1" max="20"
+           value="{{ dose.dose_number if dose and dose.dose_number else '' }}">
+  </label>
+  <label for="{{ id_prefix }}-doses-in-series">{{ t('vax.field_doses_in_series') }} <span class="an-field-optional">{{ t('vax.optional') }}</span>
+    <input id="{{ id_prefix }}-doses-in-series" name="doses_in_series" type="number" inputmode="numeric" min="1" max="20"
+           value="{{ dose.doses_in_series if dose and dose.doses_in_series else '' }}">
+  </label>
+</div>
+<p class="an-field-help">{{ t('vax.field_series_help') }}</p>
+
+<label for="{{ id_prefix }}-note">{{ t('vax.field_note') }} <span class="an-field-optional">{{ t('vax.optional') }}</span>
+  <input id="{{ id_prefix }}-note" name="note" maxlength="500" value="{{ dose.note if dose else '' }}">
+</label>
+{%- endmacro %}
+
+
+{#
+  The picker's entries, once per page. Shared by the dialog and every correction
+  form through the `an-vaccine-list` id: seventy options repeated per form is
+  the same list a dozen times over for no second behaviour.
+#}
+{% macro vaccine_datalist(vaccine_options) -%}
+<datalist id="an-vaccine-list">
+  {% for entry in vaccine_options %}<option value="{{ entry }}"></option>{% endfor %}
+</datalist>
+{%- endmacro %}
+
+
+{#
+  A dose in the document review bench, beside the page it was read from.
+
+  The same shape as `observation_row`, because it is the same job: a machine
+  read something off a photograph and a person is being asked whether it is
+  right. So it carries the page link, the evidence line, and confirm / set aside
+  / correct - where the image is, which is the only place the question can
+  actually be answered. It used to be a bare "This matches the card" button on a
+  page with no card on it.
+#}
+{% macro immunization_row(dose, csrf_token=none, next_url='', today='', viewer_id='') -%}
+<article class="obs-item an-obs-item an-vax-review" id="immunization-{{ dose.id }}" data-verification="{{ dose.status }}">
+  <div class="obs-item-top">
+    <div>
+      <strong>{{ dose.diseases|join(' · ') if dose.diseases else t('vax.unidentified_short') }}</strong>
+      <small><b>{{ t('vax.th_date') }}:</b> {{ dose.date_text }} · {{ dose.kind_label }}{% if dose.dose_text %} · {{ dose.dose_text }}{% endif %}</small>
+    </div>
+    {% if dose.page_number %}
+    <a class="obs-page" href="#{{ viewer_id if viewer_id else 'page-' ~ dose.page_number }}" data-page="{{ dose.page_number }}" title="{{ t('doc.show_page', page=dose.page_number) }}">{{ t('doc.page_n', n=dose.page_number) }}</a>
+    {% endif %}
+  </div>
+  <div class="obs-item-result">
+    <span class="result">{% if dose.vaccine_code %}<abbr title="{{ t('vax.code_help') }}">{{ dose.vaccine_code }}</abbr>{% endif %}
+      {% if dose.lot_number %}<small class="an-vax-lot">{{ dose.lot_number }}</small>{% endif %}</span>
+    <span class="status {{ dose.status }}">{{ dose.status_label }}</span>
+  </div>
+  {% if dose.trade %}<p class="obs-ref"><strong>{{ dose.trade }}</strong>{% if dose.maker %} · {{ dose.maker }}{% endif %}</p>{% endif %}
+  {% if dose.product_name %}<p class="obs-ref"><b>{{ t('vax.as_printed') }}:</b> {{ dose.product_name }}</p>{% endif %}
+  {% if dose.evidence_text %}
+  <p class="obs-evidence-line"><b>{{ t('doc.evidence_line') }}:</b> <q>{{ dose.evidence_text }}</q></p>
+  {% endif %}
+  {% if csrf_token %}
+  <div class="obs-actions">
+    <form class="obs-state" action="/vaccinations/{{ dose.id }}" method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="next" value="{{ next_url }}">
+      {% if dose.status == 'extracted' %}
+      <button class="primary" name="action" value="verify" type="submit">{{ t('vax.confirm') }}</button>
+      {% endif %}
+      <button class="secondary" name="action" value="remove" type="submit" title="{{ t('vax.remove_document_help') }}">{{ t('vax.remove') }}</button>
+    </form>
+    <details class="edit-observation">
+      <summary>{{ t('doc.correct') }}</summary>
+      <form class="an-vax-form" action="/vaccinations/{{ dose.id }}" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="next" value="{{ next_url }}">
+        <input type="hidden" name="action" value="save">
+        {{ dose_fields(dose, 'vax-edit-' ~ dose.id, today) }}
+        <button class="secondary" type="submit">{{ t('doc.save') }}</button>
+      </form>
+    </details>
+  </div>
+  {% endif %}
+</article>
+{%- endmacro %}

@@ -1,0 +1,45 @@
+{#
+  Compact result rows shared by /metrics (`_search_results.html`) and the home
+  page's priorities: name, value, the verdict in words, date. The full card
+  with its range bar is one tap away, on the result's own page.
+#}
+{% from "_components.html" import micro_mark with context %}
+
+{#- A row with nothing to compare against carries no mark and no verdict
+    text: "No comparison available" on 60 device rows said nothing 60 times.
+    A disagreement between sources is named in words, not only by the bar. -#}
+{% macro metric_row(card, attention=false) -%}
+{%- set judged = card.verdict.interpretation and card.verdict.interpretation != 'unjudged' -%}
+<a class="an-panel-member an-result-row" href="{{ card.url }}" data-interpretation="{{ card.verdict.interpretation }}"{% if card.verdict.conflicts_with_vendor %} data-conflict="true"{% endif %}>
+  <span class="an-panel-member__name">{{ card.name }}</span>
+  <span class="an-panel-member__value">{{ card.value_text }}{% if card.unit %} <small>{{ card.unit|unitfmt }}</small>{% endif %}</span>
+  {% if judged or card.verdict.conflicts_with_vendor %}{{ micro_mark(card.verdict) }}{% else %}<span class="an-micro-slot" aria-hidden="true"></span>{% endif %}
+  <small class="an-panel-member__date">
+    {{- card.date_text }}{% if judged %} · {{ card.verdict.label }}{% endif -%}
+    {%- if card.verdict.conflicts_with_vendor %} · {{ t('verdict.conflict') }}{% endif -%}
+    {%- if attention and card.outside_by_text %} · {{ t('insights.outside_by', amount=card.outside_by_text) }}{% endif -%}
+    {%- if attention and card.panel_name %} · {{ t('insights.in_panel', panel=card.panel_name) }}{% endif -%}
+    {%- if card.verification_status == 'extracted' %} · {{ card.verification_label }}{% endif -%}
+  </small>
+</a>
+{%- endmacro %}
+
+{% macro panel_row(panel) -%}
+<a class="an-panel-member an-result-row" href="{{ panel.url }}" data-status="{{ panel.status }}">
+  <span class="an-panel-member__name">{{ panel.name }}</span>
+  <span class="an-panel-member__value an-result-row__label">{{ panel.status_label }}</span>
+  <small class="an-panel-member__date">
+    {{- panel.staleness.label -}}
+    {%- if panel.staleness.last_tested %} · {{ t('insights.last_tested', date=panel.staleness.last_tested|datefmt) }}{% endif -%}
+  </small>
+</a>
+{%- endmacro %}
+
+{% macro link_row(row) -%}
+<a class="an-panel-member an-result-row" href="{{ row.url }}">
+  <span class="an-panel-member__name">{{ row.title }}</span>
+  {% if row.badge %}<span class="an-panel-member__value an-result-row__label" data-tone="attention">{{ row.badge }}</span>{% endif %}
+  {% if row.subtitle %}<small class="an-panel-member__date">{{ row.subtitle }}</small>{% endif %}
+  {% if row.note %}<small class="an-panel-member__date">{{ row.note }}</small>{% endif %}
+</a>
+{%- endmacro %}

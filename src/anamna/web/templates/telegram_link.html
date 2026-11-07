@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}{{ t('telegram.connect') }}{% endblock %}
+{% block content %}
+<section class="page-head"><div><h1>{{ t('telegram.connect') }}</h1><p>{{ t('telegram.link_hint') }}</p></div></section>
+<section class="panel">
+  <p><a class="button primary" href="{{ telegram_link }}" target="_blank" rel="noopener noreferrer">{{ t('telegram.open_bot') }}</a></p>
+  <p><a href="/profile?tab=connections#telegram">{{ t('telegram.back') }}</a></p>
+</section>
+{% endblock %}

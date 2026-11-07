@@ -1,0 +1,93 @@
+{#
+  The /metrics result region: heading, note and every result group. The page
+  load includes this file and the live search renders it again, so the two can
+  never disagree (the old type-ahead rebuilt cards in JavaScript and printed
+  "Above range" over the sentence "Your result is inside this range").
+
+  `view` comes from `_metrics_view` in app.py.
+#}
+{% from "_components.html" import empty_state, pagination_nav with context %}
+{% from "_result_rows.html" import metric_row, panel_row, link_row with context %}
+{% macro group_rows(items, kind) %}
+<div class="an-panel-card__members an-result-list">
+  {% for item in items %}
+    {%- if kind == 'panel' %}{{ panel_row(item) }}
+    {%- elif kind == 'row' %}{{ link_row(item) }}
+    {%- else %}{{ metric_row(item, kind == 'attention') }}{% endif %}
+  {% endfor %}
+</div>
+{%- endmacro %}
+
+<div class="section-heading compact-heading an-result-head">
+  <h2 id="result-title">{{ view.title }}</h2>
+  <span class="an-result-count">{{ view.count_text }}</span>
+</div>
+{% if view.note or view.link %}
+<p class="an-result-note">{{ view.note }}{% if view.link %} <a href="{{ view.link.url }}">{{ view.link.label }}</a>{% endif %}</p>
+{% endif %}
+{#- The marks are explained once, here, for every list below. -#}
+{% if view.sections or view.groups %}
+<details class="an-legend">
+  <summary>{{ t('metrics.legend_title') }}</summary>
+  <p>{{ t('metrics.legend_marks') }}</p>
+  <ul class="an-legend__marks">
+    {% for key in ['critical_high', 'high', 'borderline_high', 'normal', 'borderline_low', 'low', 'negative', 'positive'] %}
+    <li><em class="an-micro" data-interpretation="{{ key }}" aria-hidden="true"></em> {{ t('verdict.' ~ key) }}</li>
+    {% endfor %}
+    <li><em class="an-micro" data-interpretation="high" data-conflict="true" aria-hidden="true"></em> {{ t('verdict.conflict') }}</li>
+  </ul>
+  <p class="an-legend__conflict">{{ t('metrics.legend_conflict', label=t('verdict.conflict')) }}</p>
+  <p>{{ t('metrics.legend_unverified', label='Needs verification'|phrase) }}</p>
+  <p>{{ t('metrics.legend_no_mark') }}</p>
+</details>
+{% endif %}
+
+{#- Nothing typed: every result, grouped by body system. A laboratory section with
+    something that needs attention opens on its first rows (attention first);
+    the rest, and every device section, show their header and count.
+    "Show all" expands the section in place; without script it opens the
+    area filter. -#}
+{% if view.sections %}
+{% for device in [false, true] %}
+{% set sections = view.sections | selectattr('device', 'equalto', device) | list %}
+{% if sections %}
+<h3 class="an-area-sections__heading">{{ t('metrics.group_devices') if device else t('metrics.section_labs') }}</h3>
+<div class="an-area-sections">
+  {% for section in sections %}
+  <details class="an-area-section" data-section="{{ section.key }}"{% if section.flagged and not device %} open{% endif %}>
+    <summary>
+      <span class="an-area-section__title">
+        <strong>{{ section.title }}</strong>
+        <small>{{ t_plural('metrics.result_count', section.total) }}{% if section.flagged %} · <span class="an-area-section__flagged">{{ t_plural('metrics.section_flagged', section.flagged) }}</span>{% endif %}</small>
+      </span>
+    </summary>
+    <div class="an-panel-card__members an-result-list">
+      {% for card in section.rows %}{{ metric_row(card) }}{% endfor %}
+    </div>
+    <p class="an-area-section__foot">
+      {% if section.total > 5 %}<a href="/metrics?area={{ section.area_id }}" data-expand>{{ t('metrics.show_all', count=section.total|countfmt) }}</a>{% endif %}
+      {% if section.area_id and not device %}<a href="/areas/{{ section.area_id }}">{{ t('metrics.area_page') }}<span class="visually-hidden"> {{ section.title }}</span></a>{% endif %}
+    </p>
+  </details>
+  {% endfor %}
+</div>
+{% endif %}
+{% endfor %}
+{% endif %}
+
+{% for group in view.groups %}
+<section class="an-result-group" data-group="{{ group.key }}" aria-labelledby="result-group-{{ group.key }}">
+  <h3 id="result-group-{{ group.key }}">{{ group.heading }} <span class="an-result-group__count">{{ group.total|countfmt }}</span></h3>
+  {{ group_rows(group.rows, group.kind) }}
+  {#- The heading counts every match; the rest stay on this page, one click away. -#}
+  {% if group.more_rows %}
+  <details class="an-result-more">
+    <summary>{{ t('metrics.show_more', count=group.more_rows|length|countfmt) }}</summary>
+    {{ group_rows(group.more_rows, group.kind) }}
+  </details>
+  {% endif %}
+  {% if group.page %}{{ pagination_nav(group.page) }}{% endif %}
+</section>
+{% else %}
+{% if not view.sections %}{{ empty_state(view.empty_title, view.empty_body, 3) }}{% endif %}
+{% endfor %}

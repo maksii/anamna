@@ -1,0 +1,33 @@
+/* Keep the health readings close to the page title on small screens. */
+.area-detail-hero { padding:24px; margin-bottom:16px; }
+.area-detail-heading { margin-top:12px; gap:18px; }
+.area-detail-heading h1 { font-size:clamp(30px,4vw,48px); }
+.px-featured-readings { grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr)); }
+.area-detail-hero .back-link { margin-bottom:0; display:inline-flex; align-items:center; min-height:44px; }
+.area-detail-hero .area-scope-note { margin-top:14px!important; padding-top:10px; }
+.an-tracker-card__head h3 a,.an-tracker-source a { display:inline-flex; align-items:center; min-height:44px; }
+.panel .table-wrap { max-width:100%; overflow-x:auto; }
+.panel td,.panel dd { overflow-wrap:anywhere; }
+.form-actions { display:flex; flex-wrap:wrap; align-items:stretch; gap:10px; }
+.clinical-finding-card,.clinical-finding-card>header>div { min-width:0; }
+.clinical-finding-card>header,.clinical-finding-card>footer { flex-wrap:wrap; }
+@media(max-width:620px) {
+  .an-tracker > .section-heading { gap:6px; margin-bottom:8px; }
+  .an-tracker > .section-heading h2 { font-size:24px; }
+  .an-tracker > .dashboard-note { margin:0 0 12px; line-height:1.5; }
+  .px-area-nav { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:5px; }
+  .px-area-nav a { justify-content:center; font-size:11px; padding:6px 3px; gap:4px; }
+  .px-area-nav .px-area-icon { width:17px; height:17px; }
+  .area-detail-hero { padding:16px 20px; }
+  .area-detail-heading { gap:14px; margin-top:2px; }
+  .area-detail-heading h1 { font-size:30px; }
+  .area-detail-heading p { font-size:13px; }
+  .area-evidence-summary { gap:12px; }
+  .area-evidence-summary>div { flex:1; }
+  .area-evidence-summary dt { font-size:9px; }
+  .area-evidence-summary dd { font-size:22px; }
+  .px-area-story { padding:16px; margin:10px 0; }
+  .px-area-story h2 { font-size:20px; }
+  .px-area-story p { font-size:13px; line-height:1.5; }
+  .px-detail-nav { padding-bottom:8px; }
+}

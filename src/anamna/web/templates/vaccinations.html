@@ -1,0 +1,373 @@
+{% extends "base.html" %}
+{#- `dose_fields` is used by the `dose_list` macro below, which is defined
+    outside `{% block content %}` - an import made inside the block is not in
+    scope there, so both imports live here. -#}
+{% from "_components.html" import plural_t, empty_state, dose_fields, vaccination_modal, vaccine_datalist with context %}
+{% block title %}{{ t('vax.title') }}{% endblock %}
+
+{% set can_edit = csrf_token and not guest and not viewing %}
+
+{#- The doses of one disease section.  A vaccination record is read by
+    scanning dates, so the row opens with when, which kind and which dose of
+    how many - then which product, by whom, where.  The printed paragraph is
+    kept, labelled "as printed": it is what the card says, not what a person
+    searches for.  `prefix` keeps ids unique, because a combined vaccine is
+    listed under every disease it covers. -#}
+{% macro dose_list(doses, prefix='dose') -%}
+<ul class="an-vax-doses">
+  {%- for dose in doses %}
+<li class="an-vax-dose" id="{{ prefix }}-{{ dose.id }}" data-vax-dose="{{ dose.id }}"
+    data-year="{{ dose.year }}" data-product="{{ dose.product_key }}"
+    data-diseases="{{ dose.disease_keys|join(' ') }}" data-search="{{ dose.search_text }}">
+  <div class="an-vax-dose__head">
+    <time class="an-vax-dose__date" datetime="{{ dose.date }}">{{ dose.date_text }}</time>
+    <span class="an-vax-dose__kind">{{ dose.kind_label }}</span>
+    {% if dose.dose_text %}<span class="an-vax-dose__series">{{ dose.dose_text }}</span>{% endif %}
+    <span class="pill" data-vax-status="{{ dose.status }}">{{ dose.status_label }}</span>
+  </div>
+  <p class="an-vax-dose__name"><strong>{{ dose.product_label }}</strong>{% if dose.maker %}<span> · {{ dose.maker }}</span>{% endif %}</p>
+  {% if dose.alternatives %}<p class="an-field-help">{{ t('vax.trade_probable', alternatives=dose.alternatives|join(', ')) }}</p>{% endif %}
+  <dl class="an-vax-dose__facts">
+    {% if dose.vaccine_code %}
+    <div><dt>{{ t('vax.th_code') }}</dt><dd><span class="an-vax-lot">{{ dose.vaccine_code }}</span>{% if dose.code_meaning %} - {{ dose.code_meaning }}{% endif %}</dd></div>
+    {% endif %}
+    {% if dose.quantity_text %}<div><dt>{{ t('vax.th_quantity') }}</dt><dd>{{ dose.quantity_text }}</dd></div>{% endif %}
+    {% if dose.lot_number %}
+    <div><dt>{{ t('vax.th_lot') }}</dt><dd><span class="an-vax-lot">{{ dose.lot_number }}</span></dd></div>
+    {% endif %}
+    {% if dose.route_label %}<div><dt>{{ t('vax.th_route') }}</dt><dd>{{ dose.route_label }}</dd></div>{% endif %}
+    {% if dose.site %}<div><dt>{{ t('vax.th_site') }}</dt><dd>{{ dose.site }}</dd></div>{% endif %}
+    {% if dose.facility %}<div><dt>{{ t('vax.th_facility') }}</dt><dd>{{ dose.facility }}</dd></div>{% endif %}
+    {% if dose.clinician %}<div><dt>{{ t('vax.th_clinician') }}</dt><dd>{{ dose.clinician }}</dd></div>{% endif %}
+    <div>
+      <dt>{{ t('vax.th_source') }}</dt>
+      <dd>
+        {% if dose.manual %}
+        <span class="pill">{{ t('vax.entered_by_hand') }}</span>
+        {% elif dose.document_id %}
+        {#- Confirming belongs where the evidence is: the document page puts
+            the scan next to the row, which is the only place "does this match
+            the card?" can honestly be answered. -#}
+        <a href="/documents/{{ dose.document_id }}#immunization-{{ dose.id }}">{{
+          t('vax.check_on_document') if dose.status == 'extracted' else t('vax.source_document', title=dose.document_title) }}</a>
+        {% else %}
+        <span class="pill">{{ t('vax.from_document') }}</span>
+        {% endif %}
+        {% for note in dose.visit_notes %}
+        <br><a href="/documents/{{ note.id }}">{{ t('vax.recorded_at_visit', title=note.title, date=note.date_text) }}</a>
+        {% endfor %}
+      </dd>
+    </div>
+    {% if dose.note %}<div><dt>{{ t('vax.field_note') }}</dt><dd>{{ dose.note }}</dd></div>{% endif %}
+    {% if dose.product_name and dose.product_name|lower != dose.trade|lower %}<div class="an-vax-dose__printed"><dt>{{ t('vax.as_printed') }}</dt><dd>{{ dose.product_name }}</dd></div>{% endif %}
+  </dl>
+  {% if can_edit and dose.manual %}
+  <div class="an-vax-dose__actions">
+    <details class="an-vax-edit">
+      <summary>{{ t('vax.edit') }}</summary>
+      <form class="an-vax-form" action="/vaccinations/{{ dose.id }}" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="action" value="save">
+        <h4>{{ t('vax.edit_heading') }}</h4>
+        {{ dose_fields(dose, 'edit-' ~ prefix ~ '-' ~ dose.id, today) }}
+        <button class="primary" type="submit">{{ t('vax.save') }}</button>
+      </form>
+      <form class="an-vax-remove" action="/vaccinations/{{ dose.id }}" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="action" value="remove">
+        <button class="secondary" type="submit">{{ t('vax.remove') }}</button>
+      </form>
+    </details>
+  </div>
+  {% endif %}
+</li>
+  {%- endfor %}
+</ul>
+{%- endmacro %}
+
+{#- The add-a-dose opener, pre-filled from the last dose of the same vaccine. -#}
+{% macro add_next(prefill, css) -%}
+<button type="button" class="secondary {{ css }}" data-vax-add
+        data-vax-vaccine="{{ prefill.vaccine_entry }}"
+        data-vax-product="{{ prefill.product_name }}"
+        data-vax-manufacturer="{{ prefill.manufacturer }}"
+        data-vax-trade-name="{{ prefill.trade_name }}"
+        data-vax-facility="{{ prefill.facility }}"
+        data-vax-kind="{{ prefill.event_kind }}"
+        data-vax-dose-number="{{ prefill.dose_number }}"
+        data-vax-doses-in-series="{{ prefill.doses_in_series }}">{{ t('vax.add_next') }}</button>
+{%- endmacro %}
+
+{% block content %}
+
+{#- The navigation already names the page, so it opens on the action it
+    exists for - adding a dose - and a jump to what is worth asking a doctor
+    about, where the title used to be; the h1 stays for screen readers. The
+    counts follow on the same row; a count of nothing is not shown. -#}
+<section class="an-vax-head" aria-labelledby="vax-heading">
+  <h1 id="vax-heading" class="visually-hidden">{{ t('vax.heading') }}</h1>
+  {#- The gap analysis is rendered only beside doses on file. -#}
+  {% set gaps_link = totals.doses and totals.outstanding %}
+  {% if can_edit or gaps_link %}
+  <div class="an-vax-head__actions">
+    {% if can_edit %}<button type="button" class="primary an-vax-add" data-vax-add>{{ t('vax.add_submit') }}</button>{% endif %}
+    {% if gaps_link %}<a class="an-vax-head__gaps" href="#vax-gaps">{{ t('vax.gaps_jump', count=totals.outstanding) }}</a>{% endif %}
+  </div>
+  {% endif %}
+  {% if totals.doses %}
+  <dl class="an-totals">
+    <div><dt>{{ t('vax.totals_doses') }}</dt><dd>{{ totals.doses }}</dd></div>
+    {% if totals.protected %}<div><dt>{{ t('vax.totals_protected') }}</dt><dd>{{ totals.protected }}</dd></div>{% endif %}
+    {% if totals.unchecked %}<div><dt>{{ t('vax.totals_unchecked') }}</dt><dd>{{ totals.unchecked }}</dd></div>{% endif %}
+  </dl>
+  {% endif %}
+</section>
+
+{% if error %}<div class="alert error" role="alert">{{ error }}</div>{% endif %}
+{% if saved %}<div class="alert" role="status">{{ saved }}</div>{% endif %}
+
+{% if totals.doses %}
+<section class="dashboard-section" aria-labelledby="vax-doses">
+  {#- How the groups are built («one injection, listed under every disease it
+      covers») lives in the legend at the foot of this list. -#}
+  <h2 id="vax-doses" class="visually-hidden">{{ t('vax.doses_heading') }}</h2>
+
+  {#- Client-side: every dose is already on the page, so narrowing them needs
+      no round trip.  `?q=` arrives pre-filled from the site search.
+      Search, then the three narrowing selects: one compact row beside it from
+      761px, folded behind «Filters» on a phone, where four stacked controls
+      were taller than the list they filter. The fold is a <details> whose
+      content the stylesheet shows regardless of state on a wide screen. -#}
+  <form class="an-vax-filter" role="search" aria-label="{{ t('vax.filter_label') }}" data-vax-filter
+        action="/vaccinations" method="get">
+    <label class="an-vax-filter__q" for="vax-filter-q"><span class="visually-hidden">{{ t('vax.filter_search') }}</span>
+      <input id="vax-filter-q" type="search" name="q" value="{{ filters.q }}" autocomplete="off"
+             placeholder="{{ t('vax.filter_placeholder') }}" aria-describedby="vax-filter-status">
+    </label>
+    <details class="an-vax-filter__more">
+    <summary class="an-vax-filter__toggle">{{ t('vax.filter_toggle') }}</summary>
+    <div class="an-vax-filter__selects">
+    <label for="vax-filter-year">{{ t('vax.filter_year') }}
+      <select id="vax-filter-year" name="year">
+        <option value="">{{ t('vax.filter_all_years') }}</option>
+        {% for year in filters.years %}<option value="{{ year }}">{{ year }}</option>{% endfor %}
+      </select>
+    </label>
+    <label for="vax-filter-product">{{ t('vax.filter_product') }}
+      <select id="vax-filter-product" name="product">
+        <option value="">{{ t('vax.filter_all_products') }}</option>
+        {% for key, label in filters.products %}<option value="{{ key }}">{{ label }}</option>{% endfor %}
+      </select>
+    </label>
+    <label for="vax-filter-disease">{{ t('vax.filter_disease') }}
+      <select id="vax-filter-disease" name="disease">
+        <option value="">{{ t('vax.filter_all_diseases') }}</option>
+        {% for key, name in filters.diseases %}<option value="{{ key }}">{{ name }}</option>{% endfor %}
+      </select>
+    </label>
+    <button type="reset" class="secondary an-vax-filter__clear">{{ t('vax.filter_clear') }}</button>
+    </div>
+    </details>
+  </form>
+  <p class="dashboard-note an-vax-filter__status" id="vax-filter-status" aria-live="polite" data-vax-filter-status
+     data-one="{{ t('vax.filter_count_one') }}" data-few="{{ t('vax.filter_count_few') }}"
+     data-many="{{ t('vax.filter_count_many') }}" data-other="{{ t('vax.filter_count') }}"
+     data-none="{{ t('vax.filter_none') }}"></p>
+
+  {#- Closed by default, one summary line each.  Every section expanded is
+      four screens of scrolling to answer "which have I had?", so the closed
+      line names the products and their makers, not only the disease. -#}
+  {% for group in groups %}
+  <details class="an-vax-group" data-vax-group>
+    <summary class="an-vax-group__summary">
+      <span class="an-vax-group__name">{{ group.name }}</span>
+      <span class="an-vax-group__products">
+        {% for product in group.products %}<span>{{ product.label }}{% if product.maker_short %} · {{ product.maker_short }}{% endif %}</span>{% endfor %}
+      </span>
+      <span class="an-vax-group__meta">
+        <span>{{ plural_t('vax.group_count', group.count) }}</span>
+        <span class="an-vax-group__latest">{{ t('vax.group_latest', date=group.latest_text) }}</span>
+        {% if group.latest_dose_text %}<span class="pill">{{ group.latest_dose_text }}</span>{% endif %}
+        {% if group.unchecked %}<span class="pill" data-vax-status="extracted">{{ plural_t('vax.group_unchecked', group.unchecked) }}</span>{% endif %}
+      </span>
+    </summary>
+    <div class="an-vax-group__body">
+      <p class="an-vax-group__explanation">{{ group.explanation }}</p>
+      <ul class="an-vax-products">
+        {% for product in group.products %}
+        <li>
+          <p><strong>{{ product.label }}</strong>{% if product.maker %} · {{ product.maker }}{% endif %}</p>
+          {% if product.code %}<p class="an-field-help"><span class="an-vax-lot">{{ product.code }}</span>{% if product.code_meaning %} - {{ product.code_meaning }}{% endif %}</p>{% endif %}
+          {% if product.alternatives %}<p class="an-field-help">{{ t('vax.trade_probable', alternatives=product.alternatives|join(', ')) }}</p>{% endif %}
+          {% if product.sources %}
+          <details class="an-vax-gap__sources">
+            <summary>{{ t('vax.product_sources', count=product.sources|length) }}</summary>
+            <ul>
+              {% for source in product.sources %}
+              <li>
+                <span class="pill">{{ source.region_label }}</span>
+                <a href="{{ source.url }}" rel="noreferrer noopener" target="_blank">{{ source.name }}</a>
+                <span class="an-field-help">{{ source.publisher }} · {{ source.identifier }}</span>
+              </li>
+              {% endfor %}
+            </ul>
+          </details>
+          {% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+      {% if can_edit %}
+      {{ add_next(group.prefill, 'an-vax-group__add') }}
+      {% endif %}
+      {{ dose_list(group.doses, 'dose-' ~ group.key) }}
+    </div>
+  </details>
+  {% endfor %}
+
+  <details class="an-vax-legend">
+    <summary>{{ t('vax.legend_summary') }}</summary>
+    <dl>
+      <div><dt>{{ t('vax.doses_heading') }}</dt><dd>{{ t('vax.doses_lead') }}</dd></div>
+      <div><dt>{{ t('vax.th_code') }}</dt><dd>{{ t('vax.code_help') }}</dd></div>
+      <div><dt>{{ t('vax.kind_vaccination') }} / {{ t('vax.kind_revaccination') }}</dt><dd>{{ t('vax.kind_help') }}</dd></div>
+      <div><dt>{{ t('vax.th_trade_name') }}</dt><dd>{{ t('vax.trade_name_help') }}</dd></div>
+      <div><dt>{{ t('vax.th_lot') }}</dt><dd>{{ t('vax.lot_help') }}</dd></div>
+      <div><dt>{{ t('vax.th_facility') }}</dt><dd>{{ t('vax.facility_help') }}</dd></div>
+      <div><dt>{{ t('vax.as_printed') }}</dt><dd>{{ t('vax.as_printed_help') }}</dd></div>
+      <div><dt>{{ t('vax.status_extracted') }}</dt><dd>{{ t('vax.status_extracted_help') }}</dd></div>
+      <div><dt>{{ t('vax.entered_by_hand') }}</dt><dd>{{ t('vax.entered_by_hand_help') }}</dd></div>
+    </dl>
+  </details>
+</section>
+
+<section class="dashboard-section" aria-labelledby="vax-gaps">
+  <div class="section-heading compact-heading">
+    <div>
+      <h2 id="vax-gaps">{{ t('vax.gaps_heading') }}</h2>
+    </div>
+  </div>
+  {% if gaps %}
+  <ul class="an-vax-gaps">
+    {% for gap in gaps %}
+    <li class="an-vax-gap" data-urgency="{{ gap.urgency }}">
+      <div class="an-vax-gap__head">
+        <h3>{{ gap.diseases|join(' · ') }}</h3>
+        <span class="pill" data-vax-urgency="{{ gap.urgency }}">{{ gap.urgency_label }}</span>
+      </div>
+      <p class="an-vax-gap__sentence">{{ gap.sentence }}</p>
+      {% if gap.note %}<p class="an-vax-gap__note">{{ gap.note }}</p>{% endif %}
+      {% if gap.kind == 'series' %}
+      <p class="an-vax-gap__basis">{{ t('vax.gap_series_source') }}</p>
+      {% else %}
+      <p class="an-vax-gap__basis">
+        <span class="pill" data-vax-agreement="{{ gap.agreement }}">{{ gap.agreement_label }}</span>
+      </p>
+      <details class="an-vax-gap__sources">
+        <summary>{{ t('vax.sources_label', count=gap.sources|length) }}</summary>
+        <ul>
+          {% for source in gap.sources %}
+          <li>
+            <span class="pill">{{ source.region }}</span>
+            <a href="{{ source.url }}" rel="noreferrer noopener" target="_blank">{{ source.name }}</a>
+            <span class="an-field-help">{{ source.publisher }}</span>
+          </li>
+          {% endfor %}
+        </ul>
+      </details>
+      {% endif %}
+      {% if can_edit and gap.prefill %}{{ add_next(gap.prefill, 'an-vax-gap__add') }}{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="dashboard-note">{{ t('vax.gaps_none') }}</p>
+  {% endif %}
+</section>
+
+{% if unidentified %}
+<section class="dashboard-section" aria-labelledby="vax-unidentified" data-vax-group>
+  <div class="section-heading compact-heading">
+    <div>
+      <h2 id="vax-unidentified">{{ t('vax.unidentified_heading') }}</h2>
+    </div>
+  </div>
+  {{ dose_list(unidentified, 'dose-unidentified') }}
+</section>
+{% endif %}
+
+{% if missing %}
+<section class="dashboard-section" aria-labelledby="vax-missing">
+  <div class="section-heading compact-heading">
+    <div>
+      <h2 id="vax-missing">{{ t('vax.missing_heading') }}</h2>
+    </div>
+  </div>
+  <ul class="an-vax-missing">
+    {% for item in missing %}
+    <li>
+      <div>
+        <h3>{{ item.name }}</h3>
+        <p>{{ item.explanation }}</p>
+      </div>
+      {% if can_edit %}
+      <button type="button" class="secondary" data-vax-add data-vax-kind="vaccination">{{ t('vax.add_for', name=item.name) }}</button>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+<script>
+(() => {
+  const form = document.querySelector("[data-vax-filter]");
+  const status = document.querySelector("[data-vax-filter-status]");
+  if (!form || !status) return;
+  const plural = new Intl.PluralRules(document.documentElement.lang || "en");
+  const apply = () => {
+    const terms = form.elements.q.value.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+    const year = form.elements.year.value;
+    const product = form.elements.product.value;
+    const disease = form.elements.disease.value;
+    const active = Boolean(terms.length || year || product || disease);
+    /* A narrowing select in force is never hidden behind the phone's fold. */
+    if (year || product || disease) form.querySelector(".an-vax-filter__more").open = true;
+    const matched = new Set();
+    for (const row of document.querySelectorAll("[data-vax-dose]")) {
+      const hit = (!year || row.dataset.year === year)
+        && (!product || row.dataset.product === product)
+        && (!disease || row.dataset.diseases.split(" ").includes(disease))
+        && terms.every((term) => row.dataset.search.includes(term));
+      row.hidden = !hit;
+      if (hit) matched.add(row.dataset.vaxDose);
+    }
+    /* A section with nothing left in it disappears; one with a match opens,
+       so the answer is on screen without a second tap. */
+    for (const group of document.querySelectorAll("[data-vax-group]")) {
+      const any = group.querySelector("[data-vax-dose]:not([hidden])");
+      group.hidden = !any;
+      if (active && group.tagName === "DETAILS") group.open = Boolean(any);
+    }
+    const count = matched.size;
+    if (!active) status.textContent = "";
+    else if (count) status.textContent = (status.dataset[plural.select(count)] || status.dataset.other).replace("{count}", count);
+    else status.textContent = status.dataset.none;
+  };
+  form.addEventListener("input", apply);
+  form.addEventListener("change", apply);
+  form.addEventListener("reset", () => setTimeout(apply));
+  form.addEventListener("submit", (event) => { event.preventDefault(); apply(); });
+  if (form.elements.q.value) apply();
+})();
+</script>
+
+{% else %}
+{{ empty_state(t('vax.empty_title'), t('vax.empty_body'), 2, '/upload', t('vax.empty_next')) }}
+{% endif %}
+
+{% if can_edit %}
+{{ vaccine_datalist(vaccine_options) }}
+{{ vaccination_modal(csrf_token, vaccine_options, today) }}
+{% endif %}
+
+{% endblock %}

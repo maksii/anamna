@@ -1,0 +1,46 @@
+# Local health data and generated evidence are private by default.
+/sources/
+# Exclude the contents, not the directory: git will not evaluate a negation
+# below an excluded directory, so "/data/" would make the exceptions dead.
+/data/*
+!/data/.gitkeep
+# The curated reference library is published clinical guidance, not health data.
+# It must ship: create_app() seeds from it, so a fresh clone without it has no
+# reference intervals at all. Verified to contain no patient information.
+!/data/reference_library.json
+# Local drop zone for unmodified device exports (see docs/device-imports.md).
+/Device_Vendor_stats/
+/work/
+/tmp/
+/outputs/
+/dist/
+
+# Secrets and machine-specific agent notes
+.env*
+*.pem
+CLAUDE.local.md
+
+# Dumped APKs of lab apps (static analysis input; never committed)
+/ekspert/
+
+# Browser-automation scratch output
+/.playwright-mcp/
+
+# Python
+/.venv/
+__pycache__/
+*.py[cod]
+/.pytest_cache/
+/.ruff_cache/
+.coverage
+.coverage.*
+/coverage/
+
+# SonarQube local analysis
+sonar-project.properties
+/.sonar-reports/
+/.scannerwork/
+
+# OS
+.DS_Store
+Thumbs.db

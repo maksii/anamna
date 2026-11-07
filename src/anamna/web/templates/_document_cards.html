@@ -1,0 +1,68 @@
+{#
+  One document card, rendered by the page load and by live search from the same
+  macro.  `/metrics` learned this the hard way: its search once rebuilt cards
+  from JSON in the browser, filled the slots somebody had remembered, and left
+  the rest showing the seed card's text -- so a result flagged "Above range"
+  carried the sentence "Your result is inside this range" underneath it.  One
+  renderer, one truth.
+#}
+{% macro document_card(document) -%}
+<a class="document-card" href="/documents/{{ document.id }}">
+  {#- The kind is a word, not a two-letter badge: "ЛА" and "X-" were the first
+      two letters of a label, explained nowhere. -#}
+  <div class="doc-icon {{ document.clinical_type }}" aria-hidden="true"></div>
+  <div class="doc-main">
+    <div class="doc-meta">
+      <span class="doc-kind">{{ document.type_label }}</span>
+      <time>{{ document.report_date|datefmt }}</time>
+      <span>{{ document.vendor|phrase }}</span>
+      {% if document.duplicate_of_document_id %}<span class="pill">{{ t('documents.duplicate') }}</span>{% endif %}
+      {% if document.extraction_strategy == 'lab_api' %}<span class="pill">{{ t('labsync.record_badge') }}</span>{% endif %}
+      {% if document.is_stale %}<span class="pill" title="{{ t('rescan.stale_hint') }}">{{ t('rescan.stale_badge') }}</span>{% endif %}
+      {% if document.review_state %}<span class="status {{ document.review_state }}">{{ t('documents.review_' ~ document.review_state) }}</span>{% endif %}
+    </div>
+    <h2>{{ document.title_text }}</h2>
+    {% if document.review_need %}<p class="doc-need">{{ document.review_need }}</p>{% endif %}
+    {% if document.same_report_text %}<p class="doc-need">{{ document.same_report_text }}</p>{% endif %}
+    {% if document.filename_text %}<p>{{ document.filename_text }}</p>{% endif %}
+    {% if document.tags %}<div class="tag-row">{% for tag in document.tags.split(',') %}<span class="tag">{{ tag }}</span>{% endfor %}</div>{% endif %}
+  </div>
+  <dl class="doc-facts an-doc-facts">
+    <div><dt>{{ t('documents.page') if document.page_count == 1 else t('documents.pages') }}</dt><dd>{{ document.page_count|countfmt }}</dd></div>
+    <div><dt>{{ t('documents.results') }}</dt><dd>{{ document.observation_count|countfmt }}</dd></div>
+  </dl>
+</a>
+{%- endmacro %}
+
+{#- The upload page's list of recent files.  The queue poll renders this same
+    macro when a batch finishes, instead of reloading the page to get it. -#}
+{% macro upload_recent_list(recent) -%}
+{% if recent %}
+<ul class="an-upload-recent">
+  {% for item in recent %}
+  <li>
+    <a href="{{ item.url }}">{{ item.title_text }}</a>
+    <span class="an-upload-recent__meta">{{ item.date_text }} · {{ item.vendor }}</span>
+    <div class="an-upload-recent__actions">
+      <span class="an-upload-recent__status">{{ item.status_text }}</span>
+      <form action="/documents/{{ item.id }}/delete" method="post"
+            onsubmit="return confirm(this.dataset.confirm)"
+            data-confirm="{{ t('doc.delete_confirm', name=item.title_text) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="next" value="/upload">
+        <button class="secondary danger-action" type="submit">{{ t('doc.delete_action') }}</button>
+      </form>
+    </div>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<div class="an-empty-state">
+  <h3>{{ t('upload.recent_empty_title') }}</h3>
+  <p>{{ t('upload.recent_empty_body') }}</p>
+</div>
+{% endif %}
+{%- endmacro %}
+
+{#- Rendered on its own when the live search asks for just the list. -#}
+{% for document in documents %}{{ document_card(document) }}{% endfor %}

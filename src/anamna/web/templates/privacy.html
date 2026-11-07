@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}{{ t('privacy.title') }}{% endblock %}
+{% block content %}
+
+<section class="page-head">
+  <div>
+    <div class="eyebrow">{{ t('legal.eyebrow') }}</div>
+    <h1>{{ t('privacy.heading') }}</h1>
+    <p>{{ t('privacy.lead') }}</p>
+    <p class="tiny muted">{{ t('legal.updated') }}</p>
+  </div>
+</section>
+
+{% for n in range(1, 11) %}
+<section class="panel prose">
+  <h2>{{ t('privacy.s' ~ n ~ '_title') }}</h2>
+  <p>{{ t('privacy.s' ~ n ~ '_body') }}</p>
+</section>
+{% endfor %}
+
+<section class="panel prose">
+  <p><a href="/terms">{{ t('nav.terms') }}</a></p>
+</section>
+{% endblock %}

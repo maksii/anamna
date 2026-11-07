@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}{{ t('labsync.admin_title') }}{% endblock %}
+{% block content %}
+
+<section class="page-head">
+  <div>
+    <div class="eyebrow">{{ t('admin.eyebrow') }}</div>
+    <h1>{{ t('labsync.admin_heading') }}</h1>
+  </div>
+</section>
+
+{% if error %}<div class="alert error" role="alert">{{ t(error) }}</div>{% endif %}
+{% if done == 'rechecked' %}<div class="alert" role="status">{{ t('labsync.admin_rechecked', **rechecked) }}</div>
+{% elif done %}<div class="alert" role="status">{{ t('labsync.admin_' ~ done) }}</div>{% endif %}
+
+{% for item in providers %}
+<section class="panel an-lab-admin" id="lab-admin-{{ item.key }}">
+  <div class="panel-head">
+    <div><span class="eyebrow">{{ t('labsync.provider_eyebrow') }}</span><h2>{{ item.name|phrase }}</h2></div>
+    {#- The state as words, never colour alone. -#}
+    <span class="pill {{ 'an-pill--ok' if item.active else 'an-pill--warn' }}">{{ t('labsync.on') if item.active else t('labsync.off') }}</span>
+  </div>
+  <dl class="an-lab-facts">
+    <div><dt>{{ t('labsync.status_url') }}</dt><dd class="hash">{{ item.config.url }}</dd></div>
+    <div><dt>{{ t('labsync.status_accounts') }}</dt><dd>{{ item.counts.accounts|countfmt }}</dd></div>
+    <div><dt>{{ t('labsync.status_orders') }}</dt>
+      <dd>{{ t('labsync.admin_counts', orders=item.counts.orders|countfmt, imported=item.counts.imported|countfmt, linked=item.counts.linked|countfmt, pending=item.counts.pending|countfmt) }}</dd></div>
+  </dl>
+  <form action="/admin/lab-connections/{{ item.key }}" method="post" class="stack-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label class="an-lab-check">
+      <input type="checkbox" name="enabled" value="1" {{ 'checked' if item.config.enabled == '1' else '' }}>
+      {{ t('labsync.enable_label', name=item.name|phrase) }}
+    </label>
+    <label>{{ t('labsync.url_label') }}
+      <input name="url" type="url" inputmode="url" value="{{ item.config.url }}" placeholder="{{ item.default_url }}"
+             aria-describedby="lab-url-hint-{{ item.key }}">
+    </label>
+    <p class="tiny muted" id="lab-url-hint-{{ item.key }}">{{ t('labsync.url_hint', url=item.default_url) }}</p>
+    <button class="primary" type="submit">{{ t('labsync.admin_save') }}</button>
+  </form>
+</section>
+{% endfor %}
+
+<section class="panel an-lab-admin" id="lab-admin-recheck" aria-labelledby="lab-recheck-heading">
+  <div class="panel-head">
+    <div><span class="eyebrow">{{ t('labsync.provider_eyebrow') }}</span><h2 id="lab-recheck-heading">{{ t('labsync.recheck_heading') }}</h2></div>
+  </div>
+  <form action="/admin/lab-connections/recheck" method="post" class="inline-form"
+        onsubmit="var b=this.querySelector('button');setTimeout(function(){b.disabled=true;b.textContent=b.dataset.working;},0)">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button class="secondary" type="submit" data-working="{{ t('labsync.working') }}">{{ t('labsync.recheck_action') }}</button>
+  </form>
+</section>
+
+<p class="muted"><a href="/admin/users">{{ t('token.back_to_people') }}</a></p>
+
+{% endblock %}

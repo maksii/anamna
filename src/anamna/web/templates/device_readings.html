@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% block title %}{{ t('exclusions.review_title', name=metric_name) }} · {{ t('brand.name') }}{% endblock %}
+{% block content %}
+{#- One stored day of one source, opened into its single readings. Every
+    action here changes the record, so the page says what happens before any
+    button does it: this page is the confirmation. -#}
+{% macro origin_fields() -%}
+<input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+<input type="hidden" name="origin_provider" value="{{ origin.provider }}">
+<input type="hidden" name="origin_source" value="{{ origin.source }}">
+<input type="hidden" name="origin_device" value="{{ origin.device }}">
+<input type="hidden" name="next" value="{{ here }}">
+{%- endmacro %}
+
+{% macro note_fields(prefix) -%}
+{% if people %}
+<label for="{{ prefix }}-belongs">{{ t('exclusions.belongs_label') }}
+  <select id="{{ prefix }}-belongs" name="belongs_to">
+    <option value="">{{ t('exclusions.belongs_unknown') }}</option>
+    {% for person in people %}<option value="{{ person.id }}">{{ person.display_name }}</option>{% endfor %}
+  </select>
+</label>
+{% endif %}
+<label for="{{ prefix }}-reason">{{ t('exclusions.reason_label') }}
+  <input id="{{ prefix }}-reason" name="reason" maxlength="500" autocomplete="off">
+</label>
+{%- endmacro %}
+
+<a class="back-link" href="{{ back_url }}">{{ t('exclusions.back_metric', name=metric_name) }}</a>
+
+<section class="panel">
+  <span class="eyebrow">{{ t('exclusions.eyebrow') }}</span>
+  <h1>{{ t('exclusions.review_heading', name=metric_name, date=day|datefmt) }}</h1>
+  <dl class="an-person__stats">
+    <div><dt>{{ t('exclusions.origin_app') }}</dt><dd>{{ origin.source }}</dd></div>
+    <div><dt>{{ t('exclusions.origin_device') }}</dt><dd>{{ origin.device or t('exclusions.device_unnamed') }}</dd></div>
+    <div><dt>{{ t('device.th_source') }}</dt><dd>{{ source_label }}</dd></div>
+    {% if stored_text %}<div><dt>{{ t('exclusions.stored_value') }}</dt><dd>{{ stored_text }}</dd></div>{% endif %}
+    {% if typical_text %}<div><dt>{{ t('exclusions.typical') }}</dt><dd>{{ typical_text }}</dd></div>{% endif %}
+  </dl>
+  <p>{{ t('exclusions.what_happens') }}</p>
+</section>
+
+<section class="panel" aria-labelledby="readings-heading">
+  <h2 id="readings-heading">{{ t('exclusions.readings_heading') }}</h2>
+  {% if items %}
+  <p>{{ t('exclusions.readings_intro') }}</p>
+  <ul class="an-people">
+    {% for item in items %}
+    <li class="an-person{% if item.excluded %} an-person--blocked{% endif %}">
+      <div class="an-person__who">
+        <strong>{{ item.time_text }} · {{ item.value_text }}</strong>
+        <small>{{ t('exclusions.same_moment') }}: {% for part in item.companions %}{{ part.name }} {{ part.value_text }}{% if not loop.last %}; {% endif %}{% endfor %}</small>
+        <span class="tag-row">
+          {% if item.excluded %}<span class="pill an-pill--you">{{ t('exclusions.state_excluded') }}</span>{% endif %}
+          {% if item.far and not item.excluded %}<span class="pill an-pill--warn">{{ t('exclusions.far_pill') }}</span>{% endif %}
+        </span>
+        {% if item.far and not item.excluded %}<small>{{ t('exclusions.far_hint', typical=typical_text) }}</small>{% endif %}
+      </div>
+      {% if not item.excluded %}
+      <div class="an-person__actions">
+        <form action="/devices/exclusions" method="post" class="stack-form an-exclusion-form">
+          {{ origin_fields() }}
+          <input type="hidden" name="scope" value="reading">
+          <input type="hidden" name="from_utc" value="{{ item.instant }}">
+          {{ note_fields('reading-' ~ loop.index) }}
+          <button class="secondary" type="submit">{{ t('exclusions.not_mine') }}<span class="visually-hidden"> {{ item.time_text }}</span></button>
+        </form>
+      </div>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p>{{ t('exclusions.no_single_readings_file' if kind == 'file' else 'exclusions.no_single_readings') }}</p>
+  <form action="/devices/exclusions" method="post" class="stack-form an-exclusion-form">
+    {{ origin_fields() }}
+    <input type="hidden" name="scope" value="window">
+    <input type="hidden" name="from_utc" value="{{ day_bounds[0] }}">
+    <input type="hidden" name="until_utc" value="{{ day_bounds[1] }}">
+    <input type="hidden" name="series" value="{{ metric_key }}">
+    {{ note_fields('day') }}
+    <button class="secondary" type="submit">{{ t('exclusions.not_mine_day', name=metric_name) }}</button>
+  </form>
+  {% endif %}
+</section>
+
+<section class="panel" aria-labelledby="window-heading">
+  <h2 id="window-heading">{{ t('exclusions.window_heading') }}</h2>
+  <p>{{ t('exclusions.window_intro') }}</p>
+  <form action="/devices/exclusions" method="post" class="stack-form an-exclusion-form">
+    {{ origin_fields() }}
+    <input type="hidden" name="scope" value="window">
+    <label for="window-from">{{ t('exclusions.window_from') }}
+      <input id="window-from" type="datetime-local" name="from_utc" value="{{ window_from }}" required>
+    </label>
+    <label for="window-until">{{ t('exclusions.window_until') }}
+      <input id="window-until" type="datetime-local" name="until_utc" value="{{ window_until }}" required>
+    </label>
+    <fieldset>
+      <legend>{{ t('exclusions.window_series') }}</legend>
+      {% for option in series_options %}
+      <label><input type="checkbox" name="series" value="{{ option.key }}"{% if option.key == metric_key %} checked{% endif %}> {{ option.name }}</label>
+      {% endfor %}
+    </fieldset>
+    {{ note_fields('window') }}
+    <button class="secondary" type="submit">{{ t('exclusions.window_submit') }}</button>
+  </form>
+</section>
+
+<section class="panel" aria-labelledby="origin-heading">
+  <h2 id="origin-heading">{{ t('exclusions.origin_heading') }}</h2>
+  <p>{{ t('exclusions.origin_intro', app=origin.source, device=origin.device or t('exclusions.device_unnamed')) }}</p>
+  <form action="/devices/exclusions" method="post" class="stack-form an-exclusion-form">
+    {{ origin_fields() }}
+    <input type="hidden" name="scope" value="origin">
+    {{ note_fields('origin') }}
+    <button class="secondary danger-action" type="submit">{{ t('exclusions.not_my_device') }}</button>
+  </form>
+</section>
+
+<p><a class="device-tap" href="/devices/exclusions">{{ t('exclusions.list_link') }}</a></p>
+{% endblock %}

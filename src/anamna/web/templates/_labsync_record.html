@@ -1,0 +1,24 @@
+{#- The lab's own record of an order it issued no PDF for: what its online
+    service returned, shown as that and never as a scanned report.  Takes the
+    place of the source viewer, which has no file to show. -#}
+<section class="an-lab-record" id="lab-record" aria-labelledby="lab-record-title">
+  <span class="eyebrow">{{ t('labsync.record_eyebrow') }}</span>
+  <h2 id="lab-record-title">{{ t('labsync.record_heading') }}</h2>
+  <dl class="facts">
+    <div><dt>{{ t('labsync.record_lab') }}</dt><dd>{{ record.lab or document.vendor|phrase }}</dd></div>
+    <div><dt>{{ t('labsync.record_order') }}</dt><dd class="hash">{{ record.order_id }}</dd></div>
+    <div><dt>{{ t('labsync.record_date') }}</dt><dd>{{ record.day|datefmt if record.day else '-' }}</dd></div>
+    {% if record.received_at %}<div><dt>{{ t('labsync.record_received') }}</dt><dd>{{ record.received_at|datefmt }}</dd></div>{% endif %}
+  </dl>
+  {% if record.reason_key %}<p class="an-field-help">{{ t(record.reason_key) }}</p>{% endif %}
+  {% if record.rows %}
+  <h3>{{ t('labsync.record_rows_heading', order=record.order_id) }}</h3>
+  <dl class="facts an-lab-record__rows">
+    {% for row in record.rows %}
+    <div><dt>{{ row.test }}{% if row.norm %}<small>{{ t('labsync.record_norm', norm=row.norm|join('; ')) }}</small>{% endif %}</dt>
+      <dd>{{ row.result|labvalue or '-' }}{% if row.units %} {{ row.units|unitfmt }}{% endif %}</dd></div>
+    {% endfor %}
+  </dl>
+  {% endif %}
+  <p class="tiny muted"><a href="{{ source_url }}" target="_blank" rel="noopener">{{ t('labsync.record_raw') }}</a></p>
+</section>

@@ -1,0 +1,38 @@
+{# Shared in-page source viewer. Call with caller() for optional toolbar extras. #}
+{% macro source_viewer(src, mime, pages, title, viewer_id='source-viewer', page_src='') %}
+{% set is_image = mime.startswith('image/') %}
+<section class="viewer" id="{{ viewer_id }}" data-source-viewer data-src="{{ src }}" data-page-src="{{ page_src }}" data-mime="{{ mime }}" data-pages="{{ pages }}">
+  <header class="viewer-bar">
+    <div class="viewer-bar-main">
+      <span class="eyebrow">{{ t('viewer.original') }}</span>
+      <strong class="viewer-title" data-viewer-title>{{ title }}</strong>
+    </div>
+    <div class="viewer-controls">
+      {% if page_src or not is_image %}
+      <div class="viewer-pager" role="group" aria-label="{{ t('viewer.page_navigation') }}" {% if pages <= 1 %}hidden{% endif %} data-pager>
+        <button type="button" class="viewer-btn" data-page-prev aria-label="{{ t('viewer.previous') }}">{{ t('viewer.previous') }}</button>
+        <label class="viewer-page">
+          <span class="visually-hidden">{{ t('viewer.page') }}</span>
+          <input data-page-input type="number" min="1" max="{{ pages }}" value="1" inputmode="numeric">
+          <span data-page-total>/ {{ pages }}</span>
+        </label>
+        <button type="button" class="viewer-btn" data-page-next aria-label="{{ t('viewer.next') }}">{{ t('viewer.next') }}</button>
+      </div>
+      {% endif %}
+      <div class="viewer-tools" role="group" aria-label="{{ t('viewer.original') }}">
+        <button type="button" class="viewer-btn viewer-icon" data-zoom-out title="{{ t('viewer.zoom_out') }}" aria-label="{{ t('viewer.zoom_out') }}">−</button>
+        <button type="button" class="viewer-btn viewer-icon" data-fit title="{{ t('viewer.fit') }}" aria-label="{{ t('viewer.fit') }}">100%</button>
+        <button type="button" class="viewer-btn viewer-icon" data-zoom-in title="{{ t('viewer.zoom_in') }}" aria-label="{{ t('viewer.zoom_in') }}">+</button>
+        <button type="button" class="viewer-btn viewer-icon" data-rotate title="{{ t('viewer.rotate') }}" aria-label="{{ t('viewer.rotate') }}">{{ t('viewer.rotate') }}</button>
+      </div>
+      {% if caller %}{{ caller() }}{% endif %}
+      <a class="viewer-btn" data-open-tab href="{{ src }}" target="_blank" rel="noopener">{{ t('viewer.new_tab') }}</a>
+    </div>
+  </header>
+  <div class="viewer-stage" data-viewer-stage>
+    {% if page_src %}<img class="viewer-media rendered-page" data-source-frame src="{{ page_src|replace('{page}', '1') }}" alt="{{ title }} · {{ t('viewer.page') }} 1">
+    {% elif is_image %}<img class="viewer-media" data-source-frame src="{{ src }}" alt="{{ title }}">
+    {% else %}<iframe class="viewer-media" data-source-frame title="{{ title }}" src="{{ src }}#page=1"></iframe>{% endif %}
+  </div>
+</section>
+{% endmacro %}

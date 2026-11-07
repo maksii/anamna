@@ -1,0 +1,19 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "anamna-web",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "anamna-web"],
+      "port": 8000,
+      "autoPort": true
+    },
+    {
+      "name": "anamna-web-sandbox",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "anamna-web"],
+      "port": 8011,
+      "env": { "ANAMNA_DB": "work/sandbox.sqlite3", "PORT": "8011", "ANAMNA_BACKGROUND_WORKERS": "0" }
+    }
+  ]
+}

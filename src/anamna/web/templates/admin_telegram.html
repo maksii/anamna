@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}{{ t('telegram.admin') }}{% endblock %}
+{% block content %}
+<section class="page-head"><div><div class="eyebrow">{{ t('admin.eyebrow') }}</div><h1>{{ t('telegram.admin') }}</h1></div></section>
+{% if error %}<div class="alert error" role="alert">{{ error }}</div>{% endif %}
+{% if done %}<div class="alert" role="status">{{ done }}</div>{% endif %}
+<section class="panel">
+  <h2>{{ t('telegram.status') }}</h2>
+  {#- From the two stamps below, not from the on/off switch: "Active" beside
+      a bot that has not reached Telegram for weeks was the wrong answer. -#}
+  {% set state = telegram.status %}
+  <p class="pill {{ 'an-pill--ok' if state == 'ok' else 'an-pill--warn' }}">{{ t('telegram.disabled') if state == 'off' else t('telegram.state_' ~ state) }}</p>
+  {% if telegram.bot_username %}<p>@{{ telegram.bot_username }}</p>{% endif %}
+  <p>{{ t('telegram.token_present') if telegram.token_present else t('telegram.token_missing') }}</p>
+  <dl class="facts ai-facts">
+    <div><dt>{{ t('telegram.linked_count') }}</dt><dd>{{ telegram.linked_count|countfmt }}</dd></div>
+    <div><dt>{{ t('telegram.pending_count') }}</dt><dd>{{ telegram.pending_count|countfmt }}</dd></div>
+    <div><dt>{{ t('telegram.delivery_count') }}</dt><dd>{{ telegram.delivery_count|countfmt }}</dd></div>
+    <div><dt>{{ t('telegram.last_success') }}</dt>
+      <dd>{% if telegram.last_success_at %}{{ t('telegram.at_time', date=telegram.last_success_at|datefmt, time=telegram.last_success_at[11:16]) }}{% else %}{{ t('telegram.never') }}{% endif %}</dd></div>
+    <div><dt>{{ t('telegram.last_error') }}</dt>
+      <dd>{% if telegram.last_error and telegram.last_error_at %}{{ t('telegram.at_time', date=telegram.last_error_at|datefmt, time=telegram.last_error_at[11:16]) }}{% elif telegram.last_error %}{{ t('telegram.time_unknown') }}{% else %}{{ t('telegram.no_error') }}{% endif %}</dd></div>
+  </dl>
+  {% if telegram.last_error %}<p class="alert {{ 'error' if state == 'error' else 'warning' }}" role="status">{{ t(telegram.last_error) }}</p>{% endif %}
+  <p class="muted" style="overflow-wrap:anywhere">{{ t('telegram.secrets') }}</p>
+  <form action="/admin/telegram" method="post" class="stack-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label for="telegram-mode">{{ t('telegram.mode') }}</label>
+    <select id="telegram-mode" name="mode">
+      <option value="polling" {{ 'selected' if telegram.mode == 'polling' }}>{{ t('telegram.polling') }}</option>
+      <option value="webhook" {{ 'selected' if telegram.mode == 'webhook' }}>{{ t('telegram.webhook') }}</option>
+    </select>
+    <label for="telegram-public-url">{{ t('telegram.public_url') }}</label>
+    <input id="telegram-public-url" name="public_url" type="url" value="{{ telegram.public_url }}" placeholder="https://health.example.com" aria-describedby="telegram-url-hint">
+    <p id="telegram-url-hint" class="muted">{{ t('telegram.url_hint') }}</p>
+    <div class="form-actions"><button class="primary" type="submit" name="action" value="activate">{{ t('telegram.activate') }}</button>
+    {% if telegram.enabled %}<button type="submit" name="action" value="deactivate" class="secondary">{{ t('telegram.deactivate') }}</button>{% endif %}</div>
+  </form>
+</section>
+{% endblock %}

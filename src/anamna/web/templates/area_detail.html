@@ -1,0 +1,273 @@
+{% extends "base.html" %}
+{% from "_components.html" import metric_card, panel_card, empty_state, plural_t with context %}
+{% from "_blood_pressure.html" import blood_pressure_block with context %}
+{% from "_tracker.html" import tracker_block with context %}
+{% from "_experience.html" import area_nav, area_icon, small_reading with context %}
+{% block title %}{{ area.name }} · {{ t('brand.name') }}{% endblock %}
+{% block content %}
+<link rel="stylesheet" href="{{ asset('patient-experience.css') }}">
+<link rel="stylesheet" href="{{ asset('integration-ui.css') }}">
+<script src="{{ asset('patient-experience.js') }}"></script>
+{{ area_nav(area.id) }}
+
+{% set device_focused = area.id in ['activity', 'sleep', 'mobility'] %}
+{% if device_focused %}
+<section class="area-detail-hero px-device-area-hero">
+  <div class="px-device-area-title"><h1>{{ area.name }}</h1><a class="back-link" href="/">{{ t('area.back') }}</a></div>
+  <p class="px-device-area-purpose">{{ t('experience.' ~ area.id ~ '.purpose') }}</p>
+  <dl class="px-device-area-meta">
+    <div><dt>{{ t('area.measurements') }}</dt><dd>{{ measurement_count|default(metrics|length, true) }}</dd></div>
+    {% if experience and experience.latest_device %}<div><dt>{{ t('devices.latest_day') }}</dt><dd><time datetime="{{ experience.latest_device }}">{{ experience.latest_device|datefmt }}</time></dd></div>{% endif %}
+  </dl>
+</section>
+{% else %}
+<section class="area-detail-hero">
+  <a class="back-link" href="/">{{ t('area.back') }}</a>
+  <div class="area-detail-heading">
+    <div>
+      <span class="eyebrow">{{ t('area.eyebrow') }}</span>
+      <h1>{{ area.name }}</h1>
+      <p>{{ area.description }}</p>
+    </div>
+    <dl class="area-evidence-summary">
+      <div><dt>{{ t('area.conclusions') }}</dt><dd>{{ findings|length }}</dd></div>
+      <div><dt>{{ t('area.measurements') }}</dt><dd>{{ measurement_count|default(metrics|length, true) }}</dd></div>
+      <div><dt>{{ t('area.sources') }}</dt><dd>{{ documents|length }}</dd></div>
+    </dl>
+  </div>
+</section>
+{% endif %}
+
+{% if device_focused %}<details class="px-area-sections"><summary>{{ t('experience.area_sections') }}</summary>{% endif %}
+<nav class="px-detail-nav" aria-label="{{ t('experience.reading_navigation') }}">
+{% if tracker %}<a href="#area-daily">{{ t('tracker.heading') }}</a>{% endif %}
+{% if blood_pressure %}<a href="#area-pressure">{{ t('bp.heading') }}</a>{% endif %}
+{% if findings %}<a href="#area-findings">{{ t('area.clinical_heading') }}</a>{% endif %}
+{% if panels %}<a href="#area-panels">{{ t('area.panels_heading') }}</a>{% endif %}
+{% if metrics %}<a href="#area-measurements">{{ t('area.measurement_heading') }}</a>{% endif %}
+<a href="#area-sources">{{ t('area.source_heading') }}</a>
+</nav>
+{% if device_focused %}</details>{% endif %}
+
+{% if area.id in ['blood', 'heart', 'activity', 'sleep'] %}
+
+{% if experience and experience.featured_metrics and not experience.has_tracker %}
+<div class="px-featured-readings" data-area="{{ area.id }}">{% for card in experience.featured_metrics %}{{ small_reading(card) }}{% endfor %}</div>
+{% endif %}
+{% endif %}
+
+{#
+  The tracker areas lead with their dashboard: daily bars, weekly and monthly
+  averages and the month-on-month change, the shape a wearable's own app uses.
+#}
+{{ tracker_block(tracker) }}
+
+{#
+  Pressure and rhythm lead the heart page. They are measured at home rather
+  than printed by a laboratory, and burying them under the panel grid put the
+  two most-taken readings in the record below results taken once a year.
+#}
+{% if blood_pressure %}
+<section class="area-section" id="area-pressure">
+  <header class="section-heading compact-heading">
+    <div><span class="eyebrow">{{ t('area.heart_eyebrow') }}</span><h2>{{ t('bp.heading') }}</h2></div>
+    <a href="/panels/blood_pressure">{{ t('area.heart_bp_panel') }}</a>
+  </header>
+  {{ blood_pressure_block(blood_pressure) }}
+</section>
+{% endif %}
+
+{% if area.id in ['blood', 'heart', 'activity', 'sleep'] %}
+<section class="px-area-story" data-area="{{ area.id }}">
+  <div class="px-story-icon">{{ area_icon(area.id) }}</div>
+  <div><span class="eyebrow">{{ t('experience.key_readings') }}</span><h2>{{ t('experience.' ~ area.id ~ '.title') }}</h2></div>
+  {% if experience and experience.latest_device %}<div class="px-record-count"><span>{{ t('devices.latest_day') }}</span><strong>{{ experience.latest_device|datefmt }}</strong></div>{% endif %}
+</section>
+{% endif %}
+
+{% if ecg_recordings %}
+<section class="area-section">
+  <header class="section-heading compact-heading">
+    <div><span class="eyebrow">{{ t('ecg.rhythm_eyebrow') }}</span><h2>{{ t('ecg.all_recordings') }}</h2></div>
+  </header>
+  <div class="ecg-list">
+    {% for item in ecg_recordings %}
+    <a class="ecg-list-item" href="{{ item.url }}">
+      <span class="ecg-list-date"><strong>{{ item.date_text }}</strong><small>{{ item.time_text }}</small></span>
+      <span class="ecg-list-copy"><strong>{{ item.classification }}</strong><small>{{ item.source_vendor|phrase }} · {{ item.source_name }}</small></span>
+      <b>{{ item.rate_text }}</b>
+    </a>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+{#
+  The doctors' conclusions lead the area, ahead of the panel grid: an
+  ultrasound or a biopsy is usually the most important thing filed here, and
+  it was buried under results taken once a year.  Each card shows the report's
+  own conclusion first; the full report (letterhead and identity removed) is
+  one tap away, collapsed.
+#}
+{% if findings %}
+<section class="area-section" id="area-findings">
+  <header class="section-heading compact-heading">
+    <div><span class="eyebrow">{{ t('area.clinical_eyebrow') }}</span><h2>{{ t('area.clinical_heading') }}</h2></div>
+  </header>
+  {# Successive studies of the same area only mean something read against each
+     other, so they are laid out as one dated sequence, not as loose cards. #}
+  {% if findings|length > 1 %}
+  <nav class="an-study-index" aria-label="{{ t('area.study_index') }}">
+    <span>{{ t('area.study_index') }}</span>
+    <ol>
+      {% for finding in findings %}
+      <li><a href="#finding-{{ finding.id }}" data-status="{{ finding.status }}"><time datetime="{{ finding.finding_date }}">{{ finding.finding_date|datefmt }}</time> <span>{{ finding.title }}</span></a></li>
+      {% endfor %}
+    </ol>
+  </nav>
+  {% endif %}
+  <ol class="clinical-finding-list an-timeline">
+    {% for finding in findings %}
+    <li class="an-timeline-item" id="finding-{{ finding.id }}">
+      <article class="clinical-finding-card {{ finding.status }}" aria-labelledby="finding-title-{{ finding.id }}">
+        <header>
+          <div>
+            <time datetime="{{ finding.finding_date }}">{{ finding.finding_date|datefmt }}</time>
+            <h3 id="finding-title-{{ finding.id }}">{{ finding.title }}</h3>
+            <p class="an-timeline-source">{{ finding.vendor|phrase }}</p>
+          </div>
+          <span class="metric-state {{ finding.status }}">{{ finding.status|statusfmt }}</span>
+        </header>
+        {% if finding.summary_text %}
+        <p class="finding-status-hint">{{ t('area.finding_status_' ~ finding.status) if finding.status in ['attention', 'information'] else '' }}</p>
+        {% if finding.summary_original_language %}<p class="finding-language muted">{{ t('area.finding_original_' ~ finding.summary_original_language) }}</p>{% endif %}
+        <blockquote class="finding-summary"{% if finding.summary_original_language %} lang="{{ finding.summary_original_language }}"{% endif %}>{{ finding.summary_text }}</blockquote>
+        {% if finding.recommendations %}
+        <p class="finding-recommendation"><strong>{{ t('area.finding_recommended') }}:</strong> <span lang="uk">{{ finding.recommendations }}</span></p>
+        {% endif %}
+        {% for item in finding.explanations %}
+        <section class="finding-explainer" aria-label="{{ t('area.finding_explain_heading') }}">
+          <h4>{{ t('area.finding_explain_heading') }}</h4>
+          <p>{{ item.text }}</p>
+          {% if item.sources %}
+          <p class="finding-sources"><span>{{ t('area.finding_sources') }}:</span>
+            {% for source in item.sources %}<a href="{{ source.url }}" target="_blank" rel="noreferrer" title="{{ source.name }}">{{ source.publisher }}{% if source.region %} ({{ source.region }}){% endif %}</a>{% if not loop.last %} · {% endif %}{% endfor %}
+          </p>
+          {% endif %}
+        </section>
+        {% endfor %}
+        {% if finding.original_text %}
+        <details>
+          <summary>{{ t('area.finding_full_text') }}</summary>
+          <blockquote lang="{{ finding.summary_original_language or 'uk' }}">{{ finding.original_text }}</blockquote>
+        </details>
+        {% endif %}
+        {% else %}
+        <p class="finding-summary muted">{{ t('area.finding_no_conclusion') }}</p>
+        {% endif %}
+        <footer>
+          <span>{{ finding.verification_status|statusfmt }}{% if finding.verification_status == 'extracted' %} · {{ t('area.finding_provisional') }}{% endif %}</span>
+          <a href="/documents/{{ finding.document_id }}#page-{{ finding.page_number }}">{{ t('area.open_page', page=finding.page_number) }}</a>
+        </footer>
+      </article>
+    </li>
+    {% endfor %}
+  </ol>
+</section>
+{% endif %}
+
+{% if panels %}
+<section class="area-section" id="area-panels">
+  <header class="section-heading compact-heading">
+    <div><span class="eyebrow">{{ t('panels.eyebrow') }}</span><h2>{{ t('area.panels_heading') }}</h2></div>
+    <a href="/panels">{{ t('dashboard.all_panels') }}</a>
+  </header>
+  <div class="an-panel-grid">
+    {% for panel in panels %}{{ panel_card(panel, 3) }}{% endfor %}
+  </div>
+</section>
+{% endif %}
+
+
+{#
+  When the tracker above already shows every measurement this area has, an
+  empty "Measurements" grid under it would say the opposite of the truth.
+#}
+{% if metrics or not tracker %}
+<section class="area-section" id="area-measurements">
+  <header class="section-heading compact-heading">
+    <div><span class="eyebrow">{{ t('area.measurement_eyebrow') }}</span><h2>{{ t('area.measurement_heading') }}</h2></div>
+  </header>
+  {% if big_table %}
+  {% macro area_table_rows(rows) -%}
+  <div class="area-result-table-wrap">
+    <table class="area-result-table">
+      <thead><tr>
+        <th scope="col">{{ t('area.table_name') }}</th>
+        {% if big_table.has_code %}<th scope="col" class="area-result-table__code">{{ t('area.table_code') }}</th>{% endif %}
+        <th scope="col">{{ t('area.table_value') }}</th>
+        {% if big_table.has_class %}<th scope="col">{{ t('area.table_class') }}</th>{% else %}<th scope="col">{{ t('area.table_state') }}</th>{% endif %}
+        <th scope="col">{{ t('area.table_date') }}</th>
+      </tr></thead>
+      <tbody>
+        {% for row in rows %}
+        <tr data-interpretation="{{ row.card.verdict.interpretation }}">
+          <th scope="row"><a href="{{ row.card.url }}">{{ row.card.name }}</a></th>
+          {% if big_table.has_code %}<td class="area-result-table__code"><code>{{ row.code }}</code></td>{% endif %}
+          <td class="area-result-table__value">{{ row.card.value_text }} {{ row.card.unit|unitfmt }}</td>
+          {% if big_table.has_class %}<td>{% if row.cap_class is not none %}{{ t('allergy.cap_' ~ row.cap_class) }}{% else %}{{ t('em.dash') }}{% endif %}</td>
+          {% else %}<td>{{ row.card.verdict.label }}</td>{% endif %}
+          <td>{{ row.card.date_text }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {%- endmacro %}
+  <p class="area-scope-note">{{ t('area.table_lead') }}</p>
+  <h3>{{ big_table.attention_heading }}</h3>
+  {% if big_table.attention %}
+  {{ area_table_rows(big_table.attention) }}
+  {% else %}
+  <p class="muted">{{ t('area.table_none_attention') }}</p>
+  {% endif %}
+  <details class="an-disclosure area-result-table-all">
+    <summary>{{ t('area.table_show_all', count=big_table.rows|length) }}</summary>
+    <div class="an-disclosure__body">{{ area_table_rows(big_table.rows) }}</div>
+  </details>
+  {% elif metrics %}
+  <div class="area-metric-grid result-card-grid">
+    {% for card in metrics %}{{ metric_card(card, 3) }}{% endfor %}
+  </div>
+  {% else %}
+  {{ empty_state(t('area.measurement_heading'), t('area.no_measurements'), 3) }}
+  {% endif %}
+</section>
+{% endif %}
+
+{% if not findings %}
+<section class="area-section" id="area-findings">
+  <header class="section-heading compact-heading">
+    <div><span class="eyebrow">{{ t('area.clinical_eyebrow') }}</span><h2>{{ t('area.clinical_heading') }}</h2></div>
+  </header>
+  {{ empty_state(t('area.clinical_heading'), t('area.no_conclusions'), 3) }}
+</section>
+{% endif %}
+
+<section class="area-section" id="area-sources">
+  <header class="section-heading compact-heading">
+    <div><span class="eyebrow">{{ t('area.source_eyebrow') }}</span><h2>{{ t('area.source_heading') }}</h2></div>
+  </header>
+  <div class="area-document-list">
+    {% for document in documents %}
+    <a href="/documents/{{ document.id }}">
+      <div><time>{{ document.report_date|datefmt }}</time><span>{{ document.clinical_type|enumfmt }}</span></div>
+      <strong>{{ document.title_text }}</strong>
+      <small>{{ document.vendor|phrase }} · {{ plural_t('area.pages', document.page_count) }} · {{ plural_t('area.evidence_rows', document.observation_count + document.finding_count) }}</small>
+    </a>
+    {% else %}
+    {{ empty_state(t('area.source_heading'), t('area.no_sources'), 3) }}
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

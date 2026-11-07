@@ -1,0 +1,220 @@
+{#
+  Blood pressure, written once and shown wherever it belongs: on the blood
+  pressure panel and on the heart page. Two copies of a chart drift; one macro
+  cannot, so the reading, the ESH bands and the trend all live here.
+
+  Import WITH CONTEXT (the block reads `t` and `locale`):
+      {% from "_blood_pressure.html" import blood_pressure_block with context %}
+#}
+{% from "_components.html" import status_chip, empty_state, verdict_details with context %}
+
+{#
+  A cuff export on its own document page: one row per reading -- when, the
+  pressure, the pulse, and the category the ESH/AHA bands give it -- instead of
+  three cards per reading with no time on any of them.  The device's own
+  printed label is shown as what it is, evidence, beside the judgement.  The
+  individual values load on demand, for checking or correcting one.
+#}
+{% macro bp_document_readings(readings, document_id) -%}
+<section class="an-bp-readings" aria-labelledby="an-bp-readings-title">
+  <h3 id="an-bp-readings-title">{{ t_plural('bp.doc_readings', readings|length) }}</h3>
+  <p class="an-field-help">{{ t('bp.doc_readings_help') }}</p>
+  <ol class="an-bp-readings__list">
+    {% for reading in readings %}
+    <li class="an-bp-reading-row" data-obs-page="{{ reading.page_number }}" data-verification="{{ reading.state }}">
+      <div class="an-bp-reading-row__when">
+        <time datetime="{{ reading.observed_at }}">{{ reading.date_text }}</time>
+        {% if reading.time_text %}<span>{{ reading.time_text }}</span>{% endif %}
+      </div>
+      <strong class="an-bp-reading-row__value">{{ reading.pressure_text }}</strong>
+      {% if reading.pulse_text %}<span class="an-bp-reading-row__pulse">{{ t('bp.pulse') }} · {{ t('bp.pulse_value', pulse=reading.pulse_text) }}</span>{% endif %}
+      {{ status_chip(reading.category_key, reading.category_label) }}
+      {% if reading.printed_category %}<small class="an-bp-reading-row__printed">{{ t('bp.doc_printed_category', label=reading.printed_category) }}</small>{% endif %}
+      <span class="status {{ reading.state }}">{{ reading.state|statusfmt }}</span>
+      <details class="an-bp-reading-row__values" data-lazy-rows="{{ reading.ids|join(',') }}">
+        <summary data-load-rows>{{ t('bp.doc_check_values') }}</summary>
+        <div class="obs-list an-obs-list" data-rows-target></div>
+      </details>
+    </li>
+    {% endfor %}
+  </ol>
+</section>
+{%- endmacro %}
+
+{% macro blood_pressure_block(blood_pressure) -%}
+<section class="panel an-bp">
+  <div class="panel-head">
+    <div><span class="eyebrow">{{ t('bp.heading') }}</span><h2>{{ t('bp.lead') }}</h2></div>
+  </div>
+  {% if blood_pressure.has_reading %}
+  <div class="an-bp-reading">
+    <strong>{{ t('bp.reading', systolic=blood_pressure.systolic_text, diastolic=blood_pressure.diastolic_text) }}</strong>
+    {% if blood_pressure.pulse_text %}<span class="an-bp-pulse">{{ t('bp.pulse') }} · {{ t('bp.pulse_value', pulse=blood_pressure.pulse_text) }}</span>{% endif %}
+    {{ status_chip(blood_pressure.category_key, blood_pressure.category_label) }}
+    {% if blood_pressure.measured_on %}<time>{{ t('bp.measured_on', date=blood_pressure.measured_on) }}</time>{% endif %}
+  </div>
+
+  {#- The chip states one guideline's category while the chart shades both
+      ramps, so the same disclosure lab analytes get (verdict_details with
+      every official position) belongs here too. `category_verdict` is the
+      governing member's verdict; until the route supplies it, the written
+      note below still explains why two names can apply to one reading. -#}
+  {% if blood_pressure.category_verdict %}
+  {{ verdict_details(blood_pressure.category_verdict) }}
+  {% else %}
+  <details class="an-verdict-details">
+    <summary>{{ t('bp.authorities_summary') }}</summary>
+    <div class="an-verdict-details__body"><p>{{ t('bp.authorities_note') }}</p></div>
+  </details>
+  {% endif %}
+
+  <div class="dynamic-chart an-bp-chart" id="bp-chart">
+    {# viewBox is set from the container width by chart.js so one unit is one CSS pixel. #}
+    <svg id="bp-trend" role="img" aria-label="{{ t('bp.chart_aria') }}"></svg>
+  </div>
+  {#- Both ramps are in the bands JSON and both are drawn, so citing only ESH
+      claimed one authority for shading that follows two. -#}
+  <p class="chart-help"><span>{{ t('bp.chart_bands') }}</span><span>{{ t('bp.guideline_esh') }} · {{ t('bp.guideline_aha') }}</span></p>
+  <ul class="an-bp-legend">
+    <li data-series="systolic">{{ t('bp.systolic') }}</li>
+    <li data-series="diastolic">{{ t('bp.diastolic') }}</li>
+  </ul>
+
+  {% if blood_pressure.weekly %}
+  <section class="an-bp-weekly">
+    <h3>{{ t('bp.weekly_heading') }}</h3>
+    <div class="table-wrap table-wrap--stack">
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">{{ t('bp.week') }}</th>
+            <th scope="col">{{ t('bp.systolic') }}</th>
+            <th scope="col">{{ t('bp.diastolic') }}</th>
+            <th scope="col">{{ t('bp.th_readings') }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for week in blood_pressure.weekly %}
+          <tr>
+            <td data-label="{{ t('bp.week') }}">{{ week.week }}</td>
+            <td data-label="{{ t('bp.systolic') }}">{{ t('bp.weekly_range', low=week.sys_min, high=week.sys_max) }}</td>
+            <td data-label="{{ t('bp.diastolic') }}">{{ t('bp.weekly_range', low=week.dia_min, high=week.dia_max) }}</td>
+            <td data-label="{{ t('bp.th_readings') }}">{{ week.readings }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endif %}
+  {% else %}
+  {{ empty_state(t('bp.heading'), t('bp.no_reading')) }}
+  {% endif %}
+</section>
+<script type="application/json" id="bp-data">{{ blood_pressure|tojson }}</script>
+<script>
+(() => {
+  const C = globalThis.AnamnaChart;
+  const anchorFor = (order, last) => {
+    if (order === 0) return 'start';
+    return order === last ? 'end' : 'middle';
+  };
+  const pointRadius = count => {
+    if (count > 90) return 2;
+    return count > 34 ? 3 : 5;
+  };
+  const holder = document.querySelector('#bp-data');
+  const svg = document.querySelector('#bp-trend');
+  const host = document.querySelector('#bp-chart');
+  if (!holder || !svg || !host) return;
+  const data = JSON.parse(holder.textContent);
+  if (!data || !data.series) return;
+  const sys = data.series.systolic || [], dia = data.series.diastolic || [];
+  if (!sys.length && !dia.length) return;
+  const at = point => C.asDate(point.date).getTime();
+  const values = [...sys, ...dia].map(point => Number(point.value));
+  // The axis always spans the guideline bands, so a run of normal readings is
+  // still read against "high" rather than filling the frame. Blood pressure is
+  // never negative and never fractional on a cuff (C4).
+  const A = C.axis(Math.min(...values, 60), Math.max(...values, 140), {integral: true, zeroFloor: true});
+
+  const paint = (W, H) => {
+    const L = C.textWidth(svg, A.ticks.map(A.format), 'chart-axis-label') + 12;
+    const R = 14, T = 14, B = 30, plot = Math.max(40, W - L - R);
+    const limit = C.capacity(plot);
+    const drawn = {systolic: C.thin(sys, limit), diastolic: C.thin(dia, limit)};
+    const total = sys.length + dia.length, shown = drawn.systolic.length + drawn.diastolic.length;
+    const notes = shown < total ? [C.text('chart.averaged', {total, shown})] : [];
+
+    // The axis spans the real readings, not the bucket midpoints, so averaging
+    // never makes the series look shorter or less recent than it is.
+    const times = [...sys, ...dia].map(at);
+    const t0 = Math.min(...times), t1 = Math.max(...times);
+    const x = ms => t1 === t0 ? L + plot / 2 : L + (ms - t0) * plot / (t1 - t0);
+    const y = value => T + (A.max - value) * (H - T - B) / (A.max - A.min);
+
+    // Every rect first, then every label. The US and EU categories cover the
+    // same systolic ranges, so drawing rect-then-label per band meant each
+    // label was immediately painted over by its duplicate's rect.
+    const visible = (data.bands || []).map(band => {
+      const low = Math.max(A.min, Number(band.sys_low ?? A.min));
+      const high = Math.min(A.max, Number(band.sys_high ?? A.max));
+      return high > low ? {band, top: y(high), height: Math.max(1, y(low) - y(high))} : null;
+    }).filter(Boolean);
+    visible.forEach(({band, top, height}) => svg.append(
+      C.el('rect', {x: L, y: top, width: plot, height, class: 'an-bp-band', 'data-band': band.key})));
+
+    A.ticks.forEach(value => {
+      const yy = y(value);
+      svg.append(C.el('line', {x1: L, x2: W - R, y1: yy, y2: yy, class: 'chart-gridline'}));
+      const label = C.el('text', {x: L - 8, y: yy + 4, class: 'chart-axis-label', 'text-anchor': 'end'});
+      label.textContent = A.format(value); svg.append(label);
+    });
+    const series = (points, name) => {
+      if (!points.length) return;
+      svg.append(C.el('path', {
+        d: points.map((point, index) => `${index ? 'L' : 'M'} ${x(at(point))} ${y(Number(point.value))}`).join(' '),
+        class: 'dynamic-trend-line', 'data-series': name,
+      }));
+      const radius = pointRadius(points.length);
+      points.forEach(point => svg.append(C.el('circle', {
+        cx: x(at(point)), cy: y(Number(point.value)), r: radius, class: 'dynamic-point', 'data-series': name,
+      })));
+    };
+    series(drawn.systolic, 'systolic'); series(drawn.diastolic, 'diastolic');
+
+    // Band labels come last so the traces cannot bury them, and eight of them
+    // compete for one 100px strip: one is drawn only where it fits and where
+    // nothing already sits. The rest are named under the chart rather than
+    // printed on top of each other.
+    const unlabelled = [], taken = [];
+    visible.forEach(({band, top, height}) => {
+      const ly = top + 13;
+      if (height < 17
+          || taken.some(other => Math.abs(other - ly) < 14)
+          || C.textWidth(svg, [band.label], 'chart-axis-label') > plot - 12) {
+        unlabelled.push(band.label);
+        return;
+      }
+      taken.push(ly);
+      const label = C.el('text', {x: L + 6, y: ly, class: 'chart-axis-label'});
+      label.textContent = band.label; svg.append(label);
+    });
+    if (unlabelled.length) notes.push(C.text('chart.bands_unlabelled', {names: unlabelled.join(', ')}));
+
+    // A time axis with no dates on it says nothing about when any of this was.
+    const format = C.dateLabel((t1 - t0) / 86400000);
+    const stops = Math.max(2, Math.min(5, Math.floor(plot / 92)));
+    Array.from({length: stops}, (_, step) => t0 + step * (t1 - t0) / (stops - 1)).forEach((ms, order) => {
+      const label = C.el('text', {
+        x: x(ms), y: H - 9, class: 'chart-date-label',
+        'text-anchor': anchorFor(order, stops - 1),
+      });
+      label.textContent = format(new Date(ms)); svg.append(label);
+    });
+    C.note(host, notes.join(' '));
+  };
+  C.responsive(svg, host, paint);
+})();
+</script>
+{%- endmacro %}

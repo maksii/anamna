@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% from "_components.html" import stat_tile, empty_state with context %}
+{% from "_experience.html" import overview with context %}
+{% from "_result_rows.html" import metric_row, link_row with context %}
+{% block title %}{{ patient.display_name if patient else t('dashboard.title_fallback') }} · {{ t('brand.name') }}{% endblock %}
+{% block content %}
+<link rel="stylesheet" href="{{ asset('patient-experience.css') }}">
+<script src="{{ asset('patient-experience.js') }}"></script>
+
+<section class="an-home-hero">
+  <div class="an-home-identity">
+    <div class="eyebrow">{{ t('dashboard.eyebrow') }}</div>
+    <h1>{{ patient.display_name if patient else t('dashboard.heading_fallback') }}</h1>
+    <div class="overview-dates">
+      {% if patient_age %}<span>{{ t('dashboard.years_old', age=patient_age) }}</span>{% endif %}
+      {% if patient_sex_label %}<span>{{ patient_sex_label }}</span>{% endif %}
+      <span>{{ t('dashboard.medical_through', date=counts.latest_result|datefmt) }}</span>
+      {% if counts.latest_device %}<span>{{ t('dashboard.device_through', date=counts.latest_device|datefmt) }}</span>{% endif %}
+    </div>
+  </div>
+  <form class="an-home-search" action="/metrics" method="get">
+    <label for="dashboard-search">{{ t('dashboard.search_label') }}</label>
+    <div>
+      <input id="dashboard-search" type="search" name="q" placeholder="{{ t('dashboard.search_placeholder') }}" autocomplete="off">
+      <button type="submit">{{ t('dashboard.search') }}</button>
+    </div>
+  </form>
+</section>
+
+{#- Lab results a family member's lab account fetched for this person wait
+    for their decision; without this nobody would know to look. -#}
+{% set lab_waiting = lab_inbox_count(user) %}
+{% if lab_waiting %}
+<p class="alert an-lab-inbox-notice" role="status">{{ t_plural('labsync.inbox_notice', lab_waiting) }}
+  <a href="/profile?tab=connections#lab-inbox">{{ t('labsync.inbox_notice_link') }}</a></p>
+{% endif %}
+
+{#- What needs attention comes first, as the results themselves; the tiles
+    under it are shortcuts into the same filtered lists. The navigation
+    already names the page, so the list opens without a visible heading (the
+    h2 stays for screen readers); what a flag means folds into the list's
+    own footer, beside the link to the full list. -#}
+<section class="dashboard-section an-home-priorities" aria-labelledby="home-priorities-heading">
+  <h2 id="home-priorities-heading" class="visually-hidden">{{ t('dashboard.priority_heading') }}</h2>
+  {% if priorities %}
+  <div class="an-panel-card__members an-result-list">
+    {% for item in priorities %}{{ metric_row(item.card, true) if item.kind == 'metric' else link_row(item.row) }}{% endfor %}
+    <div class="an-home-priorities__foot">
+      <details class="an-home-priorities__about">
+        <summary>{{ t('dashboard.priority_note_summary') }}</summary>
+        <p>{{ t('dashboard.priority_note') }}</p>
+      </details>
+      {% if attention_total > priorities|length %}<a href="/metrics?status=attention">{{ t('dashboard.priority_all', count=attention_total|countfmt) }}</a>{% endif %}
+    </div>
+  </div>
+  {% else %}
+  <p class="an-result-note">{{ t('dashboard.no_flags') }}</p>
+  {% endif %}
+</section>
+
+<section class="dashboard-section an-home-status" aria-labelledby="home-status-heading">
+  <div class="section-heading compact-heading">
+    <div><h2 id="home-status-heading">{{ t('dashboard.status_heading') }}</h2></div>
+  </div>
+  <div class="an-tile-row">
+    {% for tile in tiles %}{{ stat_tile(tile) }}{% endfor %}
+  </div>
+</section>
+
+{{ overview(experience) }}
+
+  <section class="panel an-home-recent" aria-labelledby="home-recent-heading">
+    <div class="panel-head">
+      <div><h2 id="home-recent-heading">{{ t('dashboard.recent_heading') }}</h2></div>
+      <a href="/documents">{{ t('dashboard.browse_docs') }}</a>
+    </div>
+    {% if recent_documents %}
+    <ul>
+      {% for document in recent_documents %}
+      <li>
+        <a href="/documents/{{ document.id }}">
+          <strong>{{ document.title_text }}</strong>
+          <span>{{ t('doc.imported', date=document.imported_at[:10]|datefmt) }} · {{ document.vendor|phrase }}</span>
+        </a>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    {{ empty_state(t('dashboard.recent_empty_title'), t('dashboard.recent_empty_body'), 3, '/upload', t('dashboard.destination_upload_title')) }}
+    {% endif %}
+  </section>
+{% endblock %}

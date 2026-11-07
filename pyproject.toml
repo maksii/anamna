@@ -1,0 +1,81 @@
+[project]
+name = "anamna"
+version = "0.1.0"
+description = "Private, provenance-first personal medical record database and web UI"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "AGPL-3.0-only"
+license-files = ["LICENSE"]
+authors = [{ name = "maksii" }]
+keywords = ["health", "medical-records", "lab-results", "self-hosted", "fastapi"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Framework :: FastAPI",
+  "Intended Audience :: End Users/Desktop",
+  "Natural Language :: English",
+  "Natural Language :: Ukrainian",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Medical Science Apps.",
+]
+dependencies = [
+  "fastapi>=0.115",
+  "jinja2>=3.1",
+  "pdfplumber>=0.11",
+  "pillow>=13.0.0",
+  "pypdf>=6.21.4",
+  "pypdfium2>=4.30",
+  "reportlab>=4.4",
+  "python-multipart>=0.0.20",
+  "uvicorn>=0.34",
+  "anthropic>=2.5.0",
+  "openai>=3.46.0",
+  "tzdata>=2024.1",
+]
+
+[project.optional-dependencies]
+dev = [
+  # The editor's Python extension normally injects its own copy, but pinning it
+  # here means .vscode/launch.json works from a clean clone either way.
+  "debugpy>=1.8",
+  "hatchling>=1.27",
+  "httpx>=0.28",
+  "pytest>=8.3",
+  "pytest-xdist>=3.6",
+]
+
+[project.urls]
+Homepage = "https://github.com/maksii/anamna"
+Issues = "https://github.com/maksii/anamna/issues"
+
+[project.scripts]
+anamna = "anamna.cli:main"
+anamna-web = "anamna.web.app:run"
+
+[build-system]
+requires = ["hatchling==1.32.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/anamna"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"migrations" = "anamna/resources/migrations"
+"data/reference_library.json" = "anamna/resources/reference_library.json"
+
+# Package only application code and published guidance. Never rely on a local
+# .gitignore to keep patient records, credentials, or tool caches out of releases.
+[tool.hatch.build.targets.sdist]
+include = [
+  "/src/anamna",
+  "/migrations/*.sql",
+  "/data/reference_library.json",
+  "/README.md",
+  "/LICENSE",
+  "/pyproject.toml",
+  "/uv.lock",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/python"]
+pythonpath = ["src"]
+addopts = "-n auto"

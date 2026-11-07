@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% from "_components.html" import empty_state with context %}
+{% from "_document_cards.html" import upload_recent_list with context %}
+{% block title %}{{ t('upload.title') }}{% endblock %}
+{% block content %}
+
+<section class="page-head an-compact-head">
+  <div>
+    <div class="eyebrow">{{ t('upload.eyebrow') }}</div>
+    <h1>{{ t('upload.page_heading') }}</h1>
+  </div>
+</section>
+
+{% if document_deleted %}<p class="an-notice" role="status">{{ t('doc.delete_done') }}{% if document_promoted %} {{ t('doc.delete_promoted') }}{% endif %}</p>{% endif %}
+{% if document_delete_busy %}<p class="an-notice an-notice--warn" role="alert">{{ t('doc.delete_busy') }}</p>{% endif %}
+
+{#- A failed upload used to be grey text inside a collapsed section. It is
+    said before the drop zone, where the next upload starts, and the section
+    that explains each one opens. -#}
+<p class="an-notice an-notice--warn" id="an-upload-failed" role="alert"{% if not queue_failed %} hidden{% endif %}>
+  <span data-failed-text>{{ queue_failed_text }}</span>
+  <a href="#processing" data-open-processing>{{ t('upload.failed_show') }}</a>
+</p>
+
+{% if duplicate_url %}
+<div class="alert" role="status">
+  <strong>{{ t('upload.error_duplicate') }}</strong>
+  {{ t('upload.duplicate_notice') }}
+  <a href="{{ duplicate_url }}">{{ t('upload.duplicate_open') }}</a>
+</div>
+{% endif %}
+
+<form id="upload-form" class="an-upload{{ ' an-upload--error' if error_text else '' }}" action="/upload" method="post" enctype="multipart/form-data"
+      data-chunk-size="{{ chunk_size }}" data-chunk-threshold="{{ chunk_threshold }}"
+      data-progress="{{ t('upload.progress', name='{name}', percent='{percent}') }}"
+      data-chunk-error="{{ t('upload.error_failed') }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <h2 class="an-upload__label">{{ t('upload.heading') }}</h2>
+
+  <label class="an-upload__drop" for="an-upload-file">
+    <span>{{ t('upload.drop_label') }}</span>
+    <input id="an-upload-file" type="file" name="files" accept="{{ upload_accept }}" multiple required>
+  </label>
+  <p class="an-upload__hint" id="an-upload-selected" aria-live="polite"
+     data-none="{{ t('upload.selected_none') }}"
+     data-one="{{ t('upload.selected_one', count='{count}') }}"
+     data-few="{{ t('upload.selected_few', count='{count}') }}"
+     data-many="{{ t('upload.selected_many', count='{count}') }}">{{ t('upload.selected_none') }}</p>
+
+  <div class="an-upload__source">
+    <label for="an-upload-kind">{{ t('intake.source_label') }}</label>
+    <select id="an-upload-kind" name="kind">
+      <option value="auto" selected>{{ t('intake.adapter_auto') }}</option>
+      {% for adapter in adapters %}
+      <option value="{{ adapter.key }}">{{ adapter.label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div class="an-upload__row">
+    <button class="primary" type="submit">{{ t('upload.submit') }}</button>
+  </div>
+  <p class="an-upload__hint">{{ t('upload.formats', formats=formats_text) }} · {{ t('upload.size_limit', limit=upload_size_limit) }}</p>
+  {% if error_text %}<p class="an-upload__error" role="alert">{{ error_text }}</p>{% endif %}
+</form>
+
+<details class="panel an-page-disclosure" id="processing" data-upload-disclosure data-queue-active="{{ queue_active }}"{% if queue_active or queue_failed %} open{% endif %}
+         data-open-label="{{ t('intake.open_result') }}">
+  <summary>
+    <span><strong>{{ t('intake.heading') }}</strong></span>
+    <span class="an-queue__totals">
+      <span id="an-queue-summary"
+            data-template="{{ t('intake.summary', active='{active}', done='{done}', failed='{failed}') }}"
+        >{{ t('intake.summary', active=queue_active, done=queue_done, failed=queue_failed) }}</span>
+      <span class="pill an-pill--bad" id="an-queue-failed-pill"{% if not queue_failed %} hidden{% endif %}>{{ queue_failed_text }}</span>
+    </span>
+  </summary>
+  <div class="an-page-disclosure__body">
+
+  {#- Running, waiting and failed rows always show; of the finished ones only
+      the newest few do, the rest one tap away. Sixty finished imports under
+      one failure made this an 11,000px phone page. uploads.js applies the
+      same rule to every poll. -#}
+  {% set queue_keep = 5 %}
+  {% set ns = namespace(finished=0) %}
+  <ul class="an-queue" id="an-queue" aria-live="polite" aria-busy="{{ 'true' if queue_active else 'false' }}" data-keep="{{ queue_keep }}">
+    {% for job in queue %}
+    {% if job.finished %}{% set ns.finished = ns.finished + 1 %}{% endif %}
+    <li class="an-queue__item is-{{ job.tone }}" data-job="{{ job.id }}"{% if job.finished %} data-finished{% if ns.finished > queue_keep %} hidden{% endif %}{% endif %}>
+      <span class="an-queue__kind">{{ job.kind_text }}</span>
+      <span class="an-queue__name" title="{{ job.filename }}">{{ job.filename }}</span>
+      <span class="an-queue__state an-queue__state--{{ job.tone }}">{{ job.state_text }}</span>
+      <span class="an-queue__detail">{{ job.detail_text }}</span>
+      <span class="an-queue__meta">
+        {%- if job.summary_text %}<strong>{{ job.summary_text }}</strong>{% endif -%}
+        {%- if job.size_text %}<small>{{ job.size_text }}</small>{% endif -%}
+        {%- if job.url %} <a href="{{ job.url }}">{{ t('intake.open_result') }}</a>{% endif -%}
+      </span>
+    </li>
+    {% endfor %}
+  </ul>
+  <p class="an-queue__more"{% if ns.finished <= queue_keep %} hidden{% endif %}>
+    <button type="button" class="secondary" data-queue-all data-template="{{ t('area.table_show_all', count='{count}') }}">{{ t('area.table_show_all', count=queue|length) }}</button>
+  </p>
+  {% if not queue %}
+  <div id="an-queue-empty">{{ empty_state(t('intake.empty_title'), t('intake.empty_body'), 3) }}</div>
+  {% endif %}
+
+  <div class="an-queue__foot">
+    {% if queue_total %}
+    <form action="/uploads/clear" method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button class="secondary" type="submit">{{ t('intake.clear') }}</button>
+    </form>
+    {% endif %}
+  </div>
+  </div>
+</details>
+
+<details class="panel an-page-disclosure" id="recent-uploads" data-upload-disclosure>
+  <summary><span><strong>{{ t('upload.recent_heading') }}</strong></span></summary>
+  <div class="an-page-disclosure__body" id="an-upload-recent-body">{{ upload_recent_list(recent) }}</div>
+</details>
+
+<script src="{{ asset('uploads.js') }}" defer></script>
+{% endblock %}

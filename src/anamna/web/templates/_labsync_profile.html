@@ -1,0 +1,375 @@
+{#- One lab connection on the profile's Connections tab.  profile.html loops
+    over the providers the administrator enabled and sets `card`. -#}
+{% set lab_for = request.query_params.get('lab', '') %}
+{% set lab_msg = request.query_params.get('lab_msg', '') %}
+<section class="panel an-lab-card" id="lab-{{ card.key }}" aria-labelledby="lab-heading-{{ card.key }}">
+  <div class="panel-head">
+    <div><span class="eyebrow">{{ t('labsync.eyebrow') }}</span><h2 id="lab-heading-{{ card.key }}">{{ t('labsync.card_heading', name=card.name|phrase) }}</h2></div>
+    {% set rejected = card.connected and lab_for == card.key and lab_msg == 'labsync.error_auth' %}
+    <span class="pill {{ 'an-pill--ok' if card.connected and not card.expired and not rejected else 'an-pill--warn' }}">
+      {{ t('labsync.rejected_pill') if rejected else (t('labsync.expired_pill') if card.expired else (t('integrations.connected') if card.connected else t('integrations.not_connected'))) }}
+    </span>
+  </div>
+
+  {% if lab_for == card.key and lab_msg in lab_message_keys %}
+  <div class="alert {{ 'error' if lab_msg.startswith('labsync.error') else ('warning' if lab_msg.startswith('labsync.unavailable') else '') }}"
+       role="{{ 'alert' if lab_msg.startswith('labsync.error') else 'status' }}">{{ t(lab_msg) }}</div>
+  {% endif %}
+
+
+  {% if not card.has_profile %}
+  <div class="alert warning">{{ t('labsync.error_no_profile') }}</div>
+  {% endif %}
+
+  {% if not card.connected and card.sign_in in ('password', 'sms') %}
+  {#- A lab with only a mobile app: sign in here once, as in the app, with
+      phone and password, or (sms) phone and a texted code. -#}
+  {% set pending = lab_pending_code(user, card.key) %}
+  <h3 class="an-lab-subhead">{{ t('labsync.how_heading') }}</h3>
+  {#- Which phone and which password: the one thing the fields cannot say. -#}
+  <p class="muted">{{ t('labsync.' ~ card.sign_in ~ '_what', name=card.name|phrase) }}</p>
+  {% if pending and pending.users %}
+  {#- The phone opened several accounts at the clinic, as in the app: pick one. -#}
+  <form action="/profile/lab/{{ card.key }}/credentials" method="post" class="stack-form" autocomplete="off">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <fieldset class="an-lab-choose">
+      <legend>{{ t('labsync.sms_choose_legend', name=card.name|phrase) }}</legend>
+      {% for choice in pending.users %}
+      <label class="an-lab-check"><input type="radio" name="patient" value="{{ choice.id }}" required {{ 'checked' if loop.first else '' }}> {{ choice.name or t('labsync.unknown') }}</label>
+      {% endfor %}
+    </fieldset>
+    <button class="primary" type="submit">{{ t('labsync.sms_choose_submit') }}</button>
+  </form>
+  <form action="/profile/lab/{{ card.key }}/forget" method="post" class="inline-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button class="secondary" type="submit">{{ t('labsync.password_code_cancel') }}</button>
+  </form>
+  {% elif pending %}
+  <form action="/profile/lab/{{ card.key }}/credentials" method="post" class="stack-form" autocomplete="off">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <p>{{ t('labsync.password_code_lead', phone=pending.phone_masked or t('labsync.password_code_your_phone')) }}</p>
+    <label>{{ t('labsync.password_code_label') }}
+      <input name="code" type="text" inputmode="numeric" autocomplete="one-time-code" required
+             pattern="[0-9 ]{4,10}" {% if pending.code_length %}maxlength="{{ pending.code_length + 2 }}"{% endif %}
+             aria-describedby="lab-code-hint-{{ card.key }}">
+    </label>
+    <p class="tiny muted" id="lab-code-hint-{{ card.key }}">{{ t('labsync.password_code_hint') }}</p>
+    <button class="primary" type="submit">{{ t('labsync.password_code_submit') }}</button>
+  </form>
+  <form action="/profile/lab/{{ card.key }}/forget" method="post" class="inline-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button class="secondary" type="submit">{{ t('labsync.password_code_cancel') }}</button>
+  </form>
+  {% else %}
+  <form action="/profile/lab/{{ card.key }}/credentials" method="post" class="stack-form"
+        onsubmit="var b=this.querySelector('button');setTimeout(function(){b.disabled=true;b.textContent=b.dataset.working;},0)">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>{{ t('labsync.password_phone_label', name=card.name|phrase) }}
+      <input name="phone" type="tel" inputmode="tel" autocomplete="tel" required placeholder="+380 XX XXX XX XX"
+             aria-describedby="lab-phone-hint-{{ card.key }}">
+    </label>
+    <p class="tiny muted" id="lab-phone-hint-{{ card.key }}">{{ t('labsync.password_phone_hint') }}</p>
+    {% if card.sign_in == 'password' %}
+    <label>{{ t('labsync.password_password_label', name=card.name|phrase) }}
+      <input name="password" type="password" autocomplete="current-password" required
+             aria-describedby="lab-where-hint-{{ card.key }}">
+    </label>
+    {% endif %}
+    {#- Where a credential for someone else's server goes: the one thing a
+        person must know before typing it, so it stays beside the fields. -#}
+    <p class="tiny muted" id="lab-where-hint-{{ card.key }}">{{ t('labsync.' ~ card.sign_in ~ '_where', url=card.url) }}</p>
+    <button class="primary" type="submit" data-working="{{ t('labsync.working') }}">{{ t('labsync.' ~ card.sign_in ~ '_submit') }}</button>
+  </form>
+  {% endif %}
+
+  {% elif not card.connected %}
+  {#- How to get the credential: the hard part, so it is spelled out. -#}
+  <h3 class="an-lab-subhead">{{ t('labsync.how_heading') }}</h3>
+  {% if card.key == 'eskulab' %}
+  <ol class="an-lab-steps">
+    <li>{{ t('labsync.eskulab_step1') }}
+      <a class="an-lab-open" href="{{ card.url }}/result" target="_blank" rel="noopener noreferrer">{{ t('labsync.open_site', site=card.url.split('://')[-1] ~ '/result') }}</a></li>
+    <li>{{ t('labsync.eskulab_step2') }}</li>
+    <li>{{ t('labsync.eskulab_step3') }}
+      <pre class="an-lab-snippet" role="figure" aria-label="{{ t('labsync.snippet_label') }}"><code>copy(JSON.stringify({token: decodeURIComponent(document.cookie.match(/accessKey=([^;]*)/)[1]), phone: localStorage.activePatientPhone}))</code></pre>
+      <button type="button" class="secondary an-lab-copy" data-copied="{{ t('labsync.copied') }}"
+        onclick="var b=this;navigator.clipboard.writeText(b.previousElementSibling.textContent.trim()).then(function(){b.textContent=b.dataset.copied;})">{{ t('labsync.copy') }}</button>
+    </li>
+    <li>{{ t('labsync.eskulab_step4') }}</li>
+  </ol>
+  <p class="tiny muted">{{ t('labsync.eskulab_manual') }}</p>
+  {% else %}
+  <ol class="an-lab-steps">
+    <li>{{ t('labsync.synevo_step1') }}
+      <a class="an-lab-open" href="{{ card.url }}/personal-cabinet/my-results" target="_blank" rel="noopener noreferrer">{{ t('labsync.open_site', site=card.url.split('://')[-1] ~ '/personal-cabinet/my-results') }}</a></li>
+    <li>{{ t('labsync.synevo_step2') }}</li>
+    <li>{{ t('labsync.synevo_step3') }}
+      <pre class="an-lab-snippet" role="figure" aria-label="{{ t('labsync.cookie_name_label') }}"><code>next-auth.session-token</code></pre>
+      <button type="button" class="secondary an-lab-copy" data-copied="{{ t('labsync.copied') }}"
+        onclick="var b=this;navigator.clipboard.writeText(b.previousElementSibling.textContent.trim()).then(function(){b.textContent=b.dataset.copied;})">{{ t('labsync.copy') }}</button>
+</li>
+    <li>{{ t('labsync.synevo_step4') }}</li>
+  </ol>
+  {% endif %}
+
+  <form action="/profile/lab/{{ card.key }}/credentials" method="post" class="stack-form" autocomplete="off">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    {% if card.key == 'eskulab' %}
+    <label>{{ t('labsync.eskulab_json_label') }}
+      <textarea name="credentials_json" rows="3" spellcheck="false" autocapitalize="off"
+                placeholder='{"token":"eyJ...","phone":"+380..."}'></textarea>
+    </label>
+    <details class="an-lab-separate">
+      <summary>{{ t('labsync.eskulab_separate') }}</summary>
+      <label>{{ t('labsync.eskulab_token_label') }}<input name="token" spellcheck="false" autocapitalize="off" autocomplete="off"></label>
+      <label>{{ t('labsync.eskulab_phone_label') }}<input name="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="+380XXXXXXXXX"></label>
+    </details>
+    {% else %}
+    <label>{{ t('labsync.synevo_cookie_label') }}
+      <textarea name="token" rows="3" spellcheck="false" autocapitalize="off" aria-describedby="lab-cookie-hint-{{ card.key }}"></textarea>
+    </label>
+    <p class="tiny muted" id="lab-cookie-hint-{{ card.key }}">{{ t('labsync.synevo_cookie_hint') }}</p>
+    {% endif %}
+    <button class="primary" type="submit">{{ t('labsync.save_credentials') }}</button>
+  </form>
+
+  {% else %}
+  <dl class="an-lab-facts">
+    <div><dt>{{ t('labsync.secret_label') }}</dt><dd class="hash">...{{ card.secret_tail }}</dd></div>
+    <div><dt>{{ t('labsync.expires_label') }}</dt>
+      <dd>{% if card.expires_at %}{{ card.expires_at[:10]|datefmt }}{% else %}{{ t('labsync.expires_unknown') }}{% endif %}</dd></div>
+    {% if card.phone %}<div><dt>{{ t('labsync.phone_label') }}</dt><dd class="hash">{{ card.phone }}</dd></div>{% endif %}
+  </dl>
+  {% if card.expired %}<div class="alert warning">{{ t('labsync.error_expired') }}</div>{% endif %}
+
+  <div class="an-lab-actions">
+    <form action="/profile/lab/{{ card.key }}/check" method="post" class="inline-form"
+          onsubmit="var b=this.querySelector('button');setTimeout(function(){b.disabled=true;b.textContent=b.dataset.working;},0)">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button class="secondary" type="submit" data-working="{{ t('labsync.working') }}">{{ t('labsync.check_action') }}</button>
+    </form>
+    <form action="/profile/lab/{{ card.key }}/forget" method="post" class="inline-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button class="secondary danger-action" type="submit">{{ t('labsync.forget_action') }}</button>
+    </form>
+  </div>
+  {#- Until the account has been checked nothing below says what the button
+      is for; once its people are listed, they do. -#}
+  {% if not card.persons %}<p class="tiny muted">{{ t('labsync.check_hint') }}</p>{% endif %}
+
+  {% if card.persons %}
+  {#- One lab account usually lists a whole family.  Each person is linked to
+      a record here: your own (imported straight away), a family member's
+      (fetched, then waits for them to accept), or none.  The main risk is
+      somebody else's results in a record, so every option says whether the
+      lab's date of birth and sex match that record's profile. -#}
+  <h3 class="an-lab-subhead" id="lab-people-{{ card.key }}">{{ t('labsync.people_heading') }}</h3>
+  <p class="tiny muted" id="lab-link-hint-{{ card.key }}">{{ t('labsync.link_target_hint') }}</p>
+  {% if not card.family %}<p class="tiny muted">{{ t('labsync.people_family_hint') }} <a href="/profile?tab=sharing">{{ t('labsync.people_family_link') }}</a></p>{% endif %}
+  <ul class="an-lab-people">
+    {% for person in card.persons %}
+    <li class="an-lab-person-card">
+      <form action="/profile/lab/{{ card.key }}/link" method="post" class="stack-form"
+            onsubmit="var b=this.querySelector('button[type=submit]');setTimeout(function(){b.disabled=true;b.textContent=b.dataset.working;},0)">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="person_id" value="{{ person.id }}">
+        <div class="an-lab-person-head">
+          <strong>{{ person.lastname }} {{ person.firstname }} {{ person.middlename }}</strong>
+          <small>{{ t('labsync.person_born') }} {{ person.birthday|datefmt if person.birthday else t('labsync.unknown') }} · {{ t('labsync.sex_' ~ (person.sex or 'unknown')) }}</small>
+        </div>
+        {% set link = person.link %}
+        {% if link %}
+        <p class="an-lab-link-status">
+          {% if link.self %}
+          <span class="pill an-pill--ok">{{ t('labsync.link_state_self') }}</span>
+          {% elif link.consent == 'refused' %}
+          <span class="pill an-pill--warn">{{ t('labsync.link_state_refused', name=link.name) }}</span>
+          {% elif link.consent == 'accepted' %}
+          <span class="pill an-pill--ok">{{ t('labsync.link_state_accepted', name=link.name) }}</span>
+          {% else %}
+          <span class="pill an-pill--warn">{{ t('labsync.link_state_asked', name=link.name) }}</span>
+          {% endif %}
+          {% if link.mismatch_confirmed %}<small class="an-lab-why">{{ t('labsync.link_confirmed_note') }}</small>{% endif %}
+          {% if not link.self and link.states %}
+          <small class="an-lab-why">{{ t('labsync.link_counts', waiting=(link.states.get('awaiting', 0) + link.states.get('accepted', 0))|countfmt, imported=(link.states.get('imported', 0) + link.states.get('linked', 0))|countfmt, declined=link.states.get('declined', 0)|countfmt) }}</small>
+          {% endif %}
+        </p>
+        {% endif %}
+        {#- Already linked: the status line says it all; the choice folds away. -#}
+        {% if link %}<details class="an-conn-more"><summary>{{ t('labsync.link_change') }}</summary>{% endif %}
+        <label>{{ t('labsync.link_target_label') }}
+          {#- The confirmation is asked only when the chosen record does not
+              match; switching the choice shows or hides it (the server checks
+              again either way). -#}
+          {% set chosen_ok = person.options|selectattr('id', 'equalto', person.selected)|map(attribute='match')|map(attribute='ok')|first %}
+          <select name="target" aria-describedby="lab-link-hint-{{ card.key }}"
+                  onchange="var o=this.selectedOptions[0];this.form.querySelector('.an-lab-confirm').hidden=!this.value||o.dataset.ok==='1'">
+            <option value="" {{ 'selected' if not person.selected else '' }}>{{ t('labsync.link_target_none') }}</option>
+            {% for option in person.options %}
+            <option value="{{ option.id }}" data-ok="{{ '1' if option.match.ok else '0' }}" {{ 'selected' if person.selected == option.id else '' }} {{ 'disabled' if option.taken or not option.has_profile else '' }}>
+              {{ t('labsync.link_target_self', name=option.name) if option.self else option.name }} -
+              {% if not option.has_profile %}{{ t('labsync.link_option_no_profile') }}{% elif option.taken %}{{ t('labsync.link_option_taken') }}{% elif option.match.ok %}{{ t('labsync.link_option_matches') }}{% elif option.match.birthday is false or option.match.sex is false %}{{ t('labsync.link_option_differs') }}{% else %}{{ t('labsync.link_option_unknown') }}{% endif %}
+            </option>
+            {% endfor %}
+          </select>
+        </label>
+        <div class="an-lab-confirm" {{ 'hidden' if not person.selected or chosen_ok else '' }}>
+          <label class="an-lab-check">
+            <input type="checkbox" name="confirm" value="1">
+            {{ t('labsync.link_confirm_label') }}
+          </label>
+        </div>
+        <button class="primary" type="submit" data-working="{{ t('labsync.working') }}">{{ t('labsync.link_action') }}</button>
+        {% if link %}</details>{% endif %}
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  <details class="an-lab-legend">
+    <summary>{{ t('labsync.link_legend') }}</summary>
+    <dl>
+      {% for choice in ['self', 'other', 'none'] %}
+      <div><dt>{{ t('labsync.link_legend_' ~ choice) }}</dt><dd>{{ t('labsync.link_legend_' ~ choice ~ '_hint') }}</dd></div>
+      {% endfor %}
+    </dl>
+  </details>
+  {% endif %}
+
+  {% if card.linked %}
+  <h3 class="an-lab-subhead">{{ t('labsync.sync_heading') }}</h3>
+
+  {#- The parts marked data-lab-live are what a finished sync changes; while a
+      run is going the card asks /api/lab-sync/<key>/status and swaps only
+      these in place, so scroll, focus and anything half-typed elsewhere on
+      the page stay as they are (PERF-06). -#}
+  <form action="/profile/lab/{{ card.key }}/sync" method="post" class="inline-form" data-lab-live="sync"
+        onsubmit="var b=this.querySelector('button');setTimeout(function(){b.disabled=true;b.textContent=b.dataset.working;},0)">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button class="primary" type="submit" data-working="{{ t('labsync.working') }}" {{ 'disabled' if card.sync_state == 'running' else '' }}>{{ t('labsync.sync_action') }}</button>
+  </form>
+
+  <div class="an-lab-status" role="status" aria-live="polite" data-lab-live="status">
+    {% if card.sync_state == 'running' %}
+    {% if card.summary and card.summary.total %}
+    {%- set done = [card.summary.orders - 1, 0]|max %}
+    <p><strong>{{ t('labsync.sync_progress', number=(done + 1)|countfmt, total=card.summary.total|countfmt) }}</strong>
+      {% if card.summary.current %}<span class="an-lab-current">{{ card.summary.current }}</span>{% endif %}</p>
+    <progress class="an-lab-progress" max="{{ card.summary.total }}" value="{{ done }}">{{ done }} / {{ card.summary.total }}</progress>
+    {% else %}
+    <p><strong>{{ t('labsync.sync_running') }}</strong> {{ t('labsync.sync_listing') }}</p>
+    <progress class="an-lab-progress"></progress>
+    {% endif %}
+    {% elif card.sync_state == 'failed' %}
+    <p class="alert error">{{ t('labsync.sync_failed') }} {{ t(card.sync_detail) if card.sync_detail else '' }}</p>
+    {% elif card.sync_state == 'done' and card.summary %}
+    <p>{{ t('labsync.sync_done', date=card.sync_finished_at[:10]|datefmt) }}
+      {%- set parts = [] %}{% for state in ['imported', 'reported', 'linked', 'already', 'pending', 'unavailable', 'failed'] %}{% if card.summary.get(state) %}{% set _ = parts.append(t('labsync.summary_' ~ state, count=card.summary[state]|countfmt)) %}{% endif %}{% endfor %}
+      {{ parts|join(' · ') if parts else t('labsync.summary_nothing') }}.
+      {% if card.summary.awaiting %}{{ t('labsync.summary_awaiting', count=card.summary.awaiting|countfmt) }}{% endif %}</p>
+    {% endif %}
+  </div>
+  {% if card.sync_state == 'running' %}
+  <script>
+  (function () {
+    var card = document.getElementById('lab-{{ card.key }}');
+    function poll() {
+      if (document.visibilityState !== 'visible') {
+        document.addEventListener('visibilitychange', poll, {once: true});
+        return;
+      }
+      fetch('/api/lab-sync/{{ card.key }}/status', {headers: {Accept: 'application/json'}, credentials: 'same-origin'})
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (data) {
+          if (!data || !card) { return; }
+          var fresh = new DOMParser().parseFromString(data.html || '', 'text/html');
+          card.querySelectorAll('[data-lab-live]').forEach(function (old) {
+            var next = fresh.querySelector('[data-lab-live="' + old.dataset.labLive + '"]');
+            if (next) { old.innerHTML = next.innerHTML; }
+          });
+          if (data.state === 'running') { setTimeout(poll, 2500); }
+        })
+        .catch(function () { setTimeout(poll, 15000); });
+    }
+    setTimeout(poll, 1500);
+  })();
+  </script>
+  {% endif %}
+
+  <div data-lab-live="orders">
+  {% if card.orders %}
+  <h3 class="an-lab-subhead">{{ t('labsync.documents_heading' if card.messages == 'doctoreleks' else 'labsync.orders_heading') }}</h3>
+  {% macro orders_table(orders) %}
+  {% if card.messages == 'doctoreleks' %}
+  {#- A clinic files documents, not lab orders: no ready count, no value
+      check (its screens carry no values) -- the clinic's own name for each,
+      its day and what happened to it, one compact row apiece. -#}
+  <ul class="an-lab-docs">
+    {% for order in orders %}
+    <li>
+      {% if order.document_id %}<a href="/documents/{{ order.document_id }}">{{ order.title or order.order_id }}</a>{% else %}<span class="hash">{{ order.order_id }}</span>{% endif %}
+      <span class="an-lab-docs__meta">{{ order.ordered_at[:10]|datefmt if order.ordered_at else '-' }} ·
+        <span class="an-lab-state" data-state="{{ order.state }}">{{ t('labsync.state_' ~ order.state) }}</span></span>
+      {% if order.error_key %}<small class="an-lab-why">{{ t(order.error_key) }}</small>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <div class="table-wrap table-wrap--stack">
+    <table class="an-lab-orders">
+      <thead><tr>
+        <th scope="col">{{ t('labsync.th_order') }}</th>
+        <th scope="col">{{ t('labsync.th_date') }}</th>
+        <th scope="col">{{ t('labsync.th_ready') }}</th>
+        <th scope="col">{{ t('labsync.th_state') }}</th>
+        <th scope="col">{{ t('labsync.th_check') }}</th>
+      </tr></thead>
+      <tbody>
+      {% for order in orders %}
+      <tr>
+        <td data-label="{{ t('labsync.th_order') }}"><span class="hash">{{ order.order_id }}</span></td>
+        <td data-label="{{ t('labsync.th_date') }}">{{ order.ordered_at[:10]|datefmt if order.ordered_at else '-' }}</td>
+        <td data-label="{{ t('labsync.th_ready') }}">{{ t('labsync.ready_of', ready=order.ready|countfmt, total=order.total|countfmt) }}</td>
+        <td data-label="{{ t('labsync.th_state') }}"><div class="an-lab-cell">
+          <span class="an-lab-state" data-state="{{ order.state }}">{{ t('labsync.state_' ~ order.state) }}</span>
+          {% if order.error_key %}<small class="an-lab-why">{{ t(order.error_key) }}</small>{% endif %}
+          {% if order.changed_at %}<small class="an-lab-why">{{ t('labsync.changed_note', date=order.changed_at[:10]|datefmt) }}</small>{% endif %}
+          {% if order.document_id %}<a href="/documents/{{ order.document_id }}{{ '#lab-record' if order.state == 'reported' else '#lab-crosscheck' }}">{{ t('labsync.open_document') }}</a>{% endif %}
+        </div></td>
+        <td data-label="{{ t('labsync.th_check') }}">
+          {% if order.counts %}
+          {#- "Differ" is a value or unit that disagrees; a name cut short has
+              the right value and is its own, smaller note (OPS-18). -#}
+          {{ t('labsync.counts_short', match=order.counts.match|countfmt, mismatch=(order.counts.value_mismatch + order.counts.unit_mismatch)|countfmt, missing=order.counts.missing|countfmt, extra=order.counts.extra|countfmt) }}
+          {% if order.counts.get('name_mismatch', 0) %}<small class="an-lab-why">{{ t('labsync.counts_names', count=order.counts.name_mismatch|countfmt) }}</small>{% endif %}
+          {% elif order.state == 'reported' %}<small class="an-lab-why">{{ t('labsync.reported_check') }}</small>
+          {% elif not order.has_rows %}<small class="an-lab-why">{{ t('labsync.no_lab_values') if order.document_id else t('labsync.no_lab_values_pending') }}</small>
+          {% else %}-{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+  {% endmacro %}
+  {#- The newest few; a long history folds away so the card stays short. -#}
+  {{ orders_table(card.orders[:5]) }}
+  {% if card.orders|length > 5 %}
+  <details class="an-conn-more">
+    <summary>{{ t('labsync.older_documents' if card.messages == 'doctoreleks' else 'labsync.older_orders', count=(card.orders|length - 5)|countfmt) }}</summary>
+    {{ orders_table(card.orders[5:]) }}
+  </details>
+  {% endif %}
+  <details class="an-lab-legend">
+    <summary>{{ t('labsync.states_legend') }}</summary>
+    <dl>
+      {% for state in ['pending', 'importing', 'imported', 'reported', 'linked', 'unavailable', 'removed', 'failed'] %}
+      <div><dt>{{ t('labsync.state_' ~ state) }}</dt><dd>{{ t('labsync.state_' ~ state ~ '_hint') }}</dd></div>
+      {% endfor %}
+    </dl>
+  </details>
+  {% endif %}
+  </div>
+  {% endif %}
+  {% endif %}
+</section>

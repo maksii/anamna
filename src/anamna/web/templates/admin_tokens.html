@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}{{ t('token.admin_title') }}{% endblock %}
+{% block content %}
+
+<section class="page-head">
+  <div>
+    <div class="eyebrow">{{ t('admin.eyebrow') }}</div>
+    <h1>{{ t('token.admin_heading') }}</h1>
+  </div>
+</section>
+
+{% if error %}<div class="alert error" role="alert">{{ error }}</div>{% endif %}
+{% if saved %}<div class="alert" role="status">{{ saved }}</div>{% endif %}
+
+{% import "_tokens.html" as tokens_ui %}
+{{ tokens_ui.minted(new_token, token_base, csrf_token) }}
+
+<section class="panel">
+  <div class="panel-head">
+    <div><span class="eyebrow">{{ t('token.eyebrow') }}</span><h2>{{ t('token.admin_list_heading') }}</h2></div>
+    <span>{{ t_plural('token.list_count', tokens|length) }}</span>
+  </div>
+  {{ tokens_ui.legend() }}
+  {{ tokens_ui.listing(tokens, csrf_token, 'admin', true) }}
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <div><span class="eyebrow">{{ t('token.create_eyebrow') }}</span><h2>{{ t('token.create_heading') }}</h2></div>
+  </div>
+  {{ tokens_ui.create_form(token_kinds, csrf_token, 'admin', people) }}
+</section>
+
+<p class="muted"><a href="/admin/users">{{ t('token.back_to_people') }}</a></p>
+
+{% endblock %}

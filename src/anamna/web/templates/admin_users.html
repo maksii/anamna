@@ -1,0 +1,193 @@
+{% extends "base.html" %}
+{% block title %}{{ t('admin.title') }}{% endblock %}
+{% block content %}
+
+<section class="page-head">
+  <div>
+    <div class="eyebrow">{{ t('admin.eyebrow') }}</div>
+    <h1>{{ t('admin.heading') }}</h1>
+  </div>
+</section>
+
+{% if error %}<div class="alert error" role="alert">{{ error }}</div>{% endif %}
+{% if done %}<div class="alert" role="status">{{ done }}</div>{% endif %}
+
+<p class="muted"><a href="/admin/tokens">{{ t('token.admin_link') }}</a></p>
+
+<div class="stat-grid">
+  <article>
+    <span>{{ t('admin.totals_people') }}</span>
+    <strong>{{ totals.people }}</strong>
+  </article>
+  <article>
+    <span>{{ t('admin.documents') }}</span>
+    <strong>{{ totals.documents }}</strong>
+  </article>
+  <article>
+    <span>{{ t('admin.observations') }}</span>
+    <strong>{{ totals.observations }}</strong>
+  </article>
+  <article>
+    <span>{{ t('admin.storage') }}</span>
+    <strong class="an-people__total-size">{{ totals.bytes_text }}</strong>
+  </article>
+</div>
+
+<section class="panel">
+  <div class="panel-head">
+    <div>
+      <span class="eyebrow">{{ t('admin.registration_eyebrow') }}</span>
+      <h2>{{ t('admin.registration_heading') }}</h2>
+    </div>
+    {#- The current state as words, not only as the button's absence. -#}
+    <span class="pill {{ 'an-pill--warn' if registration_open else '' }}">
+      {{ t('admin.registration_on') if registration_open else t('admin.registration_off') }}
+    </span>
+  </div>
+  <form action="/admin/registration" method="post" class="an-people__toggle">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="enabled" value="{{ '0' if registration_open else '1' }}">
+    <button class="{{ 'secondary' if registration_open else 'primary' }}" type="submit">
+      {{ t('admin.registration_close_action') if registration_open else t('admin.registration_open_action') }}
+    </button>
+  </form>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <div><span class="eyebrow">{{ t('admin.totals_people') }}</span><h2>{{ t('admin.list_heading') }}</h2></div>
+    <span>{{ t_plural('admin.list_count', people|length) }}</span>
+  </div>
+
+  {#
+    One legend for the whole list rather than a hint under every number on
+    every row: the same five explanations repeated per person is noise, and
+    the reader needs them once.
+  #}
+  <details class="an-people__legend">
+    <summary>{{ t('admin.legend_summary') }}</summary>
+    <dl>
+      <div><dt>{{ t('admin.role_admin') }}</dt><dd>{{ t('admin.role_admin_hint') }}</dd></div>
+      <div><dt>{{ t('admin.role_user') }}</dt><dd>{{ t('admin.role_user_hint') }}</dd></div>
+      <div><dt>{{ t('admin.status_blocked') }}</dt><dd>{{ t('admin.status_blocked_hint') }}</dd></div>
+      <div><dt>{{ t('admin.documents') }}</dt><dd>{{ t('admin.documents_hint') }}</dd></div>
+      <div><dt>{{ t('admin.observations') }}</dt><dd>{{ t('admin.observations_hint') }}</dd></div>
+      <div><dt>{{ t('admin.storage') }}</dt><dd>{{ t('admin.storage_hint') }}</dd></div>
+      <div><dt>{{ t('admin.open_reviews') }}</dt><dd>{{ t('admin.open_reviews_hint') }}</dd></div>
+      <div><dt>{{ t('admin.live_sessions') }}</dt><dd>{{ t('admin.live_sessions_hint') }}</dd></div>
+    </dl>
+  </details>
+
+  <ul class="an-people">
+    {% for person in people %}
+    {% set is_self = person.id == admin_id %}
+    <li class="an-person {{ 'an-person--blocked' if person.disabled_at else '' }}">
+      <div class="an-person__who">
+        <strong>{{ person.display_name }}</strong>
+        <small>{{ person.email }}</small>
+        <span class="tag-row">
+          <span class="pill">{{ t('admin.role_admin') if person.role == 'admin' else t('admin.role_user') }}</span>
+          {#- Colour never carries the state alone: the word is always present. -#}
+          <span class="pill {{ 'an-pill--warn' if person.disabled_at else 'an-pill--ok' }}">
+            {{ t('admin.status_blocked') if person.disabled_at else t('admin.status_active') }}
+          </span>
+          {% if is_self %}<span class="pill an-pill--you">{{ t('admin.you') }}</span>{% endif %}
+        </span>
+      </div>
+
+      <dl class="an-person__stats">
+        <div><dt>{{ t('admin.documents') }}</dt><dd>{{ person.documents_text }}</dd></div>
+        <div><dt>{{ t('admin.observations') }}</dt><dd>{{ person.observations_text }}</dd></div>
+        <div><dt>{{ t('admin.storage') }}</dt><dd>{{ person.bytes_text }}</dd></div>
+        <div><dt>{{ t('admin.open_reviews') }}</dt><dd>{{ person.open_reviews_text }}</dd></div>
+        <div><dt>{{ t('admin.live_sessions') }}</dt><dd>{{ person.live_sessions_text }}</dd></div>
+        <div><dt>{{ t('admin.joined') }}</dt><dd>{{ person.created_text }}</dd></div>
+        <div>
+          <dt>{{ t('admin.last_login') }}</dt>
+          <dd>{{ person.last_login_text or t('admin.never') }}</dd>
+        </div>
+      </dl>
+
+      <div class="an-person__actions">
+        {% if is_self %}
+        <p class="tiny muted"><a href="/profile?tab=security">{{ t('admin.self_password_note') }}</a></p>
+        {% else %}
+        {#- Folded: it is the rare action, and two password fields per row would
+            bury the list.  Never prefilled, never echoed after a failure. -#}
+        <details class="an-person__password">
+          <summary>{{ t('admin.set_password') }}</summary>
+          <form action="/admin/users/{{ person.id }}/password" method="post" class="stack-form"
+                aria-label="{{ t('admin.set_password_aria', name=person.display_name) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <p class="tiny muted" id="set-password-hint-{{ loop.index }}">{{ t('admin.add_password_hint', count=minimum_password) }}</p>
+            <label>{{ t('admin.set_password_new') }}
+              <input name="new_password" type="password" autocomplete="new-password"
+                     minlength="{{ minimum_password }}" required aria-describedby="set-password-hint-{{ loop.index }}">
+            </label>
+            <label>{{ t('admin.set_password_confirm') }}
+              <input name="confirm_password" type="password" autocomplete="new-password"
+                     minlength="{{ minimum_password }}" required>
+            </label>
+            <button class="secondary" type="submit">{{ t('admin.set_password_submit') }}</button>
+          </form>
+        </details>
+        <form action="/admin/users/{{ person.id }}" method="post">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="action" value="{{ 'unblock' if person.disabled_at else 'block' }}">
+          <button class="secondary" type="submit">
+            {{ t('admin.unblock') if person.disabled_at else t('admin.block') }}
+          </button>
+        </form>
+        <form action="/admin/users/{{ person.id }}" method="post">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="action" value="{{ 'demote' if person.role == 'admin' else 'promote' }}">
+          <button class="secondary" type="submit">
+            {{ t('admin.demote') if person.role == 'admin' else t('admin.promote') }}
+          </button>
+        </form>
+        {#- Deletion takes every document and file with it, so it asks first.
+            `onsubmit` rather than a second page: one irreversible button, one
+            confirmation, and the form still submits without JavaScript. -#}
+        <form action="/admin/users/{{ person.id }}" method="post"
+              onsubmit="return confirm(this.dataset.confirm)"
+              data-confirm="{{ t('admin.delete_confirm') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="action" value="delete">
+          <button class="secondary an-person__delete" type="submit">{{ t('admin.delete') }}</button>
+        </form>
+        {% endif %}
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <div><span class="eyebrow">{{ t('admin.add_eyebrow') }}</span><h2>{{ t('admin.add_heading') }}</h2></div>
+  </div>
+  <form action="/admin/users" method="post" class="stack-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>{{ t('admin.add_email') }}
+      <input name="email" type="email" autocomplete="off" required>
+    </label>
+    <label>{{ t('admin.add_name') }}
+      <input name="display_name" autocomplete="off" required>
+    </label>
+    <label>{{ t('admin.add_password') }}
+      <input name="password" type="password" autocomplete="new-password"
+             minlength="{{ minimum_password }}" required
+             aria-describedby="admin-password-hint">
+    </label>
+    <p class="tiny muted" id="admin-password-hint">{{ t('admin.add_password_hint', count=minimum_password) }}</p>
+    <label>{{ t('admin.role') }}
+      <select name="role">
+        <option value="user">{{ t('admin.role_user') }}</option>
+        <option value="admin">{{ t('admin.role_admin') }}</option>
+      </select>
+    </label>
+    <button class="primary" type="submit">{{ t('admin.add_submit') }}</button>
+  </form>
+</section>
+
+{% endblock %}

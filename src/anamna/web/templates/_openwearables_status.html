@@ -1,0 +1,50 @@
+{%- set admin = active == 'admin_openwearables' -%}
+<section class="panel" aria-labelledby="ow-hooks-status-title">
+  <div class="panel-head"><div><h2 id="ow-hooks-status-title">{{ t('ow_hooks.title') }}</h2></div></div>
+  <dl class="facts ai-facts">
+    <div><dt>{{ t('ow_hooks.last_check') }}</dt><dd>{{ ow_hooks.last_check or t('openwearables.last_sync_never') }}</dd></div>
+    {% if ow_hooks.next_check %}<div><dt>{{ t('ow_hooks.next_check') }}</dt><dd>{{ ow_hooks.next_check }}</dd></div>{% endif %}
+    <div><dt>{{ t('ow_hooks.raw_samples') }}</dt><dd>{% if ow_hooks.raw_sample_count is none %}{{ t('ow_hooks.raw_counting') }}{% else %}{{ ow_hooks.raw_sample_count|countfmt }}{% endif %}</dd></div>
+  </dl>
+  {% if ow_hooks.raw_compacting %}<p class="tiny muted">{{ t('ow_hooks.raw_compacting') }}</p>{% endif %}
+  <h3>{{ t('ow_hooks.jobs') }}</h3>
+  {% if ow_hooks.jobs %}
+  <div class="table-wrap"><table><thead><tr>{% if admin %}<th scope="col">{{ t('ow_hooks.account') }}</th>{% endif %}<th scope="col">{{ t('ow_hooks.kind') }}</th><th scope="col">{{ t('ow_hooks.window') }}</th><th scope="col">{{ t('ow_hooks.status') }}</th><th scope="col">{{ t('ow_hooks.fetched') }}</th></tr></thead><tbody>{% include "_openwearables_jobs.html" %}</tbody></table></div>
+  <p class="tiny muted">{{ t('ow_hooks.fetched_hint') }}</p>
+  {% if admin and ow_hooks.job_total > ow_hooks.jobs|length %}
+  {#- The rest of the history loads only when asked for: an unpaginated
+      table was 60+ rows of mostly identical scheduled runs (UX-26). -#}
+  <details class="an-disclosure" data-ow-jobs="/admin/openwearables/jobs?offset={{ ow_hooks.jobs|length }}">
+    <summary>{{ t('ow_hooks.show_all', count=ow_hooks.job_total|countfmt) }}</summary>
+    <div class="an-disclosure__body">
+      <p class="muted" data-status role="status" data-error="{{ t('ow_hooks.load_error') }}">{{ t('ow_hooks.loading') }}</p>
+      <div class="table-wrap"><table><thead><tr>{% if admin %}<th scope="col">{{ t('ow_hooks.account') }}</th>{% endif %}<th scope="col">{{ t('ow_hooks.kind') }}</th><th scope="col">{{ t('ow_hooks.window') }}</th><th scope="col">{{ t('ow_hooks.status') }}</th><th scope="col">{{ t('ow_hooks.fetched') }}</th></tr></thead><tbody></tbody></table></div>
+    </div>
+  </details>
+  <script>
+  document.querySelectorAll("details[data-ow-jobs]").forEach(function (box) {
+    box.addEventListener("toggle", function () {
+      if (!box.open || box.dataset.loaded) return;
+      box.dataset.loaded = "1";
+      var status = box.querySelector("[data-status]");
+      fetch(box.dataset.owJobs, { headers: { Accept: "text/html" }, credentials: "same-origin" })
+        .then(function (response) {
+          if (!response.ok) throw new Error(response.status);
+          return response.text();
+        })
+        .then(function (rows) { box.querySelector("tbody").innerHTML = rows; status.hidden = true; })
+        .catch(function () { status.textContent = status.dataset.error; delete box.dataset.loaded; });
+    });
+  });
+  </script>
+  {% endif %}
+  {% else %}<p class="muted">{{ t('ow_hooks.no_jobs') }}</p>{% endif %}
+  {% if admin %}
+  <h3>{{ t('ow_hooks.receipts') }}</h3>
+  {% if ow_hooks.receipts %}
+  <div class="table-wrap"><table><thead><tr><th scope="col">{{ t('ow_hooks.event') }}</th><th scope="col">{{ t('ow_hooks.status') }}</th><th scope="col">{{ t('ow_hooks.arrived') }}</th></tr></thead><tbody>
+    {% for receipt in ow_hooks.receipts %}<tr><td>{{ receipt.event_type }}</td><td>{{ t('ow_hooks.' ~ receipt.status) }}</td><td>{{ receipt.received }}</td></tr>{% endfor %}
+  </tbody></table></div>
+  {% else %}<p class="muted">{{ t('ow_hooks.empty') }}</p>{% endif %}
+  {% endif %}
+</section>

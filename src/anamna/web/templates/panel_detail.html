@@ -1,0 +1,279 @@
+{% extends "base.html" %}
+{% from "_components.html" import range_bar, status_chip, staleness_chip, authority_badge,
+        sparkline, empty_state, trend_chip, metric_card, micro_mark,
+        panel_member_row, plural_t with context %}
+{% from "_blood_pressure.html" import blood_pressure_block with context %}
+{% block title %}{{ t('panel.title', name=panel.name) }}{% endblock %}
+{% block content %}
+<link rel="stylesheet" href="{{ asset('patient-experience.css') }}">
+<script src="{{ asset('patient-experience.js') }}"></script>
+
+<div class="an-detail-topline">
+  <a class="back-link" href="/panels">{{ t('panel.back') }}</a>
+  <a class="button secondary an-export-entry" href="{{ export_url }}">{{ t('export.open') }}</a>
+</div>
+
+{#- Device readings are measurements, not analytes: a panel that carries any
+    device member states its coverage in measurement wording, so "13 of 13
+    analytes" never labels sleep stages or steps. -#}
+{% set members_ns = namespace(has_device=false) %}
+{% for row in rows %}{% if row.is_device %}{% set members_ns.has_device = true %}{% endif %}{% endfor %}
+{% for member in panel.missing_members %}{% if member.id.startswith('device:') %}{% set members_ns.has_device = true %}{% endif %}{% endfor %}
+{% set coverage_text = t('panel.members_in_record' if members_ns.has_device else 'panel.coverage', present=panel.present_count, total=panel.member_count) %}
+{#- A relationships sentence exists only for panels whose members are computed
+    from one another; t() echoes a missing key, so the echo is the has-key
+    check and nothing renders until the catalog carries the panel's entry. -#}
+{% set rel_key = 'panel.relationships.' ~ panel.id %}
+{% set relationships = t(rel_key) %}
+{% if relationships == rel_key %}{% set relationships = none %}{% endif %}
+{#- The hero already prints panel.description; the aside repeating it verbatim
+    explained nothing, so the duplicate is withheld. -#}
+{% set aside_description = guidance.short_description if guidance and guidance.short_description and guidance.short_description != panel.description else none %}
+
+<section class="metric-detail-hero an-panel-hero">
+  <div>
+    <div class="eyebrow">{{ t('panel.eyebrow') }} · <a href="/areas/{{ panel.area_id }}">{{ panel.area_name }}</a></div>
+    <h1>{{ panel.name }}</h1>
+    {% if panel.description %}<p>{{ panel.description }}</p>{% endif %}
+    <div class="an-panel-meta">
+      {{ status_chip(panel.status, panel.status_label) }}
+      {{ staleness_chip(panel.staleness) }}
+      {% if panel.staleness.last_tested %}<span>{{ t('panel.last_tested', date=panel.staleness.last_tested|datefmt) }}</span>{% endif %}
+      <span>{{ coverage_text }}</span>
+    </div>
+    {% if panel.staleness.interval_months %}
+    <p class="an-retest-block">
+      <span>{{ t('panel.retest_cadence', months=panel.staleness.interval_months) }}</span>
+      {% if panel.staleness.rationale %}<small><b>{{ t('panel.retest_rationale') }}:</b> {{ panel.staleness.rationale }}</small>{% endif %}
+    </p>
+    {% elif panel.staleness.state == 'no_interval' %}
+    <p class="an-retest-block"><small>{{ t('stale.no_interval_body') }}</small></p>
+    {% endif %}
+  </div>
+  {% if aside_description or (guidance and guidance.why_it_matters) or relationships %}
+  <aside class="an-guidance-block">
+    {% if aside_description %}
+    <h2>{{ t('panel.what_it_measures') }}</h2>
+    <p>{{ aside_description }}</p>
+    {% endif %}
+    {% if guidance and guidance.why_it_matters %}
+    <h3>{{ t('panel.why_it_matters') }}</h3>
+    <p>{{ guidance.why_it_matters }}</p>
+    {% endif %}
+    {% if relationships %}
+    <h3>{{ t('panel.relationships_heading') }}</h3>
+    <p>{{ relationships }}</p>
+    {% endif %}
+  </aside>
+  {% endif %}
+</section>
+
+{# ============================================================ ALLERGY ==== #}
+{% if renderer == 'allergy' and allergy %}
+<section class="panel an-allergy">
+  <div class="panel-head">
+    <div><span class="eyebrow">{{ t('allergy.heading') }}</span><h2>{{ t('allergy.lead') }}</h2></div>
+  </div>
+
+  <p class="an-allergy-summary">
+    <strong>{{ t('allergy.summary', tested=allergy.tested, positive=allergy.positive) }}</strong>
+    <span>{{ t('allergy.highest', value=allergy.highest_text) }}</span>
+    {% if allergy.tested_on %}<span>{{ t('allergy.tested_on', date=allergy.tested_on) }}</span>{% endif %}
+  </p>
+
+  <div class="alert neutral an-allergy-caveat">
+    <strong>{{ t('allergy.caveat_title') }}</strong>
+    <p>{{ t('allergy.caveat_body') }}</p>
+  </div>
+
+  {% if allergy.total_ige %}
+  <section class="an-allergy-total">
+    <h3>{{ t('allergy.total_ige') }}</h3>
+    {{ metric_card(allergy.total_ige, 4) }}
+  </section>
+  {% endif %}
+
+  <section>
+    <h3>{{ t('allergy.cap_heading') }}</h3>
+    <p>{{ t('allergy.cap_lead') }}</p>
+    <ul class="an-cap-legend">
+      {% for item in allergy.classes %}
+      <li data-interpretation="{{ 'negative' if item['class'] == 0 else 'positive' }}">
+        <b>{{ item.label }}</b>
+        <span>{{ item.range_text }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+
+  {% if not allergy.positive %}
+  {{ empty_state(t('allergy.no_positives_title'), t('allergy.no_positives_body')) }}
+  {% endif %}
+
+  <section class="an-allergen-groups">
+    <h3>{{ t('allergy.positives_heading') }}</h3>
+    {% for group in allergy.groups %}
+    {% set positives = group['items']|rejectattr('interpretation', 'equalto', 'negative')|list %}
+    {% set negatives = group['items']|selectattr('interpretation', 'equalto', 'negative')|list %}
+    <details class="an-allergen-group" {% if positives %}open{% endif %}>
+      <summary>
+        <span class="an-allergen-group__name">{{ group.name }}</span>
+        <span class="an-allergen-group__count">{{ t('allergy.group_summary', tested=group.tested, positive=group.positive) }}</span>
+        <span class="an-allergen-group__count">{{ t('allergy.group_highest', value=group.highest_text) }}</span>
+      </summary>
+      <div class="an-allergen-group__items">
+        {% for item in positives %}
+        <a class="an-allergen-item" href="{{ item.url }}" data-interpretation="{{ item.interpretation }}">
+          <span>{{ item.name }}</span>
+          <b>{{ item.value_text }}</b>
+          <span>{{ t('allergy.cap_' ~ item.cap_class) }}</span>
+        </a>
+        {% endfor %}
+        {% if negatives %}
+        <details class="an-disclosure">
+          <summary>{{ t('allergy.show_negatives') }} <span>{{ negatives|length }}</span></summary>
+          <div class="an-disclosure__body an-allergen-group__items">
+            {% for item in negatives %}
+            <a class="an-allergen-item" href="{{ item.url }}" data-interpretation="{{ item.interpretation }}">
+              <span>{{ item.name }}</span>
+              <b>{{ item.value_text }}</b>
+              <span>{{ t('allergy.cap_' ~ item.cap_class) }}</span>
+            </a>
+            {% endfor %}
+          </div>
+        </details>
+        {% endif %}
+      </div>
+    </details>
+    {% endfor %}
+  </section>
+</section>
+
+{# ===================================================== BLOOD PRESSURE ==== #}
+{% elif renderer == 'blood_pressure' and blood_pressure %}
+{{ blood_pressure_block(blood_pressure) }}
+
+{# ======================================================== URINALYSIS ===== #}
+{% elif renderer == 'urinalysis' and urinalysis %}
+{% for section in urinalysis.sections %}
+<section class="panel an-urinalysis-section">
+  <div class="panel-head"><div><span class="eyebrow">{{ t('urinalysis.heading') }}</span><h2>{{ section.name }}</h2></div></div>
+  <div class="table-wrap table-wrap--stack">
+    <table>
+      <thead>
+        <tr>
+          <th scope="col">{{ t('panel.th_name') }}</th>
+          <th scope="col">{{ t('panel.th_value') }}</th>
+          <th scope="col">{{ t('urinalysis.expected') }}</th>
+          <th scope="col">{{ t('panel.th_authority') }}</th>
+          <th scope="col">{{ t('panel.th_date') }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in section.rows %}
+        <tr data-interpretation="{{ row.verdict.interpretation }}"{% if row.verdict.conflicts_with_vendor %} data-conflict="true"{% endif %}>
+          <td data-label="{{ t('panel.th_name') }}"><a href="{{ row.url }}">{{ row.name }}</a></td>
+          <td data-label="{{ t('panel.th_value') }}"><strong>{{ row.value_text }}</strong> <small>{{ row.unit|unitfmt }}</small></td>
+          <td data-label="{{ t('urinalysis.expected') }}">{{ row.verdict.range_text }} {{ status_chip(row.verdict.interpretation, row.verdict.label, row.verdict.conflicts_with_vendor) }}</td>
+          <td data-label="{{ t('panel.th_authority') }}">{{ authority_badge(row.verdict) }}</td>
+          <td data-label="{{ t('panel.th_date') }}">{{ row.date_text }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endfor %}
+
+{# ========================================================== STANDARD ===== #}
+{% else %}
+<section class="panel an-panel-members">
+  <div class="panel-head">
+    <div><span class="eyebrow">{{ t('panel.members_heading') }}</span><h2>{{ t('panel.members_lead') }}</h2></div>
+    <span>{{ coverage_text }}</span>
+  </div>
+  {% if rows %}
+  <div class="an-panel-member-rows">
+    {% for row in rows %}{{ panel_member_row(row, panel.name) }}{% endfor %}
+  </div>
+  {% else %}
+  {{ empty_state(t('panel.empty_title'), t('panel.empty_body')) }}
+  {% endif %}
+</section>
+
+{% if sparklines %}
+<section class="panel">
+  <div class="panel-head">
+    <div><span class="eyebrow">{{ t('panel.trend_heading') }}</span><h2>{{ t('panel.trend_lead') }}</h2></div>
+  </div>
+  <div class="an-trend-strip">
+    {% for row in rows %}
+    {% set spark = sparklines.get(row.id) %}
+    {% if spark and spark.path %}
+    <figure data-interpretation="{{ row.verdict.interpretation }}">
+      {{ sparkline(spark, row.name ~ ' · ' ~ row.value_text) }}
+      <figcaption>
+        <b><a href="{{ row.url }}">{{ row.name }}</a></b>
+        <span>{{ row.value_text }} {{ row.unit|unitfmt }}</span>
+      </figcaption>
+    </figure>
+    {% endif %}
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+{% endif %}
+
+{% if panel.missing_members %}
+<section class="panel an-panel-missing">
+  <div class="panel-head">
+    <div><span class="eyebrow">{{ t('panel.missing_heading') }}</span><h2>{{ t('panel.missing_lead') }}</h2></div>
+    <span>{{ t('panel.missing_count', count=panel.missing_members|length) }}</span>
+  </div>
+  <ul class="an-missing-list">
+    {% for member in panel.missing_members %}<li>{{ member.name }}</li>{% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+{#- The documents behind the values and the guidelines cited for them are
+    reference, not the result: each folds to one line (they were 4,000px of a
+    phone page below the values themselves). -#}
+<details class="panel an-page-disclosure an-panel-sources">
+  <summary><span><strong>{{ t('panel.sources_lead') }}</strong><small>{{ t('panel.sources_heading') }}</small></span></summary>
+  <div class="an-page-disclosure__body">
+  <div class="area-document-list">
+    {% for document in documents %}
+    <a href="/documents/{{ document.id }}">
+      <div><time>{{ document.report_date|datefmt }}</time><span>{{ document.clinical_type|enumfmt }}</span></div>
+      <strong>{{ document.title_text }}</strong>
+      <small>{{ document.vendor|phrase }} · {{ plural_t('area.pages', document.page_count) }}</small>
+    </a>
+    {% else %}
+    {{ empty_state(t('panel.sources_heading'), t('panel.sources_empty')) }}
+    {% endfor %}
+  </div>
+  </div>
+</details>
+
+<details class="panel an-page-disclosure an-panel-guidance">
+  <summary><span><strong>{{ t('panel.guidance_lead') }}</strong><small>{{ t('panel.guidance_heading') }}</small></span></summary>
+  <div class="an-page-disclosure__body">
+  {% if sources %}
+  <ul class="an-source-list">
+    {% for source in sources %}
+    <li>
+      <strong>{{ source.name|phrase }}</strong>
+      <span>{{ t('authority.source', publisher=source.publisher|phrase) }}</span>
+      {% if source.reviewed_at %}<small>{{ t('panel.guidance_reviewed', date=source.reviewed_at|datefmt) }}</small>{% endif %}
+      {% if source.url %}<a href="{{ source.url }}" target="_blank" rel="noreferrer">{{ t('authority.open_source') }}<span class="visually-hidden">: {{ source.publisher|phrase }}</span></a>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p>{{ t('panel.guidance_empty') }}</p>
+  {% endif %}
+  <p class="an-authority-explainer">{{ t('authority.explainer') }}</p>
+  </div>
+</details>
+{% endblock %}

@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block title %}{{ t('metrics.title') }}{% endblock %}
+{% block content %}
+
+{#- Search first, then one row of status filters: it wraps on a wide
+    screen and scrolls sideways on a phone, with a fade that says there is
+    more. Body systems are the sections below, not a second chip row. No
+    autofocus: it skipped the skip link and opened the phone keyboard. -#}
+<section class="metric-search-hero" data-live-region>
+  <h1>{{ t('metrics.heading') }}</h1>
+  <form class="live-search" id="metric-search-form" action="/metrics" method="get" role="search">
+    <label for="metric-search">{{ t('metrics.search_span') }}</label>
+    <input id="metric-search" type="search" name="q" value="{{ q }}" placeholder="{{ t('metrics.placeholder') }}" autocomplete="off" enterkeyhint="search">
+    <kbd aria-hidden="true" title="{{ t('metrics.shortcut_hint') }}">/</kbd>
+  </form>
+  {% if statuses %}
+  <div class="metric-chip-scroller" data-chip-scroller>
+    <nav class="metric-chip-row" aria-label="{{ t('metrics.status_aria') }}">
+      <a href="/metrics"{% if not view.status and not view.area and not view.q %} aria-current="page"{% endif %} data-chip="all">{{ t('metrics.status_all') }}</a>
+      {% for chip in statuses %}<a href="/metrics?status={{ chip.key }}" data-chip="status:{{ chip.key }}" data-tone="{{ chip.tone }}"{% if view.status == chip.key %} aria-current="page"{% endif %}>{{ chip.label }} <span>{{ chip.count|countfmt }}</span></a>{% endfor %}
+    </nav>
+  </div>
+  {% endif %}
+</section>
+
+<section class="search-results-section" data-live-region aria-busy="false" aria-labelledby="result-title">
+  <p id="search-status" class="visually-hidden" role="status" aria-live="polite"></p>
+  <span id="search-pending" class="an-search-pending" hidden>{{ t('metrics.searching') }}</span>
+  <div id="search-results">{% include "_search_results.html" %}</div>
+</section>
+
+<script>
+(() => {
+  const form = document.querySelector('#metric-search-form');
+  const input = document.querySelector('#metric-search');
+  const section = document.querySelector('.search-results-section');
+  const results = document.querySelector('#search-results');
+  const announce = document.querySelector('#search-status');
+  const pending = document.querySelector('#search-pending');
+  const i18n = globalThis.__HL_I18N__ || {};
+  let controller;
+
+  // Chips are links (they work without script); with script they update the
+  // result region in place. aria-current follows whatever is shown.
+  const markChips = (params) => {
+    let active = 'all';
+    if (params.get('q')) active = '';
+    else if (params.get('status')) active = `status:${params.get('status')}`;
+    else if (params.get('area')) active = `area:${params.get('area')}`;
+    document.querySelectorAll('[data-chip]').forEach((chip) => {
+      if (chip.dataset.chip === active) chip.setAttribute('aria-current', 'page');
+      else chip.removeAttribute('aria-current');
+    });
+  };
+
+  const load = async (params, push) => {
+    controller?.abort();
+    controller = new AbortController();
+    const query = params.toString();
+    history[push ? 'pushState' : 'replaceState'](null, '', query ? `/metrics?${query}` : '/metrics');
+    markChips(params);
+    section.setAttribute('aria-busy', 'true');
+    section.classList.add('is-pending');
+    pending.hidden = false;
+    try {
+      const response = await fetch(`/api/metrics/search?${query}`, {signal: controller.signal});
+      if (!response.ok) throw new Error(i18n['metrics.search_failed']);
+      const payload = await response.json();
+      results.innerHTML = payload.html;
+      announce.textContent = `${payload.title}: ${payload.count_text}`;
+    } catch (error) {
+      if (error.name !== 'AbortError') announce.textContent = i18n['metrics.search_unavailable'];
+    } finally {
+      if (!controller.signal.aborted) {
+        section.setAttribute('aria-busy', 'false');
+        section.classList.remove('is-pending');
+        pending.hidden = true;
+      }
+    }
+  };
+
+  const fromInput = () => {
+    const params = new URLSearchParams();
+    if (input.value.trim()) params.set('q', input.value.trim());
+    return params;
+  };
+  input.addEventListener('input', () => load(fromInput(), false));
+  form.addEventListener('submit', (event) => { event.preventDefault(); load(fromInput(), false); });
+  document.addEventListener('click', (event) => {
+    const link = event.target.closest('a[href]');
+    if (!link || !link.closest('[data-live-region]') || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    // "Show all N" opens the rest of its section where it stands.
+    if (link.dataset.expand !== undefined) {
+      event.preventDefault();
+      const section = link.closest('.an-area-section');
+      section.dataset.expanded = 'true';
+      link.remove();
+      section.querySelector('.an-result-row:nth-child(6)')?.focus();
+      return;
+    }
+    const url = new URL(link.href, location.href);
+    if (url.origin !== location.origin || url.pathname !== '/metrics') return;
+    event.preventDefault();
+    input.value = url.searchParams.get('q') || '';
+    load(url.searchParams, true);
+    if (!url.searchParams.get('offset')) return;
+    section.scrollIntoView({block: 'start'});
+  });
+  globalThis.addEventListener('popstate', () => {
+    const params = new URLSearchParams(location.search);
+    input.value = params.get('q') || '';
+    load(params, false);
+  });
+  // The chip row scrolls sideways on a phone; the fade on either edge shows
+  // only while there is more to scroll to in that direction.
+  document.querySelectorAll('[data-chip-scroller]').forEach((scroller) => {
+    const row = scroller.querySelector('.metric-chip-row');
+    const update = () => {
+      scroller.dataset.more = [
+        row.scrollLeft > 4 ? 'start' : '',
+        row.scrollLeft + row.clientWidth < row.scrollWidth - 4 ? 'end' : '',
+      ].join(' ').trim();
+    };
+    row.addEventListener('scroll', update, {passive: true});
+    globalThis.addEventListener('resize', update);
+    update();
+  });
+  // "/" jumps to the box - only where there is a keyboard to press it on.
+  if (globalThis.matchMedia('(hover: hover) and (pointer: fine)').matches) {
+    document.addEventListener('keydown', (event) => {
+      if (event.key !== '/' || event.target.closest('input, textarea, select, [contenteditable]')) return;
+      event.preventDefault();
+      input.focus();
+    });
+  }
+})();
+</script>
+{% endblock %}

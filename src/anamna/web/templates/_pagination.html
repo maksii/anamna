@@ -1,0 +1,4 @@
+{#- The pagination control on its own, so live search can replace it without
+    re-rendering the page around it.  Same macro the page load calls. -#}
+{% from "_components.html" import pagination_nav with context %}
+{{ pagination_nav(page) }}

@@ -1,0 +1,12 @@
+# Only what the image needs is sent to the builder; everything else - and
+# especially private health data - stays out of the build context.
+*
+!pyproject.toml
+!uv.lock
+!README.md
+!migrations
+!src
+!data/reference_library.json
+src/**/__pycache__
+src/**/*.pyc
+src/**/*.pyo

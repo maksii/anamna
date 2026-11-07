@@ -1,0 +1,104 @@
+{# Presentation components use only selected catalog values, never classify them. #}
+{% macro source_label(vendor, name='') -%}
+{%- set vendor = vendor|default('', true)|trim -%}
+{%- set name = name|default('', true)|trim -%}
+{%- if name and (not vendor or name.lower().startswith(vendor.lower())) -%}{{ name }}
+{%- else -%}{{ vendor|phrase }}{% if name %} · {{ name }}{% endif %}
+{%- endif -%}
+{%- endmacro %}
+
+{% macro area_icon(kind) -%}
+<svg class="px-area-icon" viewBox="0 0 40 40" fill="none" aria-hidden="true">
+{% if kind == 'blood' %}<path d="M20 5C16 12 9 18 9 25a11 11 0 0 0 22 0C31 18 24 12 20 5Z"/><path d="M14 25a6 6 0 0 0 6 6"/>
+{% elif kind == 'heart' %}<path d="M20 33 7 21C-2 11 12 1 20 13 28 1 42 11 33 21Z"/><path d="M5 22h9l3-7 5 13 3-6h10"/>
+{% elif kind == 'activity' %}<path d="m7 28 8-9 7 5 10-15M25 9h7v7"/><path d="M7 34h26"/>
+{% elif kind == 'sleep' %}<path d="M29 28A15 15 0 0 1 13 5 15 15 0 1 0 35 23c-2 3-4 4-6 5Z"/><path d="M28 5v8m-4-4h8"/>
+{% else %}<circle cx="20" cy="20" r="14"/><path d="M20 12v16m-8-8h16"/>{% endif %}
+</svg>
+{%- endmacro %}
+
+{% macro area_nav(selected='') -%}
+<nav class="px-area-nav" aria-label="{{ t('experience.area_navigation') }}">
+{% for id, label in [('blood','Blood'),('heart','Heart'),('activity','Activity'),('sleep','Sleep')] %}
+<a href="/areas/{{ id }}" data-area="{{ id }}"{% if selected == id %} aria-current="page"{% endif %}>{{ area_icon(id) }}<span>{{ label|phrase }}</span></a>
+{% endfor %}
+</nav>
+{%- endmacro %}
+
+{% macro small_reading(card) -%}
+<a class="px-small-reading" href="{{ card.url }}">
+  <span>{{ card.name }}</span>
+  <strong>{{ card.value_text }} <small>{{ card.unit|unitfmt }}</small></strong>
+  <span class="px-reading-state">{{ card.status_label }}{% if card.verdict and card.verdict.conflicts_with_vendor %} · {{ t('verdict.conflict') }}{% endif %}</span>
+  {% if card.verdict and card.verdict.authority in ['curated', 'vendor'] %}<small>{{ t('authority.' ~ card.verdict.authority) }}</small>{% endif %}
+  <time datetime="{{ card.latest_date }}">{{ card.latest_date|datefmt }}</time>
+  {% if card.verification_label %}<small>{{ card.verification_label }}</small>{% endif %}
+  {% if card.vendor or card.source_name %}<small>{{ source_label(card.vendor, card.source_name) }}</small>{% endif %}
+  {% if card.experience_spark %}<svg class="px-spark" viewBox="0 0 220 42" role="img" aria-label="{{ t('experience.overview_trend') }}"><polyline points="{{ card.experience_spark }}"/></svg>{% endif %}
+</a>
+{%- endmacro %}
+
+{% macro overview(experience) -%}
+{% if experience %}
+{#- Home only. The navigation already says where you are, so neither section
+    opens with a visible title: the h2s stay for screen readers. Each card's
+    way in sits at its top right; every reading carries its own date, and the
+    area's latest date is on its row in the directory below. -#}
+<section class="px-overview" aria-labelledby="px-overview-heading">
+  <h2 id="px-overview-heading" class="visually-hidden">{{ t('experience.overview') }}</h2>
+  <div class="px-focus-grid">
+    {% for area in experience.focus %}
+    <article class="px-focus-card" data-area="{{ area.id }}">
+      <header><span class="px-icon-tile">{{ area_icon(area.id) }}</span><div><h3><a href="/areas/{{ area.id }}">{{ area.name }}</a></h3><p>{{ area.description }}</p></div><a class="px-focus-open" href="/areas/{{ area.id }}">{{ t('experience.open_short') }}<span class="visually-hidden"> {{ area.name }}</span> <span class="an-chevron" data-dir="right" aria-hidden="true"></span></a></header>
+      {% if area.featured_metrics %}<div class="px-readings">{% for card in area.featured_metrics %}{{ small_reading(card) }}{% endfor %}</div>
+      {% else %}<div class="px-card-empty"><strong>{{ t('experience.no_reading') }}</strong><p>{{ t('experience.no_reading_body') }}</p></div>{% endif %}
+    </article>
+    {% endfor %}
+  </div>
+</section>
+<section class="px-directory" aria-labelledby="px-directory-heading">
+  <h2 id="px-directory-heading" class="visually-hidden">{{ t('experience.directory') }}</h2>
+  <nav class="px-directory-grid" aria-label="{{ t('experience.directory') }}">
+  {% for area in experience.areas %}<a href="/areas/{{ area.id }}"><span><strong>{{ area.name }}</strong><small>{% if area.latest_date %}{{ area.latest_date|datefmt }}{% else %}{{ t('experience.no_reading') }}{% endif %}</small></span><span class="px-directory-count">{% if area.metric_count %}{{ t_plural('experience.directory_metrics', area.metric_count) }}{% elif area.finding_document_count %}{{ t_plural('experience.directory_documents', area.finding_document_count) }}{% endif %} <span class="an-chevron" data-dir="right" aria-hidden="true"></span></span></a>{% endfor %}
+  </nav>
+</section>
+{% endif %}
+{%- endmacro %}
+
+{% macro period_stats(device=false) -%}
+<div class="px-period-summary" data-period-summary aria-live="polite" aria-atomic="true">
+  <span class="px-period-title">{{ t('experience.period_summary') }}<small data-period-dates></small></span>
+  <dl><div><dt>{{ t('experience.recorded_days' if device else 'experience.recorded_values') }}</dt><dd data-stat="count">-</dd></div>{% if device %}<div><dt>{{ t('experience.average') }}</dt><dd data-stat="mean">-</dd></div>{% endif %}<div><dt>{{ t('experience.daily_range') if device else t('device.range') }}</dt><dd data-stat="range">-</dd></div></dl>
+</div>
+{%- endmacro %}
+
+{#- "What this measures" and "how often to test", folded into a metric page's
+    hero. Both come from the reference library's guidance entry
+    (short_description / why_it_matters / retest_interval_months and its
+    rationale); nothing here is invented when the entry is silent. -#}
+{% macro metric_about(guidance, staleness) -%}
+{%- from "_components.html" import staleness_chip -%}
+{% set has_about = guidance and (guidance.short_description or guidance.why_it_matters) %}
+{% set has_cadence = staleness and staleness.label %}
+{% if has_about or has_cadence %}
+<details class="an-verdict-details an-metric-about">
+  <summary>{{ t('metric.about_summary') if has_about and has_cadence else t('metric.what_it_measures') if has_about else t('stale.how_often') }}</summary>
+  <div class="an-verdict-details__body">
+    {% if has_about and guidance.short_description %}<p>{{ guidance.short_description }}</p>{% endif %}
+    {% if has_about and guidance.why_it_matters %}<h3>{{ t('panel.why_it_matters') }}</h3><p>{{ guidance.why_it_matters }}</p>{% endif %}
+    {% if has_cadence %}
+    <h3>{{ t('stale.how_often') }}</h3>
+    {% if staleness.state == 'no_interval' %}
+    <p>{{ t('stale.no_interval_heading') }}</p>
+    <p><small>{{ staleness.condition_note or t('stale.no_interval_body') }}</small></p>
+    {% else %}
+    <p>{{ staleness_chip(staleness) }}</p>
+    {% endif %}
+    {% if staleness.interval_months %}<p>{{ t('stale.interval', months=staleness.interval_months) }}{% if staleness.due_on %} · {{ t('stale.due_on', date=staleness.due_on|datefmt) }}{% endif %}</p>{% endif %}
+    {% if staleness.last_tested %}<p>{{ t('stale.tested_on', date=staleness.last_tested|datefmt) }}</p>{% endif %}
+    {% if staleness.rationale %}<p><small>{{ staleness.rationale }}</small></p>{% endif %}
+    {% endif %}
+  </div>
+</details>
+{% endif %}
+{%- endmacro %}

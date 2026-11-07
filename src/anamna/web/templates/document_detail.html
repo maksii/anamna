@@ -1,0 +1,710 @@
+{% extends "base.html" %}
+{% from "_source_viewer.html" import source_viewer %}
+{% from "_components.html" import observation_row, immunization_row, dose_fields, vaccine_datalist, add_observation_form, empty_state, plural_t, classify_form, report_issue_modal, issue_report_list, status_chip with context %}
+{% from "_blood_pressure.html" import bp_document_readings with context %}
+{% block title %}{{ document.title_text }} · {{ t('brand.name') }}{% endblock %}
+{% block content %}
+{% set source_url = "/documents/" ~ document.id ~ "/source" %}
+{% set display_title = document.title_text %}
+<a class="back-link" href="/documents">{{ t('doc.back') }}</a>
+<section class="detail-head">
+  <div>
+    <div class="eyebrow">{{ document.type_label }} · {{ document.vendor|phrase }}</div>
+    <h1>{{ display_title }}</h1>
+    {#- Labelled for what it is: a heading printed on the report, or the name
+        the reader gave it. A filename is neither. -#}
+    {% if document.source_title_key %}<p class="source-title"><span>{{ t(document.source_title_key) }}</span> {{ document.title }}</p>{% endif %}
+    <p>{{ document.original_filename }} · {{ plural_t('area.pages', document.page_count) }} · {{ document.extraction_strategy|enumfmt }}</p>
+    {% if observations %}<p><a class="an-change-doc-link" href="/changes?document={{ document.id }}">{{ t('changes.document_link') }}</a></p>{% endif %}
+  </div>
+  <div class="detail-date"><span>{{ t('doc.report_date') }}</span><strong>{{ document.report_date|datefmt }}</strong><small>{{ t('doc.imported', date=document.imported_at[:10]|datefmt) }}</small></div>
+</section>
+
+{% include "_document_relations.html" %}
+{% if document.notes %}<div class="alert neutral">{{ document.notes|phrase }}</div>{% endif %}
+{% if review_task %}
+<section class="panel an-document-review" id="review-status">
+  <div>
+    <span class="eyebrow">{{ t('documents.review_state') }}</span>
+    <h2>{{ t('documents.review_' ~ review_task.state) }}</h2>
+    <p data-review-line>{{ review_task.line_text }}</p>
+  </div>
+  {% if not viewing %}
+  <form class="review-actions" method="post" action="/documents/{{ document.id }}/review">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="next" value="/documents/{{ document.id }}#review-status">
+    {% if review_task.state == 'open' %}
+    <button class="secondary" name="action" value="needs_correction" type="submit">{{ t('review.needs_correction') }}</button>
+    <button class="primary" name="action" value="verify" type="submit">{{ t('review.checked') }}</button>
+    {% else %}
+    <button class="secondary" name="action" value="reopen" type="submit">{{ t('review.reopen') }}</button>
+    {% endif %}
+  </form>
+  {% endif %}
+</section>
+{% endif %}
+{% include "_reread_proposals.html" %}
+<div class="review-bench">
+  <div class="review-bench-main panel">
+    {% if reports|length > 1 %}
+    <div class="section-strip" aria-label="{{ t('doc.sections') }}">
+      {% for report in reports %}
+      <button type="button" class="section-chip{{ ' is-active' if loop.first else '' }}" data-start-page="{{ report.start_page }}">
+        <span>{{ t('doc.pages_range', start=report.start_page, end=report.end_page) }}</span>
+        <strong>{{ report.title|phrase }}</strong>
+      </button>
+      {% endfor %}
+    </div>
+    {% endif %}
+    {% set record = lab_record(document.id) if document.extraction_strategy == 'lab_api' and lab_record is defined else none %}
+    {% if record %}{% include "_labsync_record.html" %}
+    {% else %}
+    {% call source_viewer(src=source_url, mime=document.mime_type, pages=document.page_count, title=document.original_filename, viewer_id='document-viewer', page_src='/documents/' ~ document.id ~ '/pages/{page}/image') %}{% endcall %}
+    {% endif %}
+  </div>
+
+  <aside class="review-bench-side" data-document-id="{{ document.id }}" data-row-error="{{ t('doc.row_error') }}">
+    {#- `role="tab"` is a promise: it tells assistive technology that arrow keys
+        move between the tabs and that each one controls a named panel. Neither
+        was true here, so the roles announced a widget that did not exist. These
+        are three buttons that show and hide three sections, and saying exactly
+        that is both honest and what already works. -#}
+    {#- A narrative report (ultrasound, MRI, pathology, a consultation) opens
+        on what it concluded. It used to open on "Observations · 0 total", with
+        the conclusion reachable only as raw page text two tabs away. -#}
+    {% set first_tab = 'conclusion' if narrative else 'observations' %}
+    <div class="side-tabs" aria-label="{{ t('doc.side_panels') }}">
+      {% if narrative or findings %}
+      <button type="button" class="side-tab{{ ' is-active' if first_tab == 'conclusion' else '' }}" aria-expanded="{{ 'true' if first_tab == 'conclusion' else 'false' }}" aria-controls="side-panel-conclusion" data-side-tab="conclusion">{{ t('doc.tab_conclusion') }}</button>
+      {% endif %}
+      <button type="button" class="side-tab{{ ' is-active' if first_tab == 'observations' else '' }}" aria-expanded="{{ 'true' if first_tab == 'observations' else 'false' }}" aria-controls="side-panel-observations" data-side-tab="observations">{{ t('doc.tab_observations') }}{% if narrative %} ({{ observations|length|countfmt }}){% endif %}</button>
+      <button type="button" class="side-tab" aria-expanded="false" aria-controls="side-panel-text" data-side-tab="text">{{ t('doc.tab_text') }}</button>
+      <button type="button" class="side-tab" aria-expanded="false" aria-controls="side-panel-details" data-side-tab="details">{{ t('doc.tab_details') }}</button>
+      {% if ai_assist or ai_hints %}
+      <button type="button" class="side-tab" aria-expanded="false" aria-controls="side-panel-ai" data-side-tab="ai">{{ t('aiassist.tab') }}</button>
+      {% endif %}
+    </div>
+
+    {% if narrative or findings %}
+    <section class="panel side-panel{{ ' is-active' if first_tab == 'conclusion' else '' }}" id="side-panel-conclusion" data-side-panel="conclusion"{% if first_tab != 'conclusion' %} hidden{% endif %}>
+      <div class="panel-head"><div><span class="eyebrow">{{ document.type_label }}</span><h2>{{ t('doc.conclusion_heading') }}</h2></div></div>
+      {% if findings %}
+      <ol class="an-doc-findings">
+        {% for finding in findings %}
+        <li class="an-doc-finding" data-status="{{ finding.status }}">
+          <div class="an-doc-finding__head">
+            <span class="metric-state {{ finding.status }}">{{ finding.status|statusfmt }}</span>
+            <a class="obs-page" href="#document-viewer" data-page="{{ finding.page_number }}" title="{{ t('doc.show_page', page=finding.page_number) }}">{{ t('doc.page_n', n=finding.page_number) }}</a>
+          </div>
+          {% if finding.as_printed_key %}<p class="an-field-help">{{ t(finding.as_printed_key) }}</p>{% endif %}
+          {% if finding.lead_text %}
+          <details class="an-doc-finding__long">
+            <summary><span class="an-doc-finding__text">{{ finding.lead_text }}</span> <b>{{ t('doc.finding_more') }}</b></summary>
+            <p class="an-doc-finding__text">{{ finding.text }}</p>
+          </details>
+          {% else %}
+          <p class="an-doc-finding__text">{{ finding.text }}</p>
+          {% endif %}
+          {% if finding.areas %}<p class="an-doc-finding__areas"><b>{{ t('doc.finding_areas') }}:</b> {{ finding.areas|join(', ') }}</p>{% endif %}
+          {% if finding.show_original %}
+          <details class="an-doc-finding__original"><summary>{{ t('area.source_wording') }}</summary><blockquote>{{ finding.original_text }}</blockquote></details>
+          {% endif %}
+        </li>
+        {% endfor %}
+      </ol>
+      {% else %}
+      {{ empty_state(t('doc.conclusion_heading'), t('doc.conclusion_none'), 3) }}
+      <p><button type="button" class="secondary" data-show-tab="text">{{ t('doc.conclusion_read_text') }}</button></p>
+      {% endif %}
+      {#- Measurements the report printed, if any were read: an echo's mass
+          index or a duct diameter belongs beside the conclusion it supports. -#}
+      {% if observations %}
+      <h3>{{ t('doc.key_measurements') }}</h3>
+      <ul class="an-doc-measurements">
+        {% for item in observations if item.verification_status != 'rejected' %}
+        <li>
+          <a href="/metrics/{{ item.concept_id }}">{{ item.name }}</a>
+          <span class="an-doc-measurements__value">{{ item.display_value }}{% if item.unit_text %} {{ item.unit_text|unitfmt }}{% endif %}</span>
+          {% if item.verdict %}{{ status_chip(item.verdict.interpretation, item.verdict.label, item.verdict.conflicts_with_vendor) }}{% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </section>
+    {% endif %}
+
+    <section class="panel side-panel{{ ' is-active' if first_tab == 'observations' else '' }}" id="side-panel-observations" data-side-panel="observations"{% if first_tab != 'observations' %} hidden{% endif %}>
+      <div class="panel-head"><div><span class="eyebrow">{{ t('doc.normalized') }}</span><h2>{{ t('doc.extracted') }}</h2></div><span>{{ t('doc.total', count=observations|length) }}</span></div>
+      {% if not viewing %}
+      {#- The document-level entry point: a value that is missing has no row
+          to carry a button, so the report has to be reachable from the
+          document itself. -#}
+      <button type="button" class="secondary obs-report" data-report-issue title="{{ t('report.button_hint') }}">{{ t('report.button') }}</button>
+      {{ add_observation_form(document.id, csrf_token, document.page_count, return_url, 'an-concept-list') }}
+      {% endif %}
+      {#- A vaccination card yields no observations at all - a dose is an event,
+          not a measurement, and it lives in its own table. It is reviewed here,
+          against the page image beside it, exactly as an observation is. -#}
+      {% if immunizations %}
+      <div class="an-doc-immunizations">
+        <h3>{{ plural_t('doc.immunizations_read', immunizations|length) }}</h3>
+        <div class="obs-list an-obs-list">
+          {% for dose in immunizations %}
+          {{ immunization_row(dose, none if viewing else csrf_token, return_url, today, 'document-viewer') }}
+          {% endfor %}
+        </div>
+        <p><a href="/vaccinations">{{ t('doc.immunizations_all') }}</a></p>
+      </div>
+      {% endif %}
+      {% if given_here %}
+      <div class="an-doc-immunizations">
+        <h3>{{ plural_t('doc.vaccines_given_here', given_here|length) }}</h3>
+        <ul>
+          {% for dose in given_here %}
+          <li>{{ dose.date_text }} · {{ dose.name }}{% if dose.lot %} · {{ t('vax.th_lot') }} <span class="an-vax-lot">{{ dose.lot }}</span>{% endif %}</li>
+          {% endfor %}
+        </ul>
+        <p><a href="/vaccinations">{{ t('doc.immunizations_all') }}</a></p>
+      </div>
+      {% endif %}
+      {% if bp_readings %}{{ bp_document_readings(bp_readings, document.id) }}{% endif %}
+      {#- An allergy panel: what is worth reading first, every negative folded
+          into one line that says how many and what they were measured against. -#}
+      {% if negative_allergens %}
+      <details class="an-allergy-negatives" data-lazy-rows="{{ negative_allergens|map(attribute='id')|join(',') }}">
+        <summary>{{ t_plural('doc.allergy_negatives', negative_allergens|length) }}</summary>
+        <div class="an-scroll-x">
+          <table class="an-allergy-negatives__table">
+            <thead><tr><th scope="col">{{ t('doc.allergen') }}</th><th scope="col">{{ t('doc.allergen_printed') }}</th><th scope="col">{{ t('doc.allergen_value') }}</th></tr></thead>
+            <tbody>
+              {% for item in negative_allergens %}
+              <tr><td><a href="/metrics/{{ item.concept_id }}">{{ item.name }}</a></td><td>{{ item.raw_name }}</td><td>{{ item.display_value }} {{ item.unit_text|unitfmt }}</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% if not viewing %}<p><button type="button" class="secondary" data-load-rows>{{ t('doc.allergy_review_rows') }}</button></p>{% endif %}
+        <div class="obs-list an-obs-list" data-rows-target></div>
+      </details>
+      {% endif %}
+      <div class="obs-list an-obs-list">
+        {#- The lab's own structured data, where a lab connection supplies it:
+            a per-row "matches" mark next to the value being certified. -#}
+        {% set lab_classes = lab_observation_classes(user, document.id) if (lab_observation_classes is defined and not viewing and not guest) else {} %}
+        {% for item in listed_observations %}
+        {{ observation_row(item, none if viewing else csrf_token, return_url, 'an-concept-list', '', lab_classes.get(item.id, '')) }}
+        {% else %}
+        {% if not immunizations and not bp_readings and not negative_allergens %}{{ empty_state(t('doc.extracted'), t('doc.no_obs'), 3) }}{% endif %}
+        {% endfor %}
+      </div>
+      {{ issue_report_list(issue_reports, none if viewing else csrf_token, return_url) }}
+      {#- 646 names, needed only once somebody opens a correction: shipped as
+          one JSON text node and turned into options on first use, instead of
+          646 elements on every document page. -#}
+      <datalist id="an-concept-list"></datalist>
+      <script type="application/json" id="an-concept-names">{{ concepts|tojson }}</script>
+      {% if immunizations and not viewing %}{{ vaccine_datalist(vaccine_options) }}{% endif %}
+    </section>
+
+    <section class="panel side-panel evidence-panel" id="side-panel-text" data-side-panel="text" hidden>
+      <div class="panel-head"><div><span class="eyebrow">{{ t('doc.page_audit') }}</span><h2>{{ t('doc.extracted_text') }}</h2></div></div>
+      {% for page in pages %}
+      <details id="page-{{ page.page_number }}" data-text-page="{{ page.page_number }}">
+        <summary>{{ t('doc.page_n', n=page.page_number) }} · <span>{{ page.extraction_method|enumfmt }} · {{ t('doc.native_chars', count=page.native_char_count) }} · {{ page.review_status|enumfmt }}</span></summary>
+        {% if page.native_text %}<h3>{{ t('doc.native_pdf') }}</h3><pre>{{ page.native_text }}</pre>{% endif %}
+        {% if page.ocr_text %}<h3>{{ t('doc.ocr_title') }}</h3><pre>{{ page.ocr_text }}</pre>{% endif %}
+        {% if not page.native_text and not page.ocr_text %}<pre>{{ t('doc.no_text') }}</pre>{% endif %}
+      </details>
+      {% endfor %}
+    </section>
+
+    <section class="panel side-panel" id="side-panel-details" data-side-panel="details" hidden>
+      <div class="panel-head"><div><span class="eyebrow">{{ t('devices.provenance') }}</span><h2>{{ t('doc.details_heading') }}</h2></div></div>
+      <dl class="facts">
+        <div><dt>{{ t('doc.pages_label') }}</dt><dd>{{ document.page_count|countfmt }}</dd></div>
+        <div><dt>{{ t('doc.strategy') }}</dt><dd>{{ document.extraction_strategy|enumfmt }}</dd></div>
+        <div><dt>{{ t('doc.mime') }}</dt><dd>{{ document.mime_type }}</dd></div>
+        <div><dt>{{ t('doc.sha256') }}</dt><dd class="hash">{{ document.sha256[:16] }}...</dd></div>
+        {% if paperless_link or paperless_pending %}
+        <div><dt>{{ t('paperless.doc_label') }}</dt>
+          <dd>{% if paperless_link %}<a href="{{ paperless_link }}" target="_blank" rel="noopener">{{ t('paperless.doc_open') }}</a>{% else %}{{ t('paperless.doc_pending') }}{% endif %}</dd></div>
+        {% endif %}
+      </dl>
+      {% if not viewing %}
+      <h3>{{ t('doc.edit_metadata') }}</h3>
+      <form action="/documents/{{ document.id }}/metadata" method="post" class="an-classify-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label>{{ t('doc.title') }}<input name="title" maxlength="240" value="{{ document.title }}" required></label>
+        <label>{{ t('doc.report_date') }}<input name="report_date" type="date" value="{{ document.report_date or '' }}"></label>
+        <button class="secondary" type="submit">{{ t('doc.save_metadata') }}</button>
+      </form>
+      {#- Everything the parser does follows from the kind of report, so a
+          wrong kind is not a cosmetic mislabel: it is a file whose results
+          cannot be read at all, and which re-reading cannot rescue. -#}
+      <span class="eyebrow">{{ t('doc.details_heading') }}</span>
+      {{ classify_form(document, document_kinds, known_vendors, csrf_token, '/documents/' ~ document.id) }}
+
+      <span class="eyebrow">{{ t('doc.maintenance') }}</span>
+      {#- Nothing was read from a lab record's file, so there is nothing to
+          read again: the lab's next sync is what refreshes these values. -#}
+      {% if document.extraction_strategy != 'lab_api' %}
+      <h3>{{ t('rescan.short') }}</h3>
+      {% if document.is_stale %}<p class="an-rescan__stale" role="status"><span class="pill" title="{{ t('rescan.stale_hint') }}">{{ t('rescan.stale_badge') }}</span></p>{% endif %}
+      {% if rescan_queued %}<p class="an-rescan__queued" role="status">{{ t('rescan.queued') }} <a href="/upload#processing">{{ t('rescan.watch') }}</a></p>{% endif %}
+      <form action="/documents/{{ document.id }}/rescan" method="post" class="inline-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="next" value="/documents/{{ document.id }}">
+        <button class="secondary" type="submit">{{ t('rescan.action') }}</button>
+      </form>
+      {% endif %}
+
+      <div class="an-document-delete">
+        <h3>{{ t('doc.delete_heading') }}</h3>
+        <p>{{ t('doc.delete_hint') }}</p>
+        <form action="/documents/{{ document.id }}/delete" method="post"
+              onsubmit="return confirm(this.dataset.confirm)"
+              data-confirm="{{ t('doc.delete_confirm', name=display_title) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="next" value="/documents">
+          <button class="secondary danger-action" type="submit">{{ t('doc.delete_action') }}</button>
+        </form>
+      </div>
+      {% endif %}
+
+      <span class="eyebrow">{{ t('doc.organization') }}</span>
+      <h3>{{ t('doc.tags') }}</h3>
+      <div class="tag-row">{% for tag in tags %}<span class="tag">{{ tag.name }}</span>{% else %}<span class="muted">{{ t('doc.no_tags') }}</span>{% endfor %}</div>
+      <form action="/documents/{{ document.id }}/tags" method="post" class="inline-form" {{ 'hidden' if viewing else '' }}>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input name="name" maxlength="40" placeholder="{{ t('doc.add_tag') }}" aria-label="{{ t('doc.add_tag') }}">
+        <button class="secondary" type="submit">{{ t('doc.add') }}</button>
+      </form>
+    </section>
+
+    {% if ai_assist or ai_hints %}
+    <section class="panel side-panel" id="side-panel-ai" data-side-panel="ai" hidden>
+      <div class="panel-head"><div><span class="eyebrow">{{ t('aiassist.eyebrow') }}</span><h2>{{ t('aiassist.heading') }}</h2></div></div>
+      {% if ai_error %}<div class="alert error" role="alert">{{ t('aiassist.error_' + ai_error) }}</div>{% endif %}
+      {% if ai_hints %}
+        <div class="ai-round-bar">
+          <div>
+            <span class="eyebrow">{{ t('aiassist.latest') if ai_hints_meta.id == ai_hint_rounds[0].id else t('aiassist.previous') }}</span>
+            <p>{{ t('aiassist.generated_with', model=ai_hints_meta.model, date=ai_hints_meta.created_text) }}</p>
+          </div>
+          <div class="ai-round-bar__actions">
+            {% if ai_hints_meta.id != ai_hint_rounds[0].id %}<a class="button secondary" href="/documents/{{ document.id }}#side-panel-ai">{{ t('aiassist.latest') }}</a>{% endif %}
+            <button class="secondary" type="button" data-ai-history-open aria-haspopup="dialog">{{ t('aiassist.history') }} <span class="pill">{{ ai_hint_rounds|length }}</span></button>
+          </div>
+        </div>
+        {% if ai_hints.section_errors %}
+        {%- set failures = ai_hints.section_failures or {} -%}
+        {%- set section_names = [] -%}
+        {%- for name in ai_hints.section_errors %}{% set _ = section_names.append(t('aiassist.section_' + name) if name in ('overview', 'measurements', 'audit') else name) %}{% endfor -%}
+        <div class="alert warning">{{ t('aiassist.partial', sections=section_names|join(', ')) }}{% if 'truncated' in failures.values()|list %} {{ t('aiassist.partial_truncated') }}{% endif %}</div>
+        {% endif %}
+        <h3>{{ t('aiassist.summary_heading') }}</h3>
+        {% if ai_hints.summary %}<p>{{ ai_hints.summary }}</p>{% else %}<p class="muted">{{ t('aiassist.summary_unavailable') }}</p>{% endif %}
+        {% if ai_hints.summary_evidence %}
+        <details class="ai-evidence"><summary>{{ t('aiassist.evidence_heading') }}</summary>
+          <ul class="ai-hint-list">
+          {% for evidence in ai_hints.summary_evidence %}
+            <li>{% if evidence.page %}<a href="#page-{{ evidence.page }}">{{ t('doc.page_n', n=evidence.page) }}</a> · {% endif %}<q>{{ evidence.quote }}</q></li>
+          {% endfor %}
+          </ul>
+        </details>
+        {% endif %}
+        {% if ai_hints.suggested_title and not viewing %}
+        <h3>{{ t('aiassist.title_heading') }}</h3>
+        {% if ai_hints.suggested_title != document.title %}
+        <form action="/documents/{{ document.id }}/ai-title" method="post" class="an-ai-title-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <label>{{ t('doc.title') }}<input name="title" maxlength="240" value="{{ ai_hints.suggested_title }}" required></label>
+          <button class="secondary" type="submit">{{ t('aiassist.title_apply') }}</button>
+        </form>
+        {% else %}<p><strong>{{ ai_hints.suggested_title }}</strong></p>
+        {% endif %}
+        {% endif %}
+        {% set meta = ai_hints.suggested_metadata or {} %}
+        {% if (meta.clinical_type or meta.vendor or meta.report_date) and not viewing %}
+        <h3>{{ t('aiassist.metadata_heading') }}</h3>
+        <form action="/documents/{{ document.id }}/ai-metadata" method="post" class="an-classify-form ai-metadata-form" data-ai-metadata-form>
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          {% if meta.clinical_type %}
+          <div class="ai-selectable-field">
+            <label class="check"><input type="checkbox" name="apply_clinical_type" value="1"> {{ t('aiassist.select_suggestion') }}</label>
+            {#- A choice among the kinds the parser knows, never free text: a
+                kind typed in the reader's language selects no parser. -#}
+            <label>{{ t('classify.kind') }}<select name="clinical_type" required>
+              {% for kind in document_kinds %}<option value="{{ kind.key }}" {{ 'selected' if meta.clinical_type == kind.key else '' }}>{{ kind.label }}</option>{% endfor %}
+            </select></label>
+          </div>
+          {% endif %}
+          {% if meta.vendor %}
+          <div class="ai-selectable-field">
+            <label class="check"><input type="checkbox" name="apply_vendor" value="1"> {{ t('aiassist.select_suggestion') }}</label>
+            <label>{{ t('classify.vendor') }}<input name="vendor" maxlength="200" value="{{ meta.vendor }}" required></label>
+          </div>
+          {% endif %}
+          {% if meta.report_date %}
+          <div class="ai-selectable-field">
+            <label class="check"><input type="checkbox" name="apply_report_date" value="1"> {{ t('aiassist.select_suggestion') }}</label>
+            <label>{{ t('classify.date') }}<input name="report_date" type="date" value="{{ meta.report_date }}" required></label>
+          </div>
+          {% endif %}
+          {% if meta.quote %}<p class="an-field-help">{% if meta.page %}<a href="#page-{{ meta.page }}">{{ t('doc.page_n', n=meta.page) }}</a> · {% endif %}<q>{{ meta.quote }}</q></p>{% endif %}
+          <button class="secondary" type="submit">{{ t('aiassist.metadata_apply') }}</button>
+        </form>
+        {% endif %}
+        {% if ai_hints.missed_values %}
+        <h3>{{ t('aiassist.missed_heading') }}</h3>
+        <div class="ai-hint-list">
+          {% for item in ai_hints.missed_values %}
+          <details class="edit-observation ai-missed-value">
+            <summary><strong>{{ item.name }}</strong>{% if item.value %}: {{ item.value }}{% if item.unit %} {{ item.unit }}{% endif %}{% endif %}{% if item.page %} · {{ t('doc.page_n', n=item.page) }}{% endif %}</summary>
+            {% if not viewing %}
+            <form action="/documents/{{ document.id }}/observations" method="post">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input type="hidden" name="next" value="/documents/{{ document.id }}">
+              <label>{{ t('doc.metric_name') }}<input name="raw_name" value="{{ item.name }}" required></label>
+              <label>{{ t('obs.maps_to') }}<input name="canonical_name" list="an-concept-list" placeholder="{{ t('obs.maps_to_hint') }}"></label>
+              <div class="edit-values">
+                <label>{{ t('doc.numeric') }}<input name="value_numeric" inputmode="decimal" value="{{ item.numeric_input }}"></label>
+                <label>{{ t('doc.text_value') }}<input name="value_text" value="{{ item.text_input }}"></label>
+              </div>
+              <div class="edit-values">
+                <label>{{ t('doc.unit') }}<input name="unit_raw" value="{{ item.unit or '' }}"></label>
+                <label>{{ t('doc.th_page') }}<input name="page_number" type="number" min="1" max="{{ document.page_count }}" value="{{ item.page_input }}" required></label>
+              </div>
+              <label>{{ t('doc.vendor_ref') }}<input name="vendor_reference_text" value="{{ item.reference or '' }}"></label>
+              <label>{{ t('obs.observed_at') }}<input name="observed_at" type="date" value="{{ item.observed_input or '' }}"></label>
+              <label>{{ t('aiassist.evidence_label') }}<textarea name="evidence_text" rows="2">{{ item.evidence or '' }}</textarea></label>
+              <button class="secondary" type="submit">{{ t('aiassist.missed_add') }}</button>
+            </form>
+            {% endif %}
+          </details>
+          {% endfor %}
+        </div>
+        {% endif %}
+        {% if ai_hints.suspicious %}
+        <h3>{{ t('aiassist.suspicious_heading') }}</h3>
+        <ul class="ai-hint-list ai-suspicious-list">
+          {% for item in ai_hints.suspicious %}
+          <li class="ai-suspicious">
+            <p><a href="#observation-{{ item.observation_id }}"><strong>{{ item.name }}</strong></a>{% if item.value %}: {{ item.value }}{% if item.unit %} {{ item.unit }}{% endif %}{% endif %}{% if item.page %} · <a href="#page-{{ item.page }}">{{ t('doc.page_n', n=item.page) }}</a>{% endif %}</p>
+            <p>{% if item.issue_type in ('not_measurement', 'source_mismatch', 'wrong_association', 'ocr_garble') %}<span class="pill">{{ t('aiassist.issue_' + item.issue_type) }}</span> {% endif %}{{ item.reason }}</p>
+            {% if item.evidence %}<p class="an-field-help">{{ t('aiassist.source_says') }} <q>{{ item.evidence }}</q></p>{% endif %}
+            {% if item.current_state == 'rejected' %}<p class="muted">{{ t('aiassist.fix_set_aside') }}</p>
+            {% elif item.current_state == 'missing' %}<p class="muted">{{ t('aiassist.fix_missing') }}</p>{% endif %}
+            {% if item.fix and not viewing %}
+            <details class="edit-observation ai-fix">
+              <summary><span>{{ t('aiassist.suggested_correction') }}: <strong>{{ item.fix.raw_name }}</strong> · {{ item.fix.numeric_input or item.fix.text_input }}{% if item.fix.unit %} {{ item.fix.unit }}{% endif %}</span></summary>
+              <form action="/observations/{{ item.observation_id }}" method="post" data-ai-fix-form>
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="next" value="/documents/{{ document.id }}">
+                <input type="hidden" name="ai_suggested" value="1">
+                <label>{{ t('doc.metric_name') }}<input name="raw_name" value="{{ item.fix.raw_name }}" required></label>
+                <label>{{ t('obs.maps_to') }}<input name="canonical_name" list="an-concept-list" value="{{ item.fix.canonical_name }}" placeholder="{{ t('obs.maps_to_hint') }}"></label>
+                <div class="edit-values">
+                  <label>{{ t('doc.numeric') }}<input name="value_numeric" inputmode="decimal" value="{{ item.fix.numeric_input }}"></label>
+                  <label>{{ t('doc.text_value') }}<input name="value_text" value="{{ item.fix.text_input }}"></label>
+                </div>
+                <label>{{ t('doc.unit') }}<input name="unit_raw" value="{{ item.fix.unit }}"></label>
+                <label>{{ t('doc.vendor_ref') }}<input name="vendor_reference_text" value="{{ item.fix.reference }}"></label>
+                <button class="secondary" type="submit">{{ t('aiassist.fix_apply') }}</button>
+              </form>
+            </details>
+            {% elif item.issue_type == 'not_measurement' and item.current_state not in ('rejected', 'missing') and not viewing %}
+            <form action="/observations/{{ item.observation_id }}/state" method="post" class="inline-form">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input type="hidden" name="next" value="/documents/{{ document.id }}">
+              <input type="hidden" name="action" value="reject">
+              <button class="secondary" type="submit">{{ t('aiassist.set_aside') }}</button>
+            </form>
+            {% endif %}
+          </li>
+          {% endfor %}
+        </ul>
+        {% endif %}
+        {% if ai_hints.immunization_issues %}
+        <h3>{{ t('aiassist.immunization_issues_heading') }}</h3>
+        <ul class="ai-hint-list">
+          {% for item in ai_hints.immunization_issues %}<li><a href="#immunization-{{ item.immunization_id }}">{{ t('aiassist.review_vaccination') }}</a>: {{ item.reason }}{% if item.evidence %}<br><q>{{ item.evidence }}</q>{% endif %}</li>{% endfor %}
+        </ul>
+        {% endif %}
+        {% if ai_hints.missed_immunizations and not viewing %}
+        <h3>{{ t('aiassist.missed_immunizations_heading') }}</h3>
+        <div class="ai-hint-list">
+          {% for item in ai_hints.missed_immunizations %}
+          <details class="edit-observation ai-missed-value">
+            <summary><strong>{{ item.vaccine_code or item.product_name }}</strong> · {{ item.occurred_on }}{% if item.page %} · {{ t('doc.page_n', n=item.page) }}{% endif %}</summary>
+            <form action="/vaccinations" method="post">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input type="hidden" name="next" value="/documents/{{ document.id }}#side-panel-ai">
+              <input type="hidden" name="document_id" value="{{ document.id }}">
+              <input type="hidden" name="page_number" value="{{ item.page_input }}">
+              <input type="hidden" name="evidence_text" value="{{ item.evidence }}">
+              {{ dose_fields(item, 'ai-vax-' ~ loop.index, today) }}
+              {% if item.evidence %}<p class="an-field-help"><q>{{ item.evidence }}</q></p>{% endif %}
+              <button class="secondary" type="submit">{{ t('aiassist.missed_immunization_add') }}</button>
+            </form>
+          </details>
+          {% endfor %}
+        </div>
+        {% endif %}
+      {% endif %}
+      {% if ai_assist and not viewing and not guest %}
+      <form action="/documents/{{ document.id }}/ai-hints" method="post" class="inline-form" id="ai-review-form"
+            data-error-disabled="{{ t('aiassist.error_disabled') }}" data-error-budget="{{ t('aiassist.error_budget') }}"
+            data-error-provider-error="{{ t('aiassist.error_provider_error') }}" data-error-in-progress="{{ t('aiassist.error_in_progress') }}"
+            data-error-network="{{ t('aiassist.error_network') }}" data-error-truncated="{{ t('aiassist.error_truncated') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        {% if ai_hints %}<input type="hidden" name="refresh" value="1">{% endif %}
+        <button class="secondary" type="submit" data-working="{{ t('aiassist.working') }}">{{ t('aiassist.regenerate') if ai_hints else t('aiassist.generate') }}</button>
+      </form>
+      <p id="ai-review-status" class="muted" role="status" aria-live="polite"></p>
+      {% endif %}
+    </section>
+    {% if ai_hint_rounds %}
+    <dialog class="ai-history-modal" id="ai-history-dialog" aria-labelledby="ai-history-title">
+      <div class="ai-history-modal__head">
+        <div><span class="eyebrow">{{ t('aiassist.eyebrow') }}</span><h2 id="ai-history-title">{{ t('aiassist.history') }}</h2></div>
+        <button type="button" class="ai-history-modal__close" data-ai-history-close aria-label="{{ t('aiassist.close_history') }}"><span aria-hidden="true">×</span></button>
+      </div>
+      <ol class="ai-history-list">
+        {% for round in ai_hint_rounds %}
+        <li class="{{ 'is-selected' if round.is_selected else '' }}">
+          <a href="/documents/{{ document.id }}?hint={{ round.id }}#side-panel-ai"{% if round.is_selected %} aria-current="true"{% endif %}>
+            <span><strong>{{ round.model }}</strong><small>{{ round.created_text }} · {{ round.created_time }}</small></span>
+            {% if round.is_latest %}<span class="pill">{{ t('aiassist.latest') }}</span>{% elif round.is_selected %}<span class="pill">{{ t('aiassist.open') }}</span>{% endif %}
+          </a>
+        </li>
+        {% endfor %}
+      </ol>
+    </dialog>
+    {% endif %}
+    {% endif %}
+  </aside>
+</div>
+{#- The comparison with the lab's structured record comes after the page and
+    its values, folded, with the one number that decides whether to open it.
+    Printed open above the viewer it put eight "name not read in full" notes
+    between the reader and the first value. -#}
+{% set lab_check = lab_document_check(user, document.id) if (lab_document_check is defined and not viewing and not guest) else none %}
+{% if lab_check %}
+{% set lab_problems = namespace(count=0) %}
+{% for check in lab_check.checks %}{% for cls in ['value_mismatch', 'unit_mismatch', 'name_mismatch', 'missing', 'extra'] %}{% set lab_problems.count = lab_problems.count + (check.counts[cls] or 0) %}{% endfor %}{% endfor %}
+<details class="panel an-lab-crosscheck-wrap" id="lab-crosscheck-wrap"{% if request.query_params.get('lab_verified') %} open{% endif %}>
+  <summary>
+    <strong>{{ t('labsync.check_heading') }}</strong>
+    <span class="pill{{ ' an-pill--warn' if lab_problems.count else ' an-pill--ok' }}">{{ t_plural('doc.lab_differences', lab_problems.count) if lab_problems.count else t('doc.lab_all_match') }}</span>
+  </summary>
+  {% include "_labsync_document.html" %}
+</details>
+{% endif %}
+{% if not viewing %}
+{{ report_issue_modal(document.id, observations, csrf_token, return_url) }}
+{% endif %}
+<script src="{{ asset('source-viewer.js') }}" defer></script>
+<script>
+(() => {
+  const root = document.querySelector(".review-bench-side");
+  if (!root) return;
+  const tabs = [...root.querySelectorAll("[data-side-tab]")];
+  const panels = [...root.querySelectorAll("[data-side-panel]")];
+  function show(name) {
+    tabs.forEach((tab) => {
+      const on = tab.dataset.sideTab === name;
+      tab.classList.toggle("is-active", on);
+      tab.setAttribute("aria-expanded", on ? "true" : "false");
+    });
+    panels.forEach((panel) => {
+      const on = panel.dataset.sidePanel === name;
+      panel.classList.toggle("is-active", on);
+      panel.hidden = !on;
+    });
+  }
+  tabs.forEach((tab) => tab.addEventListener("click", () => show(tab.dataset.sideTab)));
+  document.querySelectorAll("[data-show-tab]").forEach((button) => button.addEventListener("click", () => show(button.dataset.showTab)));
+  function showFromHash() {
+    const target = location.hash.match(/^#side-panel-([a-z]+)$/);
+    if (target && panels.some((panel) => panel.dataset.sidePanel === target[1])) show(target[1]);
+    // A link into something folded (the lab comparison, a value inside it)
+    // opens the fold rather than landing on nothing visible.
+    const node = location.hash.length > 1 ? document.getElementById(location.hash.slice(1)) : null;
+    const fold = node && node.closest("details:not([open])");
+    if (fold) { fold.open = true; node.scrollIntoView(); }
+    if (node && node.closest("[data-side-panel]")) show(node.closest("[data-side-panel]").dataset.sidePanel);
+  }
+  showFromHash();
+  globalThis.addEventListener("hashchange", showFromHash);
+
+  /* The concept picker's options, built the first time a correction field asks. */
+  const conceptList = document.getElementById("an-concept-list");
+  const conceptNames = document.getElementById("an-concept-names");
+  document.addEventListener("focusin", (event) => {
+    if (!conceptList || !conceptNames || conceptList.options.length) return;
+    if (event.target.getAttribute && event.target.getAttribute("list") === "an-concept-list") {
+      conceptList.append(...JSON.parse(conceptNames.textContent).map((name) => new Option(name)));
+    }
+  });
+
+  /* Rows of a folded group (an allergy panel's negatives, one blood-pressure
+     reading's values), fetched when somebody opens them to check or correct. */
+  document.addEventListener("click", async (event) => {
+    const trigger = event.target.closest("[data-load-rows]");
+    if (!trigger) return;
+    const group = trigger.closest("[data-lazy-rows]");
+    const target = group && group.querySelector("[data-rows-target]");
+    if (!target || target.dataset.loaded) return;
+    trigger.disabled = true;
+    const response = await fetch(`/documents/${root.dataset.documentId}/rows?ids=${encodeURIComponent(group.dataset.lazyRows)}`);
+    if (response.ok) {
+      target.innerHTML = await response.text();
+      target.dataset.loaded = "1";
+      if (trigger.tagName !== "SUMMARY") trigger.hidden = true;
+    } else {
+      trigger.disabled = false;
+    }
+  });
+
+  /* Verify, set aside, restore or correct one value without reloading the
+     page: the row and the review line are all that change, and a reload put
+     the reader back at the top of a 57-value report after every press. */
+  document.addEventListener("submit", async (event) => {
+    const form = event.target;
+    const row = form.closest(".obs-item");
+    if (!row || !/^\/observations\//.test(form.getAttribute("action") || "")) return;
+    event.preventDefault();
+    const data = new FormData(form);
+    if (event.submitter && event.submitter.name) data.append(event.submitter.name, event.submitter.value);
+    form.querySelectorAll("button").forEach((button) => { button.disabled = true; });
+    try {
+      // getAttribute, not form.action: the state form has buttons named
+      // "action", which shadow the property with a RadioNodeList.
+      const response = await fetch(form.getAttribute("action"), { method: "POST", body: data, headers: { Accept: "application/json" } });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) throw payload;
+      const holder = document.createElement("div");
+      holder.innerHTML = payload.row;
+      const fresh = holder.firstElementChild;
+      if (fresh) {
+        row.replaceWith(fresh);
+        fresh.querySelector("button, summary, a")?.focus({ preventScroll: true });
+      }
+      const line = document.querySelector("[data-review-line]");
+      if (line && typeof payload.review_line === "string") line.textContent = payload.review_line;
+    } catch (error_) {
+      form.querySelectorAll("button").forEach((button) => { button.disabled = false; });
+      let note = form.querySelector(".an-row-error");
+      if (!note) {
+        note = document.createElement("p");
+        note.className = "an-row-error alert error";
+        note.setAttribute("role", "alert");
+        form.append(note);
+      }
+      note.textContent = error_?.detail || root.dataset.rowError;
+    }
+  });
+  /* Re-read proposals: apply the page's value, set aside, or keep -- the
+     panel, the rows it touched and the review line update in place. */
+  document.addEventListener("submit", async (event) => {
+    const form = event.target;
+    if (!form.matches || !form.matches("[data-reread-form]")) return;
+    event.preventDefault();
+    const panel = form.closest("#reread-proposals");
+    const data = new FormData(form);
+    if (event.submitter && event.submitter.name) data.append(event.submitter.name, event.submitter.value);
+    form.querySelectorAll("button").forEach((button) => { button.disabled = true; });
+    try {
+      const response = await fetch(form.getAttribute("action"), { method: "POST", body: data, headers: { Accept: "application/json" } });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) throw payload;
+      Object.entries(payload.rows || {}).forEach(([id, html]) => {
+        const row = document.getElementById(`observation-${id}`);
+        const holder = document.createElement("div");
+        holder.innerHTML = html;
+        if (row && holder.firstElementChild) row.replaceWith(holder.firstElementChild);
+      });
+      const holder = document.createElement("div");
+      holder.innerHTML = payload.panel;
+      const fresh = holder.firstElementChild;
+      if (panel && fresh) {
+        panel.replaceWith(fresh);
+        (fresh.hidden ? document.getElementById("review-status") : fresh)?.querySelector("button, h2")?.focus({ preventScroll: true });
+      }
+      const line = document.querySelector("[data-review-line]");
+      if (line && typeof payload.review_line === "string") line.textContent = payload.review_line;
+    } catch (error_) {
+      console.error(error_);
+      form.querySelectorAll("button").forEach((button) => { button.disabled = false; });
+      const note = panel && panel.querySelector("[data-reread-error]");
+      if (note) note.hidden = false;
+    }
+  });
+  document.addEventListener("click", (event) => {
+    const pageLink = event.target.closest('a[href^="#page-"]');
+    if (!pageLink) return;
+    // Keep observations visible; page text opens on demand via its own tab if needed.
+  });
+  document.querySelectorAll('[data-custom-choice]').forEach((select) => {
+    select.addEventListener('change', () => {
+      if (select.value !== '__custom__') return;
+      const fields = select.closest('form')?.querySelector('[data-classify-custom]');
+      if (!fields) return;
+      fields.open = true;
+      fields.querySelector(`[name="${select.dataset.customChoice}"]`)?.focus();
+    });
+  });
+  document.querySelectorAll('[data-ai-metadata-form]').forEach((form) => {
+    const choices = [...form.querySelectorAll('input[type="checkbox"]')];
+    const submit = form.querySelector('button[type="submit"]');
+    const sync = () => { submit.disabled = !choices.some((choice) => choice.checked); };
+    choices.forEach((choice) => choice.addEventListener('change', sync));
+    sync();
+  });
+  const aiHistory = document.querySelector('#ai-history-dialog');
+  const aiHistoryOpen = document.querySelector('[data-ai-history-open]');
+  if (aiHistory && aiHistoryOpen) {
+    aiHistoryOpen.addEventListener('click', () => aiHistory.showModal());
+    aiHistory.querySelector('[data-ai-history-close]')?.addEventListener('click', () => aiHistory.close());
+    aiHistory.addEventListener('click', (event) => {
+      if (event.target !== aiHistory) return;
+      const box = aiHistory.getBoundingClientRect();
+      if (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom) aiHistory.close();
+    });
+  }
+  const aiForm = document.querySelector('#ai-review-form');
+  if (aiForm) aiForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (aiForm.dataset.busy === '1') return;
+    aiForm.dataset.busy = '1';
+    const button = aiForm.querySelector('button[type="submit"]');
+    const status = document.querySelector('#ai-review-status');
+    const original = button.textContent;
+    button.disabled = true;
+    button.textContent = button.dataset.working;
+    status.textContent = button.dataset.working;
+    try {
+      const response = await fetch(aiForm.action, {
+        method: 'POST', body: new FormData(aiForm), headers: {'Accept': 'application/json'}
+      });
+      const result = await response.json();
+      if (!response.ok || !result.ok) {
+        status.textContent = aiForm.dataset['error' + (result.reason || 'network').replace(/(^|_)(.)/g, (_, __, c) => c.toUpperCase())]
+          || aiForm.dataset.errorNetwork;
+        return;
+      }
+      history.replaceState(null, '', result.location);
+      globalThis.location.reload();
+    } catch (error_) {
+      console.error(error_);
+      status.textContent = aiForm.dataset.errorNetwork;
+    } finally {
+      delete aiForm.dataset.busy;
+      button.disabled = false;
+      button.textContent = original;
+    }
+  });
+})();
+</script>
+{% endblock %}

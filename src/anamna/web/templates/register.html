@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}{{ t('register.title') }}{% endblock %}
+{% block content %}
+<section class="login-page login-page--single">
+  <div class="login-card">
+    <span class="brand-mark large" aria-hidden="true">A</span>
+    <h1>{{ t('register.heading_form') }}</h1>
+    {% if error %}<div class="alert error" role="alert">{{ error }}</div>{% endif %}
+    <form action="/register" method="post" class="stack-form">
+      <label>{{ t('register.name') }}<input name="display_name" autocomplete="name" required></label>
+      <label>{{ t('login.email') }}<input name="email" type="email" autocomplete="username" required></label>
+      <label>{{ t('login.password') }}<input name="password" type="password" autocomplete="new-password" minlength="10" required></label>
+      <button class="primary" type="submit">{{ t('register.submit') }}</button>
+    </form>
+    <p class="tiny muted">{{ t('register.agree_prefix') }} <a href="/terms">{{ t('register.agree_terms') }}</a> {{ t('register.agree_and') }} <a href="/privacy">{{ t('register.agree_privacy') }}</a>.</p>
+    <p class="tiny muted">{{ t('register.have_account') }} <a href="/login">{{ t('register.sign_in_link') }}</a></p>
+  </div>
+</section>
+{% endblock %}

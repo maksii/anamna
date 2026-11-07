@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}{{ t('setup.title') }}{% endblock %}
+{% block content %}
+{#- Reached only while the database has no accounts: every other public page
+    sends an empty installation here. The code is asked for, never shown. -#}
+<section class="login-page login-page--single">
+  <div class="login-card login-card--wide">
+    <span class="brand-mark large" aria-hidden="true">A</span>
+    <h1>{{ t('setup.heading') }}</h1>
+    <p>{{ t('setup.lead') }}</p>
+    {% if error %}<div class="alert error" role="alert" id="setup-error">{{ error }}</div>{% endif %}
+    <h2 class="setup-subheading">{{ t('setup.what_heading') }}</h2>
+    <ul class="setup-points">
+      <li>{{ t('setup.point_admin') }}</li>
+      <li>{{ t('setup.point_closed') }}</li>
+      <li>{{ t('setup.point_record') }}</li>
+      <li>{{ t('setup.point_once') }}</li>
+    </ul>
+    <form action="/setup" method="post" class="stack-form" autocomplete="on">
+      <fieldset class="setup-fieldset">
+        <legend>{{ t('setup.code_heading') }}</legend>
+        <p class="tiny muted" id="setup-code-why">{{ t('setup.code_why') }}</p>
+        <label for="setup-code">{{ t('setup.code_label') }}</label>
+        <input id="setup-code" name="setup_code" type="text" autocomplete="one-time-code"
+               autocapitalize="off" spellcheck="false" required
+               aria-describedby="setup-code-why setup-code-where{% if error %} setup-error{% endif %}">
+        <div class="tiny muted setup-where" id="setup-code-where">
+          {% if code_from_env %}
+          <p>{{ t('setup.code_where_env') }}</p>
+          {% else %}
+          <p>{{ t('setup.code_where_log') }}</p>
+          <pre><code>First-run setup code:</code></pre>
+          <p>{{ t('setup.code_where_container') }}</p>
+          <pre><code>docker logs &lt;container&gt;</code></pre>
+          {% endif %}
+          <p>{{ t('setup.cli_hint') }}</p>
+          <pre><code>anamna init --email &lt;email&gt; --name &lt;name&gt;</code></pre>
+        </div>
+      </fieldset>
+      <fieldset class="setup-fieldset">
+        <legend>{{ t('setup.account_heading') }}</legend>
+        <label>{{ t('profile.full_name') }}<input name="display_name" autocomplete="name" required value="{{ form.display_name or '' }}"></label>
+        <label>{{ t('login.email') }}<input name="email" type="email" autocomplete="username" required value="{{ form.email or '' }}"></label>
+        <label>{{ t('login.password') }}<input name="password" type="password" autocomplete="new-password" minlength="{{ minimum_password }}" required aria-describedby="setup-password-hint"></label>
+        <p class="tiny muted" id="setup-password-hint">{{ t('register.error_password') }}</p>
+      </fieldset>
+      <fieldset class="setup-fieldset">
+        <legend>{{ t('setup.record_heading') }}</legend>
+        <label><span>{{ t('profile.dob') }} <span class="muted">({{ t('setup.optional') }})</span></span>
+          <input name="date_of_birth" type="date" autocomplete="bday" value="{{ form.date_of_birth or '' }}" aria-describedby="setup-dob-hint"></label>
+        <p class="tiny muted" id="setup-dob-hint">{{ t('profile.dob_hint') }}</p>
+        <label><span>{{ t('profile.sex') }} <span class="muted">({{ t('setup.optional') }})</span></span>
+          <select name="sex_at_birth" aria-describedby="setup-sex-hint">
+            <option value="">{{ t('profile.not_stated') }}</option>
+            {% for value in sex_options %}
+            <option value="{{ value }}" {{ 'selected' if form.sex_at_birth == value else '' }}>{{ t('sex.' ~ value) }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <p class="tiny muted" id="setup-sex-hint">{{ t('profile.sex_hint') }}</p>
+      </fieldset>
+      <button class="primary" type="submit">{{ t('setup.submit') }}</button>
+    </form>
+    <p class="tiny muted">{{ t('register.agree_prefix') }} <a href="/terms">{{ t('register.agree_terms') }}</a> {{ t('register.agree_and') }} <a href="/privacy">{{ t('register.agree_privacy') }}</a>.</p>
+  </div>
+</section>
+{% endblock %}

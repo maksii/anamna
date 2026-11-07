@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          python-version: "3.12"
+          version: "0.10.2"
+      - name: Install OCR engines exercised by scanned-page tests
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-ukr tesseract-ocr-eng
+      - run: uv sync --locked --all-extras
+      - run: uv run --no-sync pytest -q -n auto --basetemp=${{ runner.temp }}/pytest
+      - run: uv run --no-sync python -m compileall -q src
+      - run: uv build --out-dir ${{ runner.temp }}/packages
+      - name: Audit pinned Python runtime dependencies
+        run: |
+          uv export --locked --no-dev --no-emit-project --output-file "${{ runner.temp }}/runtime-requirements.txt"
+          uv tool run --from pip-audit==2.10.1 pip-audit --requirement "${{ runner.temp }}/runtime-requirements.txt" --disable-pip --require-hashes --progress-spinner off
+
+  js:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: node --test tests/js/
+
+  image:
+    needs: [test, js]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v5
+      # GHCR image names must be lowercase; github.repository may not be.
+      - run: echo "IMAGE=$(echo 'ghcr.io/${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+      - uses: docker/login-action@v4.6.0
+        if: github.event_name == 'push'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v7.3.0
+        with:
+          context: .
+          push: ${{ github.event_name == 'push' }}
+          tags: |
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ github.sha }}

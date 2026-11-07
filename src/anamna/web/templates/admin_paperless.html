@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}{{ t('paperless.admin_title') }}{% endblock %}
+{% block content %}
+
+<section class="page-head">
+  <div>
+    <div class="eyebrow">{{ t('admin.eyebrow') }}</div>
+    <h1>{{ t('paperless.admin_heading') }}</h1>
+  </div>
+</section>
+
+{% if error %}<div class="alert error" role="alert">{{ error }}</div>{% endif %}
+{% if done %}<div class="alert" role="status">{{ done }}</div>{% endif %}
+{#- Plaintext to a server off the LAN is allowed but never silent: it is the
+    documents and everyone's token crossing the internet in the clear. -#}
+{% if paperless_plaintext %}<div class="alert warning">{{ t('paperless.warn_plaintext') }}</div>{% endif %}
+
+<section class="panel">
+  <div class="panel-head">
+    <div><span class="eyebrow">{{ t('paperless.status_eyebrow') }}</span><h2>{{ t('paperless.status_heading') }}</h2></div>
+    {#- The state as words, never colour alone. -#}
+    <span class="pill {{ 'an-pill--ok' if paperless_on else 'an-pill--warn' }}">
+      {{ t('paperless.on') if paperless_on else (t('paperless.off') if paperless.url else t('paperless.no_url')) }}
+    </span>
+  </div>
+  <dl class="facts ai-facts">
+    <div><dt>{{ t('paperless.status_url') }}</dt>
+      <dd class="hash">{% if paperless.url %}{{ paperless.url }}{% else %}{{ t('paperless.url_missing') }}{% endif %}</dd></div>
+    <div><dt>{{ t('paperless.status_users') }}</dt>
+      <dd>{{ connected|countfmt }}</dd></div>
+    <div><dt>{{ t('paperless.admin_counts_label') }}</dt>
+      <dd>{{ t('paperless.counts', linked=counts.linked|countfmt, total=counts.total|countfmt) }}
+        {% if counts.pending %} · {{ t('paperless.counts_pending', count=counts.pending|countfmt) }}{% endif %}
+        {% if counts.refused %}<br><small>{{ t('paperless.counts_refused', count=counts.refused|countfmt) }}</small>{% endif %}</dd></div>
+  </dl>
+  <form action="/admin/paperless/test" method="post" class="inline-form"
+        onsubmit="var b=this.querySelector('button');setTimeout(function(){b.disabled=true;b.textContent=b.dataset.working;},0)">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button class="secondary" type="submit" data-working="{{ t('paperless.working') }}">{{ t('paperless.test_action') }}</button>
+  </form>
+  {% if paperless_on %}
+  <form action="/admin/paperless/sync" method="post" class="inline-form"
+        onsubmit="var b=this.querySelector('button');setTimeout(function(){b.disabled=true;b.textContent=b.dataset.working;},0)">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button class="secondary" type="submit" data-working="{{ t('paperless.working') }}">{{ t('paperless.admin_sync_action') }}</button>
+  </form>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <div><span class="eyebrow">{{ t('paperless.settings_eyebrow') }}</span><h2>{{ t('paperless.settings_heading') }}</h2></div>
+  </div>
+  <form action="/admin/paperless" method="post" class="stack-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>
+      <input type="checkbox" name="enabled" value="1" {{ 'checked' if paperless.enabled == '1' else '' }}>
+      {{ t('paperless.enable_label') }}
+    </label>
+    <label>{{ t('paperless.url_label') }}
+      <input name="url" type="url" inputmode="url" value="{{ paperless.url }}"
+             placeholder="https://paperless.example.org">
+    </label>
+    <button class="primary" type="submit">{{ t('paperless.save') }}</button>
+  </form>
+</section>
+
+<p class="muted"><a href="/admin/users">{{ t('token.back_to_people') }}</a></p>
+
+{% endblock %}

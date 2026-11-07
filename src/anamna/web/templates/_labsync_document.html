@@ -1,0 +1,141 @@
+{#- The document checked against the lab's own structured record.  Nothing here
+    changes a value by itself: the one button verifies, on the person's press,
+    only the values that agree with the lab. -#}
+{% if not viewing and not guest %}
+{% set lab_check = lab_check if lab_check is defined else lab_document_check(user, document.id) %}
+{% if lab_check %}
+{% set verified_now = request.query_params.get('lab_verified', '') %}
+<section class="panel an-lab-crosscheck" id="lab-crosscheck" aria-labelledby="lab-crosscheck-heading">
+  <div class="panel-head">
+    <div><span class="eyebrow">{{ t('labsync.check_eyebrow') }}</span><h2 id="lab-crosscheck-heading">{{ t('labsync.check_heading') }}</h2></div>
+  </div>
+  {% if verified_now %}<div class="alert" role="status">{{ t_plural('labsync.verified_done', verified_now|int) }}</div>{% endif %}
+
+  {% for check in lab_check.checks %}
+  <div class="an-lab-order">
+    <h3 class="an-lab-subhead">{{ t('labsync.check_order', name=check.provider_name|phrase, order=check.order_id) }}</h3>
+    {% if check.total and check.ready < check.total %}<p class="alert warning">{{ t('labsync.check_partial', ready=check.ready|countfmt, total=check.total|countfmt) }}</p>{% endif %}
+    {% if check.changed_at %}<p class="alert warning">{{ t('labsync.changed_note', date=check.changed_at[:10]|datefmt) }}</p>{% endif %}
+    {% if check.other_documents %}<p class="tiny muted">{{ t('labsync.check_pooled', count=check.other_documents|length) }}
+      {% for doc in check.other_documents %}<a href="/documents/{{ doc }}#lab-crosscheck">{{ t('labsync.other_document', n=loop.index) }}</a>{{ ', ' if not loop.last else '' }}{% endfor %}</p>{% endif %}
+    {#- Counts with what each means: a number alone is not an explanation. -#}
+    <dl class="an-lab-counts">
+      {% for cls in ['match', 'value_mismatch', 'unit_mismatch', 'name_mismatch', 'missing', 'extra', 'info'] %}
+      <div class="an-lab-count" data-class="{{ cls }}">
+        <dt>{{ t('labsync.cls_' ~ cls) }}</dt>
+        <dd><strong>{{ check.counts[cls]|countfmt }}</strong><small>{{ t('labsync.cls_' ~ cls ~ '_hint') }}</small></dd>
+      </div>
+      {% endfor %}
+      {% for extra in ['flag', 'reference_differs'] %}{% if check.counts.get(extra) %}
+      <div class="an-lab-count" data-class="{{ extra }}">
+        <dt>{{ t('labsync.cls_' ~ extra) }}</dt>
+        <dd><strong>{{ check.counts[extra]|countfmt }}</strong><small>{{ t('labsync.cls_' ~ extra ~ '_hint') }}</small></dd>
+      </div>
+      {% endif %}{% endfor %}
+    </dl>
+
+    {% set problems = check['items']|selectattr('cls', 'in', ['value_mismatch', 'unit_mismatch', 'name_mismatch', 'missing', 'extra'])|list %}
+    {% if problems %}
+    <h4 class="an-lab-minor">{{ t('labsync.problems_heading') }}</h4>
+    <ul class="an-lab-items">
+      {% for item in problems %}
+      <li class="an-lab-item" data-class="{{ item.cls }}">
+        <span class="an-lab-tag" data-class="{{ item.cls }}">{{ t('labsync.cls_' ~ item.cls) }}</span>
+        <div class="an-lab-pair">
+          <div>
+            <span class="an-lab-side">{{ t('labsync.side_lab', name=check.provider_name|phrase) }}</span>
+            {% if item.lab %}
+            <strong>{{ item.lab.test }}</strong>
+            <span>{{ item.lab.result|labvalue }} {{ item.lab.units|unitfmt }}</span>
+            {% if item.lab.norm %}<small>{{ t('labsync.lab_reference') }} {{ item.lab.norm|join('; ') }}</small>{% endif %}
+            {% if item.lab.packet %}<small>{{ item.lab.packet }}</small>{% endif %}
+            {% else %}<em>{{ t('labsync.no_lab_row') }}</em>{% endif %}
+          </div>
+          <div>
+            <span class="an-lab-side">{{ t('labsync.side_ours') }}</span>
+            {% if item.obs %}
+            <a href="/documents/{{ item.obs.document_id }}#observation-{{ item.obs.id }}"><strong>{{ item.obs.name }}</strong></a>
+            <span>{% if item.obs.value_numeric is not none %}{{ item.obs.comparator or '' }}{{ item.obs.value_numeric|numfmt }}{% else %}{{ item.obs.value_text }}{% endif %} {{ item.obs.unit|unitfmt }}</span>
+            <small>{{ t('labsync.page_n', n=item.obs.page) }}{% if item.obs.evidence %} · «{{ item.obs.evidence }}»{% endif %}</small>
+            {% else %}<em>{{ t('labsync.no_observation') }}</em>{% endif %}
+          </div>
+        </div>
+        {% if item.cls == 'missing' and item.lab and item.lab.result %}
+        {#- One click to add what the parser missed; it stays provisional. -#}
+        <details class="an-lab-add">
+          <summary>{{ t('labsync.add_missing') }}</summary>
+          <form action="/documents/{{ document.id }}/observations" method="post" class="stack-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="next" value="/documents/{{ document.id }}#lab-crosscheck">
+            <label>{{ t('doc.metric_name') }}<input name="raw_name" value="{{ item.lab.test }}" required></label>
+            <div class="edit-values">
+              <label>{{ t('doc.numeric') }}<input name="value_numeric" inputmode="decimal" value="{{ item.lab.result|labnumeric }}"></label>
+              <label>{{ t('doc.text_value') }}<input name="value_text" value="{{ '' if item.lab.result|labnumeric else item.lab.result }}"></label>
+            </div>
+            <div class="edit-values">
+              <label>{{ t('doc.unit') }}<input name="unit_raw" value="{{ item.lab.units }}"></label>
+              <label>{{ t('doc.th_page') }}<input name="page_number" type="number" min="1" max="{{ document.page_count or 1 }}" value="1" required></label>
+            </div>
+            <label>{{ t('doc.vendor_ref') }}<input name="vendor_reference_text" value="{{ item.lab.norm|join('; ') }}"></label>
+            <input type="hidden" name="evidence_text" value="{{ t('labsync.add_evidence', name=check.provider_name|phrase, order=check.order_id) }}">
+            <button class="secondary" type="submit">{{ t('obs.add_submit') }}</button>
+          </form>
+        </details>
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+
+    {% set matched = check['items']|selectattr('cls', 'equalto', 'match')|list %}
+    {% if matched %}
+    <details class="an-lab-more">
+      <summary>{{ t('labsync.matched_list', count=matched|length) }}</summary>
+      <ul class="an-lab-plain">
+        {% for item in matched %}<li>{{ item.lab.test }}: {{ item.lab.result|labvalue }} {{ item.lab.units|unitfmt }}{% if item.flag %} · <em>{{ t('labsync.flag_' ~ item.flag) }}</em>{% endif %}</li>{% endfor %}
+      </ul>
+    </details>
+    {% endif %}
+    {#- The rows behind the two notes above, so a count is never the whole
+        answer (DOCB-20): the lab's flag and our reading, the lab's interval
+        and the printed one. -#}
+    {% set flagged = check['items']|selectattr('flag')|list %}
+    {% if flagged %}
+    <details class="an-lab-more" data-class="flag">
+      <summary>{{ t('labsync.flag_list', count=flagged|length) }}</summary>
+      <ul class="an-lab-plain">
+        {% for item in flagged %}<li><strong>{{ item.lab.test }}</strong>: {{ item.lab.result|labvalue }} {{ item.lab.units|unitfmt }} · <em>{{ t('labsync.flag_' ~ item.flag) }}</em>{% if item.lab.norm %} · {{ t('labsync.lab_reference') }} {{ item.lab.norm|join('; ') }}{% endif %}{% if item.obs and item.obs.reference %} · {{ t('labsync.report_reference') }} {{ item.obs.reference }}{% endif %}</li>{% endfor %}
+      </ul>
+    </details>
+    {% endif %}
+    {% set ref_differs = check['items']|selectattr('reference_differs')|list %}
+    {% if ref_differs %}
+    <details class="an-lab-more" data-class="reference_differs">
+      <summary>{{ t('labsync.reference_list', count=ref_differs|length) }}</summary>
+      <ul class="an-lab-plain">
+        {% for item in ref_differs %}<li><strong>{{ item.lab.test }}</strong>: {{ item.lab.result|labvalue }} {{ item.lab.units|unitfmt }} · {{ t('labsync.lab_reference') }} {{ item.lab.norm|join('; ') }} · {{ t('labsync.report_reference') }} {{ item.obs.reference }}</li>{% endfor %}
+      </ul>
+    </details>
+    {% endif %}
+    {% set infos = check['items']|selectattr('cls', 'equalto', 'info')|list %}
+    {% if infos %}
+    <details class="an-lab-more">
+      <summary>{{ t('labsync.info_list', count=infos|length) }}</summary>
+      <ul class="an-lab-plain">
+        {% for item in infos %}<li>{% if item.part_of %}{{ item.obs.name }}: {{ t('labsync.part_of', test=item.lab.test) }}{% else %}<strong>{{ item.lab.test }}</strong>{% if item.lab.result and item.lab.result|length < 160 %}: {{ item.lab.result }}{% endif %}{% endif %}</li>{% endfor %}
+      </ul>
+    </details>
+    {% endif %}
+  </div>
+  {% endfor %}
+
+  {% if lab_check.verifiable %}
+  <form action="/documents/{{ document.id }}/lab-verify" method="post" class="an-lab-verify">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    {% for observation_id in lab_check.verifiable %}<input type="hidden" name="observation_ids" value="{{ observation_id }}">{% endfor %}
+    <button class="primary" type="submit">{{ t_plural('labsync.verify_button', lab_check.verifiable|length) }}</button>
+  </form>
+  {% endif %}
+</section>
+{% endif %}
+{% endif %}

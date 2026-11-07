@@ -1,0 +1,722 @@
+{% extends "base.html" %}
+{% block title %}{{ t('profile.title') }}{% endblock %}
+{% block content %}
+
+{#- The tabs say what this page holds; the title block cost a phone screen
+    before them (owner, 2026-11-06: "a lot of space used for nothing"). -#}
+<h1 class="visually-hidden">{{ t('profile.heading') }}</h1>
+
+{#- Messages stay outside the tabs. A minted secret is shown once and never
+    again, so hiding it behind an inactive tab would lose it for good; and an
+    error a person cannot see is an error they cannot fix. -#}
+{% if error %}<div class="alert error" role="alert">{{ error }}</div>{% endif %}
+{% if saved %}<div class="alert" role="status">{{ t('profile.saved') }}</div>{% endif %}
+{% if password_saved %}<div class="alert" role="status">{{ t('profile.password_saved') }}</div>{% endif %}
+{% if session_saved %}<div class="alert" role="status">{{ session_saved }}</div>{% endif %}
+{% if token_saved %}<div class="alert" role="status">{{ token_saved }}</div>{% endif %}
+{% if doctor_saved %}<div class="alert" role="status">{{ t('doctor.saved_revoked') }}</div>{% endif %}
+{% if paperless_saved %}<div class="alert" role="status">{{ paperless_saved }}</div>{% endif %}
+{% if integration_saved %}<div class="alert" role="status">{{ integration_saved }}</div>{% endif %}
+
+{% set lab_cards = lab_profile_cards(user) %}
+{% import "_tokens.html" as tokens_ui %}
+{{ tokens_ui.minted(new_token, token_base, csrf_token) }}
+
+{#- The code exists only on this response (only its hash is kept), so like a
+    minted token it sits above the tabs where nothing can hide it. -#}
+{% if new_pin %}
+<section class="panel an-token-minted an-doctor-pin" aria-labelledby="doctor-pin-heading">
+  <div class="panel-head">
+    <div>
+      <span class="eyebrow">{{ t('doctor.pin_eyebrow') }}</span>
+      <h2 id="doctor-pin-heading">{{ t('doctor.pin_heading') }}</h2>
+    </div>
+  </div>
+  <p class="an-doctor-pin__digits" aria-label="{{ t('doctor.pin_aria', spaced=new_pin.digits|list|join(' ')) }}">{{ new_pin.digits[:3] }}&#8202;{{ new_pin.digits[3:] }}</p>
+  <dl class="an-person__stats an-doctor-pin__facts">
+    <div><dt>{{ t('doctor.pin_address') }}</dt><dd><a href="{{ doctor_url }}">{{ doctor_url }}</a></dd></div>
+    <div><dt>{{ t('doctor.pin_redeem_by') }}</dt><dd>{{ new_pin.redeem_by_text }}</dd></div>
+    <div><dt>{{ t('doctor.pin_access_until') }}</dt><dd>{{ new_pin.expires_text }}</dd></div>
+  </dl>
+</section>
+{% endif %}
+
+{#- Buttons, not `role="tab"`: that role promises arrow-key navigation between
+    the tabs, which is not what these do. They show and hide sections, and
+    `aria-expanded` / `aria-controls` say exactly that. The open one is chosen
+    server-side, so a form POST redirect lands on the panel it belongs to
+    before any script runs. -#}
+<nav class="tabs an-profile-tabs" aria-label="{{ t('profile.tabs_label') }}">
+  {#- Links, not buttons: with script off the panels below are `hidden`, so a
+      button strip would leave four of the five sections unreachable. The
+      script intercepts these and switches in place. -#}
+  {% for tab, label in [('personal', 'profile.tab_personal'), ('sharing', 'profile.tab_sharing'), ('tokens', 'profile.tab_tokens'), ('security', 'profile.tab_security')] + ([('connections', 'profile.tab_connections')] if paperless_on or integrations_providers or openwearables_card or garmin_personal_available or telegram.available or lab_cards else []) %}
+  <a href="/profile?tab={{ tab }}" data-profile-tab="{{ tab }}" aria-controls="profile-panel-{{ tab }}"
+     class="{{ 'active' if active_tab == tab else '' }}"
+     aria-expanded="{{ 'true' if active_tab == tab else 'false' }}">{{ t(label) }}</a>
+  {% endfor %}
+</nav>
+
+<section class="panel" id="profile-panel-personal" data-profile-panel="personal" {{ '' if active_tab == 'personal' else 'hidden' }}>
+  <div class="panel-head">
+    <div><span class="eyebrow">{{ t('profile.personal_eyebrow') }}</span><h2>{{ t('profile.personal_heading') }}</h2></div>
+  </div>
+  <form action="/profile" method="post" class="stack-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>{{ t('profile.full_name') }}<input name="full_name" value="{{ patient.display_name if patient else user.display_name }}" autocomplete="name" required></label>
+    <label>{{ t('profile.nickname') }}
+      <input name="nickname" value="{{ user.nickname or '' }}" autocomplete="nickname">
+    </label>
+    {#- Demographics as one block: these three fields decide which official
+        reference intervals judge the rest of the record, so they read as a
+        unit rather than scattered among body measurements. -#}
+    <fieldset class="an-profile-group">
+      <legend>{{ t('profile.demographics_heading') }}</legend>
+      <div class="an-profile-field">
+        <label>{{ t('profile.dob') }}<input name="date_of_birth" type="date" value="{{ patient.date_of_birth or '' if patient else '' }}"></label>
+      </div>
+      <div class="an-profile-field">
+        <label>{{ t('profile.sex') }}
+          <select name="sex_at_birth">
+            <option value="">{{ t('profile.not_stated') }}</option>
+            {% for value in sex_options %}
+            <option value="{{ value }}" {{ 'selected' if patient and patient.sex_at_birth == value else '' }}>{{ t('sex.' ~ value) }}</option>
+            {% endfor %}
+          </select>
+        </label>
+      </div>
+      <div class="an-profile-field">
+        <label>{{ t('profile.timezone') }}
+          <input name="timezone" list="timezone-options" value="{{ user_timezone_name }}" autocomplete="off" spellcheck="false" aria-describedby="hint-timezone">
+        </label>
+        <datalist id="timezone-options">{% for name in timezone_options %}<option value="{{ name }}">{% endfor %}</datalist>
+        <p class="tiny muted" id="hint-timezone">{{ t('profile.timezone_hint') }}</p>
+      </div>
+      <div class="an-profile-field">
+        {% if lab_blood %}
+        {#- Derived from a lab result, not a form field: it carries no `name` and
+            submits nothing. Rendering it as a definition pair rather than a
+            disabled-looking input keeps that honest -- there is no focus ring
+            to invite editing, but the term/value pairing still reaches a screen
+            reader the way the label pairing above and below it does. -#}
+        <dl class="facts an-static-field">
+          <div><dt>{{ t('profile.blood_type') }}</dt><dd>{{ lab_blood.value }}</dd></div>
+        </dl>
+        <p class="tiny muted">
+          {{ t('profile.blood_from_lab', date=lab_blood.date_text) }}
+          <a href="/documents/{{ lab_blood.document_id }}">{{ t('profile.blood_open_result') }}</a>
+        </p>
+        {% else %}
+        <label>{{ t('profile.blood_type') }}
+          <select name="blood_type">
+            <option value="">{{ t('profile.blood_unknown') }}</option>
+            {% for bt in blood_types %}
+            <option value="{{ bt }}" {{ 'selected' if patient and patient.blood_type == bt else '' }}>{{ bt }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        {% endif %}
+      </div>
+    </fieldset>
+
+    {% set measured_how = ('waist_cm', 'chest_cm', 'hip_cm') %}
+    <fieldset class="an-profile-group">
+      <legend>{{ t('profile.body_heading') }}</legend>
+      {% for column, metric_key, unit, low, high in body_measurements %}
+      {% set device = measured.get(column) %}
+      <div class="an-profile-field">
+        {% if device %}
+        {#- Measured by a device, so it is shown from that evidence and no value
+            is submitted -- the same rule the blood group above follows. -#}
+        <dl class="facts an-static-field">
+          <div>
+            <dt>{{ t('profile.' ~ column) }}</dt>
+            <dd>{{ device.text }}</dd>
+          </div>
+        </dl>
+        <p class="tiny muted">
+          {{ t('profile.from_device', date=device.date_text, source=device.source) }}
+          <a href="/devices/metrics/{{ device.metric_key }}">{{ t('profile.open_measurement') }}</a>
+        </p>
+        {% else %}
+        <label>{{ t('profile.' ~ column) }}
+          <input name="{{ column }}" type="number" inputmode="decimal" step="0.1"
+                 min="{{ low }}" max="{{ high }}"{% if column in measured_how %} aria-describedby="hint-{{ column }}"{% endif %}
+                 value="{{ patient[column] if patient and patient[column] is not none else '' }}">
+        </label>
+        {#- Only where the tape goes needs saying: measured elsewhere it is a
+            different number. Height and weight need no instructions. -#}
+        {% if column in measured_how %}<p class="tiny muted" id="hint-{{ column }}">{{ t('profile.' ~ column ~ '_hint') }}</p>{% endif %}
+        {% endif %}
+      </div>
+      {% endfor %}
+    </fieldset>
+
+    <fieldset class="an-profile-group">
+      <legend>{{ t('profile.context_heading') }}</legend>
+      {% for field, options in profile_choices.items() %}
+      <div class="an-profile-field">
+        <label>{{ t('profile.' ~ field) }}
+          <select name="{{ field }}"{% if field == 'cv_risk_category' %} aria-describedby="hint-{{ field }}"{% endif %}>
+            <option value="">{{ t('profile.not_stated') }}</option>
+            {% for option in options %}
+            <option value="{{ option }}" {{ 'selected' if patient and patient[field] == option else '' }}>{{ t('profile.' ~ field ~ '_' ~ option) }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        {#- The option labels explain themselves; the risk category is the one
+            a person may not know, and blank is the right answer then. -#}
+        {% if field == 'cv_risk_category' %}<p class="tiny muted" id="hint-{{ field }}">{{ t('profile.' ~ field ~ '_hint') }}</p>{% endif %}
+      </div>
+      {% endfor %}
+    </fieldset>
+
+    <button class="primary" type="submit">{{ t('profile.save') }}</button>
+  </form>
+</section>
+
+{#- Two panels under one tab: who may read this record, and whose records this
+    account may read. They are the same question from either end. -#}
+<div id="profile-panel-sharing" data-profile-panel="sharing" {{ '' if active_tab == 'sharing' else 'hidden' }}>
+  <section class="panel" aria-labelledby="doctor-share-heading">
+    <div class="panel-head">
+      <div><span class="eyebrow">{{ t('doctor.share_eyebrow') }}</span><h2 id="doctor-share-heading">{{ t('doctor.share_heading') }}</h2></div>
+    </div>
+    <form action="/profile/doctor-pin" method="post" class="stack-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button class="primary" type="submit">{{ t('doctor.share_button') }}</button>
+    </form>
+    <h3>{{ t('doctor.active_heading') }}</h3>
+    {% if doctor_pins %}
+    <ul class="an-people">
+      {% for access in doctor_pins %}
+      <li class="an-person">
+        <div class="an-person__who">
+          <strong>{{ t('doctor.token_name') }}</strong>
+          <span class="tag-row">
+            <span class="pill {{ 'an-pill--ok' if access.redeemed else 'an-pill--warn' }}">
+              {{ t('doctor.state_open') if access.redeemed else t('doctor.state_waiting') }}
+            </span>
+          </span>
+        </div>
+        <dl class="an-person__stats">
+          <div><dt>{{ t('doctor.created') }}</dt><dd>{{ access.created_text }}</dd></div>
+          {% if access.redeemed %}
+          <div><dt>{{ t('doctor.opened') }}</dt><dd>{{ access.redeemed_text }}</dd></div>
+          {% else %}
+          <div><dt>{{ t('doctor.pin_redeem_by') }}</dt><dd>{{ access.redeem_by_text }}</dd></div>
+          {% endif %}
+          <div><dt>{{ t('doctor.pin_access_until') }}</dt><dd>{{ access.expires_text }}</dd></div>
+        </dl>
+        <div class="an-person__actions">
+          <form action="/profile/doctor-pin/{{ access.id }}/revoke" method="post"
+                onsubmit="return confirm(this.dataset.confirm)"
+                data-confirm="{{ t('doctor.revoke_confirm') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button class="secondary an-person__delete" type="submit">{{ t('doctor.revoke') }}</button>
+          </form>
+        </div>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="muted">{{ t('doctor.active_empty') }}</p>
+    {% endif %}
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <div><span class="eyebrow">{{ t('profile.sharing_eyebrow') }}</span><h2>{{ t('profile.sharing_heading') }}</h2></div>
+    </div>
+    {% if shares %}
+    <ul class="an-upload-recent">
+      {% for share in shares %}
+      <li>
+        <span>{{ share.grantee_email }}</span>
+        <form action="/profile/shares/remove" method="post">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="share_id" value="{{ share.id }}">
+          <button class="link-button" type="submit">{{ t('profile.share_remove') }}</button>
+        </form>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="muted">{{ t('profile.shares_empty') }}</p>
+    {% endif %}
+    <form action="/profile/shares" method="post" class="stack-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>{{ t('profile.share_email') }}<input name="email" type="email" required></label>
+      <button class="primary" type="submit">{{ t('profile.share_add') }}</button>
+    </form>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <div><span class="eyebrow">{{ t('profile.shared_with_me_eyebrow') }}</span><h2>{{ t('profile.shared_with_me_heading') }}</h2></div>
+    </div>
+    {% if shared_with_me %}
+    <ul class="an-upload-recent">
+      {% for grant in shared_with_me %}
+      <li>
+        <span>{{ grant.display_name }}</span>
+        <form action="/profile/view" method="post">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="owner_user_id" value="{{ grant.owner_user_id }}">
+          <button class="link-button" type="submit">{{ t('profile.view_record') }}</button>
+        </form>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="muted">{{ t('profile.shared_with_me_empty') }}</p>
+    {% endif %}
+    {% if viewing %}
+    <form action="/profile/view" method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="owner_user_id" value="self">
+      <button class="primary" type="submit">{{ t('profile.back_to_own') }}</button>
+    </form>
+    {% endif %}
+  </section>
+</div>
+
+<section class="panel" id="profile-panel-tokens" data-profile-panel="tokens" {{ '' if active_tab == 'tokens' else 'hidden' }}>
+  <div class="panel-head">
+    <div><span class="eyebrow">{{ t('token.eyebrow') }}</span><h2>{{ t('token.heading') }}</h2></div>
+  </div>
+  {{ tokens_ui.legend() }}
+  {{ tokens_ui.listing(tokens, csrf_token, 'profile', false) }}
+  {{ tokens_ui.create_form(token_kinds, csrf_token, 'profile', none) }}
+</section>
+
+<section class="panel" id="profile-panel-security" data-profile-panel="security" {{ '' if active_tab == 'security' else 'hidden' }}>
+  <div class="panel-head">
+    <div><span class="eyebrow">{{ t('profile.password_eyebrow') }}</span><h2>{{ t('profile.password_heading') }}</h2></div>
+  </div>
+  <form action="/profile/password" method="post" class="stack-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    {#- A hidden username field so a password manager files the new credential
+        against the right account rather than offering it everywhere. -#}
+    <input type="hidden" name="username" value="{{ user.email }}" autocomplete="username">
+    <label>{{ t('profile.password_current') }}
+      <input name="current_password" type="password" autocomplete="current-password" required>
+    </label>
+    <label>{{ t('profile.password_new') }}
+      <input name="new_password" type="password" autocomplete="new-password"
+             minlength="{{ minimum_password }}" required aria-describedby="password-hint">
+    </label>
+    <label>{{ t('profile.password_confirm') }}
+      <input name="confirm_password" type="password" autocomplete="new-password"
+             minlength="{{ minimum_password }}" required>
+    </label>
+    <p class="tiny muted" id="password-hint">{{ t('profile.password_hint', count=minimum_password) }}</p>
+    <button class="primary" type="submit">{{ t('profile.password_submit') }}</button>
+  </form>
+
+  {#- Every browser holding this account, so a forgotten library computer or a
+      lost phone can be signed out from here.  The current one is labelled and
+      offers no button: signing out here is the menu's job, and a stale copy
+      of this page must not be able to end the tab it is open in. -#}
+  <h2 id="sessions">{{ t('profile.sessions_heading') }}</h2>
+  <ul class="an-people" aria-labelledby="sessions">
+    {% for s in sessions %}
+    <li class="an-person">
+      <div class="an-person__who">
+        <strong>{{ s.device }}</strong>
+        {% if s.token_label %}<small>{{ t('profile.session_guest', label=s.token_label) }}</small>{% endif %}
+        {% if s.current %}<span class="tag-row"><span class="pill an-pill--ok">{{ t('profile.session_current') }}</span></span>{% endif %}
+      </div>
+      <p class="tiny muted">{{ t('profile.session_signed_in', date=s.created_text) }} · {{ t('profile.session_expires', date=s.expires_text) }}</p>
+      <div class="an-person__actions">
+        {% if not s.current %}
+        <form action="/profile/sessions/revoke" method="post"
+              onsubmit="return confirm(this.dataset.confirm)" data-confirm="{{ t('profile.session_sign_out_confirm') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="session" value="{{ s.id }}">
+          <button class="secondary an-person__delete" type="submit">{{ t('profile.session_sign_out') }}<span class="visually-hidden"> ({{ s.device }}, {{ s.created_text }})</span></button>
+        </form>
+        {% endif %}
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+  {% if sessions|rejectattr('current')|list %}
+  <form action="/profile/sessions/revoke-others" method="post" class="inline-form"
+        onsubmit="return confirm(this.dataset.confirm)" data-confirm="{{ t('profile.session_sign_out_others_confirm') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button class="secondary" type="submit">{{ t('profile.session_sign_out_others') }}</button>
+  </form>
+  {% endif %}
+</section>
+
+{% if paperless_on or integrations_providers or openwearables_card or garmin_personal_available or telegram.available or lab_cards %}
+{#- Panels under one tab, like sharing: accounts at other services this record
+    talks to. The ones that bring data in come first: wearable providers, then
+    the OpenWearables server; the Paperless archive below sends copies out. -#}
+<div id="profile-panel-connections" data-profile-panel="connections" {{ '' if active_tab == 'connections' else 'hidden' }}>
+{#- Every service this record exchanges data with, one folded section each,
+    whose summary line says how it stands.  A section opens by itself when it
+    needs the person (an error, an expired key, results waiting) or when the
+    page was reached for it (a message about it, a link to it). -#}
+{% set q = request.query_params %}
+{% set focus = q.get('error', '') ~ ' ' ~ q.get('saved', '') %}
+{% set lab_focus = q.get('lab', '') %}
+{% set lab_inbox_entries = lab_inbox(user) %}
+{% set lab_waiting = lab_inbox_entries|map(attribute='awaiting')|map('length')|sum %}
+{% set conns = [] %}
+{% if telegram.available %}
+{% set _ = conns.append({'id': 'telegram', 'name': t('telegram.title'), 'desc': t('conn.desc_telegram'),
+     'state': ('attention' if telegram.status == 'error' else 'ok') if telegram.linked else ('idle' if telegram.enabled else 'off'),
+     'label': (t('conn.state_problem') if telegram.status == 'error' else t('conn.state_connected')) if telegram.linked else (t('conn.state_idle') if telegram.enabled else t('conn.state_off')),
+     'open': telegram.linked and telegram.status == 'error'}) %}
+{% endif %}
+{% if lab_inbox_entries %}
+{% set _ = conns.append({'id': 'lab-inbox', 'name': t('labsync.inbox_heading'), 'desc': t('conn.desc_inbox'),
+     'state': 'attention' if lab_waiting else 'ok',
+     'label': t('conn.state_waiting', count=lab_waiting|countfmt) if lab_waiting else t('conn.state_nothing_waiting'),
+     'open': lab_waiting > 0 or lab_focus == 'inbox'}) %}
+{% endif %}
+{% for card in lab_cards %}
+{% set trouble = card.connected and (card.expired or card.sync_state == 'failed' or card.attention) %}
+{% set _ = conns.append({'id': 'lab-' ~ card.key, 'name': card.name|phrase, 'desc': t('conn.desc_clinic' if card.messages == 'doctoreleks' else 'conn.desc_lab'),
+     'state': 'attention' if trouble else ('ok' if card.connected else 'idle'),
+     'label': (t('labsync.expired_pill') if card.expired else t('conn.state_failed')) if trouble
+              else (t('conn.state_running') if card.sync_state == 'running' else (t('conn.state_connected') if card.connected else t('conn.state_idle'))),
+     'open': lab_focus == card.key or trouble or card.sync_state == 'running'}) %}
+{% endfor %}
+{% if integrations_providers %}
+{% set linked_wearables = integrations_providers|selectattr('connected')|list %}
+{% set reauth = integrations_providers|selectattr('needs_reauthorize')|list %}
+{% set _ = conns.append({'id': 'wearables', 'name': t('integrations.heading'), 'desc': t('conn.desc_wearables', names=integrations_providers|map(attribute='name')|join(', ')),
+     'state': 'attention' if reauth else ('ok' if linked_wearables else 'idle'),
+     'label': t('conn.state_reconnect') if reauth else t('conn.state_count', on=linked_wearables|length|countfmt, total=integrations_providers|length|countfmt),
+     'open': reauth|length > 0 or 'integrations.' in focus or 'integration_' in focus}) %}
+{% endif %}
+{% if garmin_personal_available %}
+{% set gp = garmin_personal_card %}
+{% set _ = conns.append({'id': 'garmin-personal', 'name': t('integrations.garmin_personal_heading'), 'desc': t('conn.desc_garmin_personal'),
+     'state': 'attention' if gp and gp.needs_new_key else ('ok' if gp else 'idle'),
+     'label': t('integrations.garmin_key_needed') if gp and gp.needs_new_key else (t('conn.state_connected') if gp else t('conn.state_idle')),
+     'open': (gp and gp.needs_new_key) or 'garmin_key' in focus}) %}
+{% endif %}
+{% if openwearables_card %}
+{% set ow_trouble = openwearables_card.unreachable or openwearables_card.failures %}
+{% set _ = conns.append({'id': 'openwearables', 'name': t('openwearables.heading'), 'desc': t('conn.desc_openwearables'),
+     'state': 'attention' if ow_trouble else ('ok' if openwearables_card.linked else 'idle'),
+     'label': t('conn.state_problem') if ow_trouble else (t('conn.state_connected') if openwearables_card.linked else t('conn.state_idle')),
+     'open': ow_trouble or 'openwearables' in focus}) %}
+{% endif %}
+{% if paperless_on %}
+{% set _ = conns.append({'id': 'paperless', 'name': t('paperless.heading'), 'desc': t('conn.desc_paperless'),
+     'state': 'ok' if paperless_token_tail else 'idle',
+     'label': t('conn.state_connected') if paperless_token_tail else t('conn.state_idle'),
+     'open': 'paperless' in focus}) %}
+{% endif %}
+{% set by_id = {} %}{% for c in conns %}{% set _ = by_id.update({c.id: c}) %}{% endfor %}
+
+{% macro summary(c) -%}
+<summary class="an-conn-summary">
+  <span class="an-conn-name"><span class="an-conn-title">{{ c.name }}</span><small>{{ c.desc }}</small></span>
+  {#- The state as words, never colour alone. -#}
+  <span class="pill an-conn-pill" data-state="{{ c.state }}">{{ c.label }}</span>
+</summary>
+{%- endmacro %}
+
+<section class="an-conn-overview" aria-labelledby="conn-overview-heading">
+  <h2 id="conn-overview-heading" class="visually-hidden">{{ t('conn.heading') }}</h2>
+  {#- No list of rows here: each folded section below already is that row
+      (name, what it does, its state), and listing every service twice was
+      the page saying everything two times. -#}
+  <details class="an-conn-legend">
+    <summary>{{ t('conn.legend') }}</summary>
+    <dl>
+      {% for state in ['ok', 'attention', 'idle', 'off'] %}
+      <div><dt><span class="pill an-conn-pill" data-state="{{ state }}">{{ t('conn.legend_' ~ state) }}</span></dt><dd>{{ t('conn.legend_' ~ state ~ '_hint') }}</dd></div>
+      {% endfor %}
+    </dl>
+  </details>
+</section>
+
+{% if telegram.available %}
+<details class="panel an-conn" id="conn-telegram" {{ 'open' if by_id['telegram'].open else '' }}>
+{{ summary(by_id['telegram']) }}
+<div class="an-conn-body">
+{% include "_telegram_profile.html" %}
+</div>
+</details>
+{% endif %}
+{% if lab_inbox_entries %}
+<details class="panel an-conn" id="conn-lab-inbox" {{ 'open' if by_id['lab-inbox'].open else '' }}>
+{{ summary(by_id['lab-inbox']) }}
+<div class="an-conn-body">
+{% include "_labsync_inbox.html" %}
+</div>
+</details>
+{% endif %}
+{% for card in lab_cards %}
+{% set c = by_id['lab-' ~ card.key] %}
+<details class="panel an-conn" id="conn-lab-{{ card.key }}" {{ 'open' if c.open else '' }}>
+{{ summary(c) }}
+<div class="an-conn-body">
+{% include "_labsync_profile.html" %}
+</div>
+</details>
+{% endfor %}
+{% if integrations_providers %}
+<details class="panel an-conn" id="conn-wearables" {{ 'open' if by_id['wearables'].open else '' }}>
+{{ summary(by_id['wearables']) }}
+<div class="an-conn-body">
+<section class="panel">
+  <div class="panel-head">
+    <div><span class="eyebrow">{{ t('integrations.eyebrow') }}</span><h2>{{ t('integrations.heading') }}</h2></div>
+  </div>
+  {% for provider in integrations_providers %}
+  <div class="an-profile-group">
+    <div class="panel-head">
+      <div><h3>{{ provider.name }}</h3></div>
+      {#- The state as words, never colour alone. -#}
+      <span class="pill {{ 'an-pill--ok' if provider.connected else 'an-pill--warn' }}">
+        {{ t('conn.state_connected') if provider.connected else t('conn.state_idle') }}
+      </span>
+    </div>
+    {% if provider.connected %}
+    <p class="tiny muted">{{ t('integrations.connected_since', date=provider.connected.connected_at|datefmt) }}</p>
+    {% if provider.key == 'oura' %}
+    {% if provider.needs_reauthorize %}
+    <div class="alert error" role="alert">{{ t('integrations.reauthorize', provider=provider.name) }}</div>
+    {#- A link, not a form: the provider's sign-in bounces across its own SSO
+        hosts, which Chrome's form-action would block on a form POST. -#}
+    <a class="primary" href="/integrations/oura/connect">{{ t('integrations.connect', provider=provider.name) }}</a>
+    {% endif %}
+    <dl class="facts ai-facts">
+      <div><dt>{{ t('integrations.data_label') }}</dt>
+        <dd>{{ t_plural('integrations.data_days', provider.sync_days) }}{% if provider.sync_latest_day %} · {{ t('integrations.data_latest', date=provider.sync_latest_day|datefmt) }}{% endif %}</dd></div>
+      <div><dt>{{ t('integrations.webhooks_label') }}</dt>
+        <dd>{{ t('integrations.webhooks_on') if provider.webhooks_active else t('integrations.webhooks_off') }}</dd></div>
+      {% if provider.ring and provider.ring.hardware_type %}
+      <div><dt>{{ t('integrations.ring_label') }}</dt>
+        <dd>{{ provider.ring.hardware_type }}{% if provider.ring.size %} · {{ t('integrations.ring_size', size=provider.ring.size) }}{% endif %}{% if provider.ring.firmware_version %} · {{ provider.ring.firmware_version }}{% endif %}</dd></div>
+      {% endif %}
+    </dl>
+    {% if not provider.backfill_done %}
+    <p class="tiny muted">{{ t('integrations.backfill_running') }}</p>
+    {% endif %}
+    <form action="/integrations/oura/sync" method="post" class="inline-form"
+          onsubmit="var b=this.querySelector('button');setTimeout(function(){b.disabled=true;b.textContent=b.dataset.working;},0)">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button class="secondary" type="submit" data-working="{{ t('integrations.working') }}">{{ t('integrations.sync_action') }}</button>
+    </form>
+    {% elif provider.key == 'garmin' %}
+    {% include "_garmin_provider.html" %}
+    {% endif %}
+    <form action="/integrations/{{ provider.key }}/disconnect" method="post" class="inline-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button class="secondary" type="submit">{{ t('integrations.disconnect') }}</button>
+    </form>
+    {#- Garmin's terms make disconnecting delete what it delivered: a
+        consequence the button alone does not say. -#}
+    {% if provider.key == 'garmin' %}<p class="tiny muted">{{ t('integrations.garmin_disconnect_hint') }}</p>{% endif %}
+    {% else %}
+    {#- A link, not a form: see the reauthorize note above. -#}
+    <a class="primary" href="/integrations/{{ provider.key }}/connect">{{ t('integrations.connect', provider=provider.name) }}</a>
+    {% endif %}
+  </div>
+  {% endfor %}
+</section>
+</div>
+</details>
+{% endif %}
+{% if garmin_personal_available %}
+<details class="panel an-conn" id="conn-garmin-personal" {{ 'open' if by_id['garmin-personal'].open else '' }}>
+{{ summary(by_id['garmin-personal']) }}
+<div class="an-conn-body">
+{% include "_garmin_personal.html" %}
+</div>
+</details>
+{% endif %}
+{% if openwearables_card %}
+<details class="panel an-conn" id="conn-openwearables" {{ 'open' if by_id['openwearables'].open else '' }}>
+{{ summary(by_id['openwearables']) }}
+<div class="an-conn-body">
+<section class="panel">
+  <div class="panel-head">
+    <div><span class="eyebrow">{{ t('openwearables.eyebrow') }}</span><h2>{{ t('openwearables.heading') }}</h2></div>
+    {#- The state as words, never colour alone. -#}
+    <span class="pill {{ 'an-pill--ok' if openwearables_card.linked else 'an-pill--warn' }}">
+      {{ t('conn.state_connected') if openwearables_card.linked else t('conn.state_idle') }}
+    </span>
+  </div>
+  {% if openwearables_card.linked %}
+  <dl class="facts ai-facts">
+    <div><dt>{{ t('openwearables.account_label') }}</dt>
+      <dd class="hash">{{ openwearables_card.remote_email }}</dd></div>
+    <div><dt>{{ t('integrations.data_label') }}</dt>
+      <dd>{{ t_plural('integrations.data_days', openwearables_card.sync_days) }}{% if openwearables_card.sync_latest_day %} · {{ t('integrations.data_latest', date=openwearables_card.sync_latest_day|datefmt) }}{% endif %}</dd></div>
+    <div><dt>{{ t('openwearables.last_sync_label') }}</dt>
+      <dd>{% if openwearables_card.sync_last_at %}{{ openwearables_card.sync_last_at|datefmt }}{% else %}{{ t('openwearables.last_sync_never') }}{% endif %}</dd></div>
+  </dl>
+  {% if not openwearables_card.backfill_done %}
+  <p class="tiny muted">{{ t('integrations.backfill_running') }}</p>
+  {% endif %}
+  {#- Named, never left looking like a quiet week: a dataset that stopped
+      arriving is indistinguishable from one with nothing to report. -#}
+  {% if openwearables_card.failures %}
+  <div class="alert warning" role="status">
+    <strong>{{ t('openwearables.failures_label', datasets=openwearables_card.failures|join('; ')) }}</strong>
+    <p class="tiny">{{ t('openwearables.failures_hint') }}</p>
+  </div>
+  {% endif %}
+  <form action="/profile/openwearables/sync" method="post" class="inline-form"
+        onsubmit="var b=this.querySelector('button');setTimeout(function(){b.disabled=true;b.textContent=b.dataset.working;},0)">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button class="secondary" type="submit" data-working="{{ t('integrations.working') }}">{{ t('openwearables.sync_action') }}</button>
+  </form>
+  <form action="/profile/openwearables/unlink" method="post" class="inline-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button class="secondary" type="submit">{{ t('openwearables.unlink_action') }}</button>
+  </form>
+  {% elif openwearables_card.unreachable %}
+  {#- The server is down, not the page: the card says so and offers nothing to
+      submit, rather than a list of accounts it could not fetch. -#}
+  <div class="alert warning" role="status">
+    <strong>{{ t('openwearables.unreachable') }}</strong>
+    <p class="tiny">{{ t('openwearables.unreachable_hint') }}</p>
+  </div>
+  {% elif openwearables_card.people %}
+  <form action="/profile/openwearables/link" method="post" class="stack-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>{{ t('openwearables.pick_label') }}
+      <select name="remote_user_id">
+        {% for person in openwearables_card.people %}
+        <option value="{{ person.id }}" {{ 'selected' if person.selected else '' }}>{{ person.email }}{% if person.name %} - {{ person.name }}{% endif %}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <button class="primary" type="submit">{{ t('openwearables.link_action') }}</button>
+  </form>
+  {% else %}
+  <p class="tiny muted">{{ t('openwearables.no_accounts') }}</p>
+  {% endif %}
+  {% if openwearables_card.linked %}
+  <details class="an-conn-more">
+    <summary>{{ t('conn.ow_log') }}</summary>
+    {% include "_openwearables_status.html" %}
+  </details>
+  {% endif %}
+</section>
+</div>
+</details>
+{% endif %}
+{% if paperless_on %}
+<details class="panel an-conn" id="conn-paperless" {{ 'open' if by_id['paperless'].open else '' }}>
+{{ summary(by_id['paperless']) }}
+<div class="an-conn-body">
+<section class="panel">
+  <div class="panel-head">
+    <div><span class="eyebrow">{{ t('paperless.eyebrow') }}</span><h2>{{ t('paperless.heading') }}</h2></div>
+    {#- The state as words, never colour alone. -#}
+    <span class="pill {{ 'an-pill--ok' if paperless_token_tail else 'an-pill--warn' }}">
+      {{ t('conn.state_connected') if paperless_token_tail else t('conn.state_idle') }}
+    </span>
+  </div>
+  <dl class="facts ai-facts">
+    <div><dt>{{ t('paperless.server_label') }}</dt>
+      <dd class="hash">{{ paperless_url }}</dd></div>
+    {% if paperless_counts %}
+    <div><dt>{{ t('paperless.counts_label') }}</dt>
+      <dd>{{ t('paperless.counts', linked=paperless_counts.linked|countfmt, total=paperless_counts.total|countfmt) }}
+        {% if paperless_counts.pending %} · {{ t('paperless.counts_pending', count=paperless_counts.pending|countfmt) }}{% endif %}
+        {#- Refused documents are named rather than left looking unsent: the
+            sync button will not retry them, and silence would read as "not
+            got round to it yet". -#}
+        {% if paperless_counts.refused %}<br><small>{{ t('paperless.counts_refused', count=paperless_counts.refused|countfmt) }}</small>{% endif %}</dd></div>
+    {% endif %}
+  </dl>
+
+  <form action="/profile/paperless" method="post" class="stack-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>{{ t('paperless.token_label') }}
+      <input name="api_token" type="password" autocomplete="off"
+             placeholder="{% if paperless_token_tail %}...{{ paperless_token_tail }}{% endif %}"
+             aria-describedby="paperless-token-hint">
+    </label>
+    <p class="tiny muted" id="paperless-token-hint">{{ t('paperless.token_hint') }}</p>
+    {% if paperless_token_tail %}
+    <label>
+      <input type="checkbox" name="clear_token" value="1">
+      {{ t('paperless.clear_token') }}
+    </label>
+    {% endif %}
+    <label>
+      <input type="checkbox" name="upload_enabled" value="1" {{ 'checked' if paperless_upload else '' }}>
+      {{ t('paperless.upload_label') }}
+    </label>
+    <button class="primary" type="submit">{{ t('paperless.account_save') }}</button>
+  </form>
+
+  {% if paperless_token_tail %}
+  <form action="/profile/paperless/test" method="post" class="inline-form"
+        onsubmit="var b=this.querySelector('button');setTimeout(function(){b.disabled=true;b.textContent=b.dataset.working;},0)">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button class="secondary" type="submit" data-working="{{ t('paperless.working') }}">{{ t('paperless.test_action') }}</button>
+  </form>
+  {% if paperless_upload %}
+  <form action="/profile/paperless/sync" method="post" class="inline-form"
+        onsubmit="var b=this.querySelector('button');setTimeout(function(){b.disabled=true;b.textContent=b.dataset.working;},0)">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button class="secondary" type="submit" data-working="{{ t('paperless.working') }}">{{ t('paperless.sync_action') }}</button>
+  </form>
+  {% endif %}
+  {% endif %}
+</section>
+</div>
+</details>
+{% endif %}
+<script>
+/* A link to anything inside a folded section (#telegram, #lab-eskulab after
+   a redirect) opens that section first.  Without script the link still jumps
+   to the right place and the section opens with one press. */
+(() => {
+  function reveal(hash) {
+    if (!hash || hash.length < 2) return;
+    let target = null;
+    try { target = document.getElementById(decodeURIComponent(hash.slice(1))); } catch (_) { return; }
+    if (!target) return;
+    for (let node = target; node; node = node.parentElement) {
+      if (node.tagName === "DETAILS") node.open = true;
+    }
+    target.scrollIntoView({ block: "start" });
+  }
+  reveal(location.hash);
+  globalThis.addEventListener("hashchange", () => reveal(location.hash));
+})();
+</script>
+</div>
+{% endif %}
+
+<script>
+(() => {
+  const strip = document.querySelector(".an-profile-tabs");
+  if (!strip) return;
+  const tabs = [...strip.querySelectorAll("[data-profile-tab]")];
+  const panels = [...document.querySelectorAll("[data-profile-panel]")];
+  function show(name) {
+    tabs.forEach((tab) => {
+      const on = tab.dataset.profileTab === name;
+      tab.classList.toggle("active", on);
+      tab.setAttribute("aria-expanded", on ? "true" : "false");
+    });
+    panels.forEach((panel) => { panel.hidden = panel.dataset.profilePanel !== name; });
+  }
+  tabs.forEach((tab) => tab.addEventListener("click", (event) => {
+    // Switch in place, and keep the address bar honest so the panel survives
+    // a reload or a shared link. Without script the href does the same job
+    // by round-tripping to the server.
+    event.preventDefault();
+    show(tab.dataset.profileTab);
+    history.replaceState(null, "", tab.getAttribute("href"));
+  }));
+})();
+</script>
+{% endblock %}

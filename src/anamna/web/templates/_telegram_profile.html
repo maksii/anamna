@@ -1,0 +1,22 @@
+<section class="panel" id="telegram" aria-labelledby="telegram-heading">
+  <div class="panel-head"><div><h2 id="telegram-heading">{{ t('telegram.title') }}</h2></div></div>
+  {% if telegram.linked %}
+  <p class="pill an-pill--ok">{{ t('conn.state_connected') }}</p>
+  {% if telegram.status == 'error' %}<div class="alert warning" role="status">{{ t('telegram.bot_not_working') }}</div>{% endif %}
+  {% if telegram.enabled and telegram.username %}<p><a class="button secondary" href="https://t.me/{{ telegram.username }}" target="_blank" rel="noopener noreferrer">{{ t('telegram.open_bot') }}</a></p>{% endif %}
+  <form action="/profile/telegram/unlink" method="post" class="stack-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit" class="secondary">{{ t('telegram.unlink') }}</button>
+  </form>
+  {% elif telegram.enabled %}
+  <form action="/profile/telegram/link" method="post" class="stack-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    {#- What the consent below agrees to (no end-to-end encryption), so it
+        stays beside the checkbox and nowhere else. -#}
+    <p>{{ t('telegram.privacy') }}</p>
+    <label><input type="checkbox" name="consent" value="1" required> {{ t('telegram.consent') }}</label>
+    <button class="primary" type="submit">{{ t('telegram.connect') }}</button>
+  </form>
+  {% else %}<p class="muted">{{ t('telegram.off') }}</p>{% endif %}
+  {% if user.role == 'admin' %}<p><a href="/admin/telegram">{{ t('telegram.admin') }}</a></p>{% endif %}
+</section>

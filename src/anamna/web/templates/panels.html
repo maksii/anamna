@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% from "_components.html" import panel_card, empty_state, plural_t with context %}
+{% block title %}{{ t('panels.title') }}{% endblock %}
+{% block content %}
+<link rel="stylesheet" href="{{ asset('patient-experience.css') }}">
+<script src="{{ asset('patient-experience.js') }}"></script>
+
+{#- The navigation already names the page, so it opens on one compact row:
+    the two counts, the sort chips and how many panels hold results. The h1
+    stays for screen readers. Every number here counts panels, and says so:
+    "9 need attention" beside results read as nine results. -#}
+<section class="an-panels-head" aria-labelledby="panels-heading">
+  <h1 id="panels-heading" class="visually-hidden">{{ t('panels.heading') }}</h1>
+  <dl class="an-totals">
+    <div><dt>{{ t('panels.totals_flagged') }}</dt><dd>{{ totals.flagged }}</dd></div>
+    <div><dt>{{ t('panels.totals_overdue') }}</dt><dd>{{ totals.overdue }}</dd></div>
+  </dl>
+  {% if groups %}
+  <nav class="metric-chip-row an-panel-sort" aria-label="{{ t('panels.sort_aria') }}">
+    <a href="/panels" data-sort="area"{% if sort == 'area' %} aria-current="page"{% endif %}>{{ t('panels.sort_area') }}</a>
+    <a href="/panels?sort=attention" data-sort="attention"{% if sort == 'attention' %} aria-current="page"{% endif %}>{{ t('panels.sort_attention') }}</a>
+  </nav>
+  {% endif %}
+  <p class="an-panels-head__count">{{ t('panels.totals_line', with_data=totals.with_data, total=totals.panels) }}</p>
+</section>
+
+{#- Attention first: one flat list in the order the verdicts give
+    (attention, borderline, oldest). The area view stamps each card with its
+    place in that list, so the toggle reorders the cards already on the page. -#}
+<div class="an-panel-grid an-panel-ranked" data-ranked{% if sort != 'attention' %} hidden{% endif %}>
+  {% if sort == 'attention' %}{% for panel in ranked %}<div data-rank="{{ loop.index0 }}">{{ panel_card(panel, 2) }}</div>{% endfor %}{% endif %}
+</div>
+
+<div class="an-index-disclosures"{% if sort == 'attention' %} hidden{% endif %}>
+{% for group in groups %}
+<details class="an-index-disclosure"{% if loop.first %} open{% endif %}>
+  <summary aria-label="{{ t('panels.group_aria', area=group.area_name) }}">
+    <span class="an-index-disclosure__title">
+      <strong>{{ group.area_name }}</strong>
+      <small>{{ plural_t('panels.group_count', group.panels|length) }}</small>
+    </span>
+    <span class="an-index-disclosure__status">
+      {% if group.flagged %}<span>{{ t('panels.group_flagged', count=group.flagged) }}</span>{% endif %}
+      {% if group.overdue %}<span>{{ t('panels.group_overdue', count=group.overdue) }}</span>{% endif %}
+    </span>
+  </summary>
+  <div class="an-index-disclosure__body">
+    <a class="an-index-disclosure__area" href="/areas/{{ group.area_id }}">{{ t('panels.open_area', area=group.area_name) }}</a>
+    <div class="an-panel-grid">
+      {% for panel in group.panels %}{% if sort != 'attention' %}<div data-rank="{{ attention_order[panel.id] }}">{{ panel_card(panel, 3) }}</div>{% endif %}{% endfor %}
+    </div>
+  </div>
+</details>
+{% else %}
+{{ empty_state(t('panels.empty_title'), t('panels.empty_body'), 2, '/upload', t('dashboard.destination_upload_title')) }}
+{% endfor %}
+</div>
+{% if sort != 'attention' and groups %}
+<script>
+(() => {
+  // Reorder the cards already rendered instead of reloading the page. Each
+  // card keeps a placeholder in its area so "By area" puts it back.
+  const ranked = document.querySelector('[data-ranked]');
+  const areas = document.querySelector('.an-index-disclosures');
+  const links = document.querySelectorAll('[data-sort]');
+  const cards = [...areas.querySelectorAll('[data-rank]')].map((card) => {
+    const home = document.createComment('');
+    card.before(home);
+    return {card, home};
+  });
+  cards.sort((a, b) => a.card.dataset.rank - b.card.dataset.rank);
+  const show = (sort) => {
+    const flat = sort === 'attention';
+    cards.forEach(({card, home}) => (flat ? ranked.append(card) : home.after(card)));
+    ranked.hidden = !flat;
+    areas.hidden = flat;
+    links.forEach((link) => (link.dataset.sort === sort ? link.setAttribute('aria-current', 'page') : link.removeAttribute('aria-current')));
+  };
+  links.forEach((link) => link.addEventListener('click', (event) => {
+    if (event.metaKey || event.ctrlKey || event.shiftKey) return;
+    event.preventDefault();
+    show(link.dataset.sort);
+    history.replaceState(null, '', link.href);
+  }));
+})();
+</script>
+{% endif %}
+{% endblock %}

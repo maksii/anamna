@@ -1,0 +1,312 @@
+{% extends "base.html" %}
+{% from "_components.html" import status_chip, empty_state, plural_t with context %}
+{% block title %}{{ t('changes.title') }} · {{ t('brand.name') }}{% endblock %}
+{% block content %}
+<link rel="stylesheet" href="{{ asset('patient-experience.css') }}">
+{%- macro trend_chart(entry) -%}
+{% set tr = entry.trend %}
+<svg class="an-trend" viewBox="0 0 {{ tr.width }} {{ tr.height }}" role="img" aria-label="{{ tr.label }}">
+  {% if tr.band %}<rect class="an-trend__band" x="0" y="{{ tr.band.y }}" width="{{ tr.width }}" height="{{ tr.band.height }}"/>{% endif %}
+  <line class="an-trend__axis" x1="0" x2="{{ tr.width }}" y1="{{ tr.baseline }}" y2="{{ tr.baseline }}"/>
+  <polyline class="an-trend__line" points="{{ tr.path }}"/>
+  {% for point in tr.points %}
+  {% set anchor = 'start' if loop.first else ('end' if loop.last else 'middle') %}
+  {% set label_x = point.x - 16 if loop.first else (point.x + 16 if loop.last else point.x) %}
+  <g class="an-trend__point{% if point.current %} is-current{% endif %}">
+    <title>{{ point.date }}: {{ point.value }}{% if entry.unit %} {{ entry.unit }}{% endif %}</title>
+    <circle cx="{{ point.x }}" cy="{{ point.y }}" r="{{ 4.5 if point.current else 3 }}"/>
+    <text class="an-trend__value" x="{{ label_x }}" y="{{ point.y - 7 }}" text-anchor="{{ anchor }}">{{ point.value }}</text>
+    <text class="an-trend__month" x="{{ label_x }}" y="{{ tr.height - 2 }}" text-anchor="{{ anchor }}">{{ point.month }}</text>
+  </g>
+  {% endfor %}
+</svg>
+{%- endmacro -%}
+
+{%- macro ai_finding_body(finding) -%}
+<p class="an-ai-finding__serious">{{ finding.how_serious }}</p>
+{% if finding.what_it_is %}<p><strong>{{ t('changes.ai_what_it_is') }}</strong> {{ finding.what_it_is }}</p>{% endif %}
+{% for key in ('possible_reasons', 'usually_next', 'ask') %}{% if finding[key] %}
+<h4>{{ t('changes.ai_' ~ key) }}</h4>
+<ul class="an-change-ai__list">{% for item in finding[key] %}<li>{{ item }}</li>{% endfor %}</ul>
+{% endif %}{% endfor %}
+{%- endmacro -%}
+
+{#- `lazy` rows sit inside a closed bucket: their chart waits in a <template>
+    (parsed, never laid out) until the bucket is opened. 300+ inline SVGs a
+    reader mostly never opens made this the heaviest page in the app. -#}
+{%- macro change_item(entry, lazy=false) -%}
+<li class="an-change" data-bucket="{{ entry.bucket }}">
+  <div class="an-change__head">
+    <span class="an-change-tag" data-bucket="{{ entry.bucket }}"{% if entry.direction %} data-direction="{{ entry.direction }}"{% endif %}>{{ entry.label }}</span>
+    <a class="an-change__name" href="{{ entry.url }}">{{ entry.name }}</a>
+    {% if entry.panel_url %}<a class="an-change__context" href="{{ entry.panel_url }}">{{ entry.context }}</a>{% else %}<span class="an-change__context">{{ entry.context }}</span>{% endif %}
+  </div>
+  <div class="an-change__body">
+    {% if entry.trend %}{% if lazy %}<template class="an-trend-lazy">{{ trend_chart(entry) }}</template>{% else %}{{ trend_chart(entry) }}{% endif %}{% endif %}
+    <p class="an-change__now">
+      <strong>{{ entry.value_text }}</strong>{% if entry.unit %} <span class="an-change__unit">{{ entry.unit }}</span>{% endif %}
+      {{ status_chip(entry.verdict.interpretation, entry.verdict.label, entry.verdict.conflicts_with_vendor) }}
+      {% if entry.change %}<span class="an-change__delta{% if not entry.change.comparable %} muted{% endif %}">{{ entry.change.text }}</span>{% endif %}
+      {% if entry.previous %}<span class="an-change__was">{{ t('changes.was_on', value=entry.previous.value_text ~ ((' ' ~ entry.previous.unit) if entry.previous.unit else ''), date=entry.previous.date_text) }}</span>
+      {% else %}<span class="an-change__was">{{ t('changes.no_previous') }}</span>{% endif %}
+    </p>
+    {% if entry.also %}<p class="an-change__also">{{ t('changes.also_measured', items=entry.also|join('; ')) }}</p>{% endif %}
+  </div>
+  {% if entry.ai_note %}{% set note = entry.ai_note %}
+  <details class="an-change-note" data-level="{{ note.level }}">
+    <summary><span>{{ t('changes.ai_note_summary') }}</span> <span class="pill an-ai-level" data-level="{{ note.level }}" title="{{ t('changes.ai_level_' ~ note.level ~ '_hint') }}">{{ t('changes.ai_level_' ~ note.level) }}</span></summary>
+    <div class="an-change-note__body">
+      {{ ai_finding_body(note) }}
+      <p class="muted"><small>{{ t('changes.ai_note_disclaimer') }}</small></p>
+    </div>
+  </details>
+  {% endif %}
+  <p class="an-change__foot">
+    <a href="{{ entry.source_url }}">{{ t('changes.open_source') }}</a>
+    {% if entry.unverified %}<span class="an-change__unverified" title="{{ t('verify.provisional_body') }}">{{ entry.verification_label }}<span class="visually-hidden"> - {{ t('verify.provisional_body') }}</span></span>{% endif %}
+  </p>
+</li>
+{%- endmacro -%}
+
+{%- macro count_list(group, always=()) -%}
+<ul class="an-change-counts" aria-label="{{ t('changes.counts_aria', date=group.date_text) }}">
+  {% for bucket in buckets %}{% if group.counts[bucket] or bucket in always %}
+  <li data-bucket="{{ bucket }}"><span>{{ t('changes.bucket_' ~ bucket) }}</span> <strong>{{ group.counts[bucket]|countfmt }}</strong></li>
+  {% endif %}{% endfor %}
+</ul>
+{%- endmacro -%}
+
+{#- Folded behind a count: one episode can draw on a dozen documents, and the
+    list is provenance a reader opens when they want it, not the report. -#}
+{%- macro document_list(group) -%}
+{% if group.documents %}
+<details class="an-change-docs">
+  <summary>{{ t('changes.documents_label') }} <span class="pill">{{ group.documents|length|countfmt }}</span></summary>
+  <ul>
+    {% for doc in group.documents %}<li><a href="{{ doc.url }}">{{ doc.title_text }}</a>{% if doc.vendor not in doc.title_text %} <small>{{ doc.vendor }}</small>{% endif %}{% if doc.filename_text %} <small>{{ doc.filename_text }}</small>{% endif %}</li>{% endfor %}
+  </ul>
+</details>
+{% endif %}
+{%- endmacro -%}
+
+{#- Closed by default and placed after the newest date's changes: the values
+    and verdicts are the record, the summary is advice about them. The summary
+    line carries a two-line teaser so a reader knows what opening it gives. -#}
+{%- macro ai_block() -%}
+<details class="panel an-change-ai" id="changes-ai"{% if ai_error %} open{% endif %}>
+  <summary class="an-change-ai__summary">
+    <span class="an-change-ai__title">
+      <span class="eyebrow">{{ t('changes.ai_eyebrow') }}</span>
+      <h2 id="changes-ai-heading">{{ t('changes.ai_heading') }}</h2>
+      {% if summary %}<span class="pill">{{ t('changes.ai_badge') }}</span>{% endif %}
+    </span>
+    <span class="an-change-ai__teaser">{{ summary.content.state if summary else t('changes.ai_teaser_empty') }}</span>
+  </summary>
+  <div class="an-change-ai__body">
+  {% if ai_error %}<div class="alert error" role="alert">{{ t('changes.ai_error_in_progress') if ai_error == 'in_progress' else t('aiassist.error_' ~ ai_error) }}</div>{% endif %}
+  {% if summary %}
+  {% if summary.stale %}<div class="alert warning">{{ t('changes.ai_stale') }}</div>{% endif %}
+  <p class="an-change-ai__state">{{ summary.content.state }}</p>
+  {% for finding in summary_findings %}
+  <article class="an-ai-finding" data-level="{{ finding.level }}">
+    <h3 class="an-ai-finding__head">{{ finding.test }}
+      <span class="pill an-ai-level" data-level="{{ finding.level }}" title="{{ t('changes.ai_level_' ~ finding.level ~ '_hint') }}">{{ t('changes.ai_level_' ~ finding.level) }}</span></h3>
+    {{ ai_finding_body(finding) }}
+  </article>
+  {% endfor %}
+  {% if summary.content.findings %}
+  <details class="an-ai-levels">
+    <summary>{{ t('changes.ai_levels_heading') }}</summary>
+    <dl>{% for level in ('slight', 'moderate', 'marked', 'urgent') %}
+      <div><dt><span class="pill an-ai-level" data-level="{{ level }}">{{ t('changes.ai_level_' ~ level) }}</span></dt><dd>{{ t('changes.ai_level_' ~ level ~ '_hint') }}</dd></div>
+    {% endfor %}</dl>
+  </details>
+  {% endif %}
+  {#- `attention` and `discuss` are the shape summaries had before findings;
+      a stored one still reads until it is regenerated. -#}
+  {% for key in ('improved', 'attention', 'discuss') %}{% if summary.content[key] %}
+  <h3>{{ t('changes.ai_' ~ key) }}</h3>
+  <ul class="an-change-ai__list">{% for item in summary.content[key] %}<li>{{ item }}</li>{% endfor %}</ul>
+  {% endif %}{% endfor %}
+  <p class="muted"><small>{{ t('changes.ai_meta', date='') }}<time datetime="{{ summary.created_iso }}" data-local>{{ summary.created_text }}</time></small></p>
+  {% endif %}
+  <p class="muted">{{ t('changes.ai_disclaimer') }}</p>
+  {% if ai_can_ask %}
+  <p class="muted"><small>{{ t('changes.ai_privacy') }}</small></p>
+  <form action="/changes/ai-summary" method="post" class="inline-form" id="changes-ai-form"
+        data-error-disabled="{{ t('aiassist.error_disabled') }}" data-error-budget="{{ t('aiassist.error_budget') }}"
+        data-error-provider-error="{{ t('aiassist.error_provider_error') }}" data-error-in-progress="{{ t('changes.ai_error_in_progress') }}"
+        data-error-network="{{ t('aiassist.error_network') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    {% if document_filter %}<input type="hidden" name="document" value="{{ document_filter }}">{% endif %}
+    {% if summary %}<input type="hidden" name="refresh" value="1">{% endif %}
+    <button class="secondary" type="submit" data-working="{{ t('aiassist.working') }}">{{ t('changes.ai_regenerate') if summary else t('changes.ai_generate') }}</button>
+  </form>
+  <p id="changes-ai-status" class="muted" role="status" aria-live="polite"></p>
+  {% endif %}
+  </div>
+</details>
+{%- endmacro -%}
+
+{%- set selection = view.selection -%}
+{%- set report = view.report -%}
+{#- The page names itself for a screen reader; sighted readers start at the
+    selector and the report, which say the same thing in less space. -#}
+<h1 class="visually-hidden">{{ t('changes.document_heading') if view.document else t('changes.heading') }}</h1>
+
+{% if view.document %}
+<p class="an-change-scope">
+  <span>{{ t('changes.document_lead', document=view.document.title_text) }}</span>
+  <a class="an-change-doc-link" href="{{ view.document.url }}">{{ view.document.title_text }}</a>
+  <a class="an-change-doc-link" href="/changes">{{ t('changes.show_latest') }}</a>
+</p>
+{% elif view.episodes %}
+<div class="an-change-picker">
+  <form class="an-change-picker__episode" method="get" action="/changes">
+    <label for="changes-episode">{{ t('changes.period_label') }}</label>
+    <select id="changes-episode" name="episode">
+      {% if selection.kind == 'range' %}<option value="" selected disabled>{{ t('changes.range_option', span=selection.label) }}</option>{% endif %}
+      {% for episode in view.episodes %}
+      <option value="{{ episode.value }}" data-url="{{ episode.url }}"{% if episode.current %} selected{% endif %}>{{ episode.label }} · {{ plural_t('changes.tests_count', episode.count) }}</option>
+      {% endfor %}
+    </select>
+    <button class="secondary" type="submit" data-js-hide>{{ t('changes.show') }}</button>
+  </form>
+  <details class="an-change-range"{% if selection.kind == 'range' %} open{% endif %}>
+    <summary>{{ t('changes.custom_range') }}</summary>
+    <form method="get" action="/changes">
+      <label>{{ t('changes.range_from') }} <input type="date" name="from" value="{{ selection.from }}" min="{{ view.bounds.min }}" max="{{ view.bounds.max }}"></label>
+      <label>{{ t('changes.range_to') }} <input type="date" name="to" value="{{ selection.to }}" min="{{ view.bounds.min }}" max="{{ view.bounds.max }}"></label>
+      <button class="secondary" type="submit">{{ t('changes.range_apply') }}</button>
+    </form>
+    <p class="muted">{{ t('changes.range_hint') }}</p>
+  </details>
+</div>
+{% endif %}
+
+{% if not report %}
+{% if view.document %}
+{{ empty_state(t('changes.empty_title'), t('changes.document_empty_body'), 2) }}
+{% elif selection.kind == 'range' and view.episodes %}
+{{ empty_state(t('changes.range_empty_title', span=selection.label), t('changes.range_empty_body'), 2, '/changes', t('changes.show_latest')) }}
+{% else %}
+{{ empty_state(t('changes.empty_title'), t('changes.empty_body'), 2, '/upload', t('changes.empty_cta')) }}
+{% endif %}
+{% else %}
+
+<section class="panel an-change-group" id="{{ report.anchor }}" aria-labelledby="{{ report.anchor }}-heading">
+  <header class="an-change-group__head">
+    <div class="an-change-group__top">
+      <h2 id="{{ report.anchor }}-heading">{{ report.date_text }} <span class="an-change-group__count">· {{ plural_t('changes.tests_count', report.total) }}</span></h2>
+      {% set nav = view.nav %}
+      {% if nav.earlier or nav.newer or selection.kind == 'range' %}
+      <nav class="an-change-group__nav" aria-label="{{ t('changes.episode_nav') }}">
+        {% if nav.earlier %}<a class="button secondary" href="{{ nav.earlier.url }}" rel="prev">{{ t('changes.earlier', span=nav.earlier.label) }}</a>{% endif %}
+        {% if nav.newer %}<a class="button secondary" href="{{ nav.newer.url }}" rel="next">{{ t('changes.newer', span=nav.newer.label) }}</a>{% endif %}
+        {% if selection.kind == 'range' %}<a class="button secondary" href="/changes">{{ t('changes.show_latest') }}</a>{% endif %}
+      </nav>
+      {% endif %}
+    </div>
+    {{ count_list(report) }}
+    <div class="an-change-group__folds">
+    {{ document_list(report) }}
+    <details class="an-change-legend">
+      <summary>{{ t('changes.legend_heading') }}</summary>
+      <dl>
+        {% for bucket in buckets %}
+        <div><dt><span class="an-change-tag" data-bucket="{{ bucket }}">{{ t('changes.bucket_' ~ bucket) }}</span></dt><dd>{{ t('changes.explain_' ~ bucket) }}</dd></div>
+        {% endfor %}
+      </dl>
+      <p>{{ t('changes.legend_episode', days=plural_t('changes.gap_days', episode_gap_days)) }}</p>
+      <p>{{ t('changes.legend_change') }}</p>
+      <p>{{ t('changes.legend_trend') }}</p>
+      <p>{{ t('changes.legend_source') }}</p>
+    </details>
+    </div>
+  </header>
+  {% if report.open %}
+  <ul class="an-change-list">{% for entry in report.open %}{{ change_item(entry) }}{% endfor %}</ul>
+  {% else %}
+  <p class="muted">{{ t('changes.nothing_open') }}</p>
+  {% endif %}
+  {% for bucket, entries in report.collapsed %}
+  <details class="an-change-more">
+    <summary><span>{{ t('changes.bucket_' ~ bucket) }}</span> <span class="pill">{{ entries|length|countfmt }}</span></summary>
+    <ul class="an-change-list">{% for entry in entries %}{{ change_item(entry, true) }}{% endfor %}</ul>
+  </details>
+  {% endfor %}
+</section>
+{% if view.scope and (summary or ai_can_ask) %}{{ ai_block() }}{% endif %}
+{% endif %}
+
+<script>
+(() => {
+  // A closed bucket's charts are stamped in the first time it opens.
+  document.addEventListener('toggle', event => {
+    const box = event.target;
+    if (!(box instanceof HTMLDetailsElement) || !box.open) return;
+    box.querySelectorAll('template.an-trend-lazy').forEach(node => node.replaceWith(node.content.cloneNode(true)));
+  }, true);
+  // Picking a period opens it at once; the Show button is the no-script path.
+  const period = document.querySelector('#changes-episode');
+  if (period) {
+    period.form.querySelector('[data-js-hide]').remove();
+    period.addEventListener('change', () => {
+      const chosen = period.selectedOptions[0];
+      if (chosen && chosen.dataset.url) location.assign(chosen.dataset.url);
+    });
+  }
+  // Arriving at #changes-ai (after generating a summary) opens it.
+  const ai = document.querySelector('#changes-ai');
+  if (ai && location.hash === '#changes-ai') ai.open = true;
+  // Stored in UTC; restated on the reader's own clock, in the CLDR month
+  // forms the server prints, so a date never appears in two spellings.
+  const F = (globalThis.__HL_I18N__ || {})._formats || {};
+  document.querySelectorAll('time[data-local]').forEach(node => {
+    const when = new Date(node.getAttribute('datetime'));
+    if (Number.isNaN(when.getTime()) || !F.months_short) return;
+    const day = String(when.getDate()).padStart(2, '0');
+    const clock = when.toLocaleTimeString(globalThis.__HL_LOCALE__ || 'en', {hour: '2-digit', minute: '2-digit'});
+    node.textContent = `${day} ${F.months_short[when.getMonth()]} ${when.getFullYear()}, ${clock}`;
+  });
+})();
+</script>
+
+{% if ai_can_ask %}
+<script>
+(() => {
+  const form = document.querySelector('#changes-ai-form');
+  if (!form) return;
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (form.dataset.busy === '1') return;
+    form.dataset.busy = '1';
+    const button = form.querySelector('button[type="submit"]');
+    const status = document.querySelector('#changes-ai-status');
+    const original = button.textContent;
+    button.disabled = true;
+    button.textContent = button.dataset.working;
+    status.textContent = button.dataset.working;
+    try {
+      const response = await fetch(form.action, {method: 'POST', body: new FormData(form), headers: {'Accept': 'application/json'}});
+      const result = await response.json();
+      if (!response.ok || !result.ok) {
+        status.textContent = form.dataset['error' + (result.reason || 'network').replace(/(^|_)(.)/g, (_, __, c) => c.toUpperCase())]
+          || form.dataset.errorNetwork;
+        return;
+      }
+      history.replaceState(null, '', result.location);
+      globalThis.location.reload();
+    } catch (error_) {
+      console.error(error_);
+      status.textContent = form.dataset.errorNetwork;
+    } finally {
+      delete form.dataset.busy;
+      button.disabled = false;
+      button.textContent = original;
+    }
+  });
+})();
+</script>
+{% endif %}
+{% endblock %}

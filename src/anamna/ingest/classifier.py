@@ -1,0 +1,921 @@
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, replace
+from datetime import date, datetime
+from pathlib import Path
+
+from ..config import local_overrides
+from ..immunizations import is_vaccination_card
+from .text import collapse_space, combined_page_text
+
+
+DATE_RE = re.compile(r"\b(\d{2})[./](\d{2})[./](\d{4})\b")
+#: «Консультація <specialty>» as a heading.  Nominative only — the genitive
+#: «консультації» is the disclaimer at the foot of every laboratory report.
+CONSULTATION_HEADING_RE = re.compile(r"консультація\s+[а-яіїєґ]")
+#: How far into a document a title can still be a title.
+CONSULTATION_HEADING_WINDOW = 120
+
+
+#: Every `clinical_type` `classify_document` can emit.  Anything else stored
+#: in `documents.clinical_type` was written by somebody other than this module.
+KNOWN_CLINICAL_TYPES: frozenset[str] = frozenset({
+    "laboratory", "radiology_mri", "radiology_xray", "ultrasound", "pathology",
+    "diagnostic_image", "compound_bundle", "consultation", "allergy",
+    "microbiology", "electrocardiogram", "blood_pressure", "administrative",
+    "clinical_report", "immunization_record",
+})
+
+
+@dataclass(frozen=True)
+class Classification:
+    vendor: str
+    website: str | None
+    clinical_type: str
+    title: str
+    report_date: str | None
+    order_identifier: str | None
+    status: str
+    extraction_strategy: str
+    confidence: float
+    notes: str | None = None
+    #: When the specimen was taken, as printed: `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM`.
+    collected_at: str | None = None
+    #: When the laboratory released the report, same format.
+    issued_at: str | None = None
+    #: The specimen the heading names («сироватка крові», «сеча»), lowercase.
+    specimen: str | None = None
+    #: A pathology report's own number («№ 40217/24»), which outlives the order.
+    report_number: str | None = None
+
+
+def iso_date(match: re.Match[str] | None) -> str | None:
+    if not match:
+        return None
+    day, month, year = match.groups()
+    return valid_date(year, month, day)
+
+
+def valid_date(year: str | int, month: str | int, day: str | int) -> str | None:
+    try:
+        return date(int(year), int(month), int(day)).isoformat()
+    except ValueError:
+        return None
+
+
+def first_match(patterns: list[str], text: str) -> re.Match[str] | None:
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE | re.MULTILINE)
+        if match:
+            return match
+    return None
+
+
+#: Where each laboratory prints its order number.  «Замовлення:» must not be
+#: preceded by «Дата»: Synevo prints «Дата замовлення: 28.08.2025», and the
+#: unanchored pattern stored the day of the month (28, 15, 21…) as the order
+#: number of every Synevo report.  Synevo prints its barcode unlabelled after
+#: the patient's sex, which is the number its own cabinet calls `Barcode` --
+#: ten digits since 2025, eight on the 2015-2018 reports.  An ALEX² export
+#: names the same barcode «Ідентифікаційний номер зразка», with a line of
+#: unrelated text between the label and the number.
+ORDER_PATTERNS = [
+    r"Результати дослідження №\s*(\d+)",
+    r"(?<!дата )\bЗам\s*овлення:\s*(\d{5,})",
+    r"№\s*обстеження:\s*([^\s]+)",
+    r"Стать:\s*\S+\s+(\d{8,10})\b",
+    r"Ідентифікаційний номер зразка:(?:[^\d\n]*\n){0,2}[^\d\n]*(\d{8,12})\b",
+]
+
+
+def extract_order_identifier(text: str) -> str | None:
+    match = first_match(ORDER_PATTERNS, text)
+    return match.group(1) if match else None
+
+
+def repair_order_identifiers(connection) -> int:
+    """Re-read order numbers stored before ORDER_PATTERNS was anchored.
+
+    Only identifiers of one or two characters are touched -- no laboratory
+    numbers its orders that way, so each one is a captured day of the month.
+    Idempotent: a repaired row no longer matches the filter.
+    """
+    rows = connection.execute(
+        """SELECT d.id, group_concat(coalesce(p.native_text, '') || char(10) || coalesce(p.ocr_text, ''), char(10)) text
+             FROM documents d JOIN document_pages p ON p.document_id = d.id
+            WHERE d.order_identifier IS NOT NULL AND length(d.order_identifier) <= 2
+            GROUP BY d.id"""
+    ).fetchall()
+    for row in rows:
+        connection.execute(
+            "UPDATE documents SET order_identifier=? WHERE id=?",
+            (extract_order_identifier(row[1] or ""), row[0]),
+        )
+    return len(rows)
+
+
+def extract_date(text: str, filename: str) -> str | None:
+    prioritized = first_match(
+        [
+            r"Дата візиту:\s*(\d{2})[./](\d{2})[./](\d{4})",
+            r"Дата замовлення:\s*(\d{2})[./](\d{2})[./](\d{4})",
+            r"Зам\s*овлення:\s*\S+\s*/\s*(\d{2})[./](\d{2})[./](\d{4})",
+            r"Дата обстеження:\s*(\d{2})[./](\d{2})[./](\d{4})",
+            r"^Дата:\s*(\d{2})[./](\d{2})[./](\d{4})",
+            r"Дата здачі аналізу:\s*(\d{2})[./](\d{2})[./](\d{4})",
+            r"Пацієнт:.*?р\.н\.\s*(\d{2})[./](\d{2})[./](\d{4})",
+            # Expert Hospital's ultrasound footer is a two-column table that
+            # text extraction reads across: «Дата дослідження: <doctor> /
+            # Лікар: / 01.02.2025», and on one layout even «Дата <name> /
+            # дослідження: Лікар: <name> / 13.02.2025».  The date sits up to
+            # two lines below its label.
+            r"Дата(?:[ \t]+\S+)?\s+дослідження:(?:[^\n]*\n){0,2}?[^\n]*?(\d{2})[./](\d{2})[./](\d{4})",
+            r"дата інтерпретації\s*(\d{2})[./](\d{2})[./](\d{4})",
+        ],
+        text,
+    )
+    if prioritized:
+        return iso_date(prioritized)
+    garmin = re.search(
+        r"Дані надані програмою Garmin Connect\s+(\d{1,2})\s+"
+        r"(січ\.|лют\.|бер\.|квіт\.|трав\.|черв\.|лип\.|серп\.|вер\.|жовт\.|лист\.|груд\.)\s+(\d{4})",
+        text,
+        re.I,
+    )
+    if garmin:
+        months = {
+            "січ.": 1, "лют.": 2, "бер.": 3, "квіт.": 4, "трав.": 5, "черв.": 6,
+            "лип.": 7, "серп.": 8, "вер.": 9, "жовт.": 10, "лист.": 11, "груд.": 12,
+        }
+        return valid_date(garmin.group(3), months[garmin.group(2).casefold()], garmin.group(1))
+    kardia = re.search(
+        r"Recorded(?:\s+on)?\s*:\s*(?:Heart Rate:\s*)?[A-Z][a-z]+,\s+([A-Z][a-z]+\s+\d{1,2},\s+\d{4})",
+        text,
+        re.I,
+    )
+    if kardia:
+        try:
+            return datetime.strptime(kardia.group(1), "%b %d, %Y").date().isoformat()
+        except ValueError:
+            pass
+    filename_match = DATE_RE.search(filename)
+    if filename_match:
+        return iso_date(filename_match)
+    iso_filename = re.search(r"(?<!\d)(\d{4})-(\d{2})-(\d{2})(?!\d)", filename)
+    if iso_filename:
+        return valid_date(*iso_filename.groups())
+    underscored = re.search(r"(?<!\d)(\d{4})_(\d{2})_(\d{2})(?!\d)", filename)
+    return valid_date(*underscored.groups()) if underscored else None
+
+
+_DMY = r"(\d{2})[./](\d{2})[./](\d{4})"
+_HM = r"(?:,?[ \t]+(\d{1,2}):(\d{2}))?"
+#: Labelled sample-collection moments, most specific first.
+COLLECTED_PATTERNS = [
+    re.compile(rf"Дата замовлення:\s*{_DMY}{_HM}", re.I),  # Synevo
+    re.compile(rf"Дата здачі аналізу:\s*{_DMY}{_HM}", re.I),  # St Paraskeva forms
+    re.compile(rf"ЗАБІР КРОВІ\s+(?:НАДРУКОВАНИЙ НА\s+)?{_DMY}", re.I),  # ALEX²
+    re.compile(rf"Дата операції:?\s*{_DMY}", re.I),  # pathology: when tissue was taken
+]
+ISSUED_PATTERNS = [
+    re.compile(rf"Дата видачі:\s*{_DMY}{_HM}", re.I),  # EskuLab
+    re.compile(rf"Час виконання:\s*{_DMY}{_HM}", re.I),  # EskuLab, older header
+    re.compile(rf"ЗАБІР КРОВІ\s+НАДРУКОВАНИЙ НА\s+{_DMY}\s+{_DMY}", re.I),  # ALEX², two columns
+    re.compile(rf"НАДРУКОВАНИЙ НА\s+{_DMY}", re.I),
+]
+ESKULAB_ORDER_DATE_RE = re.compile(rf"Зам\s*овлення:\s*\S+\s*/\s*{_DMY}", re.I)
+SAMPLING_TIME_RE = re.compile(r"Час відбору:\s*(\d{1,2}):(\d{2})", re.I)
+#: «Патологогістологічне дослідження № 40217/24»; OCR reads «№» as «Ме», «N2».
+REPORT_NUMBER_RE = re.compile(
+    r"(?:гістологічне|цитологічне)\s+дослідження\s+(?:№\s*|[NМ]\S{0,2}\s+)(\d{3,})\s*/\s*(\d{2})\b",
+    re.I,
+)
+
+
+def moment(day: str, month: str, year: str, hour: str | None = None, minute: str | None = None) -> str | None:
+    """`YYYY-MM-DD`, or `YYYY-MM-DDTHH:MM` when a valid time was printed."""
+    iso = valid_date(year, month, day)
+    if iso and hour is not None and int(hour) < 24 and int(minute or 0) < 60:
+        return f"{iso}T{int(hour):02d}:{int(minute or 0):02d}"
+    return iso
+
+
+def extract_collected_at(text: str) -> str | None:
+    for pattern in COLLECTED_PATTERNS:
+        match = pattern.search(text)
+        if match:
+            return moment(*match.groups())
+    # EskuLab prints the order date in its header and the sampling time beside
+    # every result («Час відбору: 07:40»): together they are the draw.
+    order = ESKULAB_ORDER_DATE_RE.search(text)
+    if order:
+        sampled = SAMPLING_TIME_RE.search(text)
+        return moment(*order.groups(), *(sampled.groups() if sampled else ()))
+    return None
+
+
+def extract_issued_at(text: str) -> str | None:
+    for pattern in ISSUED_PATTERNS:
+        match = pattern.search(text)
+        if match:
+            groups = match.groups()
+            # The two-column ALEX² header carries the draw date first.
+            return moment(*(groups[3:6] if len(groups) == 6 and groups[3] else groups))
+    return None
+
+
+def extract_report_number(text: str) -> str | None:
+    match = REPORT_NUMBER_RE.search(text)
+    return f"№ {match.group(1)}/{match.group(2)}" if match else None
+
+
+#: Order and turnaround codes Expert Hospital appends to a heading: «(A4001)»,
+#: «(B075)», «(O0044)», «(F0508)», «(2 ДНІ)», «(12 ГОДИН)», «(24 ГОД)».
+#: Removed together with the spaces before it, by `_sub_with_space_before`.
+HEADING_CODE_RE = re.compile(
+    r"\((?:[A-ZА-ЯІЇЄҐ]\d{3,5}|\d+\s*(?:дн[іяь]|днів|день|годин[аи]?|год)\.?)\)", re.I
+)
+#: Synevo's flag column, read into the heading; replaced, with the spaces
+#: around it, by one space.
+SYNEVO_INDICATOR_RE = re.compile(r"Індикатор зони підвищеної уваги\s*")
+SYNEVO_TABLE_HEADER = "Показник Результат Од. Референтний інтервал"
+#: The branch city Synevo prints after a section name.
+SYNEVO_CITIES = ("Київ", "Львів", "Харків", "Одеса", "Дніпро")
+CLOSING_BRACKET_RE = re.compile(r"\)")
+MRI_STUDY_NUMBER_RE = re.compile(r"\bMRI\s*\d+\b")
+#: Where a report stops being its heading: a title is never a recommendation,
+#: a conclusion or a plan («Повторна консультація невролога…, МРТ поперекового»
+#: was a cut recommendation line, picked up for its «МРТ»).
+TITLE_STOP_RE = re.compile(r"рекоменд|висновок|заключення|план обстеження", re.I)
+PATIENT_LINE_RE = re.compile(r"^(?:Пацієнт|Прізвище):")
+#: The line above a printed heading: Expert's licence block (the number on
+#: the next line), or the approval line of a Ministry form («04.01.2001 р. № 1»).
+HEADING_ANCHOR_RE = re.compile(r"^(?:Ліцензія МОЗ України|\d{2}\.\d{2}\.\d{4}\s*р\.\s*№\s*\d+)$")
+INVISIBLE_RE = re.compile("[\u200b-\u200d\u2060\ufeff]")
+ULTRASOUND_HEADING_RE = re.compile(
+    r"^(?:протокол\s+)?(дуплексного\s+)?ультразвуков(?:ого|е)\s+(?:дослідження|обстеження)\b\s*+(.*)$", re.I
+)
+KEYWORD_TITLE_TOKENS = (
+    "БІОПСІЯ", "МРТ ", "МАГНІТНО-РЕЗОНАНС", "КОЛОНОСКОП", "ГАСТРОСКОП", "БАКПОСІВ",
+    "КОАГУЛОГРАМА", "ГЛІКОВАНИЙ ГЕМОГЛОБІН", "ЗАГАЛЬНИЙ АНАЛІЗ", "ПАКЕТ ", "ВІТАМІН D",
+    "HLA B-27", "АНТИНУКЛЕАРНІ", "АУТОІМУННА",
+)
+#: Cyrillic abbreviations that stay upper case when an all-caps heading is
+#: sentence-cased.  Latin tokens, tokens with digits and roman numerals are
+#: always kept as printed.
+KEEP_UPPER = frozenset(
+    "ЗАС ЗАК ВІЛ ШОЕ МНВ АЧТЧ ПТЧ ПТІ ДДМ УЗД МРТ КТ ЕКГ ОГК ЛПВЩ ЛПНЩ ЛПДНЩ ІПСШ ПЛР ІФА "
+    "ДНК РНК СРБ ТТГ АЛТ АСТ АЛАТ АСАТ ГГТ ЛФ ЛДГ КФК ХС РФ АСЛО ЛОР ШКТ МОЗ ЛШ ПШК".split()
+)
+#: Single-letter prepositions and conjunctions; any other lone capital («гепатит
+#: С», «гепатиту В)», «Х панель») is a name and keeps its case.
+LOWER_SINGLE = frozenset("ВУЗІЙАО")
+#: Eponyms printed in capitals («ПРОТРОМБІН ПО КВІКУ», «МЕТОД ВЕСТЕРГРЕНА»).
+PROPER_NOUNS = frozenset({"КВІКУ", "КВІКОМ", "ВЕСТЕРГРЕНА", "ВЕСТЕРГРЕНОМ"})
+WORD_RE = re.compile(r"[^\W\d_]+")
+#: Specimens a heading can name, as the laboratory prints them.
+SPECIMEN_RE = re.compile(
+    r"\(\s*(?:матеріал:\s*)?(?:приносний матеріал,\s*)?"
+    r"(сироватка крові|плазма крові|цільна кров|венозна кров|капілярна кров|фекалії|кал|сеча|слина"
+    r"|мокротиння|виділення із зіву|виділення з носа)\s*\)"
+    r"|\b(сеч[іа])\b",
+    re.I,
+)
+
+
+def _sub_with_space_before(pattern: re.Pattern[str], repl: str, value: str) -> str:
+    """`pattern.sub(repl, value)` that also drops the whitespace run before each match.
+
+    The same result as a leading «\\s*» in the pattern, without the leading
+    quantifier the engine would rescan from every position of a space run.
+    `pattern` has no capturing group and starts with a non-space character.
+    """
+    pieces = pattern.split(value)
+    return repl.join([piece.rstrip() for piece in pieces[:-1]] + pieces[-1:])
+
+
+def _strip_synevo_city(section: str) -> str:
+    """«Біохімія Київ» → «Біохімія»: the city must follow a space."""
+    for city in SYNEVO_CITIES:
+        head = section.removesuffix(city)
+        if head != section and head[-1:].isspace():
+            return head.rstrip()
+    return section
+
+
+def _strip_truncated_tail(value: str) -> str:
+    """Drop a last word cut short with «...» or «…», and the spaces before it."""
+    if not value.endswith(("...", "…")):
+        return value
+    return value[: len(value) - len(value.split()[-1])].rstrip()
+
+
+def _single_letter_case(token: str, rest: str) -> str:
+    if token == "І" and re.match(r"\s+ТА\s+[ІV]+\b", rest):
+        return token  # «ВІЛ І ТА ІІ ТИПУ»: roman numerals
+    if token in LOWER_SINGLE and re.match(r"\s+[^\W\d_]", rest):
+        return token.lower()
+    return token
+
+
+def _sentence_case_word(match: re.Match[str]) -> str:
+    """One word of an all-caps heading, lowered unless it is a name or a code."""
+    token = match.group(0)
+    value = match.string
+    if not token.isupper() or re.search(r"[A-Za-z]", token) or token in KEEP_UPPER:
+        return token
+    if token in PROPER_NOUNS:
+        return token.capitalize()
+    if any("\u0370" <= char <= "\u03ff" for char in token):
+        return token.lower()
+    if set(token) <= set("ІVX") and len(token) > 1:
+        return token
+    if len(token) == 1:
+        return _single_letter_case(token, value[match.end():])
+    # Glued to a digit («HBA1C», «57.1») is a code, not a word.
+    start, end = match.span()
+    if (start and value[start - 1].isdigit()) or (end < len(value) and value[end].isdigit()):
+        return token
+    return token.lower()
+
+
+def sentence_case(value: str) -> str:
+    """«ЗАГАЛЬНИЙ АНАЛІЗ СЕЧІ (ЗАС + …)» → «Загальний аналіз сечі (ЗАС + …)».
+
+    Deterministic and conservative: Latin words (organisms, HLA, IgE), words
+    with digits, roman numerals and the abbreviations in KEEP_UPPER are left
+    exactly as printed; Greek letters (α-амілаза) are lowered.
+    """
+    return _capitalise_sentences(WORD_RE.sub(_sentence_case_word, value))
+
+
+def _capitalise_sentences(lowered: str) -> str:
+    """Upper-case the first letter, and the first after an opening quote or «. »."""
+    chars = list(lowered)
+    capitalise = True
+    for index, char in enumerate(chars):
+        if char.isalpha():
+            if capitalise:
+                chars[index] = char.upper()
+            capitalise = False
+        elif char == '"' and (index == 0 or chars[index - 1] == " "):
+            capitalise = True
+        elif char == "." and index + 1 < len(chars) and chars[index + 1] == " ":
+            capitalise = True
+    return "".join(chars)
+
+
+def _mostly_upper(value: str) -> bool:
+    letters = [char for char in value if "\u0400" <= char <= "\u04ff"]
+    return len(letters) >= 4 and sum(char.isupper() for char in letters) >= 0.8 * len(letters)
+
+
+def normalise_heading(value: str) -> str:
+    """One printed heading: quotes balanced, order/turnaround codes dropped."""
+    value = collapse_space(value)
+    previous = None
+    while value != previous:
+        previous = value
+        value = _sub_with_space_before(HEADING_CODE_RE, "", value).strip()
+        if len(value) >= 2 and value[0] == value[-1] == '"':
+            value = value[1:-1].strip()
+    value = value.replace('""', '"')
+    if value.count('"') % 2:
+        value += '"'  # «ПАКЕТ "ЛІПІДОГРАМА» lost its closing quote to the outer pair
+    return value
+
+
+def clean_title(value: str) -> str:
+    # These PDFs print the hyphen as U+00AD («ортопеда\xadтравматолога»).
+    value = INVISIBLE_RE.sub("", value.replace("\u00ad", "-"))
+    value = _sub_with_space_before(SYNEVO_INDICATOR_RE, " ", value)
+    value = re.sub(r"-{2,}", "-", collapse_space(value)).strip(" .;,:")
+    value = re.sub(r"\(\s+", "(", _sub_with_space_before(CLOSING_BRACKET_RE, ")", value))
+    if _mostly_upper(value):
+        value = sentence_case(value)
+    return value[:240]
+
+
+def extract_specimen(title: str) -> str | None:
+    if title.endswith(("…", "...")):
+        return None  # a truncated panel list may hide a second specimen
+    found = {
+        "сеча" if match.group(2) else match.group(1).casefold()
+        for match in SPECIMEN_RE.finditer(title)
+    }
+    return found.pop() if len(found) == 1 else None
+
+
+def _joined(names: list[str]) -> str:
+    title = ""
+    for name in names:
+        candidate = f"{title} · {name}" if title else name
+        if len(candidate) > 120:
+            return f"{title} · ..."
+        title = candidate
+    return title
+
+
+#: «2. F2005 Пакет №6. Ліпідограма».  Applied to collapsed lines, which never
+#: end in a space, so the possessive «\s++» gives back nothing «(.+)» needs.
+ESKULAB_HEADING_RE = re.compile(r"^\d+\.\s+[A-Z]\d{4}\s++(.+)$")
+
+
+def _with_wrapped_tail(heading: str, following_lines: list[str]) -> str:
+    # A long name wraps; its tail starts lower case («…чутливості
+    # виділених / мікроорганізмів до антибіотиків (…)»).
+    for following in following_lines:
+        if not re.match(r"^[а-яіїєґ]", following):
+            break
+        heading = f"{heading} {following}"
+    return heading
+
+
+def _eskulab_title(lines: list[str]) -> str | None:
+    # An EskuLab order prints one coded heading per panel («2. F2005 Пакет №6.
+    # Ліпідограма», «1. F5000 Коагулограма»).  The first "Пакет" line named a
+    # seven-page order of lipids, liver tests, coagulation and a blood count
+    # after its lipid panel alone, and that is the label every list shows.
+    headings: list[str] = []
+    for index, line in enumerate(lines):
+        match = ESKULAB_HEADING_RE.match(line)
+        if not match:
+            continue
+        heading = _with_wrapped_tail(match.group(1), lines[index + 1:index + 3])
+        if heading not in headings:
+            headings.append(heading)
+    if not headings:
+        return None
+    if len(headings) == 1:
+        return headings[0]
+    names: list[str] = []
+    for heading in headings:
+        name = re.sub(r"^Пакет\s*№\s*[\d.]+\.?\s*", "", heading).strip(" .")
+        if name and name not in names:
+            names.append(name)
+    return _joined(names)
+
+
+def _heading_block_title(lines: list[str]) -> str | None:
+    """The heading printed between the letterhead and «Пацієнт:».
+
+    Expert Hospital prints «"ЗАЛІЗО (СИРОВАТКА КРОВІ)"» under its licence
+    line and wraps a long one over two lines; the Ministry forms (225/о,
+    228/о) print «Загальний аналіз крові» under the form's approval line.
+    """
+    for index, line in enumerate(lines):
+        if not HEADING_ANCHOR_RE.match(line):
+            continue
+        start = index + 1
+        if start < len(lines) and lines[start].startswith("№"):
+            start += 1
+        block: list[str] = []
+        for following in lines[start:start + 4]:
+            if PATIENT_LINE_RE.match(following):
+                return normalise_heading(" ".join(block)) if block else None
+            block.append(following)
+    return None
+
+
+def _synevo_title(lines: list[str]) -> str | None:
+    if SYNEVO_TABLE_HEADER not in lines:
+        return None
+    # The section («Біохімія», «Аналіз крові розгорнутий (ЗАК)») is the line
+    # under the table header.  On a continuation page that line may be a
+    # result row («Глікований гемоглобін (HbA1c) 5.24 % 4.8 - 5.9») or the
+    # footer's «Примітка:», neither of which names anything.
+    section_lines = lines[lines.index(SYNEVO_TABLE_HEADER) + 1:][:1]
+    section = ""
+    if section_lines and (
+        SYNEVO_INDICATOR_RE.search(section_lines[0])
+        or not re.search(r"\d|^Примітка", section_lines[0])
+    ):
+        section = _sub_with_space_before(SYNEVO_INDICATOR_RE, " ", section_lines[0]).strip()
+    panels: list[tuple[str, str]] = []
+    for line in lines:
+        line = _sub_with_space_before(SYNEVO_INDICATOR_RE, " ", line).strip()
+        match = re.match(r"^Пакет\s*№\s*[\d.]+\s*\((.+)\)$", line)
+        if match and line not in [panel for panel, _ in panels]:
+            panels.append((line, match.group(1)))
+    if len(panels) == 1:
+        return panels[0][0]
+    if panels:
+        return _joined([name for _, name in panels])
+    return _strip_synevo_city(section) or None
+
+
+def _consultation_title(lines: list[str]) -> str | None:
+    for line in lines[:15]:
+        match = re.search(r"(консультативний висновок.*|консультація\s+[^\W\d_].*)$", line, re.I)
+        if match:
+            return _strip_truncated_tail(match.group(1))
+    return None
+
+
+def _blood_pressure_title(text: str) -> str | None:
+    match = re.search(
+        r"(Звіт про кров.яний тиск протягом)[ \t]*\n(?:[^\n]*\n){0,3}?[ \t]*(\d+[ \t]+[^\W\d_]+)[ \t]*(?:\n|$)",
+        text,
+    )
+    return f"{match.group(1)} {match.group(2)}" if match else None
+
+
+def _allergy_title(text: str) -> str | None:
+    if "ALEX" not in text:
+        return None
+    count = re.search(r"Протестовані алергени:[ \t]*(?:\n[ \t]*\d{6,}[ \t]+)?(\d{2,4})\b", text)
+    return f"ALEX² - протестовані алергени: {count.group(1)}" if count else "ALEX²"
+
+
+#: «Локалізація патологічного процесу - м'які тканини».  Applied to collapsed
+#: lines, which never end in a space (see ESKULAB_HEADING_RE).
+ULTRASOUND_SITE_RE = re.compile(r"^Локалізація патологічного процесу\s*[–-]\s*+(.+)$")
+STUDY_AREA_RE = re.compile(r"^(?:Область|Ділянка) дослідження:")
+MRI_STUDY_RE = re.compile(r"^(?:Ділянка обстеження:\s*)?(МРТ\s.+)$")
+XRAY_HEADING_RE = re.compile(r"^(?:рентгенологічне дослідження|комп.ютерна рентгенографія)$", re.I)
+#: «Ділянка тіла: ОГК».  Collapsed lines again, as above.
+BODY_REGION_RE = re.compile(r"^Ділянка (?:обстеження|тіла):\s*+(.+)$")
+
+
+def _ultrasound_subject(match: re.Match[str], tail: list[str]) -> str:
+    parts = [match.group(2)]
+    # Only an Expert heading wraps, and it always ends at «(дослідження
+    # проводилось на …)»; St Paraskeva's is followed by «Протокол 40551».
+    for offset, following in enumerate(tail):
+        if following.startswith("(дослідження"):
+            parts.extend(tail[:offset])
+            break
+    subject = sentence_case(" ".join(parts).strip()).strip()
+    return subject[:1].lower() + subject[1:]
+
+
+def _ultrasound_area(lines: list[str]) -> str | None:
+    return next(
+        (re.sub(r"^(?:Область|Ділянка) дослідження:\s*", "", item) for item in lines[:20]
+         if STUDY_AREA_RE.match(item)),
+        None,
+    )
+
+
+def _ultrasound_site(lines: list[str]) -> str | None:
+    for position, item in enumerate(lines[:40]):
+        located = ULTRASOUND_SITE_RE.match(item)
+        if located:
+            site = located.group(1)
+            following = lines[position + 1] if position + 1 < len(lines) else ""
+            if len(following) <= 25 and not re.search(r"[–:]", following):
+                site = f"{site} {following}"
+            return site
+    return None
+
+
+def _ultrasound_heading_title(lines: list[str], index: int, match: re.Match[str]) -> str | None:
+    subject = _ultrasound_subject(match, lines[index + 1:index + 3])
+    prefix = "Дуплексне УЗД" if match.group(1) else "УЗД"
+    title = f"{prefix} {subject}".strip()
+    detail = _ultrasound_site(lines) or _ultrasound_area(lines)
+    if detail:
+        return f"{title} - {detail}"
+    return title if subject else None
+
+
+def _ultrasound_title(lines: list[str]) -> str | None:
+    for line in lines[:40]:
+        if re.match(r"^УЗД\s+\S", line):
+            return line
+    for index, line in enumerate(lines[:40]):
+        match = ULTRASOUND_HEADING_RE.match(line)
+        if match:
+            return _ultrasound_heading_title(lines, index, match)
+    return None
+
+
+def _before_stop(lines: list[str]) -> list[str]:
+    """The lines above the first recommendation, conclusion or plan."""
+    for index, line in enumerate(lines):
+        if TITLE_STOP_RE.search(line):
+            return lines[:index]
+    return lines
+
+
+def _mri_title(lines: list[str]) -> str | None:
+    for line in lines:
+        match = MRI_STUDY_RE.match(line)
+        if match:
+            return _sub_with_space_before(MRI_STUDY_NUMBER_RE, "", match.group(1))
+    return None
+
+
+def _xray_title(lines: list[str]) -> str | None:
+    heading = None
+    for line in lines:
+        if XRAY_HEADING_RE.match(line):
+            heading = heading or line
+        match = BODY_REGION_RE.match(line)
+        if match:
+            region = _strip_truncated_tail(match.group(1))
+            if "рентген" in region.casefold() or not heading:
+                return region
+            return f"{heading} - {region}"
+    return None
+
+
+def _labelled_study_title(lines: list[str], clinical_type: str) -> str | None:
+    """MRI and X-ray: the study as printed, without its label or study number."""
+    lines = _before_stop(lines[:40])
+    if clinical_type == "radiology_mri":
+        return _mri_title(lines)
+    return _xray_title(lines)
+
+
+def _keyword_title(lines: list[str]) -> str | None:
+    for line in lines:
+        if TITLE_STOP_RE.search(line):
+            return None
+        if len(line) <= 240 and any(token in line.upper() for token in KEYWORD_TITLE_TOKENS):
+            return normalise_heading(re.sub(r"^Ділянка обстеження:\s*", "", line))
+    return None
+
+
+#: A clinic document fetched by lab sync is saved as «<clinic>-<document id>
+#: <YYYY-MM-DD> <the clinic's own name for it>.pdf» (labsync.doctoreleks).
+CLINIC_FILENAME_RE = re.compile(r"^(?P<clinic>[a-z]+)-\d+(?:-\d+)?\s+(?P<day>\d{4}-\d{2}-\d{2})\s+(?P<title>\S.*)$")
+
+
+#: The lab-sync key of a clinic → the vendor its own documents are filed under.
+CLINIC_VENDORS = {
+    "veselka": ("Veselka Medical Center", "https://veselka.clinic"),
+    "paraskeva": ("St. Paraskeva Medical Center", None),
+}
+
+
+def _typed_title(text: str, lines: list[str], clinical_type: str) -> str | None:
+    """The heading only one kind of document prints."""
+    if clinical_type == "consultation":
+        return _consultation_title(lines)
+    if clinical_type == "blood_pressure":
+        return _blood_pressure_title(text)
+    if clinical_type == "allergy":
+        return _allergy_title(text)
+    if clinical_type == "immunization_record":
+        found = re.search(r"карта профілактичних щеплень", text, re.I)
+        return "Карта профілактичних щеплень" if found else None
+    if clinical_type == "ultrasound":
+        return _ultrasound_title(lines)
+    if clinical_type in {"radiology_mri", "radiology_xray"}:
+        return _labelled_study_title(lines, clinical_type)
+    return None
+
+
+def extract_title(text: str, filename: str, clinical_type: str) -> str:
+    clinic = CLINIC_FILENAME_RE.match(Path(filename).stem)
+    if clinic:
+        # The clinic's own name for the document outranks a heading guessed
+        # from its text («Консультація лікаря-кардіолога», not the first
+        # finding line of the ultrasound it quotes).
+        return clinic["title"][:240]
+    if clinical_type == "diagnostic_image":
+        return "Diagnostic image"
+    if clinical_type == "electrocardiogram":
+        return "Kardia 6-lead ECG recording" if "6l recording" in text.casefold() else "Kardia ECG recording"
+    lines = [line for line in (collapse_space(raw) for raw in text.splitlines()) if line]
+    candidates = (
+        lambda: _eskulab_title(lines),
+        lambda: _heading_block_title(lines),
+        lambda: _synevo_title(lines),
+        lambda: _typed_title(text, lines, clinical_type),
+        lambda: _keyword_title(lines),
+    )
+    for candidate in candidates:
+        found = candidate()
+        title = clean_title(found) if found else ""
+        if title:
+            return title
+    # Nothing printed is usable; the app recognises a filename-shaped title.
+    return Path(filename).stem[:240]
+
+
+UNKNOWN_VENDOR = "Unknown vendor"
+
+#: (text tokens, filename tokens, PDF producer tokens, vendor, website), in
+#: order: the first rule any token of which is present names the vendor.
+_VENDOR_RULES: tuple[tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], str, str | None], ...] = (
+    (("kardia", "alivecor"), (), (), "Kardia", "https://www.alivecor.com/"),
+    (("garmin connect",), (), (), "Garmin Connect", "https://connect.garmin.com"),
+    (("сінево", "synevo"), ("__synevo__",), (), "Synevo", "https://www.synevo.ua"),
+    (("esculab.com", "елаб"), ("__eskulab__",), ("Apache FOP",), "EskuLab", "https://esculab.com"),
+    # Medical centre «Veselka», operated by ТзОВ «Повноділ»; its
+    # vaccination card prints only the operator's name.
+    (("повноділ", "veselka.clinic"), (), (), "Veselka Medical Center", "https://veselka.clinic"),
+    (("3d діагностики",), (), (), "Center of Medical 3D Diagnostics", None),
+    (("оксфорд медікал", "oxford.lviv"), (), (), "Oxford Medical Lviv", "https://lviv.oxford-med.com.ua"),
+    (("експерт", "experthospital", "expert hospital"), (), (), "Expert Hospital", "https://experthospital.com.ua"),
+    (("медцентр св. параскеви", "святої параскеви"), ("st-paraskeva",), (), "St. Paraskeva Medical Center", None),
+)
+MICROBIOLOGY_TOKENS = ("антибіотикограм", "бакпосів", "мікробіологічне", "мікроорганізм")
+LABORATORY_TOKENS = (
+    "показник результат",
+    "результат норма",
+    "результати дослідження",
+    "електроліти крові",
+    "носійства гену hla",
+    "аутоімунна стандартна",
+)
+#: Text that only a report carrying result values prints.
+RESULT_PRESENT_TOKENS = (
+    "показник результат", "результат норма", "назва дослідження результат",
+    "результат дослідження", "мікроорганізм", "kual/l", "kua/l",
+    "загальний ige:", "ige <", "росту аеробної", "антигени діапазон",
+    "ro/ss-a 52", "показники одиниці результати", "форма № 225/о", "форма № 228/о",
+)
+RESULT_TYPES = frozenset({"laboratory", "microbiology", "allergy"})
+
+
+def _any_in(text: str, tokens: tuple[str, ...]) -> bool:
+    return any(token in text for token in tokens)
+
+
+def _vendor(filename: str, folded: str, producer: str) -> tuple[str, str | None]:
+    clinic = CLINIC_FILENAME_RE.match(Path(filename).stem)
+    if clinic and clinic["clinic"] in CLINIC_VENDORS:
+        # The clinic itself sent this file (lab sync): its text may name
+        # another lab whose results it quotes («аналізи Synevo від …»).
+        return CLINIC_VENDORS[clinic["clinic"]]
+    name = filename.casefold()
+    for text_tokens, name_tokens, producer_tokens, vendor, website in _VENDOR_RULES:
+        if _any_in(folded, text_tokens) or _any_in(name, name_tokens) or _any_in(producer, producer_tokens):
+            return vendor, website
+    return UNKNOWN_VENDOR, None
+
+
+def _is_consultation(filename: str, folded: str) -> bool:
+    # A screenshot headed «Консультація сімейного лікаря» was filed as a
+    # diagnostic image: a picture of nothing, with a doctor's note in it.
+    # Generalising the specialty is safe only where the phrase is the
+    # document's *title*, and the corpus says why — in every other report
+    # here it is a recommendation in the conclusion («рекомендовано:
+    # консультація гастроентеролога», «повторна консультація невролога»),
+    # sitting 582 to 2916 characters in.  Searching the whole text refiled
+    # five imaging reports as consultations; the genitive «консультації»,
+    # which is the footer of every Expert Hospital laboratory report
+    # («потребують консультації лікаря»), refiled fifty-five more.  The two
+    # literals stay because those documents are named by their conclusion,
+    # not their heading, and the window would drop them.
+    return bool(
+        CONSULTATION_HEADING_RE.search(folded[:CONSULTATION_HEADING_WINDOW])
+        or "консультація невролога" in folded
+        or "консультація ортопеда" in folded
+        or "orthopedic-traumatology-consultation" in filename.casefold()
+        # A clinic's own name for the document (lab sync), e.g. «Консультація
+        # лікаря-кардіолога», «Огляд лікаря первинка».
+        or re.search(r"\s(?:консультаці|огляд лікаря)", Path(filename).stem.casefold())
+        and CLINIC_FILENAME_RE.match(Path(filename).stem)
+    )
+
+
+def _is_ultrasound(filename: str, folded: str) -> bool:
+    name = filename.casefold()
+    return bool(
+        # A report headed «УЗД органів черевної порожнини» (Veselka) is an
+        # ultrasound whatever the file is called.
+        re.search(r"^\s*узд\s", folded[:1500], re.MULTILINE)
+        or "ультразвуков" in folded
+        or "узд" in name
+        or "ultrasound" in name
+        or "echocardiogram" in name
+    )
+
+
+def _clinical_type(filename: str, mime_type: str, text: str, folded: str) -> str:
+    if "kardia advanced determination" in folded:
+        clinical_type = "electrocardiogram"
+    elif "alex2-order-cover" in filename.casefold():
+        clinical_type = "administrative"
+    elif _is_consultation(filename, folded):
+        clinical_type = "consultation"
+    elif "звіт про кров’яний тиск" in folded and "garmin connect" in folded:
+        clinical_type = "blood_pressure"
+    elif is_vaccination_card(text):
+        # Form 063/о, «Карта профілактичних щеплень».
+        clinical_type = "immunization_record"
+    elif _any_in(folded, ("біопсі", "гістолог", "патологогістолог")):
+        clinical_type = "pathology"
+    elif "магнітно-резонанс" in folded or re.search(r"\bмрт\b", folded):
+        clinical_type = "radiology_mri"
+    else:
+        clinical_type = _content_type(filename, mime_type, folded)
+    return clinical_type
+
+
+def _content_type(filename: str, mime_type: str, folded: str) -> str:
+    if _any_in(folded, ("рентгенологічне дослідження", "рентгенограф")):
+        clinical_type = "radiology_xray"
+    elif _is_ultrasound(filename, folded):
+        clinical_type = "ultrasound"
+    elif _any_in(folded, ("alex2", "алергодіагност", "алерген")):
+        clinical_type = "allergy"
+    elif re.search(r"форма\s*№\s*(?:210|225|228)/о", folded):
+        clinical_type = "laboratory"
+    elif _any_in(folded, MICROBIOLOGY_TOKENS):
+        clinical_type = "microbiology"
+    elif _any_in(folded, LABORATORY_TOKENS):
+        clinical_type = "laboratory"
+    elif mime_type.startswith("image/"):
+        # Last, not first.  «This is a picture» is a fact about the container,
+        # and it used to outrank every fact about the contents: a photograph of
+        # a family doctor's note, a scan of an X-ray *report*, a screenshot of a
+        # discharge summary all became `diagnostic_image` — a kind that means
+        # "images with no written interpretation", and that therefore promised
+        # a radiology reading nobody would ever find in them.  Now that a scan
+        # is genuinely read (extract.ocr_pdf_page), the text is there to decide
+        # on, and only an image whose text says nothing recognisable falls
+        # through to here — which is exactly what the kind is supposed to mean.
+        clinical_type = "diagnostic_image"
+    else:
+        clinical_type = "clinical_report"
+    return clinical_type
+
+
+def _extraction_strategy(
+    mime_type: str, scanned: bool, has_embedded_ocr: bool, meaningful_chars: int, image_pages: int
+) -> str:
+    if mime_type.startswith("image/"):
+        return "ocr_image_metadata"
+    if scanned:
+        # A whole page read as one image, because there was nothing else on it.
+        # Distinct from `embedded_image_ocr`, which is a table lifted out of a
+        # page whose text layer carried the rest: on a scan there is no text
+        # layer, so nothing here has a second source to be checked against.
+        return "scanned_page_ocr"
+    if has_embedded_ocr:
+        return "native_text_plus_embedded_image_ocr" if meaningful_chars else "embedded_image_ocr"
+    if meaningful_chars < 80:
+        return "ocr_required" if image_pages else "visual_or_vector_review"
+    return "native_text_plus_visual_attachments" if image_pages else "native_text"
+
+
+def _status(clinical_type: str, folded: str) -> tuple[str, str | None]:
+    if clinical_type == "administrative":
+        return (
+            "supporting_record",
+            "Order cover retained for provenance; the result values are stored in the linked attachment export.",
+        )
+    if "ваш результат готовий і знаходиться в додатковому pdf файлі" in folded:
+        return "result_not_present", "This cover export points to a separate PDF attachment that contains the result values."
+    if clinical_type in RESULT_TYPES and not _any_in(folded, RESULT_PRESENT_TOKENS):
+        return "result_not_present", "The export identifies the ordered test but contains no result value."
+    return "final", None
+
+
+def classify_document(
+    filename: str,
+    mime_type: str,
+    pages: list[dict[str, object]],
+    metadata: dict[str, str] | None = None,
+) -> Classification:
+    metadata = metadata or {}
+    text = "\n".join(combined_page_text(page) for page in pages)
+    folded = text.casefold()
+    vendor, website = _vendor(filename, folded, metadata.get("Producer", ""))
+    clinical_type = _clinical_type(filename, mime_type, text, folded)
+
+    meaningful_chars = sum(int(page.get("native_char_count") or 0) for page in pages)
+    image_pages = sum(1 for page in pages if int(page.get("image_count") or 0) > 0)
+    has_embedded_ocr = any(str(page.get("ocr_text") or "").strip() for page in pages)
+    scanned = any("page_image_ocr" in str(page.get("extraction_method") or "") for page in pages)
+    strategy = _extraction_strategy(mime_type, scanned, has_embedded_ocr, meaningful_chars, image_pages)
+
+    status, notes = _status(clinical_type, folded)
+    if meaningful_chars < 80 and not has_embedded_ocr and mime_type == "application/pdf":
+        status = "attachment_only"
+
+    order_identifier = extract_order_identifier(text)
+    title = extract_title(text, filename, clinical_type)
+    confidence = 0.98 if vendor != UNKNOWN_VENDOR and clinical_type != "clinical_report" else 0.75
+    if status in {"attachment_only", "result_not_present"}:
+        confidence = min(confidence, 0.9)
+    result = Classification(
+        vendor=vendor,
+        website=website,
+        clinical_type=clinical_type,
+        title=title,
+        report_date=extract_date(text, filename),
+        order_identifier=order_identifier,
+        status=status,
+        extraction_strategy=strategy,
+        confidence=confidence,
+        notes=notes,
+        collected_at=extract_collected_at(text),
+        issued_at=extract_issued_at(text),
+        specimen=extract_specimen(title) if clinical_type in RESULT_TYPES else None,
+        report_number=extract_report_number(text),
+    )
+    # Per-file corrections reviewed by a person (an image-only scan's vendor and
+    # date, a printed discrepancy worth a note) name one person's documents, so
+    # they live in the installation's own data, never here.
+    name = filename.casefold()
+    for override in local_overrides().get("classifier", ()):
+        if any(pattern.casefold() in name for pattern in override["filename_contains"]):
+            result = replace(result, **override["set"])
+    return result

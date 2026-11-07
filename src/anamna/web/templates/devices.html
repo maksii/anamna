@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+{% from "_components.html" import metric_card, empty_state with context %}
+{% from "_experience.html" import area_nav with context %}
+{% block title %}{{ t('devices.title') }}{% endblock %}
+{% block content %}
+<link rel="stylesheet" href="{{ asset('patient-experience.css') }}">
+<script src="{{ asset('patient-experience.js') }}"></script>
+
+{#- The navigation already names the page, so it opens on one compact band -
+    the stat row and the four area shortcuts - and the device cards start
+    right under it; the h1 stays for screen readers. The date is a date in
+    running text, not a three-line serif numeral; the two counts link to the
+    lists they count. What the cards are, and the way to every other device
+    metric, sit at the foot of the grid. -#}
+<section class="an-device-head" aria-labelledby="devices-heading">
+  <h1 id="devices-heading" class="visually-hidden">{{ t('devices.heading') }}</h1>
+  <ul class="an-device-stats" aria-label="{{ t('devices.stats_aria') }}">
+    {% if overview.counts.latest_day %}<li><span>{{ t('devices.stat_latest') }}</span> <time datetime="{{ overview.counts.latest_day }}">{{ overview.counts.latest_day|datefmt }}</time></li>{% endif %}
+    <li><a href="#device-workouts">{{ t_plural('devices.stat_workouts', overview.counts.workouts, value=overview.counts.workouts|countfmt) }}</a></li>
+    <li><a href="#device-events">{{ t_plural('devices.stat_events', overview.counts.events, value=overview.counts.events|countfmt) }}</a></li>
+    {% if not viewing and not guest %}<li><a href="/devices/exclusions">{{ t('exclusions.list_link') }}</a></li>{% endif %}
+  </ul>
+  {{ area_nav() }}
+</section>
+
+<section class="dashboard-section an-device-latest" aria-labelledby="devices-latest-heading">
+  <h2 id="devices-latest-heading" class="visually-hidden">{{ t('devices.latest_health') }}</h2>
+  <div class="result-card-grid device-metric-grid">
+    {% for card in overview.core_metrics %}{{ metric_card(card, 3) }}{% endfor %}
+  </div>
+  <div class="an-device-latest__foot">
+    <details class="px-source-policy"><summary>{{ t('experience.source_policy') }}</summary><p>{{ t('experience.source_policy_body') }}</p></details>
+    <a class="device-tap" href="/metrics?q=device">{{ t('devices.find_all') }}</a>
+  </div>
+</section>
+
+{#- Workouts and heart recordings: the first few rows of each, the rest one
+    tap away. Fifteen of each stacked to 3,300px on a phone. -#}
+{% macro device_list(items, empty_key, row) -%}
+<div class="device-list">
+  {% for item in items[:5] %}{{ row(item) }}{% else %}<p>{{ t(empty_key) }}</p>{% endfor %}
+</div>
+{% if items|length > 5 %}
+<details class="an-device-more">
+  <summary>{{ t('area.table_show_all', count=items|length|countfmt) }}</summary>
+  <div class="device-list">{% for item in items[5:] %}{{ row(item) }}{% endfor %}</div>
+</details>
+{% endif %}
+{%- endmacro %}
+
+{% macro workout_row(item) -%}
+<article>
+  <div><strong>{{ item.workout_type|phrase }}</strong> <span>{{ item.source_label }}</span></div>
+  <b>{{ item.duration_minutes|numfmt }} {{ t('devices.min') }}</b>
+  <time>{{ item.started_at|datefmt }}</time>
+  {% if item.source_count > 1 %}<small>{{ t_plural('devices.workout_sources', item.source_count, value=item.source_count) }}: {% for source in item.alternates %}{{ source.source_label }}{% if not loop.last %}; {% endif %}{% endfor %}</small>{% endif %}
+</article>
+{%- endmacro %}
+
+{% macro event_row(item) -%}
+<article>
+  <div>
+    {% if item.url %}<a class="device-tap" href="{{ item.url }}"><strong>{{ item.event_type|phrase }}</strong></a>{% else %}<strong>{{ item.event_type|phrase }}</strong>{% endif %}
+    <span>{{ (item.value_text or item.source_name)|phrase }}</span>
+  </div>
+  <b>{{ item.source_label }}</b>
+  <time>{{ item.started_at|datefmt }}</time>
+</article>
+{%- endmacro %}
+
+<section class="device-detail-grid">
+  <section class="panel" id="device-workouts">
+    <span class="eyebrow">{{ t('devices.recent_activity') }}</span>
+    <h2>{{ t('devices.workouts_heading') }}</h2>
+    {{ device_list(overview.workouts, 'devices.no_workouts', workout_row) }}
+  </section>
+  <section class="panel" id="device-events">
+    <span class="eyebrow">{{ t('devices.heart_events') }}</span>
+    <h2>{{ t('devices.events_heading') }}</h2>
+    {{ device_list(overview.events, 'devices.no_events', event_row) }}
+  </section>
+</section>
+
+{#- A sync problem is said in the open: a stalled feed otherwise reads exactly
+    like a week without measurements. The vendor tiles behind it are
+    reference, so they fold. -#}
+<section class="dashboard-section">
+  {% if oura_sync and oura_sync.failures %}
+  <div class="alert" role="status">
+    <strong>{{ t('devices.sync_failures') }}</strong>
+    <ul>
+      {% for item in oura_sync.failures %}
+      {#- The error text is the provider's own message, reproduced verbatim -
+          it is evidence, not UI copy, so it is never translated. -#}
+      <li>{{ item.label }}: {{ item.error }}</li>
+      {% endfor %}
+    </ul>
+    <p class="tiny">{{ t('devices.sync_failures_hint') }}</p>
+  </div>
+  {% endif %}
+  {% if oura_sync and oura_sync.missing_scopes %}
+  <div class="alert" role="status">
+    <strong>{{ t('devices.missing_scopes', scopes=oura_sync.missing_scopes|join(', ')) }}</strong>
+    <p class="tiny">{{ t('devices.missing_scopes_hint') }}</p>
+    {#- A link, never a form: the provider's sign-in bounces across its own
+        SSO hosts, which the CSP form-action directive would block on a form
+        POST (test_connect_is_a_navigation_because_form_action_would_block_it). -#}
+    <a class="device-tap" href="{{ oura_sync.reconnect_url }}">{{ t('devices.reconnect') }}</a>
+  </div>
+  {% endif %}
+  {#- The OpenWearables server has no webhook to push with, so "nothing new
+      since Tuesday" has to be said out loud. -#}
+  {% if openwearables_sync and openwearables_sync.failures %}
+  <div class="alert" role="status">
+    <strong>{{ t('openwearables.devices_failures') }}</strong>
+    <ul>
+      {% for item in openwearables_sync.failures %}
+      {#- The error text is the server's own message, reproduced verbatim - it
+          is evidence, not UI copy, so it is never translated. -#}
+      <li>{{ item.label }}: {{ item.error }}</li>
+      {% endfor %}
+    </ul>
+    <p class="tiny">{{ t('openwearables.devices_failures_hint') }}</p>
+  </div>
+  {% endif %}
+  {% if openwearables_sync %}
+  <p class="dashboard-note">
+    {% if openwearables_sync.last_sync_at %}{{ t('openwearables.devices_last_sync', date=openwearables_sync.last_sync_at|datefmt) }}{% else %}{{ t('openwearables.devices_last_sync_never') }}{% endif %}
+  </p>
+  {% endif %}
+  <details class="panel an-page-disclosure" id="device-sources">
+    <summary><span><strong>{{ t_plural('devices.vendor_count', overview.vendors|length, value=overview.vendors|length) }}</strong><small>{{ t('devices.adapters') }}</small></span></summary>
+    <div class="an-page-disclosure__body">
+      <div class="device-vendor-grid">
+        {% for vendor in overview.vendors %}
+        <article class="device-vendor-card {{ 'ready' if not vendor.record_count else 'connected' }}">
+          <span class="area-index" aria-hidden="true">{{ '%02d'|format(loop.index) }}</span>
+          <h3>{{ vendor.name }}</h3>
+          <strong>{{ vendor.status }}</strong>
+          <p>{% if vendor.record_count %}{{ t_plural('devices.rows_held', vendor.record_count, value=vendor.record_count|countfmt) }}{% else %}{{ t('devices.importer_ready') }}{% endif %}</p>
+          {% if vendor.latest_date %}<time class="device-vendor-date">{{ t('devices.through', date=vendor.latest_date|datefmt) }}</time>{% endif %}
+          {% if vendor.last_sync_at %}<time class="device-vendor-date">{{ t('devices.last_sync', date=vendor.last_sync_at|datefmt) }}</time>{% endif %}
+        </article>
+        {% endfor %}
+      </div>
+    </div>
+  </details>
+
+  {% if overview.source_overlap.metric_count %}
+  <details class="panel an-page-disclosure an-overlap-section" id="device-overlap">
+    <summary><span><strong>{{ t('devices.overlap_heading', metrics=t_plural('devices.overlap_metrics', overview.source_overlap.metric_count, value=overview.source_overlap.metric_count|countfmt), days=t_plural('device.days_count', overview.source_overlap.day_count, value=overview.source_overlap.day_count|countfmt)) }}</strong><small>{{ t('devices.multi_source') }} · {{ t('devices.overlap_note') }}</small></span></summary>
+    <div class="an-page-disclosure__body">
+      <div class="an-overlap-grid">
+        {% for item in overview.source_overlap.metrics %}
+        <a href="{{ item.url }}" class="an-overlap-card">
+          <strong>{{ item.name }}</strong>
+          <span>{{ t('devices.overlap_metric', days=t_plural('device.days_count', item.days, value=item.days|countfmt), sources=t_plural('devices.sources_upto', item.max_sources, value=item.max_sources)) }}</span>
+          <small>{{ item.vendors|join(' · ') }} · {{ item.latest_day|datefmt }}</small>
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+  </details>
+  {% endif %}
+
+  <details class="panel an-page-disclosure" id="device-provenance">
+    <summary><span><strong>{{ t('devices.reproducible') }}</strong><small>{{ t('devices.provenance') }} · {{ t('devices.provenance_body') }}</small></span></summary>
+    <div class="an-page-disclosure__body">
+      <div class="recent-mini">
+        {% for item in overview.imports %}
+        <article{% if item.superseded %} class="is-superseded"{% endif %}>
+          <span>{% if item.is_account %}{{ t('devices.account_envelope') }}{% else %}{{ item.imported_at|datefmt }}{% endif %}</span>
+          <strong>{{ item.vendor }}</strong>
+          {% if item.superseded %}<small>{{ t('devices.superseded') }}</small>
+          {% else %}<small>{{ t('devices.records_range', rows=t_plural('devices.rows_held', item.rows_owned, value=item.rows_owned|countfmt), start=item.first_day|datefmt, end=item.last_day|datefmt) }}</small>{% endif %}
+          {% if item.last_sync_at %}<small>{{ t('devices.last_sync', date=item.last_sync_at|datefmt) }}</small>{% endif %}
+        </article>
+        {% endfor %}
+      </div>
+    </div>
+  </details>
+</section>
+{% endblock %}

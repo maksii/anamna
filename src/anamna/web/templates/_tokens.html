@@ -1,0 +1,160 @@
+{#
+  Access credentials, rendered identically wherever they are managed.
+
+  The profile page and the administration page differ in one thing only,
+  whether the owner can be chosen, so they share this markup rather than
+  keeping two copies that drift. `owners` is the list of accounts an
+  administrator may mint against, and `none` on the profile page.
+#}
+
+{#
+  The one moment the secret exists.
+
+  Shown by rendering the page rather than after a redirect: a value in a URL
+  is written into browser history, into the server log and into every proxy
+  on the way, and this one is never stored so it could not be recovered from
+  any of them afterwards.
+#}
+{% macro minted(new_token, token_base, csrf_token) -%}
+{% if new_token %}
+<section class="panel an-token-minted">
+  <div class="panel-head">
+    <div>
+      <span class="eyebrow">{{ t('token.minted_eyebrow') }}</span>
+      <h2>{{ t('token.minted_heading', label=new_token.label) }}</h2>
+    </div>
+    <span class="pill an-pill--warn">{{ t('token.minted_once') }}</span>
+  </div>
+  {#- readonly rather than disabled: a disabled field cannot be focused, so it
+      cannot be selected, and copying is the only thing this field is for. -#}
+  <label class="an-token-secret">
+    <span>{{ t('token.secret') }}</span>
+    <input value="{{ new_token.secret }}" readonly spellcheck="false"
+           onfocus="this.select()">
+  </label>
+  {% if new_token.kind == 'guest' or new_token.kind == 'agent' %}
+  <label class="an-token-secret">
+    <span>{{ t('token.link') }}</span>
+    <input value="{{ token_base }}/t/{{ new_token.secret }}" readonly spellcheck="false"
+           onfocus="this.select()">
+  </label>
+  {% endif %}
+  {% if new_token.kind == 'api' or new_token.kind == 'agent' %}
+  <pre class="an-token-example"><code>curl -H "Authorization: Bearer {{ new_token.secret }}" {{ token_base }}{{ '/api/panels/blood-count' if new_token.kind == 'api' else '/' }}</code></pre>
+  {% endif %}
+</section>
+{% endif %}
+{%- endmacro %}
+
+{#
+  What the three kinds are, once per page rather than under every row. Every
+  credential on the list carries a word the reader has not met before, and the
+  answer belongs beside them, not in the documentation.
+#}
+{% macro legend() -%}
+<details class="an-people__legend">
+  <summary>{{ t('token.legend_summary') }}</summary>
+  <dl>
+    <div><dt>{{ t('token.kind_agent') }}</dt><dd>{{ t('token.kind_agent_hint') }}</dd></div>
+    <div><dt>{{ t('token.kind_api') }}</dt><dd>{{ t('token.kind_api_hint') }}</dd></div>
+    <div><dt>{{ t('token.kind_guest') }}</dt><dd>{{ t('token.kind_guest_hint') }}</dd></div>
+  </dl>
+</details>
+{%- endmacro %}
+
+{% macro listing(tokens, csrf_token, origin, show_owner) -%}
+{% if tokens %}
+<ul class="an-people">
+  {% for token in tokens %}
+  <li class="an-person {{ 'an-person--blocked' if token.expired else '' }}">
+    <div class="an-person__who">
+      <strong>{{ t('token.seeded_name') if token.seeded else (t('doctor.token_name') if token.pin else token.label) }}</strong>
+      {#- A PIN row has no secret anybody holds, so there is no tail to show. -#}
+      {% if token.pin %}<small>{{ t('doctor.token_hint') }}</small>{% else %}<small>{{ t('token.hint_label') }} ·{{ token.hint }}</small>{% endif %}
+      <span class="tag-row">
+        <span class="pill">{{ token.kind_label }}</span>
+        {% if token.seeded %}<span class="pill an-pill--you">{{ t('token.seeded_pill') }}</span>{% endif %}
+        {#- The word, never the colour alone. -#}
+        <span class="pill {{ 'an-pill--warn' if token.expired else 'an-pill--ok' }}">
+          {{ t('token.state_expired') if token.expired else t('token.state_active') }}
+        </span>
+        {% if show_owner %}<span class="pill an-pill--you">{{ token.owner_name }}</span>{% endif %}
+      </span>
+    </div>
+
+    <dl class="an-person__stats">
+      {% if show_owner %}<div><dt>{{ t('token.owner') }}</dt><dd>{{ token.owner_email }}</dd></div>{% endif %}
+      <div><dt>{{ t('token.created') }}</dt><dd>{{ token.created_text }}</dd></div>
+      <div><dt>{{ t('token.expires') }}</dt><dd>{{ token.expires_text }}</dd></div>
+      <div><dt>{{ t('token.last_used') }}</dt><dd>{{ token.last_used_text }}</dd></div>
+    </dl>
+
+    <div class="an-person__actions">
+      {#- A PIN access keeps its fixed name and its 24-hour end; only revoking applies. -#}
+      {% if not token.pin %}
+      <form action="/tokens/{{ token.id }}" method="post" class="an-token-edit">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="action" value="update">
+        <input type="hidden" name="origin" value="{{ origin }}">
+        <label>
+          <span class="visually-hidden">{{ t('token.label') }}</span>
+          <input name="label" value="{{ token.label }}" required
+                 aria-label="{{ t('token.label') }}">
+        </label>
+        <label>
+          <span class="visually-hidden">{{ t('token.expires') }}</span>
+          <input name="expires_on" type="date" value="{{ token.expires_date }}"
+                 aria-label="{{ t('token.expires') }}">
+        </label>
+        <button class="secondary" type="submit">{{ t('token.save') }}</button>
+      </form>
+      {% endif %}
+      {#- Revoking closes the sessions the credential opened, so it asks first. -#}
+      <form action="/tokens/{{ token.id }}" method="post"
+            onsubmit="return confirm(this.dataset.confirm)"
+            data-confirm="{{ t('token.revoke_confirm') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="action" value="revoke">
+        <input type="hidden" name="origin" value="{{ origin }}">
+        <button class="secondary an-person__delete" type="submit">{{ t('token.revoke') }}</button>
+      </form>
+    </div>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<p class="muted">{{ t('token.empty') }}</p>
+{% endif %}
+{%- endmacro %}
+
+{% macro create_form(token_kinds, csrf_token, origin, owners) -%}
+<form action="/tokens" method="post" class="stack-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="origin" value="{{ origin }}">
+  {% if owners %}
+  <label>{{ t('token.owner') }}
+    <select name="owner_user_id">
+      {% for person in owners %}
+      <option value="{{ person.id }}">{{ person.display_name }} - {{ person.email }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  {% endif %}
+  {#- A guest link must lapse, so its expiry is required rather than
+      explained; the server refuses one without it all the same. -#}
+  <label>{{ t('token.kind') }}
+    <select name="kind" onchange="this.form.expires_on.required = this.value === 'guest'">
+      {% for kind in token_kinds %}
+      <option value="{{ kind }}">{{ t('token.kind_' ~ kind) }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>{{ t('token.label') }}
+    <input name="label" required autocomplete="off" placeholder="{{ t('token.label_placeholder') }}">
+  </label>
+  <label>{{ t('token.expires') }}
+    <input name="expires_on" type="date"{% if token_kinds[0] == 'guest' %} required{% endif %}>
+  </label>
+  <button class="primary" type="submit">{{ t('token.create') }}</button>
+</form>
+{%- endmacro %}

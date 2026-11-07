@@ -1,0 +1,98 @@
+{#- Results another user's lab account fetched for this record.  Nothing here
+    is in the record yet: each order waits for this person's "accept". -#}
+{% set lab_inbox_entries = lab_inbox(user) %}
+{% if lab_inbox_entries %}
+{% set lab_for = request.query_params.get('lab', '') %}
+{% set lab_msg = request.query_params.get('lab_msg', '') %}
+<section class="panel an-lab-card" id="lab-inbox" aria-labelledby="lab-inbox-heading">
+  <div class="panel-head">
+    <div><span class="eyebrow">{{ t('labsync.eyebrow') }}</span><h2 id="lab-inbox-heading">{{ t('labsync.inbox_heading') }}</h2></div>
+  </div>
+  {% if lab_for == 'inbox' and lab_msg in lab_message_keys %}
+  <div class="alert {{ 'error' if lab_msg.startswith('labsync.error') or 'error' in lab_msg else '' }}"
+       role="{{ 'alert' if 'error' in lab_msg else 'status' }}">{{ t(lab_msg) }}</div>
+  {% endif %}
+
+  {% for entry in lab_inbox_entries %}
+  <article class="an-lab-inbox-entry" aria-labelledby="lab-inbox-{{ loop.index }}">
+    <h3 class="an-lab-subhead" id="lab-inbox-{{ loop.index }}">{{ t('labsync.inbox_from', holder=entry.holder, lab=entry.name) }}</h3>
+    <p>
+      <strong>{{ entry.person.lastname }} {{ entry.person.firstname }} {{ entry.person.middlename }}</strong>
+      · {{ t('labsync.person_born') }} {{ entry.person.birthday|datefmt if entry.person.birthday else t('labsync.unknown') }}
+      · {{ t('labsync.sex_' ~ (entry.person.sex or 'unknown')) }}
+      {% if entry.match.ok %}<span class="pill an-pill--ok">{{ t('labsync.person_matches') }}</span>
+      {% else %}<span class="pill an-pill--warn">{{ t('labsync.person_differs') }}</span>
+      <small class="an-lab-why">
+        {% if entry.match.birthday is false %}{{ t('labsync.differs_birthday') }} {% elif entry.match.birthday is none %}{{ t('labsync.unknown_birthday') }} {% endif %}
+        {% if entry.match.sex is false %}{{ t('labsync.differs_sex') }}{% elif entry.match.sex is none %}{{ t('labsync.unknown_sex') }}{% endif %}
+      </small>
+      {% endif %}
+    </p>
+    <p class="tiny muted">{{ t('labsync.inbox_consent_' ~ entry.consent, holder=entry.holder) }}</p>
+
+    {% if entry.awaiting %}
+    <form action="/profile/lab-inbox/{{ entry.key }}/decide" method="post" class="stack-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="account" value="{{ entry.account_user_id }}">
+      <input type="hidden" name="person_id" value="{{ entry.person.id }}">
+      <fieldset>
+        <legend>{{ t('labsync.inbox_waiting_legend') }}</legend>
+        <ul class="an-lab-inbox-orders">
+          {% for order in entry.awaiting %}
+          <li>
+            <label class="an-lab-check">
+              <input type="checkbox" name="order_ids" value="{{ order.order_id }}" checked>
+              <span>{{ order.ordered_at[:10]|datefmt if order.ordered_at else '-' }} · {{ t('labsync.th_order') }} <span class="hash">{{ order.order_id }}</span>
+                · {{ t('labsync.ready_of', ready=order.ready|countfmt, total=order.total|countfmt) }}</span>
+            </label>
+            {% if order.rows %}
+            <details class="an-lab-inbox-rows">
+              <summary>{{ t('labsync.inbox_rows_summary', count=order.rows|length|countfmt) }}</summary>
+              <div class="table-wrap">
+                <table>
+                  <thead><tr><th scope="col">{{ t('labsync.inbox_th_test') }}</th><th scope="col">{{ t('labsync.inbox_th_result') }}</th></tr></thead>
+                  <tbody>
+                  {% for row in order.rows %}
+                  <tr><td>{{ row.test }}</td><td>{{ row.result|labvalue }} {{ row.units }}</td></tr>
+                  {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            </details>
+            {% endif %}
+          </li>
+          {% endfor %}
+        </ul>
+      </fieldset>
+      <div class="an-lab-actions">
+        <button class="primary" type="submit" name="decision" value="accept">{{ t('labsync.inbox_accept') }}</button>
+        <button class="secondary danger-action" type="submit" name="decision" value="decline">{{ t('labsync.inbox_decline') }}</button>
+      </div>
+    </form>
+    {% elif entry.consent != 'refused' %}
+    <p class="tiny muted">{{ t('labsync.inbox_nothing_waiting') }}</p>
+    {% endif %}
+
+    {% if entry.accepted %}
+    <p class="alert {{ 'warning' if entry.holder_failed else '' }}" role="status">
+      {{ t('labsync.inbox_accepted_pending', count=entry.accepted|length|countfmt, holder=entry.holder) }}
+      {% if entry.holder_failed %}{{ t('labsync.inbox_holder_failed', holder=entry.holder) }}{% endif %}
+    </p>
+    {% endif %}
+    {% if entry.states.get('imported', 0) + entry.states.get('linked', 0) %}
+    <p class="tiny muted">{{ t('labsync.inbox_in_record', count=(entry.states.get('imported', 0) + entry.states.get('linked', 0))|countfmt) }}
+      <a href="/documents">{{ t('labsync.inbox_open_documents') }}</a></p>
+    {% endif %}
+
+    <form action="/profile/lab-inbox/{{ entry.key }}/consent" method="post" class="an-lab-actions">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="account" value="{{ entry.account_user_id }}">
+      <input type="hidden" name="person_id" value="{{ entry.person.id }}">
+      {% if entry.consent != 'accepted' %}<button class="secondary" type="submit" name="consent" value="accepted">{{ t('labsync.inbox_always') }}</button>{% endif %}
+      {% if entry.consent != 'asked' %}<button class="secondary" type="submit" name="consent" value="asked">{{ t('labsync.inbox_ask') }}</button>{% endif %}
+      {% if entry.consent != 'refused' %}<button class="secondary danger-action" type="submit" name="consent" value="refused">{{ t('labsync.inbox_stop') }}</button>{% endif %}
+    </form>
+  </article>
+  {% endfor %}
+</section>
+{% endif %}

@@ -1,0 +1,18 @@
+-- A classification a person made outranks the one the classifier guessed.
+--
+-- The classifier decides a document's vendor, kind and date, and everything
+-- downstream follows from the kind: `parse_document` returns nothing at all
+-- for anything outside laboratory, allergy and microbiology. So a lab report
+-- the classifier could not recognise -- one printed in English, one on a form
+-- it has never seen -- lands as `clinical_report`, produces no values, and
+-- there was no way to say otherwise. Re-reading it ran the same classifier and
+-- reached the same answer, so the file was permanently unreadable through the
+-- interface, with its results sitting in plain text on the stored page.
+--
+-- This column is the same contract `observations.verification_status` already
+-- carries for values: once a person has ruled, a re-read may improve what the
+-- parser finds but may not overrule who ruled. It is deliberately one flag
+-- rather than one per field -- a reader correcting the kind of a report is
+-- correcting the whole classification of it, and three flags would only invite
+-- three ways to be half-corrected.
+ALTER TABLE documents ADD COLUMN classified_by TEXT;

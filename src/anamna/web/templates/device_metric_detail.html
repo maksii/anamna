@@ -1,0 +1,218 @@
+{% extends "base.html" %}
+{% from "_components.html" import range_bar, status_chip, staleness_chip,
+        verdict_details, trend_chip, empty_state, plural_t with context %}
+{% from "_correlation.html" import correlation_block with context %}
+{% from "_experience.html" import period_stats, metric_about with context %}
+{% block title %}{{ latest.metric_name|phrase }} · {{ t('brand.name') }}{% endblock %}
+{% block content %}
+<link rel="stylesheet" href="{{ asset('patient-experience.css') }}">
+<script src="{{ asset('patient-experience.js') }}"></script>
+{% set display_name = latest.metric_name|phrase %}
+
+<div class="an-detail-topline">
+  <a class="back-link" href="/devices">{{ t('device.back') }}</a>
+  <a class="button secondary an-export-entry" href="{{ export_url }}">{{ t('export.open') }}</a>
+</div>
+
+<section class="metric-detail-hero">
+  <div>
+    <div class="eyebrow">{{ latest.category|categoryfmt }} · {{ t_plural('device.tracked_days', total_days, value=total_days_text) }}</div>
+    <h1>{{ display_name }}</h1>
+    {#- A cadence is only "how often" when a cited interval exists; a daily
+        wearable series has none, and saying so on every one is noise. -#}
+    {{ metric_about(guidance, staleness if staleness.interval_months else none) }}
+  </div>
+
+  <div class="latest-reading an-verdict-block" data-interpretation="{{ verdict.interpretation }}"{% if verdict.conflicts_with_vendor %} data-conflict="true"{% endif %}>
+    {% if comparison.has_selected_values is defined and not comparison.has_selected_values %}<p class="an-no-range-note"><strong>{{ t('experience.alternative_reading') }}</strong> {{ t('source_policy.no_selected') }}</p>{% endif %}
+    <span>{{ t('device.latest', date=latest.day|datefmt) }}</span>
+    <strong>{{ latest.value_text }} <small>{{ latest.unit|unitfmt }}</small></strong>
+    {% if partial_text %}<p class="an-no-range-note an-partial-note"><strong>{{ t('device.partial_title') }}</strong> {{ t('device.partial_note', value=partial_text) }}</p>{% endif %}
+    {#- A metric with no low/high bound has nothing for the bar, chip, range
+        text and authority badge to each say separately -- that produced four
+        restatements of "no data" plus a stray dash (range_text() returns an
+        em-dash placeholder, which is truthy, so the old `{% if verdict.range_text %}`
+        guard never actually caught it). One explanation replaces all four. -#}
+    {% if verdict.low is not none or verdict.high is not none %}
+    {{ range_bar(verdict, latest.value|numfmt, latest.unit) }}
+    <div class="an-verdict-meta">
+      {{ status_chip(verdict.interpretation, verdict.label, verdict.conflicts_with_vendor) }}
+      {% if trend %}{{ trend_chip(trend) }} <small>{{ trend.since_text }}</small>{% endif %}
+      {% if staleness.state != 'no_interval' %}{{ staleness_chip(staleness) }}{% endif %}
+    </div>
+    {% else %}
+    {% if trend %}<div class="an-verdict-meta">{{ trend_chip(trend) }} <small>{{ trend.since_text }}</small></div>{% endif %}
+    <p class="an-no-range-note"><strong>{{ t('device.no_range_title') }}</strong> {{ t('device.no_range_body') }}</p>
+    {% endif %}
+    {% if staleness.quiet_body %}<p class="an-no-range-note">{{ staleness.quiet_body }}</p>{% endif %}
+    {% if blocked_notice %}
+    <p class="an-no-range-note an-blocked-notice" data-reason="{{ blocked_notice.reason }}">
+      {{ blocked_notice.text }}
+      {% if blocked_notice.profile_url %}<a href="{{ blocked_notice.profile_url }}">{{ t('verdict.blocked_profile_link') }}</a>{% endif %}
+    </p>
+    {% endif %}
+    <p class="an-device-source">
+      <span>{{ t('device.data_source') }}</span> ·
+      <i class="metric-state information">{{ t('device.measurement') }}</i> ·
+      <b>{{ latest_source_label }}</b> · {{ t('experience.alternative_reading') if comparison.has_selected_values is defined and not comparison.has_selected_values else t('device.selected_series') }}
+    </p>
+    {{ verdict_details(verdict) }}
+  </div>
+</section>
+
+{% if twin %}
+{#- Where else this measurement is read: its concept page (the one place a
+    same-measurement twin is read with the clinic's readings) and its panel.
+    This page stays the place to compare what each device recorded. -#}
+<nav class="panel an-twin-links" aria-label="{{ t('twin.links_aria') }}">
+  {% if twin.concept_url %}<p>{% if twin.relation == 'same' %}<strong>{{ t('twin.compare_page') }}</strong> {% endif %}{{ twin.why }}</p>{% endif %}
+  <div class="an-twin-links__actions">
+    {% if twin.concept_url %}<a class="button secondary" href="{{ twin.concept_url }}">{{ t('twin.open_concept_' ~ twin.relation, name=twin.concept_name) }}</a>{% endif %}
+    {% if twin.panel_url %}<a class="button secondary" href="{{ twin.panel_url }}">{{ t('twin.open_panel', name=twin.panel_name) }}</a>{% endif %}
+  </div>
+</nav>
+{% endif %}
+
+<section class="panel interactive-chart-panel" id="reading-trend">
+  <div class="panel-head chart-heading">
+    <div><span class="eyebrow">{{ t('device.interactive') }}</span><h2>{{ t('device.daily_trend') }}</h2></div>
+    <div class="chart-controls" role="group" aria-label="{{ t('device.range_aria') }}">
+      <button type="button" class="active" data-days="30">{{ t('device.days_30') }}</button>
+      <button type="button" data-days="90">{{ t('experience.days_90') }}</button>
+      <button type="button" data-days="365">{{ t('device.year_1') }}</button>
+      <button type="button" data-days="0">{{ t('device.all') }}</button>
+    </div>
+  </div>
+  {% if comparison.source_count > 1 %}
+  <div class="an-source-controls" role="group" aria-label="{{ t('device.chart_source_aria') }}">
+    <button type="button" class="active" data-chart-source="combined">{{ t('device.combined_series') }}</button>
+    {% for source in comparison.sources %}<button type="button" data-chart-source="{{ source.source_key }}">{{ source.label }}</button>{% endfor %}
+  </div>
+  {% endif %}
+  {% if chart_available %}
+  {{ period_stats(true) }}
+  <div class="dynamic-chart" id="device-chart" data-msg-loading="{{ t('device.loading_source') }}" data-msg-failed="{{ t('device.load_failed') }}" data-msg-no-selected="{{ t('source_policy.no_selected') }}">
+    {# viewBox is set from the container width by chart.js so one unit is one CSS pixel. #}
+    <svg id="device-trend" role="img" aria-label="{{ t('device.chart_aria', name=display_name) }}"></svg>
+    <div id="device-tooltip" class="chart-tooltip" hidden></div>
+  </div>
+  {% else %}
+  {{ empty_state(t('metric.no_trend_title'), t('metric.no_trend_body'), 3) }}
+  {% endif %}
+</section>
+
+{% if exclusion.active or exclusion.suggestions %}
+<section class="panel an-exclusion-panel" id="reading-exclusions" aria-labelledby="reading-exclusions-heading">
+  <h2 id="reading-exclusions-heading">{{ t('exclusions.metric_heading') }}</h2>
+  {% if exclusion.active %}
+  <p>{{ t_plural('exclusions.metric_active', exclusion.active, value=exclusion.active|countfmt) }}
+    {% if exclusion.own %}<a class="device-tap" href="/devices/exclusions?next={{ request.url.path|urlencode }}">{{ t('exclusions.list_link') }}</a>{% endif %}</p>
+  {% endif %}
+  {% if exclusion.suggestions %}
+  <p>{{ t('exclusions.suggest_intro', typical=exclusion.typical_text) }}</p>
+  <ul class="an-people">
+    {% for item in exclusion.suggestions %}
+    <li class="an-person">
+      <div class="an-person__who">
+        <strong>{{ item.day|datefmt }} · {{ item.value_text }}</strong>
+        <small>{{ item.source_label }}</small>
+        <span class="tag-row"><span class="pill an-pill--warn">{{ t('exclusions.far_pill') }}</span></span>
+      </div>
+      <div class="an-person__actions"><a class="button secondary" href="{{ item.url }}">{{ t('exclusions.check') }}<span class="visually-hidden"> {{ item.day|datefmt }}</span></a></div>
+    </li>
+    {% endfor %}
+  </ul>
+  <p class="tiny">{{ t('exclusions.suggest_never_auto') }}</p>
+  {% endif %}
+</section>
+{% endif %}
+
+<section class="panel" id="reading-history">
+  <div class="panel-head">
+    <div><span class="eyebrow">{{ t('device.source_history') }}</span><h2>{{ t('device.daily_aggs') }}</h2></div>
+    <span>{{ t('device.stored_rows', rows=t_plural('device.rows_count', comparison.stored_row_count, value=comparison.stored_row_count|countfmt), days=t_plural('device.days_count', total_days, value=total_days_text)) }}</span>
+  </div>
+  <details class="an-disclosure" {% if total_days <= 14 %}open{% endif %}>
+    <summary>{{ t('device.daily_aggs') }} ({{ total_days_text }})</summary>
+    <div class="table-wrap table-wrap--stack">
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">{{ t('device.th_date') }}</th>
+            <th scope="col">{{ t('device.th_value') }}</th>
+            <th scope="col">{{ t('device.th_range') }}</th>
+            <th scope="col">{{ t('device.th_samples') }}</th>
+            <th scope="col">{{ t('device.th_source') }}</th>
+            {% if exclusion.own %}<th scope="col">{{ t('exclusions.th_action') }}</th>{% endif %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for group in day_groups %}
+          {% for item in group.rows %}
+          <tr{% if item.selected %} class="an-selected-source-row"{% endif %}>
+            <td data-label="{{ t('device.th_date') }}">{{ item.day|datefmt }}{% if group.partial %} <small>({{ t('device.partial_row') }})</small>{% endif %}</td>
+            <td data-label="{{ t('device.th_value') }}"><strong>{{ item.value_text }} {{ item.unit|unitfmt }}</strong>{% if item.selected %} <span class="metric-state information">{{ t('device.used_in_series') }}</span>{% endif %}</td>
+            <td data-label="{{ t('device.th_range') }}">{{ item.min_text }}-{{ item.max_text }}</td>
+            <td data-label="{{ t('device.th_samples') }}">{{ item.samples_text }}</td>
+            <td data-label="{{ t('device.th_source') }}">{{ item.source_label }}</td>
+            {% if exclusion.own %}<td data-label="{{ t('exclusions.th_action') }}">{% if item.review_url %}<a class="device-tap" href="{{ item.review_url }}">{{ t('exclusions.not_mine') }}<span class="visually-hidden"> {{ item.day|datefmt }}, {{ item.source_label }}</span></a>{% endif %}</td>{% endif %}
+          </tr>
+          {% endfor %}
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </details>
+  {% include "_pagination.html" %}
+</section>
+
+<section class="panel an-source-comparison" id="reading-sources">
+  <div class="panel-head">
+    <div><span class="eyebrow">{{ t('device.source_coverage') }}</span><h2>{{ t_plural('device.source_count', comparison.source_count, value=comparison.source_count|countfmt) }}</h2></div>
+    {% if comparison.overlap_days %}<span>{{ t_plural('device.overlap_days', comparison.overlap_days, value=comparison.overlap_days|countfmt) }}</span>{% endif %}
+  </div>
+  <details class="px-source-policy">
+    <summary>{{ t('experience.source_policy') }}</summary>
+    <p>{{ t('experience.source_policy_body') }}</p>
+    {% if comparison.policy %}<p>{{ comparison.policy.description }}</p><p>{{ t('experience.source_switches', count=comparison.policy.source_switches|countfmt) }}</p>{% endif %}
+  </details>
+  {% if can_manage_sources and comparison.policy %}
+  <form class="px-source-form" action="/devices/source-preference" method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="metric_key" value="{{ latest.metric_key }}">
+    <input type="hidden" name="next" value="{{ request.url.path }}">
+    <label for="preferred-source">{{ t('experience.source_preference') }}
+      <select id="preferred-source" name="source_key">
+        {% if comparison.policy.mode == 'preferred' and comparison.policy.preferred_source_key not in comparison.sources|map(attribute='source_key')|list %}<option selected disabled>{{ t('experience.source_unavailable') }}</option>{% endif %}
+        <option value=""{% if comparison.policy.mode == 'automatic' %} selected{% endif %}>{{ t('experience.source_automatic') }}</option>
+        {% for source in comparison.sources %}<option value="{{ source.source_key }}"{% if source.source_key == comparison.policy.preferred_source_key %} selected{% endif %}>{{ source.label }}</option>{% endfor %}
+      </select>
+    </label>
+    <button class="button secondary" type="submit">{{ t('experience.source_save') }}</button>
+  </form>
+  {% endif %}
+  <div class="an-source-grid">
+    {% for source in comparison.sources %}
+    <article class="an-source-card" data-kind="{{ source.kind }}">
+      <header><strong>{{ t('device.source_' ~ source.kind) }}</strong></header>
+      <h3>{{ source.label }}</h3>
+      <dl>
+        <div><dt>{{ t('device.coverage') }}</dt><dd>{{ source.first_day|datefmt }} - {{ source.last_day|datefmt }}</dd></div>
+        <div><dt>{{ t('device.days_samples') }}</dt><dd>{{ t_plural('device.days_count', source.day_count, value=source.day_count|countfmt) }} · {{ t_plural('device.samples_count', source.sample_count, value=source.sample_count|countfmt) }}</dd></div>
+        <div><dt>{{ t('device.selected_days') }}</dt><dd>{{ source.selected_days|countfmt }}</dd></div>
+      </dl>
+      {% set device_url = exclusion.review_url({'source_name': source.name, 'day': source.last_day}) %}
+      {% if device_url %}<a class="device-tap" href="{{ device_url }}#origin-heading">{{ t('exclusions.not_my_device') }}<span class="visually-hidden"> {{ source.label }}</span></a>{% endif %}
+    </article>
+    {% endfor %}
+  </div>
+</section>
+
+{{ correlation_block(correlation, chart_band) }}
+
+{% if chart_available %}
+<script type="application/json" id="device-chart-data">{{ chart_payload|tojson }}</script>
+<script type="application/json" id="device-chart-band">{{ (chart_band or none)|tojson }}</script>
+<script src="{{ asset('device-chart.js') }}"></script>
+{% endif %}
+{% endblock %}

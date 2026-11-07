@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% block title %}{{ t('openwearables.admin_title') }}{% endblock %}
+{% block content %}
+
+<section class="page-head">
+  <div>
+    <div class="eyebrow">{{ t('admin.eyebrow') }}</div>
+    <h1>{{ t('openwearables.admin_heading') }}</h1>
+  </div>
+</section>
+
+{% if error %}<div class="alert error" role="alert">{{ error }}</div>{% endif %}
+{% if done %}<div class="alert" role="status">{{ done }}</div>{% endif %}
+
+<section class="panel">
+  <div class="panel-head">
+    <div><span class="eyebrow">{{ t('openwearables.status_eyebrow') }}</span><h2>{{ t('openwearables.status_heading') }}</h2></div>
+    {#- The state as words, never colour alone. -#}
+    <span class="pill {{ 'an-pill--ok' if openwearables_on else 'an-pill--warn' }}">
+      {{ t('openwearables.on') if openwearables_on
+         else (t('openwearables.off') if openwearables.url and ow_key_tail else t('openwearables.incomplete')) }}
+    </span>
+  </div>
+  <dl class="facts ai-facts">
+    <div><dt>{{ t('openwearables.status_url') }}</dt>
+      <dd class="hash">{% if openwearables.url %}{{ openwearables.url }}{% else %}{{ t('openwearables.url_missing') }}{% endif %}</dd></div>
+    <div><dt>{{ t('openwearables.status_key') }}</dt>
+      {#- Words rather than a bare `...abcdef`: the monospace `hash` style breaks
+          anywhere, and on a phone the ellipsis landed on its own line. -#}
+      <dd>{% if ow_key_tail %}{{ t('openwearables.key_tail', tail=ow_key_tail) }}{% else %}{{ t('openwearables.key_missing') }}{% endif %}</dd></div>
+    <div><dt>{{ t('openwearables.status_linked') }}</dt>
+      <dd>{{ linked|countfmt }}</dd></div>
+  </dl>
+  <form action="/admin/openwearables/test" method="post" class="inline-form"
+        onsubmit="var b=this.querySelector('button');setTimeout(function(){b.disabled=true;b.textContent=b.dataset.working;},0)">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button class="secondary" type="submit" data-working="{{ t('openwearables.working') }}">{{ t('openwearables.test_action') }}</button>
+  </form>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <div><span class="eyebrow">{{ t('openwearables.settings_eyebrow') }}</span><h2>{{ t('openwearables.settings_heading') }}</h2></div>
+  </div>
+  <form action="/admin/openwearables" method="post" class="stack-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>
+      <input type="checkbox" name="enabled" value="1" {{ 'checked' if openwearables.enabled == '1' else '' }}>
+      {{ t('openwearables.enable_label') }}
+    </label>
+    <label>{{ t('openwearables.url_label') }}
+      <input name="url" type="url" inputmode="url" value="{{ openwearables.url }}"
+             placeholder="https://openwearables.example.org" aria-describedby="ow-url-hint">
+    </label>
+    <p class="tiny muted" id="ow-url-hint">{{ t('openwearables.url_hint') }}</p>
+    <label>{{ t('openwearables.key_label') }}
+      <input name="api_key" type="password" autocomplete="off"
+             placeholder="{% if ow_key_tail %}...{{ ow_key_tail }}{% endif %}" aria-describedby="ow-key-hint">
+    </label>
+    <p class="tiny muted" id="ow-key-hint">{{ t('openwearables.key_hint') }}</p>
+    {% if ow_key_tail %}
+    <label>
+      <input type="checkbox" name="clear_key" value="1">
+      {{ t('openwearables.clear_key') }}
+    </label>
+    {% endif %}
+    <p class="tiny muted">{{ t('openwearables.url_change_warning') }}</p>
+    <button class="primary" type="submit">{{ t('openwearables.save') }}</button>
+  </form>
+</section>
+
+<section class="panel">
+  <h2>{{ t('ow_hooks.subscriptions') }}</h2>
+  <form action="/admin/openwearables/webhooks/save" method="post" class="stack-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>{{ t('ow_hooks.public_url') }}<input name="public_url" type="url" required placeholder="https://health.example.com"></label>
+    <label>{{ t('ow_hooks.scope') }}<select name="remote_user_id"><option value="">{{ t('ow_hooks.all_users') }}</option>{% for account in ow_hooks.linked_accounts %}<option value="{{ account.remote_user_id }}">{{ account.email }}</option>{% endfor %}</select></label>
+    <label>{{ t('ow_hooks.filters') }}<input name="filter_types" placeholder="sleep.created, workout.created" aria-describedby="ow-filters-hint"></label>
+    <p class="tiny muted" id="ow-filters-hint">{{ t('ow_hooks.filters_hint') }}</p>
+    <button type="submit" class="primary">{{ t('ow_hooks.save') }}</button>
+  </form>
+  {% for subscription in ow_hooks.subscriptions %}
+  <article class="panel">
+    <p><span class="pill">{{ t('ow_hooks.error_status' if subscription.status == 'error' else 'ow_hooks.' ~ subscription.status) }}</span></p>
+    <dl class="facts"><div><dt>{{ t('ow_hooks.callback') }}</dt><dd class="hash">{{ subscription.callback_url }}</dd></div><div><dt>{{ t('ow_hooks.scope') }}</dt><dd>{% if subscription.remote_user_id %}{% for account in ow_hooks.linked_accounts if account.remote_user_id == subscription.remote_user_id %}{{ account.email }}{% else %}{{ t('ow_hooks.unlinked') }}{% endfor %}{% else %}{{ t('ow_hooks.all_users') }}{% endif %}</dd></div></dl>
+    <form action="/admin/openwearables/webhooks/save" method="post" class="stack-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="receiver_id" value="{{ subscription.id }}">
+      <label>{{ t('ow_hooks.public_url') }}<input name="public_url" type="url" value="{{ subscription.public_url }}" required></label>
+      <label>{{ t('ow_hooks.scope') }}<select name="remote_user_id"><option value="">{{ t('ow_hooks.all_users') }}</option>{% for account in ow_hooks.linked_accounts %}<option value="{{ account.remote_user_id }}" {{ 'selected' if account.remote_user_id == subscription.remote_user_id else '' }}>{{ account.email }}</option>{% endfor %}</select></label>
+      <label>{{ t('ow_hooks.filters') }}<input name="filter_types" value="{{ subscription.filter_types|join(', ') }}"></label>
+      <button class="secondary">{{ t('ow_hooks.save') }}</button>
+    </form>
+    {% if subscription.enabled %}<div class="form-actions">
+      <form action="/admin/openwearables/webhooks/test" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="receiver_id" value="{{ subscription.id }}"><button class="secondary">{{ t('ow_hooks.test') }}</button></form>
+      <form action="/admin/openwearables/webhooks/delete" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="receiver_id" value="{{ subscription.id }}"><button class="secondary">{{ t('ow_hooks.delete') }}</button></form>
+    </div>{% endif %}
+    {% if subscription.endpoint_id %}<p><a href="/admin/openwearables/webhooks/{{ subscription.id }}/attempts">{{ t('ow_hooks.attempts') }}</a></p>{% endif %}
+  </article>
+  {% endfor %}
+</section>
+<section class="panel">
+  <h2>{{ t('ow_hooks.sync') }}</h2>
+  <form action="/admin/openwearables/webhooks/sync" method="post" class="stack-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <fieldset><legend>{{ t('ow_hooks.scope') }}</legend>{% for account in ow_hooks.linked_accounts %}<label><input type="checkbox" name="user_ids" value="{{ account.user_id }}" checked> {{ account.email }}</label>{% endfor %}</fieldset>
+    <label><input type="checkbox" name="backfill" value="1"> {{ t('ow_hooks.backfill') }}</label>
+    <div class="form-actions"><button class="primary">{{ t('ow_hooks.sync') }}</button><button class="secondary" formaction="/admin/openwearables/webhooks/retry">{{ t('ow_hooks.retry') }}</button></div>
+  </form>
+</section>
+{% include "_openwearables_status.html" %}
+<p class="muted"><a href="/admin/users">{{ t('token.back_to_people') }}</a></p>
+
+{% endblock %}

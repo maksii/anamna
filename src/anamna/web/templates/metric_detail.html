@@ -1,0 +1,523 @@
+{% extends "base.html" %}
+{% from "_components.html" import range_bar, status_chip, staleness_chip, authority_badge,
+        verdict_details, trend_chip, micro_mark, empty_state, plural_t with context %}
+{% from "_correlation.html" import correlation_block with context %}
+{% from "_experience.html" import period_stats, metric_about with context %}
+{% block title %}{{ concept_name if concept_name else concept.canonical_name|conceptfmt }} · {{ t('brand.name') }}{% endblock %}
+{% block content %}
+<link rel="stylesheet" href="{{ asset('patient-experience.css') }}">
+<script src="{{ asset('patient-experience.js') }}"></script>
+{% set display_name = concept_name if concept_name else concept.canonical_name|conceptfmt %}
+{#- Documents and device days on one page; every row and point says which. -#}
+{% set mixed_sources = values|selectattr('is_device')|list|length > 0 %}
+
+<div class="an-detail-topline">
+  <a class="back-link" href="/metrics">{{ t('metric.back') }}</a>
+  <a class="button secondary an-export-entry" href="{{ export_url }}">{{ t('export.open') }}</a>
+</div>
+
+{#- Compact on purpose: name, latest value and its verdict, then the chart.
+    Everything that explains the number follows the chart, folded.
+    One column, read top to bottom: the name and the value share the first
+    row, the bar and the expanded details take the whole width beneath. As a
+    side column the details were a 340 px strip of 10 px type beside 600 px
+    of empty hero. -#}
+<section class="metric-detail-hero an-metric-hero"{% if latest %} data-interpretation="{{ verdict.interpretation }}"{% if verdict.conflicts_with_vendor %} data-conflict="true"{% endif %}{% endif %}>
+  <div class="an-metric-hero__head">
+    <div class="an-metric-hero__title">
+      <div class="eyebrow">
+        {% if area %}<a href="/areas/{{ area.id }}">{{ area.name }}</a>{% else %}{{ concept.category|categoryfmt }}{% endif %}
+        · {{ plural_t('metric.points', values|length) }}
+      </div>
+      <h1>{{ display_name }}</h1>
+    </div>
+
+    {% if latest %}
+    <div class="an-metric-hero__value">
+      <span>{{ t('metric.latest', date=latest.observed_at|datefmt) }}</span>
+      {% if mixed_sources %}<small class="an-latest-source">{{ t('twin.source_device') if latest.is_device else t('twin.source_clinic') }} · {{ latest.vendor|phrase }}</small>{% endif %}
+      <strong>{{ latest.display_value }} <small>{{ latest.display_unit }}</small></strong>
+      <div class="an-verdict-meta">
+        {{ status_chip(verdict.interpretation, verdict.label, verdict.conflicts_with_vendor) }}
+        {#- A qualitative result has no bar, so the details block that names the
+            judging authority is withheld; the badge is printed here instead. -#}
+        {% if verdict.position is none and verdict.authority != 'none' %}{{ authority_badge(verdict, true) }}{% endif %}
+        {#- The chip's hidden text would repeat "vs <date>" printed beside it. -#}
+        {% if trend %}{{ trend_chip(dict(trend, since_text='')) }} <small>{{ trend.since_text }}</small>{% else %}<small>{{ t('panel.delta_first') }}</small>{% endif %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  {% if latest %}
+  <div class="an-metric-hero__reading">
+    {#- A qualitative result has no interval to draw, but the laboratory said
+        what it expected; "No reference interval" beside a "lab interval" badge
+        contradicted it. -#}
+    {{ range_bar(verdict, latest.display_value, latest.display_unit, expected_text=latest.vendor_reference_text|reffmt if latest.value_numeric is none and latest.vendor_reference_text else '') }}
+    {{ verdict_details(verdict) }}
+    {% if blocked_notice %}
+    <p class="an-no-range-note an-blocked-notice" data-reason="{{ blocked_notice.reason }}">
+      {{ blocked_notice.text }}
+      {% if blocked_notice.profile_url %}<a href="{{ blocked_notice.profile_url }}">{{ t('verdict.blocked_profile_link') }}</a>{% endif %}
+    </p>
+    {% endif %}
+  </div>
+  {% endif %}
+  {{ metric_about(guidance, staleness) }}
+</section>
+
+<section class="panel interactive-chart-panel an-metric-chart" id="reading-trend" aria-labelledby="reading-trend-heading">
+  <div class="panel-head chart-heading">
+    <h2 id="reading-trend-heading">{{ t('metric.value_over_time') }}{% if chart_points %} <small class="an-chart-unit">{{ chart_points[0].unit }}</small>{% endif %}</h2>
+    {% if chart_points|length > 1 %}
+    <div class="chart-controls" role="group" aria-label="{{ t('metric.range_aria') }}">
+      <button type="button" class="active" data-range="all">{{ t('metric.range_all') }}</button>
+      <button type="button" data-range="5y">{{ t('metric.range_5y') }}</button>
+      <button type="button" data-range="1y">{{ t('metric.range_1y') }}</button>
+    </div>
+    {% endif %}
+  </div>
+  {% if chart_points|length > 1 %}
+  <div class="dynamic-chart" id="dynamic-chart">
+    {# viewBox is set from the container width by chart.js so one unit is one CSS pixel. #}
+    <svg id="trend-chart" role="img" aria-label="{{ t('metric.chart_aria', name=display_name) }}"></svg>
+    <div id="chart-tooltip" class="chart-tooltip" hidden></div>
+  </div>
+  {% if chart_legend %}
+  {#- The marker shapes, named in words: shape and text carry the source,
+      colour carries only the verdict. -#}
+  <ul class="an-chart-legend" aria-label="{{ t('twin.legend_aria') }}">
+    {% for kind in chart_legend %}
+    <li data-source="{{ kind }}"><span class="an-chart-legend__mark" aria-hidden="true"></span>{{ t('twin.legend_' ~ kind) }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  {{ period_stats() }}
+  {% elif chart_points %}
+  {#- One numeric result: a value, not yet a trend. Saying "no numeric trend"
+      over a number reads as though the number were missing. -#}
+  {{ empty_state(t('metric.single_point_title'), t('metric.single_point_body', date=chart_points[0].date|datefmt), 3) }}
+  {% else %}
+  {# A categorical result is not plotted: drawing one would invent an axis. #}
+  {{ empty_state(t('metric.no_trend_title'), t('metric.no_trend_body'), 3) }}
+  {% endif %}
+</section>
+
+<section class="panel evidence-history" id="reading-history">
+  <div class="panel-head">
+    <div><span class="eyebrow">{{ t('metric.source_history') }}</span><h2>{{ t('metric.every_result') }}</h2></div>
+    <span>{{ plural_t('metric.timeline', values|length) }}</span>
+  </div>
+  {% if mixed_sources %}<p class="an-twin-note">{{ t('twin.history_note') }}</p>{% endif %}
+  <div class="table-wrap table-wrap--stack">
+    <table>
+      <thead>
+        <tr>
+          <th scope="col">{{ t('metric.th_date') }}</th>
+          <th scope="col">{{ t('metric.th_result') }}</th>
+          <th scope="col">{{ t('metric.th_comparison') }}</th>
+          <th scope="col">{{ t('metric.th_provider') }}</th>
+          <th scope="col">{{ t('metric.th_trust') }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in history %}
+        <tr{% if item.is_device %} data-source="device"{% endif %}>
+          <td data-label="{{ t('metric.th_date') }}">{{ item.observed_at|datefmt }}</td>
+          <td class="result" data-label="{{ t('metric.th_result') }}"><span>{{ item.display_value }} <small>{{ item.display_unit }}</small>{% if item.off_axis %} <small class="an-off-axis-note">{{ t('metric.off_axis') }}</small>{% endif %}</span></td>
+          <td data-label="{{ t('metric.th_comparison') }}">
+            {#- The verdict and the interval that gave it (the same judgement
+                the chart point is coloured by), then the laboratory's own
+                range when it describes this patient at that age. -#}
+            {% if item.judged %}
+            <span class="comparison-label">{{ t('metric.verdict_label') }}</span>
+            <i class="metric-state an-row-verdict" data-state="{{ item.verdict_state }}">{{ item.verdict.label }}</i>
+            {% if item.judged_text %}<small>{{ item.judged_text }}</small>{% endif %}
+            {% endif %}
+            {% if not item.hide_lab %}
+            <span class="comparison-label">{{ t('metric.original_range') }}</span>
+            <strong>{{ item.display_reference }}</strong>
+            <i class="metric-state {{ item.display_comparison.status }}">{{ item.display_status }}</i>
+            {% if item.display_comparison.comparison_label %}<small>{{ item.display_comparison.comparison_label }}</small>{% endif %}
+            {% endif %}
+          </td>
+          <td data-label="{{ t('metric.th_provider') }}">
+            {% if item.is_device %}
+            {#- A device day: no page to open, so it leads to the device page
+                where every source's value for that day is compared. -#}
+            <span class="an-source-tag" data-source="device">{{ t('twin.source_device') }}</span>
+            <strong>{{ item.vendor }}</strong>
+            <small>{{ t('twin.device_row') }}</small>
+            <span class="evidence-links"><a href="{{ item.device_url }}">{{ t('twin.compare_sources') }}</a></span>
+            {% else %}
+            {% if mixed_sources %}<span class="an-source-tag" data-source="clinic">{{ t('twin.source_clinic') }}</span>{% endif %}
+            <strong>{{ item.vendor|phrase }}</strong>
+            {% if item.extraction_method == 'lab_api' %}<small>{{ t('labsync.record_source', order=item.document_order or '-') }}</small>
+            {% else %}<small>{{ t('metric.original_report', title=document_title(item.document_title, vendor=item.vendor|phrase), page=item.page_number) }}{% if item.evidence_count > 1 %} · {{ t('metric.matching_copies', count=item.evidence_count) }}{% endif %}</small>{% endif %}
+            {% if item.extraction_method == 'derived_ckd_epi_2021' %}<small>{{ t('doc.derived_egfr') }}</small>{% endif %}
+            <span class="evidence-links">
+              <a href="/documents/{{ item.document_id }}#observation-{{ item.id }}">{{ t('metric.open_details') }}</a>
+              <a href="/documents/{{ item.document_id }}#observation-{{ item.id }}" target="_blank" rel="noreferrer">{{ t('chart.new_tab') }}</a>
+            </span>
+            {% endif %}
+          </td>
+          <td data-label="{{ t('metric.th_trust') }}">{% if item.is_device %}<span class="status device_measurement">{{ t('device.measurement') }}</span>{% else %}<span class="status {{ item.verification_status }}">{{ item.verification_status|statusfmt }}</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% include "_pagination.html" %}
+</section>
+
+{% if method_series or twin_links %}
+{#- The device side of this measurement: merged above (same), drawn beside it
+    and judged on its own (method), or a neighbour that is not it (related).
+    Each says why, so no link is a guess. -#}
+<section class="panel an-twins" id="reading-devices" aria-labelledby="reading-devices-heading">
+  <div class="panel-head"><div><span class="eyebrow">{{ t('twin.eyebrow') }}</span><h2 id="reading-devices-heading">{{ t('twin.heading') }}</h2></div></div>
+  {% for method in method_series %}
+  <article class="an-twin" data-relation="method" data-interpretation="{{ method.verdict.interpretation }}">
+    <h3><a href="{{ method.url }}">{{ method.name }}</a></h3>
+    <p class="an-twin__why">{{ method.why }}</p>
+    <p class="an-twin__reading">
+      <strong>{{ method.value_text }} <small>{{ method.unit }}</small></strong>
+      {{ status_chip(method.verdict.interpretation, method.verdict.label, method.verdict.conflicts_with_vendor) }}
+      <small>{{ method.date|datefmt }} · {{ method.source }} · {{ method.days_text }}</small>
+    </p>
+    <p><small>{{ t('twin.method_judged') }}</small></p>
+  </article>
+  {% endfor %}
+  {% for link in twin_links if link.relation != 'method' %}
+  <article class="an-twin" data-relation="{{ link.relation }}">
+    <h3><a href="{{ link.url }}">{{ t('twin.compare_sources') if link.relation == 'same' else link.name }}</a></h3>
+    <p class="an-twin__why">{{ link.why }}</p>
+    <p><small><span class="an-source-tag" data-source="{{ 'device' if link.relation == 'same' else 'related' }}">{{ t('twin.relation_' ~ link.relation) }}</span> {{ link.name }} · {{ link.days_text }}</small></p>
+  </article>
+  {% endfor %}
+</section>
+{% endif %}
+
+<div class="an-metric-more" id="reading-guidance">
+{% if panel or siblings %}
+<details class="panel an-fold an-siblings">
+  <summary>
+    <span class="eyebrow">{{ t('panel.eyebrow') }}</span>
+    <h2>{{ t('panel.read_together') }}{% if panel %} · {{ panel.name }}{% endif %}</h2>
+  </summary>
+  {% if panel %}<p><a href="{{ panel.url }}">{{ panel.name }} · {{ t('panels.open') }}</a></p>{% endif %}
+  {#- A 296-allergen panel made 296 chips here; past a dozen the rest wait
+      behind one disclosure (UX-09). -#}
+  {% macro sibling_chips(items) -%}
+  <ul class="an-sibling-chips">
+    {% for sibling in items %}
+    <li data-interpretation="{{ sibling.verdict_interpretation }}">
+      {#- The verdict glyph is CSS-only, so the state it encodes is repeated as
+          hidden text a screen reader can actually hear. -#}
+      <a href="{{ sibling.url }}">{{ sibling.name }}<span class="visually-hidden"> · {{ t('verdict.' ~ sibling.verdict_interpretation) }}</span></a>
+    </li>
+    {% endfor %}
+  </ul>
+  {%- endmacro %}
+  {{ sibling_chips(siblings[:12]) }}
+  {% if siblings|length > 12 %}
+  <details class="an-disclosure">
+    <summary>{{ t('area.table_show_all', count=siblings|length) }}</summary>
+    <div class="an-disclosure__body">{{ sibling_chips(siblings[12:]) }}</div>
+  </details>
+  {% endif %}
+</details>
+{% endif %}
+
+{{ correlation_block(correlation, chart_band) }}
+
+<details class="panel an-fold official-guidance">
+  <summary>
+    <span class="eyebrow">{{ t('metric.official') }}</span>
+    <h2>{{ t('authority.curated') }}{% if rules %} <small>({{ rules|length|countfmt }})</small>{% endif %}</h2>
+  </summary>
+  {% for rule in rules %}
+  <article class="guidance-rule">
+    <div>
+      <strong>{{ rule.label }}</strong>
+      <span>{{ rule.publisher }}{% if rule.reference_set %} · {{ rule.reference_set }}{% endif %} · {{ t('metric.reviewed', date=rule.reviewed_at|datefmt) }}</span>
+      {#- Whose numbers these are, and whether that is this patient - text
+          labels, so the highlight colour never carries the meaning alone. -#}
+      {% if rule.applicability or rule.applies_to_you %}
+      <span class="an-rule-scope">
+        {% if rule.applicability %}<i class="metric-state">{{ rule.applicability }}</i>{% endif %}
+        {% if rule.applies_to_you %}<i class="metric-state stable">{{ t('rule.applies_to_you') }}</i>{% endif %}
+      </span>
+      {% endif %}
+    </div>
+    <b>{% if rule.lower_bound is none and rule.upper_bound is none %}{{ t('metric.no_universal_target') }}{% elif rule.lower_bound is none %}{{ '≤' if rule.upper_inclusive else '<' }} {{ rule.upper_bound|numfmt }} {{ rule.unit|unitfmt if rule.unit else '' }}{% elif rule.upper_bound is none %}{{ '≥' if rule.lower_inclusive else '>' }} {{ rule.lower_bound|numfmt }} {{ rule.unit|unitfmt if rule.unit else '' }}{% else %}{{ rule.lower_bound|numfmt }}-{{ '< ' if not rule.upper_inclusive else '' }}{{ rule.upper_bound|numfmt }} {{ rule.unit|unitfmt if rule.unit else '' }}{% endif %}</b>
+    <p>{{ rule.interpretation }}{% if rule.notes %} · {{ rule.notes }}{% endif %}</p>
+    {% if rule.context %}
+    {#- Context values are catalog enums ("decision_threshold") or lists of
+        them ("requires"); enumfmt turns each into an explained sentence. -#}
+    <dl>{% for key, value in rule.context.items() %}<div><dt>{{ key|enumfmt }}</dt><dd>{% if value is string %}{{ value|enumfmt }}{% elif value is iterable %}{{ value|map('enumfmt')|join(', ') }}{% else %}{{ value|enumfmt }}{% endif %}</dd></div>{% endfor %}</dl>
+    {% endif %}
+    <a href="{{ rule.source_url }}" target="_blank" rel="noreferrer">{{ t('metric.open_source', publisher=rule.publisher) }}</a>
+  </article>
+  {% else %}
+  <div class="no-universal-range"><strong>{{ t('metric.no_range_title') }}</strong><p>{{ t('metric.no_range_body') }}</p></div>
+  {% endfor %}
+</details>
+</div>
+
+{% if chart_points|length > 1 %}
+<script type="application/json" id="chart-data">{{ chart_points|tojson }}</script>
+<script type="application/json" id="chart-band">{{ (chart_band or none)|tojson }}</script>
+<script>
+(() => {
+  const C = globalThis.AnamnaChart;
+  const esc = globalThis.AnamnaExperience.escape;
+  const allPoints = JSON.parse(document.querySelector('#chart-data').textContent);
+  const band = JSON.parse(document.querySelector('#chart-band').textContent);
+  const svg = document.querySelector('#trend-chart');
+  const tooltip = document.querySelector('#chart-tooltip');
+  const host = document.querySelector('#dynamic-chart');
+  const i18n = globalThis.__HL_I18N__ || {};
+  let range = 'all';
+  let placed = [];
+  // Documents and device days on one axis: a clinic reading is drawn as a
+  // square and never averaged away; device days thin per line, as before.
+  const mixed = allPoints.some(point => point.source === 'device');
+  const thinPoints = (source, limit) => {
+    if (!mixed) return C.thin(source, limit);
+    const kept = source.filter(point => point.source === 'clinic');
+    const lines = {};
+    source.filter(point => point.source !== 'clinic').forEach(point => {
+      lines[point.line] ||= [];
+      lines[point.line].push(point);
+    });
+    Object.values(lines).forEach(list => kept.push(...C.thin(list, Math.max(2, limit - kept.length))));
+    return kept.sort((a, b) => C.asDate(a.date) - C.asDate(b.date));
+  };
+
+  const filterPoints = () => {
+    if (range === 'all' || !allPoints.length) return allPoints;
+    const cutoff = C.asDate(allPoints[allPoints.length - 1].date);
+    cutoff.setFullYear(cutoff.getFullYear() - (range === '5y' ? 5 : 1));
+    return allPoints.filter(point => C.asDate(point.date) >= cutoff);
+  };
+
+  const showTooltip = item => {
+    const {point, x, y, when} = item;
+    const grouped = point.hlGroup > 1;
+    const verdict = point.verdict_label || point.status_label;
+    let detail = '';
+    if (!grouped) {
+      const reference = point.reference_label ? `<span>${esc(point.reference_label)}</span>` : '';
+      const links = `<a href="${esc(point.document_url)}">${esc(point.link_label || i18n['chart.open_evidence'])}</a><a href="${esc(point.document_url)}" target="_blank" rel="noreferrer">${esc(i18n['chart.new_tab'])}</a>`;
+      const source = mixed && point.source_text ? `<span>${esc(point.source_text)}</span>` : '';
+      detail = `${source}<b>${esc(point.vendor)}</b><i class="metric-state" data-state="${esc(point.state || 'none')}">${esc(verdict)}</i>${reference}<div>${links}</div>`;
+    }
+    tooltip.innerHTML = `<span>${esc(when)}</span><strong>${esc(point.value_text || C.num(point.value, 4))} <small>${esc(point.unit)}</small></strong>${detail}`;
+    tooltip.hidden = false;
+    tooltip.style.left = `${Math.max(8, Math.min(host.clientWidth - 250, x - 110))}px`;
+    tooltip.style.top = `${Math.max(4, y - 150)}px`;
+  };
+
+  // An averaged point belongs to several results, so it links to none of
+  // them: its evidence is the row-per-result table below.
+  const pointWhen = (point, grouped) => (grouped
+    ? C.text('chart.averaged_point', {count: point.hlGroup, from: C.fullDate(C.asDate(point.hlFrom)), to: C.fullDate(C.asDate(point.hlTo))})
+    : C.fullDate(C.asDate(point.date), String(point.date).includes('T')));
+  const pointNode = (point, grouped, when, shown) => {
+    if (grouped) return C.el('g', {tabindex: '0', role: 'img', 'aria-label': `${when}, ${shown} ${point.unit}`});
+    const verdict = point.verdict_label || point.status_label;
+    const source = mixed && point.source_text ? `${point.source_text}, ` : '';
+    return C.el('a', {href: point.document_url, tabindex: '0', 'aria-label': `${when}, ${shown} ${point.unit}, ${source}${point.vendor}, ${verdict}`});
+  };
+  const pointMarker = (point, grouped, x, y, radius) => {
+    const state = grouped ? 'none' : (point.state || 'none');
+    if (mixed && point.source === 'clinic') {
+      const side = Math.max(radius, 5);
+      return C.el('rect', {x: x - side, y: y - side, width: side * 2, height: side * 2, class: 'dynamic-point is-clinic', 'data-state': state});
+    }
+    return C.el('circle', {cx: x, cy: y, r: radius, class: `dynamic-point${point.line === 'method' ? ' is-method' : ''}`, 'data-state': state});
+  };
+  // A value printed on its point only where it does not collide with one
+  // already placed.
+  const placeLabel = ({node, labels, shown, x, y, left, right, top, W}) => {
+    const width = C.textWidth(svg, [shown], 'chart-point-label') + 6;
+    const ly = y - top > 18 ? y - 11 : y + 20;
+    const box = {l: Math.max(left, Math.min(W - right - width, x - width / 2)), t: ly - 12, w: width, h: 15};
+    const clear = labels.every(o => box.l >= o.l + o.w || o.l >= box.l + box.w || box.t >= o.t + o.h || o.t >= box.t + box.h);
+    if (!clear) return;
+    const label = C.el('text', {x: box.l + width / 2, y: ly, class: 'chart-point-label', 'text-anchor': 'middle'});
+    label.textContent = shown; node.append(label);
+    labels.push(box);
+  };
+  const bindPoint = (node, item, index) => {
+    node.addEventListener('focus', () => showTooltip(item));
+    node.addEventListener('click', event => {
+      // A keyboard Enter on a point whose card is already open follows the
+      // link; a pointer press opens the card, whose links lead on.
+      if (event.detail === 0 && !tooltip.hidden && tooltip.dataset.for === String(index)) return;
+      event.preventDefault();
+      tooltip.dataset.for = String(index);
+      showTooltip(item);
+    });
+  };
+  const pointRadius = count => {
+    if (count > 90) return 2;
+    return count > 34 ? 3 : 6;
+  };
+  const anchorFor = (order, last) => {
+    if (order === 0) return 'start';
+    return order === last ? 'end' : 'middle';
+  };
+
+  // The band is the same interval the hero's range bar names; its name
+  // rides on the shape (hover title, accessible name) instead of a
+  // caption under every chart.
+  const drawBand = ({A, W, H, left, right, plot, yAt, bandLow, bandHigh}) => {
+    const clampY = value => Math.min(A.max, Math.max(A.min, value));
+    const upper = yAt(bandHigh !== null ? clampY(bandHigh) : A.max);
+    const lower = yAt(bandLow !== null ? clampY(bandLow) : A.min);
+    if (lower - upper > 0.5) {
+      const rect = C.el('rect', {x: left, y: upper, width: plot, height: lower - upper, class: 'chart-reference-band'});
+      if (band?.label) { const title = C.el('title', {}); title.textContent = band.label; rect.append(title); }
+      svg.append(rect);
+    }
+    [[bandLow, 'low'], [bandHigh, 'high']].forEach(([value, side]) => {
+      if (value === null || value < A.min || value > A.max) return;
+      svg.append(C.el('line', {x1: left, x2: W - right, y1: yAt(value), y2: yAt(value), class: 'chart-reference-bound', 'data-bound': side}));
+    });
+  };
+
+  // A shortened gap is drawn dashed and marked on the time axis.  Each line
+  // joins only its own points: a reading taken another way is never joined
+  // to this series.
+  const drawTrend = ({points, T, xAt, yAt, H, bottom}) => {
+    const last = {};
+    points.forEach((point, index) => {
+      const line = point.line || 'main';
+      const from = last[line];
+      last[line] = index;
+      if (from === undefined) return;
+      const gap = T.breaks.some(position => position > from && position <= index);
+      svg.append(C.el('path', {
+        d: `M ${xAt(from)} ${yAt(points[from].value)} L ${xAt(index)} ${yAt(point.value)}`,
+        class: `dynamic-trend-line${gap ? ' is-compressed' : ''}${line === 'method' ? ' is-method' : ''}`,
+      }));
+      if (gap) {
+        const mid = (xAt(from) + xAt(index)) / 2, base = H - bottom;
+        svg.append(C.el('path', {d: `M ${mid - 5} ${base + 5} l 4 -10 M ${mid + 1} ${base + 5} l 4 -10`, class: 'chart-axis-break'}));
+      }
+    });
+  };
+
+  const draw = (W, H) => {
+    const source = filterPoints();
+    // The period's figures describe this measurement, never a reading taken
+    // another way that is only drawn beside it.
+    globalThis.AnamnaExperience?.periodSummary(host.closest('section'), source.filter(point => (point.line || 'main') === 'main'));
+    placed = [];
+    if (!source.length) { C.note(host, ''); return; }
+    const integral = source.every(point => Number.isInteger(Number(point.value)));
+    const bound = side => (band?.[side] ?? null) === null ? null : Number(band[side]);
+    const bandLow = bound('low'), bandHigh = bound('high');
+    const left0 = 12, right = 16, top = 26, bottom = 30;
+    const plot0 = Math.max(40, W - left0 - right);
+    const points = thinPoints(source, C.capacity(plot0));
+    const averaged = points.length < source.length;
+    // Scaled to the readings; a far reference bound is clipped, not drawn to.
+    const fit = C.fitDomain(points.map(point => Number(point.value)), [bandLow, bandHigh]);
+    const A = C.axis(fit.min, fit.max, {integral, zeroFloor: fit.min >= 0});
+    const left = C.textWidth(svg, A.ticks.map(A.format), 'chart-axis-label') + 14;
+    const plot = Math.max(40, W - left - right);
+    const notes = averaged
+      ? [C.text('chart.averaged', {total: source.length, shown: points.length})] : [];
+
+    const T = C.timeScale(points);
+    const xAt = index => left + T.at(index) * plot;
+    const yAt = value => top + (A.max - value) * (H - top - bottom) / (A.max - A.min);
+
+    if (bandLow !== null || bandHigh !== null) drawBand({A, W, H, left, right, plot, yAt, bandLow, bandHigh});
+
+    A.ticks.forEach(value => {
+      const y = yAt(value);
+      svg.append(C.el('line', {x1: left, x2: W - right, y1: y, y2: y, class: 'chart-gridline'}));
+      const label = C.el('text', {x: left - 8, y: y + 4, class: 'chart-axis-label', 'text-anchor': 'end'});
+      label.textContent = A.format(value); svg.append(label);
+    });
+    // The unit heads the value axis, so a bare "6" is never read as anything else.
+    const unit = C.el('text', {x: 4, y: 12, class: 'chart-axis-label chart-axis-unit', 'text-anchor': 'start'});
+    unit.textContent = points[0].unit || ''; svg.append(unit);
+
+    drawTrend({points, T, xAt, yAt, H, bottom});
+    if (T.breaks.length) notes.push(C.text('chart.axis_compressed'));
+
+    const radius = pointRadius(points.length);
+    // Values printed on the points, newest first, wherever a label does not
+    // collide with one already placed.
+    const labels = [];
+    points.map((point, index) => ({point, index})).reverse().forEach(({point, index}) => {
+      const x = xAt(index), y = yAt(point.value);
+      const grouped = point.hlGroup > 1;
+      const when = pointWhen(point, grouped);
+      const shown = grouped ? C.num(point.value, 2) : (point.value_text || C.num(point.value, 4));
+      const node = pointNode(point, grouped, when, shown);
+      // 44 px target around a 12 px dot; the svg-level handler below also
+      // picks the nearest point for a tap that lands between targets.
+      node.append(C.el('circle', {cx: x, cy: y, r: 22, class: 'chart-hit'}));
+      node.append(pointMarker(point, grouped, x, y, radius));
+      if (!averaged || index === points.length - 1) {
+        placeLabel({node, labels, shown, x, y, left, right, top, W});
+      }
+      svg.append(node);
+      const item = {point, x, y, when};
+      placed.push(item);
+      bindPoint(node, item, index);
+    });
+
+    const format = C.dateLabel(T.span);
+    const stops = globalThis.AnamnaExperience.timeTicks(points, xAt);
+    C.xLabels(points, stops, format).forEach((text, order) => {
+      if (!text) return;
+      const label = C.el('text', {
+        x: xAt(stops[order]), y: H - 9, class: 'chart-date-label',
+        'text-anchor': anchorFor(order, stops.length - 1),
+      });
+      label.textContent = text; svg.append(label);
+    });
+    C.note(host, notes.join(' '));
+  };
+
+  // Nearest point to the pointer, so a finger need not land on a 12 px dot.
+  const nearest = event => {
+    const box = svg.getBoundingClientRect();
+    const scale = box.width ? (Number(svg.viewBox.baseVal.width) || box.width) / box.width : 1;
+    const x = (event.clientX - box.left) * scale;
+    let best = null;
+    placed.forEach(item => { if (!best || Math.abs(item.x - x) < Math.abs(best.x - x)) best = item; });
+    return best && Math.abs(best.x - x) <= 44 ? best : null;
+  };
+  svg.addEventListener('pointermove', event => {
+    if (event.pointerType !== 'mouse') return;
+    const item = nearest(event);
+    if (item) showTooltip(item);
+  });
+  svg.addEventListener('click', event => {
+    if (event.target.closest('a, g[tabindex]')) return;
+    const item = nearest(event);
+    if (item) showTooltip(item);
+  });
+
+  const size = width => width < 560
+    ? Math.max(220, Math.round(globalThis.innerWidth * 0.6))
+    : Math.min(Math.round(width * 0.8), Math.max(320, Math.round(globalThis.innerHeight * 0.5)));
+  const repaint = C.responsive(svg, host, draw, size);
+  document.querySelectorAll('[data-range]').forEach(button => button.addEventListener('click', () => {
+    document.querySelectorAll('[data-range]').forEach(item => item.classList.remove('active'));
+    button.classList.add('active'); range = button.dataset.range; tooltip.hidden = true; repaint();
+  }));
+  document.addEventListener('click', event => { if (!host.contains(event.target)) tooltip.hidden = true; });
+})();
+</script>
+{% endif %}
+{% endblock %}

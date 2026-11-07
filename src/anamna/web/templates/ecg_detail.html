@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{% from "_components.html" import empty_state with context %}
+{% block title %}{{ t('ecg.title') }}{% endblock %}
+{% block content %}
+<a class="back-link" href="/areas/heart">{{ t('ecg.back') }}</a>
+
+{% if not recording %}
+{{ empty_state(t('ecg.none_title'), t('ecg.none_body'), 1) }}
+
+{% else %}
+<section class="detail-head">
+  <div>
+    <div class="eyebrow">{{ recording.source_label }}</div>
+    <h1>{{ t('ecg.heading') }}</h1>
+    <p>{{ recording.date_text }} · {{ recording.time_text }} · {{ position_text }}</p>
+  </div>
+  <div class="ecg-verdict">
+    <span>{{ t('ecg.determination') }}</span>
+    <strong>{{ recording.classification }}</strong>
+    <small>{{ t('ecg.determination_source', vendor=recording.source_vendor|phrase) }}</small>
+  </div>
+</section>
+
+{#
+  Two rates, never merged. The device printed one and the samples say another;
+  showing a single number would hide which claim the reader is looking at.
+#}
+<section class="ecg-readings">
+  <article class="ecg-reading">
+    <span>{{ t('ecg.vendor_rate') }}</span>
+    <strong>{{ recording.rate_text }}</strong>
+    <small>{{ t('ecg.vendor_rate_note', vendor=recording.source_vendor|phrase) }}</small>
+  </article>
+  {% if measurement %}
+  <article class="ecg-reading">
+    <span>{{ t('ecg.measured_rate') }}</span>
+    <strong>{{ measurement.heart_rate or t('em.dash') }}</strong>
+    <small>{{ t('ecg.measured_rate_note', lead=measurement.lead) }}</small>
+  </article>
+  <article class="ecg-reading">
+    <span>{{ t('ecg.rate_span') }}</span>
+    <strong>{% if measurement.heart_rate_min and measurement.heart_rate_max %}{{ measurement.heart_rate_min }} - {{ measurement.heart_rate_max }}{% else %}{{ t('em.dash') }}{% endif %}</strong>
+    <small>{{ t('ecg.rate_span_note') }}</small>
+  </article>
+  <article class="ecg-reading">
+    <span>{{ t('ecg.beats') }}</span>
+    <strong>{{ measurement.beats }}</strong>
+    <small>{{ t('ecg.beats_note', seconds=calibration.duration) }}</small>
+  </article>
+  {% endif %}
+</section>
+
+{% if recording.source_missing %}
+<div class="alert" role="status">{{ t('ecg.source_missing', file=recording.source_name_text) }}</div>
+{% elif not strip %}
+<div class="alert neutral" role="status">{{ t('ecg.no_waveform') }}</div>
+{% endif %}
+
+{% if strip %}
+<section class="panel">
+  <div class="panel-head">
+    <div><span class="eyebrow">{{ t('ecg.waveform') }}</span><h2>{{ t('ecg.strip_heading', scale=calibration.scale) }}</h2></div>
+    <span>{{ t('ecg.strip_note') }}</span>
+  </div>
+  {#
+    One row per time window, drawn in millimetres on the same paper the device
+    printed: a small square is 0.04 s by 0.1 mV, exactly as on a printout.
+  #}
+  <p class="ecg-scroll-hint">{{ t('ecg.scroll_hint') }}</p>
+  <div class="ecg-strip-stack">
+    {% for row in strip %}
+    <figure class="ecg-strip-row">
+      <figcaption>{{ row.label }}</figcaption>
+      <div class="ecg-strip-frame">
+        <div class="ecg-lead-labels">
+          {% for name in row.lead_names %}<span>{{ name }}</span>{% endfor %}
+        </div>
+        {{ row.svg }}
+      </div>
+    </figure>
+    {% endfor %}
+  </div>
+  <dl class="facts ecg-facts">
+    <div><dt>{{ t('ecg.scale') }}</dt><dd>{{ calibration.scale }}</dd></div>
+    <div><dt>{{ t('ecg.sample_rate') }}</dt><dd>{{ calibration.sample_rate }} {{ t('ecg.hz') }}</dd></div>
+    <div><dt>{{ t('ecg.duration') }}</dt><dd>{{ calibration.duration }} {{ t('ecg.seconds') }}</dd></div>
+    <div><dt>{{ t('ecg.samples') }}</dt><dd>{{ calibration.samples }}</dd></div>
+    {% if calibration.filter %}<div><dt>{{ t('ecg.filters') }}</dt><dd>{{ calibration.filter }}</dd></div>{% endif %}
+    {% if calibration.symptoms %}<div><dt>{{ t('ecg.symptoms') }}</dt><dd>{{ calibration.symptoms|phrase }}</dd></div>{% endif %}
+  </dl>
+</section>
+{% endif %}
+
+{% if measurement %}
+<section class="panel">
+  <div class="panel-head">
+    <div><span class="eyebrow">{{ t('ecg.intervals') }}</span><h2>{{ t('ecg.intervals_heading') }}</h2></div>
+    {% if leads|length > 1 %}
+    <nav class="ecg-leads" aria-label="{{ t('ecg.lead_switch') }}">
+      {% for item in leads %}
+      <a class="{{ 'is-active' if item.active else '' }}" href="{{ item.url }}"{% if item.active %} aria-current="true"{% endif %}>{{ item.name }}</a>
+      {% endfor %}
+    </nav>
+    {% endif %}
+  </div>
+  <dl class="facts ecg-facts">
+    <div><dt><abbr title="{{ t('ecg.rr_full') }}">{{ t('ecg.rr_mean') }}</abbr></dt><dd>{{ measurement.rr_mean or t('em.dash') }}</dd></div>
+    <div><dt><abbr title="{{ t('ecg.sdnn_full') }}">{{ t('ecg.sdnn') }}</abbr></dt><dd>{{ measurement.sdnn or t('em.dash') }}</dd></div>
+    <div><dt><abbr title="{{ t('ecg.rmssd_full') }}">{{ t('ecg.rmssd') }}</abbr></dt><dd>{{ measurement.rmssd or t('em.dash') }}</dd></div>
+    <div><dt>{{ t('ecg.intervals_used') }}</dt><dd>{{ measurement.intervals_text }}</dd></div>
+    {% if measurement.excluded %}<div><dt>{{ t('ecg.excluded') }}</dt><dd>{{ measurement.excluded_text }}</dd></div>{% endif %}
+  </dl>
+  {# Visible, not tooltip-only: a tooltip never reaches a phone. #}
+  <dl class="ecg-glossary">
+    <dt>{{ t('ecg.rr_mean') }} - {{ t('ecg.rr_full') }}</dt><dd>{{ t('ecg.rr_help') }}</dd>
+    <dt>{{ t('ecg.sdnn') }} - {{ t('ecg.sdnn_full') }}</dt><dd>{{ t('ecg.sdnn_help') }}</dd>
+    <dt>{{ t('ecg.rmssd') }} - {{ t('ecg.rmssd_full') }}</dt><dd>{{ t('ecg.rmssd_help') }}</dd>
+  </dl>
+  <p class="ecg-note">{{ t('ecg.hrv_source') }} <a href="https://doi.org/10.1161/01.CIR.93.5.1043" rel="noopener noreferrer" target="_blank">{{ t('ecg.hrv_source_link') }}</a></p>
+  <p class="ecg-note">{{ t('ecg.method_note') }}{% if measurement.excluded %} {{ t('ecg.excluded_note') }}{% endif %}</p>
+</section>
+{% endif %}
+
+<nav class="ecg-steps" aria-label="{{ t('ecg.other') }}">
+  {% if previous %}<a class="secondary button" href="{{ previous.url }}"><span class="an-chevron" data-dir="left" aria-hidden="true"></span> {{ previous.date_text }}</a>{% else %}<span></span>{% endif %}
+  {% if recording.document_id %}<a class="secondary button" href="/documents/{{ recording.document_id }}">{{ t('ecg.open_report') }}</a>{% endif %}
+  {% if following %}<a class="secondary button" href="{{ following.url }}">{{ following.date_text }} <span class="an-chevron" data-dir="right" aria-hidden="true"></span></a>{% endif %}
+</nav>
+
+<section class="panel">
+  <div class="panel-head">
+    <div><span class="eyebrow">{{ t('ecg.other') }}</span><h2>{{ t('ecg.all_recordings') }}</h2></div>
+    <span>{{ recordings|length }}</span>
+  </div>
+  <div class="ecg-list">
+    {% for item in recordings %}
+    <a class="ecg-list-item{{ ' is-active' if item.id == recording.id else '' }}" href="{{ item.url }}"{% if item.id == recording.id %} aria-current="true"{% endif %}>
+      <span class="ecg-list-date"><strong>{{ item.date_text }}</strong><small>{{ item.time_text }}</small></span>
+      <span class="ecg-list-copy"><strong>{{ item.classification }}</strong><small>{{ item.source_label }}</small></span>
+      <b>{{ item.rate_text }}</b>
+    </a>
+    {% endfor %}
+  </div>
+</section>
+
+<p class="ecg-note">{{ t('ecg.disclaimer') }}</p>
+{% endif %}
+{% endblock %}

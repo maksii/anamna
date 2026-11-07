@@ -1,0 +1,25 @@
+{#- The business-tier Garmin card's facts, inside profile.html's provider loop
+    (`provider` is in scope). Garmin pushes; there is no "Sync now" that can
+    fetch on demand, so the button only processes what arrived and retries a
+    history request. -#}
+{% if provider.needs_reauthorize %}
+<div class="alert error" role="alert">{{ t('integrations.reauthorize', provider=provider.name) }}</div>
+{#- A link, not a form: Garmin's sign-in bounces across its own SSO hosts,
+    which Chrome's form-action would block on a form POST. -#}
+<a class="primary" href="/integrations/garmin/connect">{{ t('integrations.connect', provider=provider.name) }}</a>
+{% endif %}
+<dl class="facts ai-facts">
+  <div><dt>{{ t('integrations.data_label') }}</dt>
+    <dd>{{ t_plural('integrations.data_days', provider.sync_days) }}{% if provider.sync_latest_day %} · {{ t('integrations.data_latest', date=provider.sync_latest_day|datefmt) }}{% endif %}</dd></div>
+  <div><dt>{{ t('integrations.garmin_delivery_label') }}</dt>
+    <dd>{% if provider.last_delivery_at %}{{ provider.last_delivery_at|datefmt }}{% else %}{{ t('integrations.garmin_delivery_never') }}{% endif %}</dd></div>
+  <div><dt>{{ t('integrations.garmin_permissions_label') }}</dt>
+    <dd>{% for permission in provider.permissions %}{{ permission.label }}: {{ t('integrations.garmin_permission_on') if permission.granted else t('integrations.garmin_permission_off') }}{% if not loop.last %}<br>{% endif %}{% endfor %}</dd></div>
+  <div><dt>{{ t('integrations.garmin_backfill_label') }}</dt>
+    <dd>{{ t('integrations.garmin_backfill_' ~ provider.backfill_state) }}</dd></div>
+</dl>
+<form action="/integrations/garmin/sync" method="post" class="inline-form"
+      onsubmit="var b=this.querySelector('button');setTimeout(function(){b.disabled=true;b.textContent=b.dataset.working;},0)">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <button class="secondary" type="submit" data-working="{{ t('integrations.working') }}">{{ t('integrations.garmin_sync_action') }}</button>
+</form>

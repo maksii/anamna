@@ -1,0 +1,98 @@
+{
+  // Debug targets for Anamna. Every entry runs through `uv`, so the
+  // project venv is used without anyone having to activate it first.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      // The one most people want: F5 starts the server on 127.0.0.1:8000 with
+      // breakpoints live. run() honours $PORT, so set it here to work beside a
+      // server another session already has on 8000.
+      "name": "Web app (debug)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": [
+        "anamna.web.app:app",
+        "--host", "127.0.0.1",
+        "--port", "8000"
+      ],
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "env": { "PYTHONUNBUFFERED": "1" }
+    },
+    {
+      // Same server on a free port. Use when 8000 is taken; uvicorn's --reload
+      // is deliberately absent everywhere here because it imports half-saved
+      // files while another agent or editor is mid-write.
+      "name": "Web app (port 8199)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": [
+        "anamna.web.app:app",
+        "--host", "127.0.0.1",
+        "--port", "8199"
+      ],
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "env": { "PYTHONUNBUFFERED": "1" }
+    },
+    {
+      // Points the app at a throwaway copy so destructive experiments cannot
+      // touch data/anamna.sqlite3. Copy the DB there yourself first.
+      "name": "Web app (sandbox DB)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": [
+        "anamna.web.app:app",
+        "--host", "127.0.0.1",
+        "--port", "8123"
+      ],
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "env": {
+        "PYTHONUNBUFFERED": "1",
+        "ANAMNA_DB": "${workspaceFolder}/work/sandbox.sqlite3"
+      }
+    },
+    {
+      "name": "CLI",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "anamna.cli",
+      "args": [],
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      // --basetemp is not optional on Windows: the default work/pytest is
+      // usually still locked by a previous run and produces a wall of phantom
+      // PermissionErrors that have nothing to do with the code under test.
+      "name": "Pytest: whole suite",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "pytest",
+      "args": ["-q", "--basetemp=${workspaceFolder}/work/pytest-debug"],
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "name": "Pytest: current file",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "pytest",
+      "args": ["${file}", "-v", "--basetemp=${workspaceFolder}/work/pytest-debug"],
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "name": "Python: current file",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${file}",
+      "console": "integratedTerminal",
+      "justMyCode": false
+    }
+  ]
+}

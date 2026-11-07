@@ -1,0 +1,142 @@
+{#
+  Tracker dashboard for the device-driven areas (activity, mobility, sleep):
+  the way a wearable's own app presents a day-by-day metric. Everything is
+  computed server-side in devices/queries.py:area_tracker - the bars are
+  plain spans whose height is a 0..1 fraction handed to CSS, so no JS runs
+  and nothing recomputes in the browser.
+
+  Chart discipline (dataviz): bars for daily magnitudes, one hue per card so
+  no legend is needed; the sleep stack is an ordered depth ramp plus amber
+  for awake, with a legend, 2px surface gaps between segments, and every
+  number repeated as text in the stats row - colour never carries the value
+  alone. A day the device recorded nothing stays a visible gap, never a zero.
+#}
+
+{% from "_experience.html" import source_label with context %}
+
+{% macro delta_chip(delta_pct) -%}
+{%- if delta_pct is none -%}
+<span class="an-tracker-delta" data-direction="none">{{ t('tracker.no_prev') }}</span>
+{%- else -%}
+{%- set direction = 'flat' if delta_pct|abs < 0.5 else 'up' if delta_pct > 0 else 'down' -%}
+{%- set percent = delta_pct|abs|round(1)|numfmt -%}
+{#- The direction is said in words, for every reader: "up 4.2%". -#}
+<span class="an-tracker-delta" data-direction="{{ direction }}">{{ t('tracker.vs_prev_' ~ direction, percent=percent) }}</span>
+{%- endif -%}
+{%- endmacro %}
+
+
+{% macro bar_strip(bars, unit, aria) -%}
+<div class="an-tracker-bars" role="img" aria-label="{{ aria }}">
+  {%- for bar in bars -%}
+  <span class="an-tracker-bar{% if bar.value is none %} an-tracker-bar--empty{% endif %}" style="--h:{{ bar.frac }}" title="{{ bar.day|datefmt }} - {% if bar.value is not none %}{{ bar.value|numfmt }} {{ unit|unitfmt }}{% else %}{{ t('tracker.no_data_day') }}{% endif %}"></span>
+  {%- endfor -%}
+</div>
+<div class="an-tracker-axis" aria-hidden="true"><span>{{ bars[0].day|datefmt }}</span><span>{{ bars[-1].day|datefmt }}</span></div>
+{%- endmacro %}
+
+
+{% macro tracker_card(card) -%}
+<article class="an-tracker-card">
+  <header class="an-tracker-card__head">
+    <h3><a href="{{ card.url }}">{{ card.name }}</a></h3>
+    <p class="an-tracker-card__latest">
+      <strong>{{ card.latest_value|round(1)|numfmt }}</strong> <small>{{ card.unit|unitfmt }}</small>
+      <span>{{ card.latest_day|datefmt }}</span>
+    </p>
+  </header>
+  <p class="an-tracker-source">{{ t('source_policy.selected', source=card.selected_label|default(card.selected_source)) }}{% if card.source_count > 1 %} · <a href="{{ card.url }}">{{ t('source_policy.alternatives', count=card.source_count - 1, days=card.overlap_days) }}</a>{% endif %}</p>
+  {% if card.dormant %}
+  <p class="an-tracker-lead">{{ t('tracker.no_recent_days', date=card.latest_day|datefmt) }}</p>
+  {% else %}
+  {{ bar_strip(card.bars, card.unit, t('tracker.bar_aria', name=card.name, date=card.bars[-1].day|datefmt)) }}
+  {% endif %}
+  {% set coverage = namespace(count=0) %}
+  {% for bar in card.bars %}{% if bar.value is not none %}{% set coverage.count = coverage.count + 1 %}{% endif %}{% endfor %}
+  <div class="px-coverage"><span>{{ t('experience.coverage', recorded=coverage.count|countfmt, total=card.bars|length|countfmt) }}</span><span>{{ t('experience.recording_window') }}</span><span class="px-coverage-track" aria-hidden="true" style="--coverage:{{ coverage.count / (card.bars|length) if card.bars else 0 }}"><i></i></span></div>
+  <dl class="an-tracker-stats">
+    <div><dt>{{ t('tracker.avg7') }}</dt><dd>{% if card.avg7 is not none %}{{ card.avg7|round(1)|numfmt }} <small>{{ card.unit|unitfmt }}</small>{% else %}-{% endif %}</dd></div>
+    <div><dt>{{ t('tracker.avg30') }}</dt><dd>{% if card.avg30 is not none %}{{ card.avg30|round(1)|numfmt }} <small>{{ card.unit|unitfmt }}</small>{% else %}-{% endif %}</dd></div>
+    <div><dt>{{ t('tracker.vs_prev_month') }}</dt><dd>{{ delta_chip(card.delta_pct) }}</dd></div>
+  </dl>
+  <details class="px-day-values">
+    <summary>{{ t('experience.inspect_days') }}</summary>
+    <p class="dashboard-note">{{ t('experience.coverage_note') }}</p>
+    <dl>{% for bar in card.bars|reverse %}<div><dt>{{ bar.day|datefmt }}</dt><dd>{% if bar.value is not none %}{{ bar.value|round(2)|numfmt }} {{ card.unit|unitfmt }}{% else %}{{ t('tracker.no_data_day') }}{% endif %}</dd></div>{% endfor %}</dl>
+  </details>
+  <a class="an-tracker-card__more" href="{{ card.url }}">{{ t('metrics.view_history') }}</a>
+</article>
+{%- endmacro %}
+
+
+{% macro sleep_block(sleep) -%}
+<article class="an-tracker-card an-tracker-sleep">
+  <header class="an-tracker-card__head">
+    <h3>{{ t('tracker.sleep_heading') }}</h3>
+    <p class="an-tracker-card__latest">
+      {% if sleep.asleep_avg7 is not none %}<strong>{{ sleep.asleep_avg7|round(1)|numfmt }}</strong> <small>{{ sleep.unit|unitfmt }}</small> <span>{{ t('tracker.avg7') }}</span>{% endif %}
+    </p>
+  </header>
+  <div class="an-sleep-nights" role="img" aria-label="{{ t('tracker.sleep_aria', date=sleep.nights[-1].day|datefmt) }}">
+    {%- for night in sleep.nights -%}
+    <span class="an-sleep-night" title="{{ night.day|datefmt }}{% if night.asleep is not none %} - {{ t('tracker.asleep') }} {{ night.asleep|numfmt }} {{ sleep.unit|unitfmt }}{% endif %}{% if night.in_bed is not none %} · {{ t('tracker.in_bed') }} {{ night.in_bed|numfmt }} {{ sleep.unit|unitfmt }}{% endif %}{% if not night.has_stages and night.asleep is none and night.in_bed is none %} - {{ t('tracker.no_data_day') }}{% endif %}">
+      {%- if night.has_stages -%}
+      {%- for segment in night.stages -%}
+      {%- if segment.value is not none and segment.frac > 0 -%}
+      <i class="an-sleep-seg" data-stage="{{ segment.key }}" style="--h:{{ segment.frac }}"></i>
+      {%- endif -%}
+      {%- endfor -%}
+      {%- elif night.asleep_frac > 0 -%}
+      <i class="an-sleep-seg" data-stage="unstaged" style="--h:{{ night.asleep_frac }}"></i>
+      {%- endif -%}
+    </span>
+    {%- endfor -%}
+  </div>
+  <div class="an-tracker-axis" aria-hidden="true"><span>{{ sleep.nights[0].day|datefmt }}</span><span>{{ sleep.nights[-1].day|datefmt }}</span></div>
+  <p class="an-tracker-lead">{{ t('tracker.sleep_lead') }}</p>
+  {% if sleep.policy %}<details class="px-source-policy"><summary>{{ t('experience.source_policy') }}</summary><p>{{ sleep.policy }}</p></details>{% endif %}
+  {% if sleep.source_count > 1 %}<p class="an-tracker-source"><a href="/devices/metrics/sleep_duration">{{ t('tracker.sleep_sources', count=sleep.source_count, days=sleep.overlap_days) }}</a></p>{% endif %}
+  {% set coverage = namespace(count=0) %}
+  {% for night in sleep.nights %}{% if night.asleep is not none or night.has_stages %}{% set coverage.count = coverage.count + 1 %}{% endif %}{% endfor %}
+  <div class="px-coverage"><span>{{ t('experience.coverage', recorded=coverage.count|countfmt, total=sleep.nights|length|countfmt) }}</span><span class="px-coverage-track" aria-hidden="true" style="--coverage:{{ coverage.count / (sleep.nights|length) if sleep.nights else 0 }}"><i></i></span></div>
+  <ul class="an-sleep-legend">
+    {#- A row without a url is a drawn state rather than a metric - the
+        unstaged night - so it names itself and explains itself in a
+        disclosure instead of linking to a history page that does not exist. -#}
+    {% for item in sleep.legend %}
+    <li><i class="an-sleep-swatch" data-stage="{{ item.key }}" aria-hidden="true"></i>
+      {%- if item.url %}<a href="{{ item.url }}">{{ item.name }}</a>
+      {%- else %}<details class="an-verdict-details"><summary>{{ item.name }}</summary><p class="an-staleness-chip__note">{{ item.hint }}</p></details>
+      {%- endif %}
+      {%- if item.avg30 is not none %}<span>{{ item.avg30|round(1)|numfmt }} {{ sleep.unit|unitfmt }} · {{ t('tracker.avg30') }}</span>{% endif %}</li>
+    {% endfor %}
+  </ul>
+  <dl class="an-tracker-stats">
+    <div><dt>{{ t('tracker.asleep') }} · {{ t('tracker.avg30') }}</dt><dd>{% if sleep.asleep_avg30 is not none %}{{ sleep.asleep_avg30|round(1)|numfmt }} <small>{{ sleep.unit|unitfmt }}</small>{% else %}-{% endif %}</dd></div>
+    <div><dt>{{ t('tracker.in_bed') }} · {{ t('tracker.avg30') }}</dt><dd>{% if sleep.in_bed_avg30 is not none %}{{ sleep.in_bed_avg30|round(1)|numfmt }} <small>{{ sleep.unit|unitfmt }}</small>{% else %}-{% endif %}</dd></div>
+    <div><dt>{{ t('tracker.vs_prev_month') }}</dt><dd>{{ delta_chip(sleep.asleep_delta_pct) }}</dd></div>
+  </dl>
+  <details class="px-day-values"><summary>{{ t('experience.inspect_days') }}</summary>
+    <dl>{% for night in sleep.nights|reverse %}<div><dt>{{ night.day|datefmt }}</dt><dd>{% if night.asleep is not none %}{{ night.asleep|round(2)|numfmt }} {{ sleep.unit|unitfmt }}{% else %}{{ t('tracker.no_data_day') }}{% endif %}{% if night.source %}<small> · {{ source_label(night.vendor, night.source) }}</small>{% endif %}</dd></div>{% endfor %}</dl>
+  </details>
+</article>
+{%- endmacro %}
+
+
+{% macro tracker_block(tracker) -%}
+{% if tracker and (tracker.cards or tracker.sleep) %}
+<section class="area-section an-tracker" id="area-daily">
+  <header class="section-heading compact-heading">
+    <div><span class="eyebrow">{{ t('tracker.eyebrow') }}</span><h2>{{ t('tracker.heading') }}</h2></div>
+    <span class="dashboard-note">{{ t('tracker.note_mean') }}</span>
+  </header>
+  <p class="dashboard-note">{{ t('experience.window_note') }}</p>
+  {% if tracker.sleep %}{{ sleep_block(tracker.sleep) }}{% endif %}
+  {% if tracker.cards %}
+  <div class="an-tracker-grid">
+    {% for card in tracker.cards %}{{ tracker_card(card) }}{% endfor %}
+  </div>
+  {% endif %}
+</section>
+{% endif %}
+{%- endmacro %}

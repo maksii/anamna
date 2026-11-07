@@ -1,0 +1,77 @@
+{
+  // Everything runs through `uv run`, which resolves the project venv itself,
+  // so none of these depend on an activated environment.
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Run web app",
+      "type": "shell",
+      "command": "uv run anamna-web",
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated" },
+      "group": "build"
+    },
+    {
+      "label": "Run web app (free port)",
+      "type": "shell",
+      "command": "uv run anamna-web",
+      "options": { "env": { "PORT": "8199" } },
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    },
+    {
+      // The default basetemp (work/pytest) is normally still locked on Windows
+      // and yields phantom PermissionErrors; a per-run directory avoids both
+      // that and collisions when two runs overlap.
+      "label": "Test",
+      "type": "shell",
+      "command": "uv run pytest -q -n auto --basetemp=work/pytest-vscode",
+      "problemMatcher": [],
+      "group": { "kind": "test", "isDefault": true },
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    },
+    {
+      "label": "Test: current file",
+      "type": "shell",
+      "command": "uv run pytest -q \"${relativeFile}\" --basetemp=work/pytest-vscode",
+      "problemMatcher": [],
+      "group": "test",
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    },
+    {
+      "label": "Compile check",
+      "type": "shell",
+      "command": "uv run python -m compileall -q src",
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "shared" }
+    },
+    {
+      "label": "Validate: source extraction",
+      "type": "shell",
+      "command": "uv run python scripts/validate_source_extraction.py",
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    },
+    {
+      "label": "Validate: device imports",
+      "type": "shell",
+      "command": "uv run python scripts/validate_device_imports.py",
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    },
+    {
+      // The full gate from CLAUDE.md's "Definition of done". Runs the same
+      // checks CI does, plus the two data validators CI does not.
+      "label": "Definition of done",
+      "dependsOrder": "sequence",
+      "dependsOn": [
+        "Test",
+        "Compile check",
+        "Validate: source extraction",
+        "Validate: device imports"
+      ],
+      "problemMatcher": [],
+      "group": { "kind": "build", "isDefault": true }
+    }
+  ]
+}

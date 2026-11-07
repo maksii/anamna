@@ -1,0 +1,73 @@
+{#- Other files that hold this same report, and the answer one press away:
+    keep one file and count its values once.  Built by `_document_relations_view`. -#}
+{%- set rel = relations or {} -%}
+{%- set can_act = not viewing and not guest -%}
+{% if rel.copy_of or rel.same_as or rel.related or rel.copies or dup_error %}
+<section class="panel an-reread an-relations" id="duplicates" aria-labelledby="duplicates-title">
+  <h2 id="duplicates-title">{{ t('dup.title') }}</h2>
+  {% if dup_error %}<div class="alert" role="alert">{{ t(dup_error) }}</div>{% endif %}
+  {% if rel.copy_of %}
+  <div class="an-reread-item an-relations-item">
+    <div>
+      {% if rel.same_bytes %}
+      <p class="an-relations-line"><strong>{{ t('doc.duplicate_title') }}</strong> {{ t('doc.duplicate_body') }} <a href="/documents/{{ rel.copy_of.id }}">{{ rel.copy_of.title_text }}</a>{{ t('doc.duplicate_tail') }}</p>
+      {% else %}
+      <p class="an-relations-line"><strong>{{ t('dup.copy_of') }} <a href="/documents/{{ rel.copy_of.id }}">{{ rel.copy_of.title_text }}</a></strong> <span class="an-reread-page">{{ rel.copy_of.report_date|datefmt }}</span>{{ t('dup.copy_of_tail') }}</p>
+      {% endif %}
+    </div>
+    {% if can_act and not rel.same_bytes %}
+    <form method="post" action="/documents/{{ document.id }}/duplicate" class="an-reread-actions">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button class="secondary" name="action" value="unmark" type="submit">{{ t('dup.unmark') }}</button>
+    </form>
+    {% endif %}
+  </div>
+  {% endif %}
+  {% for item in rel.same_as %}
+  {%- set other = item.document -%}
+  <div class="an-reread-item an-relations-item">
+    <div>
+      <p class="an-relations-line"><strong>{{ t('dup.same_as') }} <a href="/documents/{{ other.id }}">{{ other.title_text }}</a></strong>
+        <span class="an-reread-page">{{ other.report_date|datefmt }} · {{ t('doc.imported', date=other.imported_at[:10]|datefmt) }}</span></p>
+      <p>{{ item.reason }}</p>
+      {% if can_act %}<p>{{ t('dup.suggested') }}</p>{% endif %}
+    </div>
+    {% if can_act %}
+    <div class="an-reread-actions">
+      {% set keep_other %}
+      <form method="post" action="/documents/{{ document.id }}/duplicate">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="primary_id" value="{{ other.id }}">
+        <button class="{{ 'primary' if item.keep_other else 'secondary' }}" name="action" value="mark" type="submit">{{ t('dup.keep_other') }}</button>
+      </form>
+      {% endset %}
+      {% set keep_this %}
+      <form method="post" action="/documents/{{ other.id }}/duplicate">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="primary_id" value="{{ document.id }}">
+        <input type="hidden" name="next" value="/documents/{{ document.id }}">
+        <button class="{{ 'secondary' if item.keep_other else 'primary' }}" name="action" value="mark" type="submit">{{ t('dup.keep_this') }}</button>
+      </form>
+      {% endset %}
+      {{ keep_other if item.keep_other else keep_this }}{{ keep_this if item.keep_other else keep_other }}
+      <form method="post" action="/documents/{{ document.id }}/duplicate">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="other_id" value="{{ other.id }}">
+        <button class="secondary" name="action" value="keep_both" type="submit">{{ t('dup.keep_both') }}</button>
+      </form>
+    </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+  {% if rel.related or rel.copies %}
+  <ul class="an-reread-list">
+    {% for item in rel.related %}
+    <li class="an-reread-item"><p class="an-relations-line">{{ item.label }} <a href="/documents/{{ item.document.id }}">{{ item.document.title_text }}</a> <span class="an-reread-page">{{ item.document.report_date|datefmt }}</span></p></li>
+    {% endfor %}
+    {% for copy in rel.copies %}
+    <li class="an-reread-item"><p class="an-relations-line">{{ t('dup.copy_held') }} <a href="/documents/{{ copy.id }}">{{ copy.title_text }}</a> <span class="an-reread-page">{{ t('doc.imported', date=copy.imported_at[:10]|datefmt) }}</span></p></li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>
+{% endif %}

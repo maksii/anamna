@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block title %}{{ t('export.title') }} · {{ t('brand.name') }}{% endblock %}
+{% block content %}
+<link rel="stylesheet" href="{{ asset('patient-experience.css') }}">
+<a class="back-link export-no-print" href="{{ back_url }}">{{ t('export.back', name=origin_name) }}</a>
+
+<section class="export-hero">
+  <div>
+    <span class="eyebrow">{{ t('export.eyebrow') }}</span>
+    <h1>{{ t('export.title') }}</h1>
+  </div>
+  <dl>
+    <div><dt>{{ t('export.patient') }}</dt><dd>{{ export.patient_name }}</dd></div>
+    <div><dt>{{ t('export.period') }}</dt><dd>{{ export.period_text }}</dd></div>
+    <div><dt>{{ t('export.included') }}</dt><dd>{{ export.selection_text }}</dd></div>
+  </dl>
+</section>
+
+<form class="export-workspace" method="get" action="{{ export_url }}" id="health-export-form">
+  <input type="hidden" name="custom" value="1">
+  <aside class="panel export-builder export-no-print" aria-labelledby="export-builder-title">
+    <div class="panel-head">
+      <h2 id="export-builder-title">{{ t('export.builder_title') }}</h2>
+      <span data-selected-count data-template="{{ t('export.selected_count', count='{count}') }}">{{ t('export.selected_count', count=selected_ids|length) }}</span>
+    </div>
+    <label class="export-search">
+      <span>{{ t('export.search_label') }}</span>
+      <input type="search" data-export-search placeholder="{{ t('export.search_placeholder') }}" autocomplete="off">
+    </label>
+    <div class="export-select-actions">
+      <button type="button" class="secondary" data-select-visible>{{ t('export.select_visible') }}</button>
+      <button type="button" class="secondary" data-clear-visible>{{ t('export.clear_visible') }}</button>
+    </div>
+    <div class="export-metric-list" data-export-options>
+      {% for group in metric_groups %}
+      <section data-export-group>
+        <h3>{{ group.name }}</h3>
+        {% for metric in group.metrics %}
+        <label class="export-metric-option" data-export-option>
+          <input type="checkbox" name="metric" value="{{ metric.id }}" {% if metric.id in selected_ids %}checked{% endif %}>
+          <span><b>{{ metric.name }}</b><small>{{ metric.latest_text }} · {{ metric.count_text }}</small></span>
+        </label>
+        {% endfor %}
+      </section>
+      {% endfor %}
+      <p class="export-no-search-results" data-no-results hidden>{{ t('export.no_search_results') }}</p>
+    </div>
+  </aside>
+
+  <main class="export-preview" id="export-preview">
+    <section class="panel export-toolbar export-no-print" aria-labelledby="export-format-title">
+      <div>
+        <label for="export-aggregation" id="export-format-title">{{ t('export.aggregation_label') }}</label>
+        <select id="export-aggregation" name="aggregation">
+          {% for key in aggregation_options %}<option value="{{ key }}" {% if aggregation == key %}selected{% endif %}>{{ t('export.aggregation_' ~ key) }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="export-toolbar-actions">
+        <button type="submit" class="secondary">{{ t('export.update_preview') }}</button>
+        <button type="button" class="secondary" data-export-print>{{ t('export.print') }}</button>
+        <button type="submit" class="primary" formaction="/exports/health-history.pdf">{{ t('export.download_pdf') }}</button>
+      </div>
+      <p class="export-dirty" data-export-dirty hidden>{{ t('export.preview_changed') }}</p>
+    </section>
+
+    {% if selection_error %}
+    <div class="alert warning export-no-print" role="alert"><strong>{{ t('export.select_one_title') }}</strong><p>{{ t('export.select_one_body') }}</p></div>
+    {% endif %}
+
+    <article class="export-paper">
+      <header class="export-paper-header">
+        <div><span>{{ t('brand.name') }}</span><h2>{{ t('export.document_title') }}</h2><p>{{ t('export.document_subtitle') }}</p></div>
+        <dl>
+          <div><dt>{{ t('export.patient') }}</dt><dd>{{ export.patient_name }}</dd></div>
+          <div><dt>{{ t('export.date_of_birth') }}</dt><dd>{{ export.date_of_birth_text }}</dd></div>
+          <div><dt>{{ t('export.created') }}</dt><dd>{{ export.created_text }}</dd></div>
+        </dl>
+      </header>
+
+      {% for metric in export.metrics %}
+      <section class="export-metric-history">
+        <div class="export-metric-heading">
+          <div><span class="eyebrow">{{ metric.category_name }}</span><h3><a href="{{ metric.detail_url }}">{{ metric.name }}</a></h3></div>
+          <dl>
+            <div><dt>{{ t('export.latest') }}</dt><dd>{% if metric.latest %}{{ metric.latest.value_text }} <small>{{ metric.latest.unit }}</small>{% if metric.latest.verdict %} · {{ metric.latest.verdict }}{% endif %}{% else %}{{ t('export.not_available') }}{% endif %}</dd></div>
+            <div><dt>{{ t('export.period') }}</dt><dd>{{ metric.period_text }}</dd></div>
+          </dl>
+        </div>
+        {% if metric.was_aggregated %}<p class="export-aggregation-note">{{ t('export.aggregation_note', original=metric.point_count, shown=metric.displayed_count, mode=metric.aggregation_label) }}</p>{% endif %}
+        <div class="table-wrap export-table-wrap">
+          <table>
+            <thead><tr>
+              <th scope="col">{{ t('export.th_date') }}</th>
+              <th scope="col">{{ t('export.th_result') }}</th>
+              <th scope="col">{{ t('export.th_comparison') }}</th>
+              <th scope="col">{{ t('export.th_source') }}</th>
+            </tr></thead>
+            <tbody>
+              {% for row in metric.rows %}
+              <tr{% if row.is_aggregate %} class="is-aggregate"{% endif %}>
+                <td data-label="{{ t('export.th_date') }}">{{ row.period_text }}</td>
+                <td data-label="{{ t('export.th_result') }}"><strong>{{ row.value_text }}</strong> <small>{{ row.unit }}</small>{% if row.is_aggregate %}<span>{{ t('export.average_badge') }}</span>{% endif %}</td>
+                <td data-label="{{ t('export.th_comparison') }}" class="export-comparison"{% if row.verdict_state %} data-state="{{ row.verdict_state }}"{% endif %}>
+                  {%- if row.verdict %}<strong>{{ row.verdict }}</strong>{% endif %}
+                  {%- if row.interval %}<span>{{ row.interval }}</span>{% endif %}
+                  {%- if row.reference %}<small>{{ row.reference }}</small>{% endif %}
+                  {%- if row.also_printed %}<small>{{ row.also_printed }}</small>{% endif %}
+                  {%- if not (row.verdict or row.interval or row.reference) %}{{ t('export.not_available') }}{% endif -%}
+                </td>
+                <td data-label="{{ t('export.th_source') }}"><strong>{{ row.provider or t('export.unknown_source') }}</strong>{% if row.document_title %}<small>{{ row.document_title }}</small>{% endif %}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      {% else %}
+      <div class="export-empty"><h3>{{ t('export.select_one_title') }}</h3><p>{{ t('export.select_one_body') }}</p></div>
+      {% endfor %}
+    </article>
+  </main>
+</form>
+<script src="{{ asset('health-export.js') }}" defer></script>
+{% endblock %}

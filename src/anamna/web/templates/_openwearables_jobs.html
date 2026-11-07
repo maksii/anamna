@@ -1,0 +1,10 @@
+{#- Background-check rows: the status panel and the lazily loaded full list
+    (/admin/openwearables/jobs) render the same markup. `admin` adds the account
+    column and keeps raw error codes; a person's profile gets labels. -#}
+{% for job in ow_hooks.jobs %}<tr>
+  {% if admin %}<td>{% for account in ow_hooks.linked_accounts if account.user_id == job.owner_user_id %}{{ account.email }}{% else %}{{ t('ow_hooks.unlinked') }}{% endfor %}</td>{% endif %}
+  <td>{{ t('ow_hooks.reason_' ~ job.reason) if job.reason in ('scheduled', 'backfill', 'manual', 'webhook') else job.reason }}<br><small>{{ t('ow_hooks.started', when=job.started) }}</small></td>
+  <td>{{ job.period }}</td>
+  <td>{{ t('ow_hooks.retry_status' if job.status == 'retry' else 'ow_hooks.' ~ job.status) }}<br><small>{{ t('ow_hooks.finished', when=job.finished) }}</small>{% if job.last_error %}<br><small>{% if admin %}{{ job.last_error }}{% else %}{{ job.error_labels|join('; ') }}{% endif %}</small>{% endif %}</td>
+  <td>{% if job.fetched %}{{ t('ow_hooks.fetched_records') }}: {{ job.records|countfmt }}<br>{{ t('ow_hooks.fetched_samples') }}: {{ job.samples|countfmt }}{% else %}-{% endif %}</td>
+</tr>{% endfor %}

@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}{{ t('exclusions.list_title') }} · {{ t('brand.name') }}{% endblock %}
+{% block content %}
+{% macro exclusion_card(item, undo) %}{# The list item is written where the card is listed, inside its list. #}
+  <div class="an-person__who">
+    <strong>{{ t('exclusions.scope_' ~ item.scope) }}{% if item.when %} · {{ item.when }}{% endif %}</strong>
+    <small>{{ t('exclusions.origin_line', app=item.app, device=item.device or t('exclusions.device_unnamed')) }}</small>
+    <small>{{ t('exclusions.series_line', series=item.series|join(', ') if item.series else t('exclusions.series_all')) }}</small>
+    {% if item.belongs_to %}<small>{{ t('exclusions.belongs_line', name=item.belongs_to) }}</small>{% endif %}
+    {% if item.reason %}<small>{{ t('exclusions.reason_line', reason=item.reason) }}</small>{% endif %}
+    <span class="tag-row">
+      {#- The word, never the colour alone. -#}
+      <span class="pill {{ 'an-pill--ok' if item.state == 'applied' else 'an-pill--warn' }}">{{ t('exclusions.state_' ~ item.state) }}</span>
+    </span>
+  </div>
+  <dl class="an-person__stats">
+    <div><dt>{{ t('exclusions.created') }}</dt><dd>{{ item.created_text }}</dd></div>
+  </dl>
+  {% if undo %}
+  <div class="an-person__actions">
+    <form action="/devices/exclusions/{{ item.id }}/undo" method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="next" value="{{ back_url }}">
+      <button class="secondary" type="submit">{{ t('exclusions.undo') }}</button>
+    </form>
+  </div>
+  {% endif %}
+{% endmacro %}
+
+<a class="back-link" href="{{ back_url }}">{{ t('exclusions.back') }}</a>
+
+<section class="panel">
+  <span class="eyebrow">{{ t('exclusions.eyebrow') }}</span>
+  <h1>{{ t('exclusions.list_title') }}</h1>
+  {% if status %}
+  <div class="alert neutral" role="status">{{ t('exclusions.status_' ~ status) }}</div>
+  {% endif %}
+  <p>{{ t('exclusions.list_intro') }}</p>
+  <details class="px-source-policy">
+    <summary>{{ t('exclusions.why_summary') }}</summary>
+    <p>{{ t('exclusions.why_body') }}</p>
+    <p>{{ t('exclusions.scopes_body') }}</p>
+  </details>
+</section>
+
+<section class="panel" aria-labelledby="exclusions-active">
+  <h2 id="exclusions-active">{{ t_plural('exclusions.active_count', items|length, value=items|length|countfmt) }}</h2>
+  {% if items %}
+  <ul class="an-people">{% for item in items %}<li class="an-person">{{ exclusion_card(item, true) }}</li>{% endfor %}</ul>
+  {% else %}
+  <p>{{ t('exclusions.empty') }}</p>
+  {% endif %}
+  {% if undoing %}
+  <h3>{{ t('exclusions.undoing_heading') }}</h3>
+  <ul class="an-people">{% for item in undoing %}<li class="an-person an-person--blocked">{{ exclusion_card(item, false) }}</li>{% endfor %}</ul>
+  {% endif %}
+</section>
+{% endblock %}

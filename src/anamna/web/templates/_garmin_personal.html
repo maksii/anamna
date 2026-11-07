@@ -1,0 +1,63 @@
+{#- Garmin Connect Personal API: the person's own read-only key. Included by
+    profile.html on the connections tab. Not OAuth: there is no provider page
+    to bounce through, so saving the key is an ordinary same-origin form. -#}
+{% set card = garmin_personal_card %}
+<section class="panel" aria-labelledby="garmin-personal-heading">
+  <div class="panel-head">
+    <div><span class="eyebrow">{{ t('integrations.eyebrow') }}</span><h2 id="garmin-personal-heading">{{ t('integrations.garmin_personal_heading') }}</h2></div>
+    {#- The state as words, never colour alone. -#}
+    <span class="pill {{ 'an-pill--ok' if card and not card.needs_new_key else 'an-pill--warn' }}">
+      {{ t('integrations.garmin_key_needed') if card and card.needs_new_key else t('conn.state_connected') if card else t('conn.state_idle') }}
+    </span>
+  </div>
+  {% if card %}
+  <p class="tiny muted">{{ t('integrations.connected_since', date=card.connected_at|datefmt) }}</p>
+  {% if card.needs_new_key %}
+  <div class="alert error" role="alert">{{ t('integrations.garmin_key_expired') }}</div>
+  {% endif %}
+  <dl class="facts ai-facts">
+    <div><dt>{{ t('integrations.data_label') }}</dt>
+      <dd>{{ t_plural('integrations.data_days', card.sync_days) }}{% if card.sync_latest_day %} · {{ t('integrations.data_latest', date=card.sync_latest_day|datefmt) }}{% endif %}</dd></div>
+    <div><dt>{{ t('integrations.garmin_personal_last_sync_label') }}</dt>
+      <dd>{% if card.sync_last_at %}{{ card.sync_last_at|datefmt }}{% else %}{{ t('openwearables.last_sync_never') }}{% endif %}</dd></div>
+  </dl>
+  {% if not card.backfill_done %}
+  <p class="tiny muted">{{ t('integrations.backfill_running') }}</p>
+  {% elif card.no_wellness %}
+  <p class="tiny muted">{{ t('integrations.garmin_personal_no_wellness') }}</p>
+  {% endif %}
+  {#- Named, never left looking like a quiet week. -#}
+  {% if card.failures %}
+  {% set labels = [] %}
+  {% for dataset in card.failures %}{% set _ = labels.append(t('integrations.garmin_dataset_' ~ dataset)) %}{% endfor %}
+  <div class="alert warning" role="status">
+    <strong>{{ t('integrations.garmin_personal_failures', datasets=labels|join('; ')) }}</strong>
+  </div>
+  {% endif %}
+  {% if not card.needs_new_key %}
+  <form action="/integrations/garmin/personal/sync" method="post" class="inline-form"
+        onsubmit="var b=this.querySelector('button');setTimeout(function(){b.disabled=true;b.textContent=b.dataset.working;},0)">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button class="secondary" type="submit" data-working="{{ t('integrations.working') }}">{{ t('integrations.sync_action') }}</button>
+  </form>
+  {% endif %}
+  {% endif %}
+  {% if not card or card.needs_new_key %}
+  <form action="/integrations/garmin/personal" method="post" class="stack-form" autocomplete="off">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>{{ t('integrations.garmin_key_label') }}
+      <input type="password" name="api_key" required spellcheck="false" autocapitalize="off"
+             autocomplete="off" aria-describedby="garmin-key-hint garmin-key-how">
+    </label>
+    <p class="tiny muted" id="garmin-key-hint">{{ t('integrations.garmin_key_hint') }}</p>
+    <p class="tiny muted" id="garmin-key-how">{{ t('integrations.garmin_personal_how') }}</p>
+    <button class="primary" type="submit">{{ t('integrations.garmin_key_replace') if card else t('integrations.garmin_key_save') }}</button>
+  </form>
+  {% endif %}
+  {% if card %}
+  <form action="/integrations/garmin/personal/remove" method="post" class="inline-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button class="secondary" type="submit">{{ t('integrations.garmin_key_remove') }}</button>
+  </form>
+  {% endif %}
+</section>

@@ -1,0 +1,300 @@
+{% extends "base.html" %}
+{% block title %}{{ t('aiassist.admin_title') }}{% endblock %}
+{% block content %}
+
+<section class="page-head">
+  <div>
+    <div class="eyebrow">{{ t('admin.eyebrow') }}</div>
+    <h1>{{ t('aiassist.admin_heading') }}</h1>
+  </div>
+</section>
+
+{% if error %}<div class="alert error" role="alert">{{ error }}</div>{% endif %}
+{% if done %}<div class="alert" role="status">{{ done }}{% if tested_model %} {{ t('aiassist.test_answered_by', task=t('aiassist.task_' + tested_task), model=tested_model) }}{% endif %}</div>{% endif %}
+
+<section class="panel" id="ai-tasks">
+  <div class="panel-head">
+    <div><span class="eyebrow">{{ t('aiassist.status_eyebrow') }}</span><h2>{{ t('aiassist.status_heading') }}</h2></div>
+    {#- The state as words, never colour alone. -#}
+    <span class="pill {{ 'an-pill--ok' if ai_on else 'an-pill--warn' }}">
+      {{ t('aiassist.on') if ai_on else (t('aiassist.off') if ai.enabled != '1' else t('aiassist.no_key')) }}
+    </span>
+  </div>
+  <ul class="ai-route-list">
+    {% for task in ai_tasks %}
+    {% set route = ai.tasks[task] %}
+    {% set has_key = ai['keys'][route.provider] %}
+    <li class="ai-route">
+      <div class="ai-route__text">
+        <strong>{{ t('aiassist.task_' + task) }}</strong>
+        <span class="pill {{ 'an-pill--ok' if (route.enabled and has_key and ai.enabled == '1') else 'an-pill--warn' }}">
+          {% if not route.enabled %}{{ t('aiassist.task_off') }}{% elif not has_key %}{{ t('aiassist.no_key') }}{% elif ai.enabled != '1' %}{{ t('aiassist.off') }}{% else %}{{ t('aiassist.on') }}{% endif %}
+        </span>
+        <small class="muted">{{ t('aiassist.route_line', provider=t('aiassist.provider_' + route.provider), host=route.host, model=route.model) }}{% if route.effort %} · {{ t('aiassist.effort_label') }}: {{ t('aiassist.effort_' + route.effort) }}{% endif %} · {{ t('aiassist.route_tokens', count=route.max_tokens|countfmt) }}</small>
+      </div>
+      <form action="/admin/ai/test" method="post" class="inline-form"
+            onsubmit="var b=this.querySelector('button');setTimeout(function(){b.disabled=true;b.textContent=b.dataset.working;},0)">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="task" value="{{ task }}">
+        <button class="secondary" type="submit" data-working="{{ t('aiassist.working') }}">{{ t('aiassist.test_action_short') }}<span class="visually-hidden"> {{ t('aiassist.task_' + task) }}</span></button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  <h3>{{ t('aiassist.budgets_heading') }}</h3>
+  <dl class="facts ai-facts">
+    {% for budget in usage.budgets %}
+    <div><dt>{{ t('aiassist.provider_' + budget.provider) }}</dt>
+      <dd>{{ t('aiassist.today_of_budget', used=budget.today|countfmt, budget=budget.cap|countfmt) }}</dd></div>
+    {% endfor %}
+  </dl>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <div><span class="eyebrow">{{ t('aiassist.settings_eyebrow') }}</span><h2>{{ t('aiassist.settings_heading') }}</h2></div>
+  </div>
+  <form action="/admin/ai" method="post" class="stack-form ai-settings-form" data-ai-settings
+        data-efforts="{{ efforts|tojson|forceescape }}"
+        data-effort-labels="{{ {'': t('aiassist.effort_default'), 'none': t('aiassist.effort_none'), 'minimal': t('aiassist.effort_minimal'), 'low': t('aiassist.effort_low'), 'medium': t('aiassist.effort_medium'), 'high': t('aiassist.effort_high'), 'xhigh': t('aiassist.effort_xhigh'), 'max': t('aiassist.effort_max')}|tojson|forceescape }}"
+        data-default-models="{{ default_models|tojson|forceescape }}"
+        data-effort-none="{{ t('aiassist.effort_unsupported') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>
+      <input type="checkbox" name="enabled" value="1" {{ 'checked' if ai.enabled == '1' else '' }}>
+      {{ t('aiassist.enable_label') }}
+    </label>
+
+    <fieldset class="ai-fieldset">
+      <legend>{{ t('aiassist.keys_heading') }}</legend>
+      {% for provider in providers %}
+      <div class="ai-card">
+        <h3>{{ t('aiassist.provider_' + provider) }} <small class="muted hash">{{ provider_hosts[provider] }}</small></h3>
+        <p class="tiny muted">{{ t('aiassist.provider_about_' + provider) }}</p>
+        <label>{{ t('aiassist.key_label') }}
+          <input name="key_{{ provider }}" type="password" autocomplete="off"
+                 placeholder="{% if key_tails[provider] %}...{{ key_tails[provider] }}{% endif %}"
+                 aria-describedby="ai-key-hint-{{ provider }}">
+        </label>
+        <p class="tiny muted" id="ai-key-hint-{{ provider }}">
+          {% if ai.key_sources[provider] == 'saved' %}{{ t('aiassist.key_saved', tail=key_tails[provider]) }}
+          {% elif ai.key_sources[provider] == 'environment' %}{{ t('aiassist.key_from_env', tail=key_tails[provider]) }}
+          {% else %}{{ t('aiassist.key_missing_hint') }}{% endif %}
+          {{ t('aiassist.key_keep_hint') }}
+        </p>
+        {% if key_tails[provider] %}
+        <label>
+          <input type="checkbox" name="clear_key_{{ provider }}" value="1">
+          {{ t('aiassist.clear_key') }}
+        </label>
+        {% endif %}
+        {% if provider in paid_providers %}
+        <label>{{ t('aiassist.cap_label') }}
+          <input name="cap_{{ provider }}" type="number" min="0" max="100000" inputmode="numeric"
+                 value="{{ ai.caps[provider] }}" aria-describedby="ai-cap-hint-{{ provider }}">
+        </label>
+        <p class="tiny muted" id="ai-cap-hint-{{ provider }}">{{ t('aiassist.cap_hint') }}</p>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </fieldset>
+
+    <fieldset class="ai-fieldset">
+      <legend>{{ t('aiassist.tasks_heading') }}</legend>
+      {% for task in ai_tasks %}
+      {% set route = ai.tasks[task] %}
+      <div class="ai-card" data-ai-task>
+        <h3>{{ t('aiassist.task_' + task) }}</h3>
+        <p class="tiny muted">{{ t('aiassist.task_about_' + task) }}</p>
+        <label>
+          <input type="checkbox" name="task_{{ task }}_enabled" value="1" {{ 'checked' if route.enabled else '' }}>
+          {{ t('aiassist.task_enable') }}
+        </label>
+        <label>{{ t('aiassist.provider_label') }}
+          <select name="task_{{ task }}_provider" data-ai-provider>
+            {% for name in providers %}
+            <option value="{{ name }}" {{ 'selected' if name == route.provider else '' }}>{{ t('aiassist.provider_' + name) }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>{{ t('aiassist.model_label') }}
+          <input name="task_{{ task }}_model" value="{{ route.model }}" list="ai-models-{{ route.provider }}"
+                 autocomplete="off" spellcheck="false" data-ai-model aria-describedby="ai-model-hint-{{ task }}">
+        </label>
+        <p class="tiny muted" id="ai-model-hint-{{ task }}">{{ t('aiassist.model_hint_tasks') }}</p>
+        <label>{{ t('aiassist.effort_label') }}
+          <select name="task_{{ task }}_effort" data-ai-effort data-current="{{ route.effort }}"
+                  {{ 'disabled' if not efforts[route.provider] else '' }}>
+            <option value="">{{ t('aiassist.effort_default') if efforts[route.provider] else t('aiassist.effort_unsupported') }}</option>
+            {% for value in efforts[route.provider] %}
+            <option value="{{ value }}" {{ 'selected' if value == route.effort else '' }}>{{ t('aiassist.effort_' + value) }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>{{ t('aiassist.max_tokens_label') }}
+          <input name="task_{{ task }}_max_tokens" type="number" min="256" max="64000" step="1" inputmode="numeric"
+                 value="{{ route.max_tokens }}">
+        </label>
+      </div>
+      {% endfor %}
+    </fieldset>
+    {#- A provider whose list is not in memory yet is fetched after the page
+        has loaded (data-ai-models-fetch); until then, and without script,
+        its default model is the one suggestion and the field is free text. -#}
+    {% for provider in providers %}
+    <datalist id="ai-models-{{ provider }}" {% if model_lists.get(provider) is none and provider in paid_providers %}data-ai-models-fetch="{{ provider }}"{% endif %}>
+      {% set listed = model_lists.get(provider) or [default_models[provider]] %}
+      {% for name in listed %}<option value="{{ name }}"></option>{% endfor %}
+    </datalist>
+    {% endfor %}
+
+    <details class="ai-explain">
+      <summary>{{ t('aiassist.explain_heading') }}</summary>
+      <dl class="ai-explain__list">
+        <dt>{{ t('aiassist.explain_effort_term') }}</dt><dd>{{ t('aiassist.explain_effort') }}</dd>
+        <dt>{{ t('aiassist.explain_tokens_term') }}</dt><dd>{{ t('aiassist.explain_tokens') }}</dd>
+        <dt>{{ t('aiassist.explain_cost_term') }}</dt><dd>{{ t('aiassist.explain_cost') }}</dd>
+        <dt>{{ t('aiassist.explain_data_term') }}</dt><dd>{{ t('aiassist.explain_data') }}</dd>
+      </dl>
+    </details>
+    <button class="primary" type="submit">{{ t('aiassist.save') }}</button>
+  </form>
+</section>
+
+<section class="panel" id="ai-usage">
+  <div class="panel-head">
+    <div><span class="eyebrow">{{ t('aiassist.usage_eyebrow') }}</span><h2>{{ t('aiassist.usage_heading') }}</h2></div>
+  </div>
+  <dl class="facts ai-facts">
+    <div><dt>{{ t('aiassist.usage_requests') }}</dt><dd>{{ usage.month.requests|countfmt }}</dd></div>
+    <div><dt>{{ t('aiassist.usage_succeeded') }}</dt><dd>{{ usage.month.succeeded|countfmt }}</dd></div>
+    <div><dt>{{ t('aiassist.usage_failed') }}</dt><dd>{{ (usage.month.requests - usage.month.succeeded)|countfmt }}</dd></div>
+    <div><dt>{{ t('aiassist.usage_tokens') }}</dt>
+      <dd>{{ usage.month.prompt_tokens|countfmt }} / {{ usage.month.completion_tokens|countfmt }}</dd></div>
+  </dl>
+
+  {% macro rollup_table(rows, label_prefix, heading_key) %}
+  <h3>{{ t(heading_key) }}</h3>
+  <div class="table-wrap table-wrap--stack">
+    <table>
+      <thead><tr>
+        <th scope="col">{{ t('aiassist.col_name') }}</th>
+        <th scope="col">{{ t('aiassist.col_requests') }}</th>
+        <th scope="col">{{ t('aiassist.col_tokens_in_out') }}</th>
+      </tr></thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          <td data-label="{{ t('aiassist.col_name') }}">{{ t(label_prefix + row.name) }}</td>
+          <td data-label="{{ t('aiassist.col_requests') }}">{{ t('aiassist.feature_counts', ok=row.succeeded|countfmt, total=row.requests|countfmt) }}</td>
+          <td data-label="{{ t('aiassist.col_tokens_in_out') }}">{{ row.prompt_tokens|countfmt }} / {{ row.completion_tokens|countfmt }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endmacro %}
+  {% if usage.by_provider %}{{ rollup_table(usage.by_provider, 'aiassist.provider_', 'aiassist.by_provider') }}{% endif %}
+  {% if usage.by_task %}{{ rollup_table(usage.by_task, 'aiassist.task_', 'aiassist.by_task') }}{% endif %}
+
+  {% set known_features = ('document_hints', 'document_hints_overview', 'document_hints_measurements', 'document_hints_audit', 'admin_test', 'admin_test_document_review', 'admin_test_summary', 'changes_summary') %}
+  {% if usage.by_feature %}
+  <h3>{{ t('aiassist.by_feature') }}</h3>
+  <dl class="facts ai-facts">
+    {% for row in usage.by_feature %}
+    <div>
+      <dt>{{ t('aiassist.feature_' + row.feature) if row.feature in known_features else row.feature }}</dt>
+      <dd>{{ t('aiassist.feature_counts', ok=row.succeeded|countfmt, total=row.requests|countfmt) }}</dd>
+    </div>
+    {% endfor %}
+  </dl>
+  {% endif %}
+
+  <h3>{{ t('aiassist.recent_heading') }}</h3>
+  {% if usage.recent %}
+  <div class="table-wrap table-wrap--stack">
+    <table>
+      <thead>
+        <tr>
+          <th scope="col">{{ t('aiassist.col_when') }}</th>
+          <th scope="col">{{ t('aiassist.col_feature') }}</th>
+          <th scope="col">{{ t('aiassist.col_model') }}</th>
+          <th scope="col">{{ t('aiassist.col_result') }}</th>
+          <th scope="col">{{ t('aiassist.col_tokens') }}</th>
+          <th scope="col">{{ t('aiassist.col_duration') }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in usage.recent %}
+        <tr>
+          {#- The clock is stored in UTC and printed as stored; saying so beats
+              an admin in Kyiv reading their own 17:05 call as 14:05. -#}
+          <td data-label="{{ t('aiassist.col_when') }}">{{ item.created_at|datefmt }} {{ t('aiassist.at_utc', time=item.created_at[11:16]) }}</td>
+          <td data-label="{{ t('aiassist.col_feature') }}">{{ t('aiassist.feature_' + item.feature) if item.feature in known_features else item.feature }}</td>
+          <td data-label="{{ t('aiassist.col_model') }}" class="hash">{% if item.provider in providers %}{{ t('aiassist.provider_' + item.provider) }} · {% endif %}{{ item.model }}</td>
+          <td data-label="{{ t('aiassist.col_result') }}">
+            <span class="pill {{ 'an-pill--ok' if item.ok else 'an-pill--warn' }}">
+              {{ t('aiassist.ok_yes') if item.ok else t('aiassist.ok_no') }}
+            </span>
+            {#- The kind of failure in the reader's language, never the stored
+                text: that is the provider's or the model's own words, and the
+                model's words are about a medical document. -#}
+            {% if item.error_text %}<small class="muted">{{ item.error_text }}</small>{% endif %}
+          </td>
+          <td data-label="{{ t('aiassist.col_tokens') }}">{{ item.prompt_tokens|countfmt }} / {{ item.completion_tokens|countfmt }}</td>
+          <td data-label="{{ t('aiassist.col_duration') }}">{% if item.duration_ms is not none %}{{ t('aiassist.seconds', seconds=((item.duration_ms / 1000)|round(1))|numfmt) }}{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted">{{ t('aiassist.recent_empty') }}</p>
+  {% endif %}
+</section>
+
+<p class="muted"><a href="/admin/users">{{ t('token.back_to_people') }}</a></p>
+
+<script>
+(() => {
+  // Switching a task's provider swaps the model suggestions and the effort
+  // choices to that provider's.  Without this script the server still drops
+  // an effort the provider does not take, so nothing invalid is saved.
+  const form = document.querySelector('[data-ai-settings]');
+  if (!form) return;
+  const efforts = JSON.parse(form.dataset.efforts);
+  const labels = JSON.parse(form.dataset.effortLabels);
+  const defaults = JSON.parse(form.dataset.defaultModels);
+  form.querySelectorAll('[data-ai-task]').forEach((card) => {
+    const provider = card.querySelector('[data-ai-provider]');
+    const model = card.querySelector('[data-ai-model]');
+    const effort = card.querySelector('[data-ai-effort]');
+    let previous = provider.value;
+    provider.addEventListener('change', () => {
+      const name = provider.value;
+      model.setAttribute('list', 'ai-models-' + name);
+      if (!model.value || model.value === defaults[previous]) model.value = defaults[name] || '';
+      const choices = efforts[name] || [];
+      effort.replaceChildren();
+      const blank = new Option(choices.length ? labels[''] : form.dataset.effortNone || labels[''], '');
+      effort.append(blank);
+      choices.forEach((value) => effort.append(new Option(labels[value] || value, value)));
+      effort.disabled = choices.length === 0;
+      previous = name;
+    });
+  });
+  // Live model lists arrive after the page: each one is a call to the
+  // provider that can take seconds, and the rest of the page needs none.
+  document.querySelectorAll('[data-ai-models-fetch]').forEach((list) => {
+    fetch('/admin/ai/models?provider=' + encodeURIComponent(list.dataset.aiModelsFetch), { credentials: 'same-origin' })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => {
+        if (!data || !Array.isArray(data.models) || !data.models.length) return;
+        list.replaceChildren(...data.models.map((name) => new Option('', name)));
+      })
+      .catch(() => {});
+  });
+})();
+</script>
+
+{% endblock %}

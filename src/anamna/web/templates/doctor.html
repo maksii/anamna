@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}{{ t('doctor.title') }}{% endblock %}
+{% block content %}
+{#- The page a clinician reaches by typing a short address the patient reads
+    out: one field, one button. -#}
+<section class="login-page login-page--single">
+  <div class="login-card">
+    <span class="brand-mark large" aria-hidden="true">A</span>
+    <h1>{{ t('doctor.heading') }}</h1>
+    {% if error %}<div class="alert error" role="alert" id="doctor-error">{{ error }}</div>{% endif %}
+    <form action="/doctor" method="post" class="stack-form">
+      <label for="doctor-pin">{{ t('doctor.pin_label') }}</label>
+      {#- text + inputmode rather than type=number: a number field drops a
+          leading zero and offers a spinner nobody wants for a code. -#}
+      <input id="doctor-pin" class="an-doctor-pin__input" name="pin" type="text"
+             inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]{6,7}"
+             maxlength="7" required spellcheck="false"
+             {% if error %}aria-describedby="doctor-error" aria-invalid="true"{% endif %}>
+      <button class="primary" type="submit">{{ t('doctor.submit') }}</button>
+    </form>
+    <p class="tiny muted">{{ t('doctor.patient_hint') }} <a href="/login">{{ t('doctor.patient_link') }}</a></p>
+  </div>
+</section>
+{% endblock %}

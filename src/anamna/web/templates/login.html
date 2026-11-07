@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}{{ t('login.title') }}{% endblock %}
+{% block content %}
+<section class="login-page login-page--single">
+  <div class="login-card">
+    <span class="brand-mark large" aria-hidden="true">A</span>
+    <h1>{{ t('login.heading_form') }}</h1>
+    {% if error %}<div class="alert error" role="alert">{{ error }}</div>{% endif %}
+    <form action="/login" method="post" class="stack-form">
+      <input type="hidden" name="next" value="{{ request.query_params.get('next', '/') }}">
+      <label>{{ t('login.email') }}<input name="email" type="email" autocomplete="username" required></label>
+      <label>{{ t('login.password') }}<input name="password" type="password" autocomplete="current-password" required></label>
+      <button class="primary" type="submit">{{ t('login.submit') }}</button>
+    </form>
+    <p class="tiny muted">{{ t('login.forgot') }}</p>
+    <p class="tiny muted"><a href="/doctor">{{ t('doctor.login_link') }}</a></p>
+    {#- No dead end: when sign-up is closed the link is replaced by the reason
+        and what to do instead. Said once: a redirect from /register already
+        carries the same sentence as the alert above. -#}
+    {% if registration_open %}
+    <p class="tiny muted">{{ t('login.register_prompt') }} <a href="/register">{{ t('login.register_link') }}</a></p>
+    {% elif error != t('register.closed') %}
+    <p class="tiny muted">{{ t('login.registration_closed') }}</p>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

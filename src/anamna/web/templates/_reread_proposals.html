@@ -1,0 +1,64 @@
+{#- What a re-read found about values a person had already checked, with the
+    answer one press away.  Replaced whole by the JSON response of
+    /documents/{id}/reread-proposals, so it carries no script of its own. -#}
+{%- set changed = proposals.changed if proposals else [] -%}
+{%- set orphaned = proposals.orphaned if proposals else [] -%}
+<section class="panel an-reread" id="reread-proposals" aria-labelledby="reread-proposals-title"{% if not changed and not orphaned %} hidden{% endif %}>
+  <h2 id="reread-proposals-title">{{ t('reread.title') }}</h2>
+  {% if changed %}
+  <div class="an-reread-group">
+    <div class="an-reread-head">
+      <h3>{{ t_plural('reread.changed_heading', changed|length) }}</h3>
+      {% if not viewing and changed|length > 1 %}
+      <form method="post" action="/documents/{{ document.id }}/reread-proposals" data-reread-form>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button class="primary" name="action" value="apply_all" type="submit">{{ t_plural('reread.apply_all', changed|length) }}</button>
+      </form>
+      {% endif %}
+    </div>
+    <ul class="an-reread-list">
+      {% for item in changed %}
+      <li class="an-reread-item">
+        <div>
+          <strong>{{ item.label }}</strong>
+          <span class="an-reread-page">{{ t('reread.page', page=item.page) }}</span>
+          <p><span>{{ t('reread.checked_value') }}</span> {{ item.old_text }} · <span>{{ t('reread.page_reads') }}</span> <strong>{{ item.new_text }}</strong></p>
+        </div>
+        {% if not viewing %}
+        <form method="post" action="/documents/{{ document.id }}/reread-proposals" data-reread-form>
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="observation_id" value="{{ item.id }}">
+          <button class="secondary" name="action" value="apply" type="submit">{{ t('reread.apply') }}<span class="visually-hidden"> {{ item.label }}</span></button>
+        </form>
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+  {% if orphaned %}
+  <div class="an-reread-group">
+    <h3>{{ t_plural('reread.orphaned_heading', orphaned|length) }}</h3>
+    <ul class="an-reread-list">
+      {% for item in orphaned %}
+      <li class="an-reread-item">
+        <div>
+          <strong>{{ item.label }}</strong>
+          <span class="an-reread-page">{{ t('reread.page', page=item.page) }}</span>
+          <p><span>{{ t('reread.checked_value') }}</span> {{ item.old_text }}</p>
+        </div>
+        {% if not viewing %}
+        <form method="post" action="/documents/{{ document.id }}/reread-proposals" data-reread-form class="an-reread-actions">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="observation_id" value="{{ item.id }}">
+          <button class="secondary" name="action" value="set_aside" type="submit">{{ t('reread.set_aside') }}<span class="visually-hidden"> {{ item.label }}</span></button>
+          <button class="secondary" name="action" value="keep" type="submit">{{ t('reread.keep') }}<span class="visually-hidden"> {{ item.label }}</span></button>
+        </form>
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+  <p class="an-row-error alert error" role="alert" hidden data-reread-error>{{ t('doc.row_error') }}</p>
+</section>

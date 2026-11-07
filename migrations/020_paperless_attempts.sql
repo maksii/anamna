@@ -1,0 +1,14 @@
+-- How many times we have handed this document to Paperless and been refused.
+--
+-- Without a count a deterministic rejection is an infinite loop: a duplicate
+-- checksum, or a PDF whose OCR crashes over there, fails consumption;
+-- `resolve_pending` clears the task id so a later sync may try again; the next
+-- sync re-uploads it; it fails again.  The profile meanwhile reports it as
+-- "never sent" forever, which invites the person to press the button that will
+-- fail once more.
+--
+-- Counting the attempts lets sync give up and, more importantly, lets the page
+-- say the document was refused instead of pretending it was never tried.  A
+-- successful upload clears the count back to zero, so a server that was simply
+-- down does not consume the budget permanently.
+ALTER TABLE documents ADD COLUMN paperless_attempts INTEGER NOT NULL DEFAULT 0;

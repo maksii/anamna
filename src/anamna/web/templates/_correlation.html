@@ -1,0 +1,601 @@
+{#
+  "Does anything else I record move with this?" - written once and rendered on
+  both detail pages, because two copies of a chart drift and one macro cannot.
+
+  The server decides whether this section exists at all: `correlation` is None
+  for a measurement taken once, and the page then shows nothing rather than an
+  empty panel over a single reading.
+
+  One instance per page, so the ids are hardcoded - the same arrangement the
+  blood-pressure macro uses.
+
+  Import WITH CONTEXT (the block reads `t` and `locale`):
+      {% from "_correlation.html" import correlation_block with context %}
+#}
+{% macro correlation_block(correlation, chart_band=none) -%}
+{% if correlation %}
+{#- The controls open on whatever the top suggestion was measured under, so the
+    chart the page paints is the one the highlighted card describes. With no
+    suggestion to open on, the page's own defaults stand. -#}
+{% set opening = correlation.initial %}
+{% set chosen_id = opening.companions[0].id if opening else correlation.groups[0].options[0].id %}
+{% set open_align = opening.align if opening else correlation.defaults.align %}
+{% set open_range = opening.range if opening else correlation.defaults.range %}
+{#- Folded: the explorer is a tool for a question the reader brings, not the
+    first thing a metric page has to say. Its chart paints when opened. -#}
+<details class="panel an-corr an-fold" id="corr-section" aria-labelledby="corr-heading">
+  <summary>
+    <span class="eyebrow">{{ t('corr.eyebrow') }}</span>
+    <h2 id="corr-heading">{{ t('corr.title') }}{% if correlation.suggestions %} <small>({{ correlation.suggestions|length|countfmt }})</small>{% endif %}</h2>
+  </summary>
+  <p class="an-corr-intro">{{ t('corr.intro') }}</p>
+
+  <h3 class="an-corr-subhead">{{ t('corr.suggested_heading') }}</h3>
+  {% if correlation.suggestions %}
+  <ul class="an-corr-cards">
+    {% for item in correlation.suggestions %}
+    <li>
+      {#- The arrow says the direction at a glance and the word beside it says
+          the same thing in text, so the meaning never rests on a glyph or on a
+          colour alone. -#}
+      <button type="button" class="an-corr-card" data-corr-pick="{{ item.id }}"
+              data-corr-align="{{ item.align }}" data-corr-period="{{ item.range }}"
+              aria-pressed="{{ 'true' if item.id == chosen_id else 'false' }}"
+              aria-label="{{ t('corr.card_aria', name=item.name) }}">
+        <span class="an-corr-card__name">{{ item.name }}</span>
+        <span class="an-corr-card__reading" data-direction="{{ item.direction }}">
+          <span class="an-chevron" data-dir="{{ 'up' if item.direction == 'positive' else 'down' }}" aria-hidden="true"></span>
+          <b>{{ item.strength_label }}</b>
+          <i>r&nbsp;=&nbsp;{{ item.r_text }}</i>
+        </span>
+        <span class="an-corr-card__sentence">{{ item.sentence }}</span>
+        <span class="an-corr-card__days">{{ item.days_text }}</span>
+      </button>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="an-corr-empty">{{ t('corr.no_suggestions') }}</p>
+  {% endif %}
+
+  <h3 class="an-corr-subhead">{{ t('corr.explore_heading') }}</h3>
+  <div class="an-corr-controls">
+    {#- A record with eighty-odd measurable series is not a dropdown. Filter,
+        tick up to four, and the chosen ones stay visible as chips so the
+        selection is readable without reopening anything. -#}
+    <div class="an-corr-field an-corr-field--picker">
+      <span class="an-corr-field__label" id="corr-picker-label">{{ t('corr.companion_label') }}</span>
+      <ul class="an-corr-chips" id="corr-chips" aria-live="polite"></ul>
+      <label class="an-corr-filter" for="corr-filter">
+        <span>{{ t('corr.filter_label') }}</span>
+        <input type="search" id="corr-filter" autocomplete="off" placeholder="{{ t('corr.filter_placeholder') }}">
+      </label>
+      <div class="an-corr-options" id="corr-options">
+        {% for group in correlation.groups %}
+        <div class="an-corr-optgroup" role="group" aria-labelledby="corr-group-{{ loop.index }}">
+          <p class="an-corr-optgroup__label" id="corr-group-{{ loop.index }}">{{ group.label }}</p>
+          {% for option in group.options %}
+          <label class="an-corr-option">
+            <input type="checkbox" value="{{ option.id }}"{% if option.id == chosen_id %} checked{% endif %}>
+            <span>{{ option.name }}</span>
+          </label>
+          {% endfor %}
+        </div>
+        {% endfor %}
+      </div>
+      <p class="an-corr-hint" id="corr-nomatch" hidden>{{ t('corr.filter_none') }}</p>
+      <p class="an-corr-hint" id="corr-cap" hidden>{{ t('corr.cap_note') }}</p>
+    </div>
+    <div class="an-corr-field">
+      <label for="corr-align">{{ t('corr.align_label') }}</label>
+      {#- Short labels here; the sentence explaining each one lives in the
+          disclosure at the foot of the panel, where it has room to be a
+          sentence. -#}
+      <select id="corr-align">
+        {% for key in ['same_day', 'prev_day', 'avg7', 'avg30'] %}
+        <option value="{{ key }}"{% if key == open_align %} selected{% endif %}>{{ t('corr.align_' ~ key) }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="an-corr-field">
+      <span class="an-corr-field__label" id="corr-range-label">{{ t('corr.range_label') }}</span>
+      <div class="chart-controls" role="group" aria-labelledby="corr-range-label">
+        {% for key in ['90', '365', 'all'] %}
+        <button type="button" data-corr-range="{{ key }}"
+                class="{{ 'active' if key == open_range }}"
+                aria-pressed="{{ 'true' if key == open_range else 'false' }}">{{ t('corr.range_' ~ key) }}</button>
+        {% endfor %}
+      </div>
+    </div>
+    <div class="an-corr-field">
+      <span class="an-corr-field__label" id="corr-view-label">{{ t('corr.view_aria') }}</span>
+      <div class="chart-controls" role="group" aria-labelledby="corr-view-label">
+        <button type="button" data-corr-view="timeline" class="active" aria-pressed="true">{{ t('corr.view_timeline') }}</button>
+        <button type="button" data-corr-view="scatter" aria-pressed="false">{{ t('corr.view_scatter') }}</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="dynamic-chart an-corr-chart" id="corr-chart">
+    {# viewBox is set from the container width by chart.js so one unit is one CSS pixel. #}
+    <svg id="corr-plot" role="img" aria-label="{{ t('corr.chart_aria', a=correlation.primary.name, b=opening.companions[0].name if opening else correlation.groups[0].options[0].name) }}"></svg>
+  </div>
+  {#- Never a blank frame: every state this panel can be in says which state it
+      is and what would change it. -#}
+  <p class="an-corr-message" id="corr-message" hidden></p>
+  <p class="an-corr-hint" id="corr-scale-note" hidden>{{ t('corr.own_scale') }}</p>
+  <ul class="an-corr-legend" id="corr-legend"></ul>
+  <ul class="an-corr-stats" id="corr-stats" aria-live="polite"></ul>
+
+  <details class="an-disclosure an-corr-explain">
+    <summary>{{ t('corr.explain_summary') }}</summary>
+    <div class="an-disclosure__body an-corr-explain__body">
+      <p>{{ t('corr.explain_what') }}</p>
+
+      <h4>{{ t('corr.scale_heading') }}</h4>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">{{ t('corr.th_strength') }}</th>
+              <th scope="col">{{ t('corr.th_r') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for key in ['negligible', 'weak', 'moderate', 'strong', 'very_strong'] %}
+            <tr>
+              <th scope="row">{{ t('corr.strength_' ~ key) }}</th>
+              <td>{{ t('corr.scale_' ~ key) }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <p class="an-corr-cite">
+        {{ t('corr.citation') }}
+        <a href="https://doi.org/10.1213/ANE.0000000000002864" target="_blank" rel="noreferrer">{{ t('corr.citation_link') }}</a>
+      </p>
+
+      <h4>{{ t('corr.align_heading') }}</h4>
+      <p>{{ t('corr.align_anchor') }}</p>
+      <ul class="an-corr-align-help">
+        {% for key in ['same_day', 'prev_day', 'avg7', 'avg30'] %}
+        <li>{{ t('corr.align_help_' ~ key) }}</li>
+        {% endfor %}
+      </ul>
+
+      <h4>{{ t('corr.not_causation_heading') }}</h4>
+      <p>{{ t('corr.not_causation') }}</p>
+
+      <h4>{{ t('corr.timing_heading') }}</h4>
+      <p>{{ t('corr.timing_note') }}</p>
+    </div>
+  </details>
+</details>
+
+<script type="application/json" id="corr-data">{{ correlation.boot|tojson }}</script>
+{#- The same band the chart above draws, handed in rather than read back out of
+    that chart's own script tag: on both pages that tag is emitted below this
+    one, so a DOM lookup here would always come back empty. -#}
+<script type="application/json" id="corr-band">{{ (chart_band or none)|tojson }}</script>
+<script>
+(() => {
+  const C = globalThis.AnamnaChart;
+  const anchorFor = (order, last) => {
+    if (order === 0) return 'start';
+    return order === last ? 'end' : 'middle';
+  };
+  const holder = document.querySelector('#corr-data');
+  const svg = document.querySelector('#corr-plot');
+  const host = document.querySelector('#corr-chart');
+  const message = document.querySelector('#corr-message');
+  const scaleNote = document.querySelector('#corr-scale-note');
+  const stats = document.querySelector('#corr-stats');
+  const legend = document.querySelector('#corr-legend');
+  const chips = document.querySelector('#corr-chips');
+  const options = document.querySelector('#corr-options');
+  const filter = document.querySelector('#corr-filter');
+  const capNote = document.querySelector('#corr-cap');
+  const noMatch = document.querySelector('#corr-nomatch');
+  const alignment = document.querySelector('#corr-align');
+  if (!C || !holder || !svg || !host) return;
+  const boot = JSON.parse(holder.textContent);
+  if (!boot || !boot.primary) return;
+
+  const MAX = 4;
+  const bandHolder = document.querySelector('#corr-band');
+  const band = bandHolder ? JSON.parse(bandHolder.textContent) : null;
+  const bound = side => band && band[side] !== null && band[side] !== undefined ? Number(band[side]) : null;
+
+  let range = (boot.initial && boot.initial.range) || boot.defaults.range;
+  let view = 'timeline';
+  let data = boot.initial;
+  let inflight = null;
+
+  const boxes = () => [...options.querySelectorAll('input[type="checkbox"]')];
+  const chosen = () => boxes().filter(box => box.checked);
+
+  const press = (selector, key, values) => document.querySelectorAll(selector).forEach(node => {
+    const on = values.includes(node.dataset[key]);
+    node.setAttribute('aria-pressed', on ? 'true' : 'false');
+    node.classList.toggle('active', on);
+  });
+
+  /* --- picker ------------------------------------------------------------ */
+
+  const labelOf = box => box.parentElement.querySelector('span').textContent;
+
+  const drawChips = () => {
+    const picked = chosen();
+    chips.replaceChildren();
+    picked.forEach(box => {
+      const item = document.createElement('li');
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'an-corr-chip';
+      button.dataset.corrRemove = box.value;
+      button.setAttribute('aria-label', C.text('corr.remove', {name: labelOf(box)}));
+      button.append(labelOf(box));
+      const cross = document.createElement('span');
+      cross.setAttribute('aria-hidden', 'true');
+      cross.textContent = '×';
+      button.append(cross);
+      button.addEventListener('click', () => { box.checked = false; selectionChanged(); });
+      item.append(button);
+      chips.append(item);
+    });
+    // At the cap the remaining boxes are disabled, so the reason has to be on
+    // the page: a control that stops responding with no explanation reads as a
+    // broken control.
+    const full = picked.length >= MAX;
+    boxes().forEach(box => {
+      box.disabled = full && !box.checked;
+      if (box.disabled) box.parentElement.title = capNote.textContent;
+      else box.parentElement.removeAttribute('title');
+    });
+    capNote.hidden = !full;
+    press('[data-corr-pick]', 'corrPick', picked.map(box => box.value));
+    // The scatter puts one companion on one pair of axes; with several there
+    // is no such pair, so the control says why instead of going quiet.
+    const scatterButton = document.querySelector('[data-corr-view="scatter"]');
+    scatterButton.disabled = picked.length !== 1;
+    if (scatterButton.disabled) {
+      scatterButton.title = C.text('corr.scatter_needs_one');
+      if (view === 'scatter') { view = 'timeline'; press('[data-corr-view]', 'corrView', [view]); }
+    } else {
+      scatterButton.removeAttribute('title');
+    }
+  };
+
+  const applyFilter = () => {
+    const needle = filter.value.trim().toLowerCase();
+    let shown = 0;
+    options.querySelectorAll('.an-corr-optgroup').forEach(group => {
+      let visible = 0;
+      group.querySelectorAll('.an-corr-option').forEach(option => {
+        const hit = !needle || option.querySelector('span').textContent.toLowerCase().includes(needle);
+        option.hidden = !hit;
+        if (hit) visible += 1;
+      });
+      group.hidden = visible === 0;
+      shown += visible;
+    });
+    noMatch.hidden = shown > 0;
+  };
+
+  const selectionChanged = () => { drawChips(); load(); };
+
+  /* --- drawing ----------------------------------------------------------- */
+
+  const at = day => C.asDate(day).getTime();
+  const gutter = axis => C.textWidth(svg, axis.ticks.map(axis.format), 'chart-axis-label') + 12;
+  const titled = meta => meta.unit ? `${meta.name} (${meta.unit})` : meta.name;
+  const extent = points => {
+    const values = points.map(point => Number(point.value));
+    return [Math.min(...values), Math.max(...values)];
+  };
+
+  const trace = (points, x, y, attributes) => {
+    if (!points.length) return;
+    svg.append(C.el('path', {
+      d: points.map((point, index) => `${index ? 'L' : 'M'} ${x(point.day)} ${y(Number(point.value))}`).join(' '),
+      class: 'dynamic-trend-line', ...attributes,
+    }));
+    // A quarterly blood draw is four points: without markers its "line" is
+    // three faint segments and the reader cannot see where the readings are.
+    if (points.length > 60) return;
+    const radius = points.length > 30 ? 3 : 5;
+    points.forEach(point => svg.append(C.el('circle', {
+      cx: x(point.day), cy: y(Number(point.value)), r: radius, class: 'an-corr-dot', ...attributes,
+    })));
+  };
+
+  const timeline = (W, H) => {
+    const single = data.companions.length === 1;
+    const low = bound('low'), high = bound('high');
+    const [primaryLow, primaryHigh] = extent(data.a.series);
+    const domain = [primaryLow, primaryHigh].concat([low, high].filter(value => value !== null));
+    const A = C.axis(Math.min(...domain), Math.max(...domain));
+    const B = single && data.companions[0].series.length
+      ? C.axis(...extent(data.companions[0].series))
+      : null;
+    const left = gutter(A);
+    const right = B ? gutter(B) : 14;
+    const top = 14, foot = 30, plot = Math.max(40, W - left - right);
+    const height = H - top - foot;
+    const first = at(data.period.from), last = at(data.period.to);
+    const x = day => last === first ? left + plot / 2 : left + (at(day) - first) * plot / (last - first);
+    const scale = (value, lo, hi) => top + (hi - value) * height / ((hi - lo) || 1);
+    const ya = value => scale(value, A.min, A.max);
+
+    if (low !== null || high !== null) {
+      const upper = ya(high !== null ? Math.min(high, A.max) : A.max);
+      const lower = ya(low !== null ? Math.max(low, A.min) : A.min);
+      svg.append(C.el('rect', {
+        x: left, y: upper, width: plot, height: Math.max(1, lower - upper), class: 'chart-reference-band',
+      }));
+    }
+
+    // Each axis label is marked with the series it belongs to, so a reader
+    // never has to guess which side of the chart a number came from.
+    A.ticks.forEach(value => {
+      const y = ya(value);
+      svg.append(C.el('line', {x1: left, x2: W - right, y1: y, y2: y, class: 'chart-gridline'}));
+      const label = C.el('text', {
+        x: left - 8, y: y + 4, class: 'chart-axis-label',
+        'text-anchor': 'end', 'data-axis': 'corr-primary',
+      });
+      label.textContent = A.format(value); svg.append(label);
+    });
+    if (B) {
+      B.ticks.forEach(value => {
+        const label = C.el('text', {
+          x: W - right + 8, y: scale(value, B.min, B.max) + 4,
+          class: 'chart-axis-label', 'data-axis': 'corr-companion',
+        });
+        label.textContent = B.format(value); svg.append(label);
+      });
+    }
+
+    // Companions first, so the measurement this page is about sits on top.
+    data.companions.forEach((companion, slot) => {
+      if (!companion.series.length) return;
+      const [lo, hi] = B ? [B.min, B.max] : extent(companion.series);
+      trace(companion.series, x, value => scale(value, lo, hi),
+        B ? {'data-series': 'corr-companion'} : {'data-series': 'corr-scaled', 'data-slot': slot});
+    });
+    trace(data.a.series, x, ya, {'data-series': 'corr-primary'});
+
+    const format = C.dateLabel((last - first) / 86400000);
+    const stops = Math.max(2, Math.min(5, Math.floor(plot / 92)));
+    Array.from({length: stops}, (_, step) => first + step * (last - first) / (stops - 1)).forEach((ms, order) => {
+      const label = C.el('text', {
+        x: last === first ? left + plot / 2 : left + (ms - first) * plot / (last - first),
+        y: H - 9, class: 'chart-date-label',
+        'text-anchor': anchorFor(order, stops - 1),
+      });
+      label.textContent = format(new Date(ms)); svg.append(label);
+    });
+  };
+
+  const scatter = (W, H) => {
+    const companion = data.companions[0];
+    const pairs = companion.pairs || [];
+    if (!pairs.length) return;
+    // zeroFloor stays off: a scatter is about where the cloud sits, and
+    // stretching the axis down to zero flattens it into a line.
+    const xs = pairs.map(pair => Number(pair.b)), ys = pairs.map(pair => Number(pair.a));
+    const X = C.axis(Math.min(...xs), Math.max(...xs), {zeroFloor: false});
+    const Y = C.axis(Math.min(...ys), Math.max(...ys), {zeroFloor: false});
+    const left = gutter(Y);
+    const right = 14, top = 30, foot = 46;
+    const plot = Math.max(40, W - left - right), height = Math.max(30, H - top - foot);
+    const x = value => left + (value - X.min) * plot / (X.max - X.min);
+    const y = value => top + (Y.max - value) * height / (Y.max - Y.min);
+
+    Y.ticks.forEach(value => {
+      svg.append(C.el('line', {x1: left, x2: W - right, y1: y(value), y2: y(value), class: 'chart-gridline'}));
+      const label = C.el('text', {
+        x: left - 8, y: y(value) + 4, class: 'chart-axis-label',
+        'text-anchor': 'end', 'data-axis': 'corr-primary',
+      });
+      label.textContent = Y.format(value); svg.append(label);
+    });
+    X.ticks.forEach((value, order) => {
+      const label = C.el('text', {
+        x: x(value), y: H - 22, class: 'chart-date-label',
+        'text-anchor': anchorFor(order, X.ticks.length - 1),
+        'data-axis': 'corr-companion',
+      });
+      label.textContent = X.format(value); svg.append(label);
+    });
+
+    // An unlabelled axis is two numbers and no measurement, so both say what
+    // they are and in which unit.
+    const yTitle = C.el('text', {x: 0, y: 12, class: 'chart-axis-title', 'data-axis': 'corr-primary'});
+    yTitle.textContent = titled(data.a); svg.append(yTitle);
+    const xTitle = C.el('text', {
+      x: left + plot / 2, y: H - 4, class: 'chart-axis-title',
+      'text-anchor': 'middle', 'data-axis': 'corr-companion',
+    });
+    xTitle.textContent = titled(companion); svg.append(xTitle);
+
+    const dot = pairs.length > 150 ? 2 : 3;
+    pairs.forEach(pair => svg.append(C.el('circle', {
+      cx: x(Number(pair.b)), cy: y(Number(pair.a)), r: dot,
+      class: 'an-corr-dot', 'data-series': 'corr-scatter',
+    })));
+
+    if (companion.regression) {
+      // Clipped by the plot rectangle rather than by arithmetic: a steep line
+      // otherwise leaves the frame and paints over the axis labels.
+      const clip = C.el('clipPath', {id: 'corr-clip'});
+      clip.append(C.el('rect', {x: left, y: top, width: plot, height}));
+      svg.append(clip);
+      const fit = value => companion.regression.slope * value + companion.regression.intercept;
+      svg.append(C.el('path', {
+        d: `M ${x(X.min)} ${y(fit(X.min))} L ${x(X.max)} ${y(fit(X.max))}`,
+        class: 'an-corr-fit', 'clip-path': 'url(#corr-clip)',
+      }));
+    }
+  };
+
+  const drawable = () => data && data.period && data.a.series.length
+    && data.companions.some(companion => companion.series.length);
+
+  const draw = (W, H) => {
+    if (!drawable()) return;
+    (view === 'scatter' && data.companions.length === 1 ? scatter : timeline)(W, H);
+  };
+  const repaint = C.responsive(svg, host, draw);
+
+  /* --- captions ---------------------------------------------------------- */
+
+  const smoothedSuffix = series => series.smoothed ? ` ${C.text('corr.smoothed_' + series.smoothed)}` : '';
+
+  const drawLegend = () => {
+    legend.replaceChildren();
+    const scaled = data.companions.length > 1;
+    const entry = (slot, key, meta, extra) => {
+      const item = document.createElement('li');
+      Object.entries(extra).forEach(([name, value]) => item.dataset[name] = value);
+      item.textContent = C.text(key, {name: titled(meta)}) + smoothedSuffix(meta);
+      legend.append(item);
+    };
+    entry(null, 'corr.legend_primary', data.a, {series: 'corr-primary'});
+    data.companions.forEach((companion, slot) => {
+      if (!companion.series.length) return;
+      entry(slot, scaled ? 'corr.legend_scaled' : 'corr.legend_companion', companion,
+        scaled ? {series: 'corr-scaled', slot} : {series: 'corr-companion'});
+    });
+    legend.hidden = view === 'scatter';
+  };
+
+  const statFor = companion => {
+    if (!companion.n) {
+      return C.text('corr.stat_no_overlap', {name: companion.name});
+    }
+    if (companion.insufficient) {
+      return C.text('corr.stat_too_few', {name: companion.name, days: companion.labels.days});
+    }
+    let reading = C.text('corr.reading_none');
+    if (companion.r !== null && companion.direction !== 'none') {
+      const key = companion.direction === 'negative' ? 'corr.reading_negative' : 'corr.reading_positive';
+      reading = C.text(key, {strength: C.text('corr.strength_' + companion.strength)});
+    }
+    const line = C.text('corr.stat_companion', {
+      name: companion.name,
+      r: companion.r === null ? '-' : C.num(companion.r, 2, true),
+      reading,
+      days: companion.labels.days,
+    });
+    return companion.labels.sampled ? `${line} · ${companion.labels.sampled}` : line;
+  };
+
+  const drawStats = () => {
+    stats.replaceChildren();
+    data.companions.forEach((companion, slot) => {
+      const item = document.createElement('li');
+      item.dataset.slot = slot;
+      item.textContent = statFor(companion);
+      stats.append(item);
+    });
+  };
+
+  const showMessage = text => {
+    svg.replaceChildren();
+    host.hidden = true;
+    stats.hidden = true;
+    legend.hidden = true;
+    scaleNote.hidden = true;
+    C.note(host, '');
+    message.textContent = text;
+    message.hidden = false;
+  };
+
+  const render = () => {
+    if (!chosen().length) { showMessage(C.text('corr.none_selected')); return; }
+    if (!data) { showMessage(C.text('corr.loading')); return; }
+    const names = data.companions.map(companion => companion.name).join(', ');
+    const key = view === 'scatter' && data.companions.length === 1 ? 'corr.scatter_aria' : 'corr.chart_aria';
+    svg.setAttribute('aria-label', C.text(key, {a: data.a.name, b: names}));
+    if (!drawable()) { showMessage(C.text('corr.nothing_to_draw')); return; }
+    message.hidden = true;
+    host.hidden = false;
+    stats.hidden = false;
+    // Several companions cannot share one axis, so each is stretched to the
+    // plot on its own scale - the shapes are comparable, the heights are not,
+    // and the chart has to say so rather than let a reader assume otherwise.
+    scaleNote.hidden = view === 'scatter' || data.companions.length < 2;
+    drawStats();
+    drawLegend();
+    C.note(host, data.a.sampled || '');
+    repaint();
+  };
+
+  const load = () => {
+    if (inflight) inflight.abort();
+    const picked = chosen();
+    if (!picked.length) { data = null; render(); return; }
+    inflight = new AbortController();
+    const query = new URLSearchParams({a: boot.primary.id, align: alignment.value, range});
+    picked.forEach(box => query.append('b', box.value));
+    data = null;
+    render();
+    fetch(`/api/correlation?${query}`, {signal: inflight.signal, headers: {Accept: 'application/json'}})
+      .then(response => response.ok ? response.json() : Promise.reject(new Error(response.status)))
+      .then(payload => { data = payload; render(); })
+      .catch(error => { if (!error || error.name !== 'AbortError') showMessage(C.text('corr.error')); });
+  };
+
+  /* --- wiring ------------------------------------------------------------ */
+
+  options.addEventListener('change', selectionChanged);
+  filter.addEventListener('input', applyFilter);
+  document.querySelectorAll('[data-corr-pick]').forEach(button => button.addEventListener('click', () => {
+    const box = boxes().find(item => item.value === button.dataset.corrPick);
+    if (!box) return;
+    if (!box.checked && chosen().length >= MAX) return;
+    box.checked = !box.checked;
+    // Two analytes from one tube were measured same-day, a wearable through a
+    // trailing average, and a blood draw against a wearable over the whole
+    // record rather than the last year; the card has to bring both settings
+    // with it or the chart it opens is not the one it advertised.
+    if (box.checked && button.dataset.corrAlign) {
+      alignment.value = button.dataset.corrAlign;
+      range = button.dataset.corrPeriod || range;
+      press('[data-corr-range]', 'corrRange', [range]);
+    }
+    selectionChanged();
+  }));
+  alignment.addEventListener('change', load);
+  document.querySelectorAll('[data-corr-range]').forEach(button => button.addEventListener('click', () => {
+    range = button.dataset.corrRange;
+    press('[data-corr-range]', 'corrRange', [range]);
+    load();
+  }));
+  document.querySelectorAll('[data-corr-view]').forEach(button => button.addEventListener('click', () => {
+    if (button.disabled) return;
+    view = button.dataset.corrView;
+    press('[data-corr-view]', 'corrView', [view]);
+    render();
+  }));
+
+  // Paint from the payload the server already computed; only a page with no
+  // suggestion to open on has to ask for its first comparison.
+  // The section opens folded, so nothing is drawn or fetched until it opens
+  // (a closed <details> has no width to draw into).
+  const section = document.querySelector('#corr-section');
+  let started = false;
+  const start = () => {
+    if (started) { repaint(); return; }
+    started = true;
+    drawChips();
+    if (data) render(); else load();
+  };
+  if (!section || section.open) start();
+  else section.addEventListener('toggle', () => { if (section.open) start(); });
+})();
+</script>
+{% endif %}
+{%- endmacro %}

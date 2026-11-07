@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% from "_components.html" import empty_state, pagination_nav, plural_t with context %}
+{% from "_document_cards.html" import document_card with context %}
+{% block title %}{{ t('documents.title') }}{% endblock %}
+{% block content %}
+
+{#- Reached as the review queue (/review redirects here with a state), the
+    page says it is one and what is asked, instead of "Documents". -#}
+{% set queue_view = selected_review_state in ['open', 'needs_correction'] %}
+{#- Opens on the files: the navigation says which page this is. -#}
+<section class="page-head an-page-tools">
+  <h1 class="visually-hidden">{{ t('documents.queue_heading_' ~ selected_review_state) if queue_view else t('documents.heading') }}</h1>
+  <a class="primary" href="/upload">{{ t('documents.add_files') }}</a>
+</section>
+
+{% if document_deleted %}<p class="an-notice" role="status">{{ t('doc.delete_done') }}{% if document_promoted %} {{ t('doc.delete_promoted') }}{% endif %}</p>{% endif %}
+{% if document_delete_busy %}<p class="an-notice an-notice--warn" role="alert">{{ t('doc.delete_busy') }}</p>{% endif %}
+
+{#- On a phone the four filters were two screens before the first file; they
+    fold behind one line there unless one is already in use. -#}
+<details class="an-filters-toggle" open data-collapse-narrow="{{ '0' if filters_active else '1' }}">
+<summary>{{ t('documents.filters_toggle') }}</summary>
+<form class="filters" method="get">
+  <label class="search-field"><span>{{ t('documents.search') }}</span><input type="search" name="q" value="{{ q }}" placeholder="{{ t('documents.search_placeholder') }}"></label>
+  <label><span>{{ t('documents.type') }}</span>
+    <select name="clinical_type">
+      <option value="">{{ t('documents.all_types') }}</option>
+      {% for item in types %}<option value="{{ item.clinical_type }}" {{ 'selected' if selected_type == item.clinical_type else '' }}>{{ item.label }} ({{ item.count }})</option>{% endfor %}
+    </select>
+  </label>
+  <label><span>{{ t('documents.vendor') }}</span>
+    <select name="vendor">
+      <option value="">{{ t('documents.all_vendors') }}</option>
+      {% for item in vendors %}<option value="{{ item.id }}" {{ 'selected' if selected_vendor == item.id else '' }}>{{ item.canonical_name|phrase }} ({{ item.count }})</option>{% endfor %}
+    </select>
+  </label>
+  <label><span>{{ t('documents.review_state') }}</span>
+    <select name="review_state">
+      <option value="">{{ t('documents.review_all') }} ({{ all_document_count|countfmt }})</option>
+      {% for state in ['open', 'needs_correction', 'resolved'] %}
+      <option value="{{ state }}" {{ 'selected' if selected_review_state == state else '' }}>{{ t('documents.review_' ~ state) }} ({{ review_counts.get(state, 0)|countfmt }})</option>
+      {% endfor %}
+    </select>
+  </label>
+  <button class="secondary" type="submit">{{ t('documents.filter') }}</button>
+</form>
+</details>
+<script>
+(() => {
+  const box = document.currentScript.previousElementSibling;
+  if (box.dataset.collapseNarrow === '1' && matchMedia('(max-width: 620px)').matches) box.open = false;
+})();
+</script>
+
+{#
+  The parser keeps learning, and a file read last month is not re-read by this
+  month's unless somebody asks. Before this the only way to ask was to open each
+  file and find the control behind its third tab, and nothing anywhere said
+  which files needed it.
+#}
+{% if rescan_queued %}<p class="an-notice" role="status">{{ rescan_queued_text }} <a href="/upload#processing">{{ t('rescan.watch') }}</a></p>{% endif %}
+{% if rescan_none %}<p class="an-notice" role="status">{{ t('rescan.bulk_none') }}</p>{% endif %}
+{#- One line with its action. -#}
+{% if stale_count %}
+<section class="an-stale-rescan" aria-label="{{ t('rescan.bulk_heading') }}">
+  <form action="/documents/rescan-stale" method="post" class="an-stale-rescan__line">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="next" value="/documents">
+    <span>{{ stale_line_text }}</span>
+    <button class="secondary" type="submit">{{ t('rescan.bulk_action') }}</button>
+  </form>
+  {# A count that never moves is the question this answers: the re-reads ran
+     and failed, and until now the only page that said so was one nothing
+     linked to. #}
+  {% if rescan_failed %}<p class="an-notice an-notice--warn" role="status">{{ rescan_failed_text }} <a href="/upload#processing">{{ t('rescan.watch') }}</a></p>{% endif %}
+</section>
+{% endif %}
+
+{#
+  Typing filters the list as you type, the way `/metrics` already does. Before
+  this the search box needed a submit and a full page load, so the two search
+  fields in the application behaved differently for no reason a reader could
+  see. The form still works with JavaScript off -- the script only intercepts
+  what the form would have done anyway.
+#}
+<section class="document-list" id="document-results" aria-live="polite" aria-busy="false">
+  {% for document in documents %}{{ document_card(document) }}{% endfor %}
+</section>
+<div id="document-empty" {{ '' if not documents else 'hidden' }}>
+  {{ empty_state(t('documents.empty_title'), t('documents.empty_body'), 2) }}
+</div>
+
+<div id="document-pagination">{{ pagination_nav(page) }}</div>
+
+<script>
+(() => {
+  const form = document.querySelector('.filters');
+  const input = form?.querySelector('input[name="q"]');
+  const list = document.querySelector('#document-results');
+  const emptyBox = document.querySelector('#document-empty');
+  const pager = document.querySelector('#document-pagination');
+  const counter = document.querySelector('#document-count');
+  if (!form || !input || !list) return;
+  let controller;
+  let timer;
+
+  const run = async () => {
+    controller?.abort();
+    controller = new AbortController();
+    const params = new URLSearchParams(new FormData(form));
+    const query = params.toString();
+    history.replaceState(null, '', query ? `/documents?${query}` : '/documents');
+    list.setAttribute('aria-busy', 'true');
+    try {
+      const response = await fetch(`/api/documents/search?${query}`, {signal: controller.signal});
+      if (!response.ok) throw new Error('search failed');
+      const payload = await response.json();
+      /* The server renders the cards with the same macro the page load uses. */
+      list.innerHTML = payload.documents;
+      if (emptyBox) emptyBox.hidden = payload.total > 0;
+      if (pager) pager.innerHTML = payload.pagination;
+      if (counter) counter.textContent = payload.total_text;
+    } catch (error) {
+      /* A failed fetch must not leave a stale list looking like a result:
+         fall back to the form the browser would have submitted anyway. */
+      if (error.name !== 'AbortError') form.submit();
+    } finally {
+      if (!controller.signal.aborted) list.setAttribute('aria-busy', 'false');
+    }
+  };
+
+  /* Debounced, because a search on every keystroke of «гемоглобін» is ten
+     queries over 85 documents to show the answer to the last one. */
+  const schedule = () => { clearTimeout(timer); timer = setTimeout(run, 160); };
+  input.addEventListener('input', schedule);
+  form.querySelectorAll('select').forEach(node => node.addEventListener('change', run));
+  form.addEventListener('submit', event => { event.preventDefault(); clearTimeout(timer); run(); });
+})();
+</script>
+{% endblock %}
