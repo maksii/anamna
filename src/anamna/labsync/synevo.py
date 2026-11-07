@@ -163,7 +163,10 @@ class Client:
         return [
             self._order_entry(order, results)
             for order in self._pages("/api/cabinet/get-orders", person)
-            if self._mine(order, person)
+            # An order booked online and never brought to the lab (unpaid,
+            # «Не сплачено») has no barcode yet, and no results; reading it as
+            # malformed stopped the whole account's run (2026-11-07).
+            if self._mine(order, person) and order.get("Barcode") not in (None, "")
         ]
 
     def _order_entry(self, order: dict, results: list[dict]) -> dict:

@@ -70,3 +70,21 @@ def test_a_refusal_is_final_and_not_repeated(client, monkeypatch, status, key):
         client.pdfs(ORDER, PERSON)
     assert caught.value.key == key
     assert len(seen) == 1
+
+
+def test_an_unpaid_online_booking_without_a_barcode_is_skipped(client, monkeypatch):
+    """Booked on the website, never taken to the lab: no barcode, no results.
+    It used to raise and end the run before any of that person's orders."""
+    person = {"id": "p2", "match_ids": ["p2"], "account_size": 2}
+    booked = {"Barcode": None, "WebOrderId": "100000002", "OrderDate": "2025-10-26T16:52:47Z",
+              "StatusDescr": "Не сплачено", "Person": {"_id": "p2"}, "Items": []}
+    done = {"Barcode": "100000003", "WebOrderId": "100000004", "OrderDate": "2025-10-01T08:00:00Z",
+            "StatusDescr": "Виконано", "Person": {"_id": "p2"}, "Items": [{"IsReady": True}]}
+    pages = {"/api/cabinet/get-results": {"pagesCount": 1, "items": []},
+             "/api/cabinet/get-orders": {"pagesCount": 1, "items": [booked, done]}}
+
+    def http(method, url, *, headers, body=None, timeout=0, limit=0):
+        return 200, [], json.dumps(pages[url.split("synevo.ua")[1]]).encode()
+
+    monkeypatch.setattr(common, "_http", http)
+    assert [order["order_id"] for order in client.orders(person)] == ["100000003"]
