@@ -174,6 +174,8 @@ from ..ingest.pipeline import (
     repair_observation_semantics,
     apply_reread_proposals,
     NOT_DUPLICATE_NOTE,
+    PAGE_TEXT_NOTE,
+    SAME_ORDER_NOTE,
     DuplicateRefused,
     keep_both_documents,
     mark_document_duplicate,
@@ -324,7 +326,7 @@ AI_EXPORT_PAGES = frozenset(
 )
 REVIEW_STATES = ("open", "resolved", "needs_correction")
 #: Refusals of /documents/{id}/duplicate, each `dup.error_<code>` in the catalogue.
-DUPLICATE_ERRORS = ("already", "self", "patient", "busy", "ruled", "not_duplicate", "same_bytes")
+DUPLICATE_ERRORS = ("already", "self", "patient", "busy", "ruled", "missing", "not_duplicate", "same_bytes")
 BLOOD_TYPES = ("A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-")
 
 #: The values the patients CHECK constraint accepts; "" from the form is NULL.
@@ -4520,7 +4522,8 @@ def _document_briefs(connection, owner_user_id: str, document_ids: set[str]) -> 
         str(row["id"]): _document_row(row)
         for row in connection.execute(
             f"""SELECT d.id, d.title, d.clinical_type, d.report_date, d.original_filename, d.imported_at,
-                       d.duplicate_of_document_id, d.sha256, v.canonical_name vendor, {_TITLE_TESTS_SQL}
+                       d.duplicate_of_document_id, d.sha256, v.canonical_name vendor, {_TITLE_TESTS_SQL},
+                       EXISTS(SELECT 1 FROM lab_orders lo WHERE lo.document_id=d.id) has_lab_order
                   FROM documents d LEFT JOIN vendors v ON v.id=d.vendor_id
                  WHERE d.owner_user_id=? AND d.id IN ({",".join("?" * len(ids))})""",
             (owner_user_id, *ids),
@@ -4528,30 +4531,39 @@ def _document_briefs(connection, owner_user_id: str, document_ids: set[str]) -> 
     }
 
 
-def _same_report_pairs(connection, owner_user_id: str, document_ids: list[str]) -> dict[str, list[tuple[str, str]]]:
-    """Active document → [(active other document, relation note)] the record says hold one report.
+def _same_report_pairs(
+    connection, owner_user_id: str, document_ids: list[str]
+) -> dict[str, list[tuple[str, str, bool | None]]]:
+    """Active document → [(active other document, relation note, keep the other)]
+    for files the record says hold one report.
 
     Only open questions: a pair a person called different, or where one side
-    is already marked a copy, is not listed.
+    is already marked a copy, is not listed.  A photo or a part of a report
+    found by its order or its page text (`contains`) is offered like a copy,
+    the whole report kept; for a plain duplicate the third item is None and
+    the page decides which file to keep.
     """
-    found: dict[str, list[tuple[str, str]]] = {}
+    found: dict[str, list[tuple[str, str, bool | None]]] = {}
     if not document_ids:
         return found
     marks = ",".join("?" * len(document_ids))
     for row in connection.execute(
-        f"""SELECT r.source_document_id, r.target_document_id, COALESCE(r.notes, '') notes
+        f"""SELECT r.source_document_id, r.target_document_id, r.relationship, COALESCE(r.notes, '') notes
               FROM document_relations r
               JOIN documents a ON a.id=r.source_document_id
               JOIN documents b ON b.id=r.target_document_id
-             WHERE r.relationship='duplicate' AND COALESCE(r.notes, '')<>?
+             WHERE (r.relationship='duplicate' OR (r.relationship='contains' AND r.notes IN (?, ?)))
+               AND COALESCE(r.notes, '')<>?
                AND a.owner_user_id=? AND b.owner_user_id=?
                AND a.duplicate_of_document_id IS NULL AND b.duplicate_of_document_id IS NULL
                AND (r.source_document_id IN ({marks}) OR r.target_document_id IN ({marks}))""",
-        (NOT_DUPLICATE_NOTE, owner_user_id, owner_user_id, *document_ids, *document_ids),
+        (SAME_ORDER_NOTE, PAGE_TEXT_NOTE, NOT_DUPLICATE_NOTE, owner_user_id, owner_user_id,
+         *document_ids, *document_ids),
     ):
-        source, target = str(row["source_document_id"]), str(row["target_document_id"])
-        found.setdefault(source, []).append((target, str(row["notes"])))
-        found.setdefault(target, []).append((source, str(row["notes"])))
+        source, target, notes = str(row["source_document_id"]), str(row["target_document_id"]), str(row["notes"])
+        whole = row["relationship"] == "contains"  # the source holds the whole report
+        found.setdefault(source, []).append((target, notes, False if whole else None))
+        found.setdefault(target, []).append((source, notes, True if whole else None))
     return found
 
 
@@ -4561,10 +4573,17 @@ def _same_report_reason(note: str) -> str:
         return t_plural("dup.reason_results", int(note.rsplit(":", 1)[1] or 0))
     if note == "auto:report_number":
         return t("dup.reason_report_number")
+    if note == "auto:content_hash":
+        return t("dup.reason_content_hash")
+    if note == SAME_ORDER_NOTE:
+        return t("dup.reason_same_order")
+    if note == PAGE_TEXT_NOTE:
+        return t("dup.reason_page_text")
     return t("dup.reason_text")
 
 
-#: (relationship, this document is the source) → how the other one is named.
+#: (relationship, this document is the source) → how the other one is named;
+#: a (relationship, is source, note) entry, when there is one, comes first.
 _RELATION_TEXT_KEYS = {
     ("contains", True): "dup.rel_contains",
     ("contains", False): "dup.rel_contained_in",
@@ -4574,6 +4593,10 @@ _RELATION_TEXT_KEYS = {
     ("overlaps", False): "dup.rel_overlaps",
     ("attachment_of", True): "dup.rel_results_for",
     ("attachment_of", False): "dup.rel_results_in",
+    ("attachment_of", True, SAME_ORDER_NOTE): "dup.rel_supplement_of",
+    ("attachment_of", False, SAME_ORDER_NOTE): "dup.rel_has_supplement",
+    ("part_of", True): "dup.rel_part_of",
+    ("part_of", False): "dup.rel_has_part",
 }
 
 
@@ -4582,20 +4605,33 @@ def _relation_other_id(row, document_id: str) -> str:
     return str(row["target_document_id"] if row["source_document_id"] == document_id else row["source_document_id"])
 
 
+def _keep_rank(brief: dict[str, object], document_id: str) -> tuple[int, str, str]:
+    """Lower is kept: the file the lab's order is linked to, then the older import."""
+    return (0 if brief.get("has_lab_order") else 1, str(brief.get("imported_at") or ""), document_id)
+
+
 def _same_as_entries(
-    pairs: list[tuple[str, str]], briefs: dict[str, dict[str, object]], mine: tuple[str, str]
+    pairs: list[tuple[str, str, bool | None]], briefs: dict[str, dict[str, object]], mine: dict[str, object]
 ) -> list[dict[str, object]]:
     entries: list[dict[str, object]] = []
-    for other_id, note in pairs:
+    my_rank = _keep_rank(mine, str(mine["id"]))
+    for other_id, note, keep_other in pairs:
         brief = briefs.get(other_id)
-        if brief:
-            entries.append({
-                "document": brief,
-                "reason": _same_report_reason(note),
-                # Keep the older import by default: it is the one the record
-                # has been counting, and whose values a person may have checked.
-                "keep_other": (str(brief.get("imported_at") or ""), other_id) <= mine,
-            })
+        if not brief:
+            continue
+        if keep_other is not None:
+            suggested = "dup.suggested_whole"
+        else:
+            # The file the lab's order is linked to: its values are checked
+            # against the lab's own record.  Else the older import: the one
+            # the record has been counting, whose values a person may have
+            # checked.
+            other_rank = _keep_rank(brief, other_id)
+            keep_other = other_rank <= my_rank
+            suggested = "dup.suggested_lab_order" if other_rank[0] != my_rank[0] else "dup.suggested"
+        entries.append({
+            "document": brief, "reason": _same_report_reason(note), "keep_other": keep_other, "suggested": suggested,
+        })
     return entries
 
 
@@ -4604,9 +4640,12 @@ def _related_entries(related, briefs: dict[str, dict[str, object]], document_id:
     for row in related:
         is_source = row["source_document_id"] == document_id
         other_id = _relation_other_id(row, document_id)
-        key = _RELATION_TEXT_KEYS.get((str(row["relationship"]), is_source))
+        relationship = str(row["relationship"])
+        key = _RELATION_TEXT_KEYS.get((relationship, is_source, str(row["notes"] or ""))) or _RELATION_TEXT_KEYS.get(
+            (relationship, is_source)
+        )
         if key and other_id in briefs:
-            entries.append({"label": t(key), "document": briefs[other_id]})
+            entries.append({"label": t(key), "document": briefs[other_id], "part": relationship == "part_of"})
     return entries
 
 
@@ -4625,21 +4664,26 @@ def _document_relations_view(connection, owner_user_id: str, document: dict[str,
         connection, owner_user_id, [document_id]
     ).get(document_id, [])
     related = connection.execute(
-        """SELECT source_document_id, target_document_id, relationship FROM document_relations
-            WHERE relationship<>'duplicate' AND (source_document_id=? OR target_document_id=?)""",
-        (document_id, document_id),
+        """SELECT source_document_id, target_document_id, relationship, notes FROM document_relations
+            WHERE relationship<>'duplicate' AND NOT (relationship='contains' AND COALESCE(notes, '') IN (?, ?))
+              AND (source_document_id=? OR target_document_id=?)""",
+        (SAME_ORDER_NOTE, PAGE_TEXT_NOTE, document_id, document_id),
     ).fetchall()
     primary_id = str(document.get("duplicate_of_document_id") or "")
-    others = {other for other, _ in pairs} | set(copies) | ({primary_id} if primary_id else set()) | {
+    others = {other for other, _, _ in pairs} | set(copies) | ({primary_id} if primary_id else set()) | {
         _relation_other_id(row, document_id) for row in related
     }
     briefs = _document_briefs(connection, owner_user_id, others)
     if primary_id and primary_id in briefs:
         view["copy_of"] = briefs[primary_id]
         view["same_bytes"] = briefs[primary_id].get("sha256") == document.get("sha256")
-    mine = (str(document.get("imported_at") or ""), document_id)
+    mine = {**document, "has_lab_order": bool(connection.execute(
+        "SELECT 1 FROM lab_orders WHERE document_id=? LIMIT 1", (document_id,)
+    ).fetchone())}
     view["same_as"] = _same_as_entries(pairs, briefs, mine)
     view["related"] = _related_entries(related, briefs, document_id)
+    # Screenshots of one report: the page explains them and offers to unlink one.
+    view["parts"] = [item for item in view["related"] if item["part"]]
     view["copies"] = [briefs[item] for item in copies if item in briefs]
     return view
 
@@ -9372,12 +9416,23 @@ def _mark_same_report(connection, owner_user_id: str, rows: list[dict[str, objec
     pairs = _same_report_pairs(
         connection, owner_user_id, [str(row["id"]) for row in rows if not row.get("duplicate_of_document_id")]
     )
-    briefs = _document_briefs(connection, owner_user_id, {other for found in pairs.values() for other, _ in found})
+    briefs = _document_briefs(connection, owner_user_id, {other for found in pairs.values() for other, _, _ in found})
+    ids = [str(row["id"]) for row in rows]
+    parted = {
+        str(item)
+        for found in connection.execute(
+            f"""SELECT source_document_id, target_document_id FROM document_relations
+                 WHERE relationship='part_of' AND (source_document_id IN ({",".join("?" * len(ids))})
+                       OR target_document_id IN ({",".join("?" * len(ids))}))""",
+            (*ids, *ids),
+        )
+        for item in found
+    } if ids else set()
     for row in rows:
-        others = [briefs[other] for other, _ in pairs.get(str(row["id"]), []) if other in briefs]
+        others = [briefs[other] for other, _, _ in pairs.get(str(row["id"]), []) if other in briefs]
         row["same_report_text"] = t(
             "dup.card_same_as", title=others[0]["title_text"], date=format_date(others[0].get("report_date"))
-        ) if others else ""
+        ) if others else (t("dup.card_part") if str(row["id"]) in parted else "")
 
 
 def _document_search(settings, connection, owner_user_id: str, q: str, clinical_type: str,

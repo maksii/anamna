@@ -1964,9 +1964,11 @@ def ingest_file(
         try:
             seed_concepts(connection)
             vendor_id = ensure_vendor(connection, classification.vendor, classification.website)
+            # The kept document, never another copy: the earliest file with
+            # these bytes may itself have been marked a copy since.
             duplicate = connection.execute(
-                """SELECT id FROM documents WHERE owner_user_id = ? AND sha256 = ?
-                   ORDER BY imported_at LIMIT 1""",
+                """SELECT COALESCE(duplicate_of_document_id, id) id FROM documents
+                    WHERE owner_user_id = ? AND sha256 = ? ORDER BY imported_at LIMIT 1""",
                 (owner_user_id, digest),
             ).fetchone()
             duplicate_id = duplicate["id"] if duplicate else None
@@ -2246,16 +2248,58 @@ _NOT_LETTER_OR_DIGIT = re.compile(r"[\W_]+")
 _MIN_TEXT_KEY = 40
 
 
-def _text_keys(connection, document_ids: list[str]) -> dict[str, str]:
-    """Document id → the words of its stored page text, case-folded and sorted,
-    local file paths left out; documents with too little text are left out.
+#: What a print adds to a page that is not the report: a browser's header
+#: stamp ("07.08.26, 10:33", two-digit year, at the start of a line), page
+#: counters ("Сторінка 1 із 3", "Стор. 2 з 2", "Page 1 of 3"), a report's own
+#: print date ("Дата друку: …") and the URL of the page printed.  Three portal
+#: prints of one urinalysis differed in nothing else (sandbox, 2026-11-07).
+#: `\w` in the counter because a portal prints "Сторінĸа" with a kra (U+0138).
+_PRINT_NOISE = re.compile(
+    r"^\s*\d{1,2}[./]\d{1,2}[./]\d{2}(?:\d{2})?,\s*\d{1,2}:\d{2}(?::\d{2})?(?:\s*[ap]\.?m\.?)?"
+    r"|\b(?:сторін\w*|стор\.?|page|стр\.?|страница)\s*\d+\s*(?:(?:із|з|of|из|/)\s*\d+)?"
+    r"|дата\s+друку\s*:?\s*[\d./]+"
+    r"|\b(?:https?|blob|about):\S*",
+    re.I,
+)
+#: An order number or barcode: 7 to 13 digits standing alone.  Shorter runs
+#: are licence and street numbers.
+_ORDER_NUMBER = re.compile(r"(?<!\w)\d{7,13}(?!\w)")
+#: A Ukrainian phone number written without separators: a clinic's letterhead.
+_PHONE_NUMBER = re.compile(r"380\d{9}|0[3-9]\d{8}")
+#: A number this long is specific enough to tie two files on its own.
+_LONG_ORDER_NUMBER = 8
+#: An order, collection or result time to the minute: "06.04.2026 15:15",
+#: "11/08/2021 14:18".  Letterheads print dates, never times.
+_STAMP = re.compile(r"(?<!\d)(\d{1,2})[./](\d{1,2})[./]((?:19|20)\d{2})[\s,|]{1,4}(\d{1,2}):(\d{2})(?!\d)")
+#: A scroll seam: one line long enough not to repeat by chance, looked for
+#: among the last lines of one screenshot and the first of the next.
+_MIN_SEAM_LINE = 25
+_SEAM_LINES = 8
 
-    Sorted, because a re-export of one report moves whole blocks: Expert
-    Hospital's soft-tissue ultrasound came back with its footer above the
-    doctor's line, which no in-order comparison survives (sandbox, 2026-11-06).
-    Over the 97 documents on the sandbox the word multiset groups exactly the
-    four true re-export pairs and nothing else."""
-    parts: dict[str, list[str]] = {}
+
+@dataclass(frozen=True)
+class _PageText:
+    """What one document's stored page text says, print noise removed."""
+
+    key: str  # every word, sorted: the same-text test
+    words: frozenset[str]  # distinct words of four letters or more, no digits
+    figures: frozenset[str]  # distinct tokens with a digit: sizes, values, dates
+    numbers: frozenset[str]
+    stamps: frozenset[str]  # ISO date and minute
+    lines: frozenset[str]  # every long line
+    head: tuple[str, ...]  # the first and the last long lines, for scroll seams
+    tail: tuple[str, ...]
+
+
+def _page_texts(connection, document_ids: list[str]) -> dict[str, _PageText]:
+    """Document id → its page text, native and OCR, case-folded, local file
+    paths and print noise left out.
+
+    The key is the words sorted, because a re-export of one report moves whole
+    blocks: Expert Hospital's soft-tissue ultrasound came back with its footer
+    above the doctor's line, which no in-order comparison survives (sandbox,
+    2026-11-06)."""
+    lines: dict[str, list[str]] = {}
     for start in range(0, len(document_ids), 500):
         chunk = document_ids[start:start + 500]
         for row in connection.execute(
@@ -2263,13 +2307,41 @@ def _text_keys(connection, document_ids: list[str]) -> dict[str, str]:
                  WHERE document_id IN ({",".join("?" * len(chunk))}) ORDER BY document_id, page_number""",
             chunk,
         ):
-            parts.setdefault(str(row["document_id"]), []).extend(
-                _NOT_LETTER_OR_DIGIT.sub(" ", line.casefold())
+            lines.setdefault(str(row["document_id"]), []).extend(
+                _PRINT_NOISE.sub(" ", line)
                 for line in combined_page_text(dict(row)).splitlines()
                 if not _LOCAL_PATH_LINE.search(line)
             )
-    keys = {document_id: " ".join(sorted(word for line in lines for word in line.split())) for document_id, lines in parts.items()}
-    return {document_id: key for document_id, key in keys.items() if len(key.replace(" ", "")) >= _MIN_TEXT_KEY}
+    found: dict[str, _PageText] = {}
+    for document_id, raw in lines.items():
+        text = "\n".join(raw)
+        folded = [" ".join(_NOT_LETTER_OR_DIGIT.sub(" ", line.casefold()).split()) for line in raw]
+        words = [word for line in folded for word in line.split()]
+        long_lines = [line for line in folded if len(line) >= _MIN_SEAM_LINE]
+        found[document_id] = _PageText(
+            key=" ".join(sorted(words)),
+            words=frozenset(word for word in words if len(word) >= 4 and not any(c.isdigit() for c in word)),
+            figures=frozenset(word for word in words if len(word) >= 2 and any(c.isdigit() for c in word)),
+            numbers=frozenset(
+                number for number in _ORDER_NUMBER.findall(text) if not _PHONE_NUMBER.fullmatch(number)
+            ),
+            stamps=frozenset(
+                f"{year}-{int(month):02d}-{int(day):02d}T{int(hour):02d}:{minute}"
+                for day, month, year, hour, minute in _STAMP.findall(text)
+                if int(hour) < 24 and int(minute) < 60 and 1 <= int(month) <= 12 and 1 <= int(day) <= 31
+            ),
+            lines=frozenset(long_lines),
+            head=tuple(long_lines[:_SEAM_LINES]),
+            tail=tuple(long_lines[-_SEAM_LINES:]),
+        )
+    return found
+
+
+def _text_key(page_text: _PageText | None) -> str:
+    """The same-text key, or '' when there is too little text to compare."""
+    if page_text is None or len(page_text.key.replace(" ", "")) < _MIN_TEXT_KEY:
+        return ""
+    return page_text.key
 
 
 def _result_fingerprints(connection, document_id: str) -> set[tuple[object, ...]]:
@@ -2351,19 +2423,324 @@ def _shared_result_relations(
         relations.setdefault(key, (0.9, f"auto:shared_results:{len(common)}"))
 
 
-def _same_text_relations(connection, document, document_id: str, by_id: dict, relations: dict) -> None:
-    # A narrative report (an ultrasound, a consultation) has no results to
-    # compare, so a re-export of one is recognised by its words.
-    # ponytail: reads every same-patient document's pages per call; a stored
-    # text key per document if record sizes ever make imports slow.
-    keys = _text_keys(connection, [document_id, *by_id])
-    if not keys.get(document_id):
-        return
-    for other_id, key in keys.items():
-        if other_id != document_id and key == keys[document_id]:
-            relations.setdefault(
-                (*_newer_first(document, document_id, by_id[other_id]), "duplicate"), (0.9, "auto:same_text")
+#: Relation notes written from page text alone.
+SAME_TEXT_NOTE = "auto:same_text"
+CONTENT_HASH_NOTE = "auto:content_hash"
+SAME_ORDER_NOTE = "auto:same_order"
+PARTS_NOTE = "auto:parts"
+PAGE_TEXT_NOTE = "auto:page_text"
+#: Share of the smaller file's words found in the larger at which two prints
+#: of one order are one report rather than a report and its supplement.
+_SAME_REPORT_WORDS = 0.6
+#: A photo of a report with no order number on it is matched by its words and
+#: its figures (sizes, values, dates): nearly all of both must be in one
+#: report, and clearly fewer in any other.  Measured on 124 phone photos of
+#: one record (2026-11-07): one clinic's template reports share 85 % of their
+#: words with each other and differ in their figures, and the next best
+#: report trailed a true copy by at least 0.2.
+_PAGE_WORDS = 0.85
+_PAGE_FIGURES = 0.7
+_PAGE_MARGIN = 0.2
+_PAGE_MIN_WORDS = 30
+_PAGE_MIN_FIGURES = 5
+
+
+def _person_pairs(connection, document_ids: list[str]) -> set[frozenset[str]]:
+    """Pairs a person answered about: nothing automatic is suggested for them."""
+    pairs: set[frozenset[str]] = set()
+    for start in range(0, len(document_ids), 500):
+        chunk = document_ids[start:start + 500]
+        for row in connection.execute(
+            f"""SELECT source_document_id, target_document_id FROM document_relations
+                 WHERE notes LIKE 'person:%' AND source_document_id IN ({",".join("?" * len(chunk))})""",
+            chunk,
+        ):
+            pairs.add(frozenset((str(row[0]), str(row[1]))))
+    return pairs
+
+
+def _first_uploads(connection, document_ids: list[str]) -> dict[str, tuple[str, int]]:
+    """Document id → (batch, place in the queue) of the upload that brought it
+    in; a re-read is not an upload.  The queue's row order, not its clock: an
+    album's files are enqueued within one second."""
+    found: dict[str, tuple[str, int]] = {}
+    for start in range(0, len(document_ids), 500):
+        chunk = document_ids[start:start + 500]
+        for row in connection.execute(
+            f"""SELECT document_id, batch_id, MIN(rowid) place FROM upload_jobs
+                 WHERE kind<>'rescan' AND document_id IN ({",".join("?" * len(chunk))}) GROUP BY document_id""",
+            chunk,
+        ):
+            found[str(row["document_id"])] = (str(row["batch_id"]), int(row["place"]))
+    return found
+
+
+class _TextEvidence:
+    """One patient's active documents read side by side: which two hold one
+    report, by their page text, its order numbers and its order times."""
+
+    def __init__(self, connection, rows) -> None:
+        self.connection = connection
+        self.rows = {str(row["id"]): row for row in rows}
+        self.texts = _page_texts(connection, list(self.rows))
+        self.anchored: dict[str, set[str]] = {}
+        self.numbers: dict[str, set[str]] = {}
+        for document_id, row in self.rows.items():
+            text = self.texts.get(document_id)
+            stored = {str(row[name] or "")[:10] for name in ("report_date", "collected_at", "issued_at")} - {""}
+            self.anchored[document_id] = stored | {stamp[:10] for stamp in (text.stamps if text else ())}
+            numbers = set(text.numbers) if text else set()
+            order = re.sub(r"\D", "", str(row["order_identifier"] or ""))
+            if order:
+                numbers.add(order)
+            self.numbers[document_id] = numbers
+        # A number printed on files of different days is the letterhead's
+        # (a trademark certificate, a company code), not an order's.
+        holders: dict[str, list[str]] = {}
+        for document_id, numbers in self.numbers.items():
+            for number in numbers:
+                holders.setdefault(number, []).append(document_id)
+        self.letterhead = {
+            number for number, ids in holders.items()
+            if any(self._conflict(a, b) for index, a in enumerate(ids) for b in ids[index + 1:])
+        }
+        self._counts: dict[str, int] = {}
+
+    def _conflict(self, a: str, b: str) -> bool:
+        """Both files name the days they are about, and no day is shared."""
+        return bool(self.anchored[a] and self.anchored[b] and not self.anchored[a] & self.anchored[b])
+
+    def _specific(self, document_id: str) -> set[str]:
+        return self.numbers[document_id] - self.letterhead
+
+    def _stamps(self, document_id: str) -> frozenset[str]:
+        text = self.texts.get(document_id)
+        return text.stamps if text else frozenset()
+
+    def same_order(self, a: str, b: str) -> bool:
+        """Two files print one order: its number with a second sign (its day,
+        its time), or its order and result times.  A short number alone is
+        never enough; a long one is, unless the files are about other days."""
+        stamps = self._stamps(a) & self._stamps(b)
+        mine, theirs = self._specific(a), self._specific(b)
+        numbers = mine & theirs
+        if not (stamps or numbers) or self._conflict(a, b):
+            return False
+        if len(stamps) >= 2 or (stamps and numbers):
+            return True
+        if stamps:
+            # One shared minute, and each names an order the other does not.
+            return not (mine and theirs)
+        return any(len(number) >= _LONG_ORDER_NUMBER for number in numbers) or bool(
+            self.anchored[a] & self.anchored[b]
+        )
+
+    def candidate_pairs(self, focus: str | None):
+        """Pairs that share an order number or an order time; with `focus`, only its own."""
+        index: dict[str, set[str]] = {}
+        for document_id in self.rows:
+            for token in (self._specific(document_id) | set(self._stamps(document_id))):
+                index.setdefault(token, set()).add(document_id)
+        seen: set[frozenset[str]] = set()
+        # ponytail: every pair under one token; a token on hundreds of files
+        # (a letterhead number with no dates to expose it) costs its square.
+        for ids in index.values():
+            ordered = sorted(ids)
+            for position, a in enumerate(ordered):
+                for b in ordered[position + 1:]:
+                    pair = frozenset((a, b))
+                    if pair not in seen and (focus is None or focus in pair):
+                        seen.add(pair)
+                        yield a, b
+
+    def is_image(self, document_id: str) -> bool:
+        return str(self.rows[document_id]["mime_type"] or "").startswith("image/")
+
+    def observation_count(self, document_id: str) -> int:
+        if document_id not in self._counts:
+            self._counts[document_id] = self.connection.execute(
+                "SELECT COUNT(*) FROM observations WHERE document_id=? AND verification_status <> 'rejected'",
+                (document_id,),
+            ).fetchone()[0]
+        return self._counts[document_id]
+
+    def order_relation(self, a: str, b: str) -> tuple[str, str, str] | None:
+        """How two files of one order relate: one report twice, a page of the
+        other (a photo or screenshot), or a supplement printed beside it."""
+        row_a, row_b = self.rows[a], self.rows[b]
+        image_a, image_b = self.is_image(a), self.is_image(b)
+        if image_a != image_b:
+            return (b, a, "contains") if image_a else (a, b, "contains")
+        if image_a:
+            # Two photos of one order are its pages (see `parts`); the same
+            # page photographed twice is found by `page_copies`.
+            return None
+        words_a = self.texts[a].words if a in self.texts else frozenset()
+        words_b = self.texts[b].words if b in self.texts else frozenset()
+        small, large = sorted((words_a, words_b), key=len)
+        if not small:
+            return None
+        held = len(small & large) / len(small)
+        if held >= _SAME_REPORT_WORDS and len(small) * 2 >= len(large):
+            return (*_newer_first(row_a, a, row_b), "duplicate")
+        if held >= _SAME_REPORT_WORDS:
+            larger, smaller = (a, b) if small is words_b else (b, a)
+            return (larger, smaller, "contains")
+        # Mostly other words, same order: the illustrated companion or the
+        # cytology passport printed beside the report.  The report is the one
+        # with more results; between equals, the earlier import.
+        main = max((a, b), key=lambda item: (self.observation_count(item), _newer_first(row_a, a, row_b)[1] == item))
+        return (b if main == a else a, main, "attachment_of")
+
+    def page_copies(self, focus: str | None):
+        """(report, photo, relationship) for photos matched by page text alone.
+
+        A photo of a consultation or an ultrasound protocol prints no order
+        number, so it is compared word for word with every other file.  A
+        photo held almost whole by one report is a picture of that report
+        (`contains`); two photos holding each other almost whole are one page
+        photographed twice (`duplicate`)."""
+        candidates = [item for item in self.rows if item in self.texts]
+        # ponytail: each photo against every file, O(photos x files) set
+        # intersections; an inverted word index if records reach thousands.
+        only = focus if focus is not None and self.is_image(focus) else None
+        for photo in candidates:
+            if not self.is_image(photo) or (only and photo != only):
+                continue
+            mine = self.texts[photo]
+            if len(mine.words) < _PAGE_MIN_WORDS or len(mine.figures) < _PAGE_MIN_FIGURES:
+                continue
+            scores = sorted(
+                (
+                    len(mine.words & self.texts[other].words) / len(mine.words),
+                    len(mine.figures & self.texts[other].figures) / len(mine.figures),
+                    other,
+                )
+                for other in candidates if other != photo
             )
+            reports = [item for item in scores if not self.is_image(item[2])]
+            if reports:
+                words, figures, report = reports[-1]
+                # The next best, not counting a second file of the same report
+                # (an unmarked re-export would otherwise hide every photo of it).
+                runner_up = max(
+                    (item[0] for item in reports[:-1] if not self._same_page(report, item[2])), default=0.0
+                )
+                if (
+                    words >= _PAGE_WORDS and figures >= _PAGE_FIGURES and words - runner_up >= _PAGE_MARGIN
+                    and not self._conflict(photo, report) and (focus is None or focus in (photo, report))
+                ):
+                    yield report, photo, "contains"
+            for _, _, other in scores:
+                if not self.is_image(other) or (not only and other < photo) or (
+                    focus is not None and focus not in (photo, other)
+                ):
+                    continue
+                if self._same_page(photo, other) and not self._conflict(photo, other):
+                    yield (*_newer_first(self.rows[photo], photo, self.rows[other]), "duplicate")
+
+    def _same_page(self, a: str, b: str) -> bool:
+        """Nearly every word and figure of each is in the other."""
+        mine, theirs = self.texts[a], self.texts[b]
+        common_words, common_figures = len(mine.words & theirs.words), len(mine.figures & theirs.figures)
+        return (
+            common_words >= 0.9 * max(len(mine.words), len(theirs.words), 1)
+            and common_figures >= 0.8 * max(len(mine.figures), len(theirs.figures), 1)
+        )
+
+    def parts(self, focus: str | None):
+        """(later part, first part) for screenshots of one report uploaded together.
+
+        A phone screenshots a long report page by page; each image arrives as
+        a document of its own.  Consecutive images of one upload batch are one
+        report when they print the same order (number, times), or when a line
+        near the end of one is near the start of the next and no other file
+        of the record prints it: the seam where one scroll position overlaps
+        the next.  A letterhead repeats at the top of every page, never at
+        the bottom of one and the top of the next.  The chain is kept to the
+        first image."""
+        uploads = _first_uploads(self.connection, [item for item in self.rows if self.is_image(item)])
+        batches: dict[str, list[tuple[int, str]]] = {}
+        for document_id, (batch, place) in uploads.items():
+            batches.setdefault(batch, []).append((place, document_id))
+        for members in batches.values():
+            if len(members) < 2:
+                continue
+            members.sort()
+            ordered = [document_id for _, document_id in members]
+            head: dict[str, str] = {}
+            for position, current in enumerate(ordered):
+                for previous in reversed(ordered[max(0, position - 2):position]):
+                    if self._one_report(previous, current):
+                        head[current] = head.get(previous, previous)
+                        if focus is None or focus in (current, head[current]):
+                            yield current, head[current]
+                        break
+
+    def _one_report(self, a: str, b: str) -> bool:
+        if self.same_order(a, b):
+            return True
+        stamps_a, stamps_b = self._stamps(a), self._stamps(b)
+        mine, theirs = self._specific(a), self._specific(b)
+        if self._conflict(a, b) or (stamps_a and stamps_b and not stamps_a & stamps_b) or (
+            mine and theirs and not mine & theirs
+        ):
+            return False
+        if a not in self.texts or b not in self.texts:
+            return False
+        seam = set(self.texts[a].tail) & set(self.texts[b].head)
+        return any(
+            not any(line in text.lines for other, text in self.texts.items() if other not in (a, b)) for line in seam
+        )
+
+
+def _text_evidence_relations(
+    connection, rows, relations: dict[tuple[str, str, str], tuple[float, str]], focus: str | None = None
+) -> None:
+    """Add to `relations` what the page text of one patient's active documents
+    says: the same text, the same content hash, one order printed twice, a
+    photo of a page, screenshots of one report in parts.  A pair a person
+    answered about, or one already related, is left out."""
+    evidence = _TextEvidence(connection, rows)
+    ids = list(evidence.rows)
+    taken = {frozenset((source, target)) for source, target, _ in relations}
+    ruled = _person_pairs(connection, ids)
+
+    def add(key: tuple[str, str, str], confidence: float, note: str, *, beside_results: bool = False) -> None:
+        pair = frozenset(key[:2])
+        if pair in ruled or (focus and focus not in pair) or (pair in taken and not beside_results):
+            return
+        taken.add(pair)
+        relations.setdefault(key, (confidence, note))
+
+    groups: dict[tuple[str, str], list[str]] = {}
+    for document_id in ids:
+        key = _text_key(evidence.texts.get(document_id))
+        if key:
+            groups.setdefault(("text", key), []).append(document_id)
+            content_hash = str(evidence.rows[document_id]["content_sha256"] or "")
+            if content_hash:
+                groups.setdefault(("hash", content_hash), []).append(document_id)
+    for (kind, _), members in sorted(groups.items()):
+        for position, a in enumerate(members):
+            for b in members[position + 1:]:
+                add(
+                    (*_newer_first(evidence.rows[a], a, evidence.rows[b]), "duplicate"), 0.9,
+                    SAME_TEXT_NOTE if kind == "text" else CONTENT_HASH_NOTE, beside_results=True,
+                )
+    for a, b in evidence.candidate_pairs(focus):
+        if evidence.same_order(a, b):
+            key = evidence.order_relation(a, b)
+            if key:
+                add(key, 0.8 if key[2] == "duplicate" else 0.7, SAME_ORDER_NOTE)
+    for key in evidence.page_copies(focus):
+        add(key, 0.7, PAGE_TEXT_NOTE)
+    for part, first in evidence.parts(focus):
+        add((part, first, "part_of"), 0.7, PARTS_NOTE)
+
+
+_RELATION_COLUMNS = """id, patient_id, order_identifier, report_number, report_date, collected_at, issued_at,
+    status, imported_at, mime_type, content_sha256"""
 
 
 def record_document_relations(connection, owner_user_id: str, document_id: str) -> int:
@@ -2376,8 +2753,13 @@ def record_document_relations(connection, owner_user_id: str, document_id: str) 
     `duplicate` (same printed report number and issue date, or the same
     results), `reprint` (same report number and study date, issued again),
     `contains` / `overlaps` (results in common), `attachment_of` (the export a
-    cover points to, by order number).  Only this function's own rows
-    (`notes` 'auto:…') are replaced; relations a person recorded stay.
+    cover points to, by order number).  The page text adds what files with no
+    results to compare still say (`_text_evidence_relations`): the same words,
+    the same order printed on a scan, a photo of one page, a supplement
+    printed beside the report, screenshots of one report uploaded together
+    (`part_of`).  Only this function's own rows (`notes` 'auto:…') are
+    replaced; relations a person recorded stay, and a pair a person answered
+    about gets no new suggestion.
     """
     connection.execute(
         """DELETE FROM document_relations
@@ -2385,16 +2767,14 @@ def record_document_relations(connection, owner_user_id: str, document_id: str) 
         (document_id, document_id),
     )
     document = connection.execute(
-        """SELECT id, patient_id, order_identifier, report_number, report_date, collected_at, status, imported_at,
-                  duplicate_of_document_id
+        f"""SELECT {_RELATION_COLUMNS}, duplicate_of_document_id
              FROM documents WHERE id=? AND owner_user_id=?""",
         (document_id, owner_user_id),
     ).fetchone()
     if document is None or document["duplicate_of_document_id"]:
         return 0
     others = connection.execute(
-        """SELECT id, order_identifier, report_number, report_date, collected_at, status, imported_at
-             FROM documents
+        f"""SELECT {_RELATION_COLUMNS} FROM documents
             WHERE owner_user_id=? AND patient_id=? AND id<>? AND duplicate_of_document_id IS NULL""",
         (owner_user_id, document["patient_id"], document_id),
     ).fetchall()
@@ -2409,7 +2789,7 @@ def record_document_relations(connection, owner_user_id: str, document_id: str) 
             relations[key] = (1.0, "auto:order_identifier")
     by_id = {str(other["id"]): other for other in others}
     _shared_result_relations(connection, owner_user_id, document, document_id, by_id, relations)
-    _same_text_relations(connection, document, document_id, by_id, relations)
+    _text_evidence_relations(connection, [document, *others], relations, focus=document_id)
     for (source, target, relationship), (confidence, notes) in relations.items():
         connection.execute(
             """INSERT INTO document_relations(source_document_id, target_document_id, relationship, confidence, notes)
@@ -2423,40 +2803,77 @@ def record_document_relations(connection, owner_user_id: str, document_id: str) 
 
 
 def repair_text_duplicates(connection) -> int:
-    """Start-up repair: same-text 'duplicate' relations for documents already held.
+    """Start-up repair: what page text says about documents already held.
 
-    Relations are otherwise recorded only on import and re-read, so a narrative
-    report imported twice before this check existed would never be linked.
-    One read of the stored page text, grouped by patient; idempotent, and a
-    relation already present -- a person's above all -- is left as it is.
+    Relations are otherwise recorded only on import and re-read, so files
+    imported before a check existed would never be linked: same-text
+    duplicates, equal content hashes, one order printed twice, a photo of a
+    page, a supplement, screenshots of one report.  One read of the stored
+    page text per patient; idempotent, and a relation already present -- a
+    person's above all -- is left as it is.  Copies of copies are pointed at
+    the document kept first (`flatten_duplicate_chains`).
     """
+    flattened = flatten_duplicate_chains(connection)
     documents = connection.execute(
-        """SELECT id, owner_user_id, patient_id, imported_at FROM documents
-            WHERE duplicate_of_document_id IS NULL"""
+        f"""SELECT owner_user_id, {_RELATION_COLUMNS} FROM documents
+             WHERE duplicate_of_document_id IS NULL ORDER BY owner_user_id, patient_id"""
     ).fetchall()
-    keys = _text_keys(connection, [str(row["id"]) for row in documents])
-    groups: dict[tuple[str, str, str], list[tuple[str, str]]] = {}
+    patients: dict[tuple[str, str], list] = {}
     for row in documents:
-        key = keys.get(str(row["id"]))
-        if key:
-            groups.setdefault((row["owner_user_id"], row["patient_id"], key), []).append(
-                (str(row["imported_at"] or ""), str(row["id"]))
-            )
+        patients.setdefault((str(row["owner_user_id"]), str(row["patient_id"])), []).append(row)
     added = 0
-    for members in groups.values():
-        members.sort()
-        for index, (_, older) in enumerate(members):
-            for _, newer in members[index + 1:]:
+    for rows in patients.values():
+        if len(rows) < 2:
+            continue
+        ids = [str(row["id"]) for row in rows]
+        relations: dict[tuple[str, str, str], tuple[float, str]] = {}
+        for start in range(0, len(ids), 500):
+            chunk = ids[start:start + 500]
+            for row in connection.execute(
+                f"""SELECT source_document_id, target_document_id, relationship, confidence, notes
+                      FROM document_relations WHERE source_document_id IN ({",".join("?" * len(chunk))})""",
+                chunk,
+            ):
+                relations[(str(row[0]), str(row[1]), str(row[2]))] = (float(row[3]), str(row[4] or ""))
+        held = set(relations)
+        _text_evidence_relations(connection, rows, relations)
+        for (source, target, relationship), (confidence, notes) in relations.items():
+            if (source, target, relationship) not in held:
                 added += connection.execute(
                     """INSERT OR IGNORE INTO document_relations(
                            source_document_id, target_document_id, relationship, confidence, notes)
-                       VALUES (?, ?, 'duplicate', 0.9, 'auto:same_text')""",
-                    (newer, older),
+                       VALUES (?, ?, ?, ?, ?)""",
+                    (source, target, relationship, confidence, notes),
                 ).rowcount
-    if added:
+    if added or flattened:
         connection.commit()
-        logger.info("relations: %d same-text duplicate pair(s) recorded", added)
+        logger.info("relations: %d pair(s) recorded from page text, %d copy chain(s) shortened", added, flattened)
     return added
+
+
+def flatten_duplicate_chains(connection) -> int:
+    """Point every copy at the document kept, never at another copy.
+
+    Copies are kept one level deep, but a byte-identical upload of a file that
+    was later marked a copy pointed at that copy: two copies of one Synevo
+    report pointed at each other's original rather than at the document the
+    lab order is linked to (sandbox, 2026-11-07).  Repeated until no copy
+    points at a copy; a loop (which no write path makes) is left alone."""
+    changed = 0
+    for _ in range(10):
+        step = connection.execute(
+            """UPDATE documents SET duplicate_of_document_id=(
+                   SELECT parent.duplicate_of_document_id FROM documents parent
+                    WHERE parent.id=documents.duplicate_of_document_id)
+                WHERE duplicate_of_document_id IN (
+                   SELECT id FROM documents WHERE duplicate_of_document_id IS NOT NULL)
+                  AND id<>(SELECT parent.duplicate_of_document_id FROM documents parent
+                            WHERE parent.id=documents.duplicate_of_document_id)"""
+        ).rowcount
+        changed += step
+        if not step:
+            break
+    return changed
 
 
 # --- a person's answer to "these two are one report" -------------------------
@@ -2565,6 +2982,31 @@ def _copy_rows_held_by_primary(connection: sqlite3.Connection, copy_id: str, pri
         if _is_ruled(row)
         and _result_fingerprint(row) not in (held_any if row["verification_status"] == "rejected" else held)
     ]
+    # A test the kept document does not hold at all is lost with the copy's
+    # rows: a Synevo lab record was set aside as a copy of its PDF, whose
+    # parse had dropped the only result, and the record held it nowhere
+    # (sandbox, 2026-11-07).  By test, not value: two prints of one report
+    # that read a date or an interpretation differently are still one report;
+    # a test is held when the kept document has its concept or its printed
+    # name (an unmapped name gets a concept per vendor).
+    kept_tests = {
+        test
+        for row in kept_rows if row["verification_status"] != "rejected"
+        for test in (row["concept_id"], normalized_key(str(row["raw_name"] or "")))
+    }
+    missing = [
+        row for row in copy_rows
+        if row["verification_status"] != "rejected" and not is_derived(row["extraction_method"])
+        and row["concept_id"] not in kept_tests and normalized_key(str(row["raw_name"] or "")) not in kept_tests
+    ]
+    if missing and not unheld:
+        raise DuplicateRefused(
+            "dup.error_missing",
+            count=len(missing),
+            observation_ids=[row["id"] for row in missing],
+            dose_ids=[],
+            labels=[str(row["raw_name"]) for row in missing],
+        )
     dose_sql = """SELECT id, vaccine_code, product_name, occurrence_date, verification_status, entry_source
                     FROM immunizations WHERE document_id=?"""
     held_doses = {
@@ -2717,6 +3159,13 @@ def keep_both_documents(
     if document_id == other_id or owned != 2:
         raise LookupError(other_id)
     _record_person_relation(connection, document_id, other_id, NOT_DUPLICATE_NOTE)
+    # Every automatic link between the two goes: a "part of", a "photo of a
+    # page", a "supplement" is the same question answered.
+    connection.execute(
+        """DELETE FROM document_relations WHERE notes LIKE 'auto:%'
+              AND ((source_document_id=? AND target_document_id=?) OR (source_document_id=? AND target_document_id=?))""",
+        (document_id, other_id, other_id, document_id),
+    )
     details: dict[str, object] = {"other_document_id": other_id}
     if token_kind:
         details["token_kind"] = token_kind
