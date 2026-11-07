@@ -23,7 +23,7 @@ the server output. For experiments, point `ANAMNA_DB` at a throwaway file such a
 
 ```bash
 uv run pytest --basetemp=work/pytest-run
-node --test tests/js/
+node --test tests/js/*.test.mjs
 uv run python -m compileall -q src
 ```
 

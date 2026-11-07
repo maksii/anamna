@@ -58,7 +58,7 @@ off.
 
 ```bash
 uv run pytest --basetemp=work/pytest-run
-node --test tests/js/
+node --test tests/js/*.test.mjs
 ```
 
 The Python suite runs in parallel by default (pytest-xdist, `-n auto` in the `pyproject.toml`
@@ -373,7 +373,7 @@ Each of these has already produced a confident, wrong, or silently missing clini
 1. Checks pass: the same set CI runs, plus the data validators:
    ```bash
    uv run pytest -q --basetemp=work/pytest-run
-   node --test tests/js/
+   node --test tests/js/*.test.mjs
    uv run python -m compileall -q src
    uv run python scripts/validate_source_extraction.py
    uv run python scripts/validate_device_imports.py

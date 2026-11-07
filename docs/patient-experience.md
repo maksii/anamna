@@ -45,7 +45,7 @@ formatters and receive labels from rendered HTML.
 
 Run `tests/python/test_patient_experience.py` for immutability, empty coverage,
 zero-value handling and calendar placement, and
-`node --test tests/js/` for period changes, missing values,
+`node --test tests/js/*.test.mjs` for period changes, missing values,
 time-label spacing and tooltip escaping. The integration regression set includes
 `test_web_tracker.py`, `test_web_metrics.py`, `test_web_panels.py`,
 `test_web_i18n.py`, `test_i18n.py` and `test_static_assets.py`.
