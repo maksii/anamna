@@ -151,8 +151,15 @@ def test_a_smear_row_is_not_a_urinalysis_row(connection, raw_name):
     category = connection.execute("SELECT category FROM concepts WHERE id=?", (concept_id,)).fetchone()[0]
     assert concept_id != urine
     assert category == "microbiology"
-    # Once the smear's site heading («ТОЧКА 2: VAGINA») reaches the row as its specimen.
-    assert filed(connection, raw_name, specimen="VAGINA", value_text="не виявлені") == concept_id
+    # Once the smear's site heading («ТОЧКА 2: VAGINA») reaches the row as its
+    # specimen, each site is its own series, and neither is urine.
+    vagina = filed(connection, raw_name, specimen="VAGINA", value_text="не виявлені")
+    cervix = filed(connection, raw_name, specimen="CERVIX", value_text="не виявлені")
+    assert len({vagina, cervix, urine}) == 3
+    categories = {
+        row[0] for row in connection.execute("SELECT category FROM concepts WHERE id IN (?, ?)", (vagina, cervix))
+    }
+    assert categories == {"microbiology"}
 
 
 def test_microscopy_on_the_slide_is_per_field_and_the_analyser_count_is_per_microlitre(connection):

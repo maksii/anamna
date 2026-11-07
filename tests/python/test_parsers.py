@@ -243,8 +243,9 @@ def test_expert_unit_behind_a_comma_is_split_off_the_name():
     observations = parse_document("Expert Hospital", "laboratory", page(text))
     rows = {item.raw_name: (item.value_numeric, item.value_text, item.unit_raw) for item in observations}
     # The unit leaves the name either way; a word result keeps none at all
-    # ("Not detected mg/dL" is not a quantity, CLIN-30), while a count or an
-    # HPF range keeps the unit it is a count in.
+    # ("Not detected mg/dL" is not a quantity, CLIN-30), while a count, an
+    # HPF range or any reading per field of view keeps the unit it is a
+    # count in.
     assert rows == {
         "Питома вага": (1.035, None, "г/мл"),
         "Білок в сечі": (None, "негативний", None),
@@ -252,7 +253,7 @@ def test_expert_unit_behind_a_comma_is_split_off_the_name():
         "Нітрити": (None, "негативний", None),
         "Еритроцити змінені": (0.0, None, "в п/з"),
         "Лейкоцити (WBC)": (None, "0-1", "в п/з"),
-        "Клітини перехідного епітелію": (None, "не виявлено", None),
+        "Клітини перехідного епітелію": (None, "не виявлено", "в п/з"),
     }
     # Folded, or they would start second series: «в п/з» is the HPF unit the
     # app already knew, and «г/мл» joins the unitless specific gravity every
@@ -890,8 +891,10 @@ def test_eskulab_coprogram_is_read_at_all():
     "Показник Результат" skipped it and the report read as empty.
     """
     parsed = coprogram()
-    assert parsed["Шматочки тканини (кал)"].value_text == "не виявлено"
-    assert parsed["Реакція (кал)"].value_numeric == 6.5
+    assert parsed["Шматочки тканини"].value_text == "не виявлено"
+    assert parsed["Реакція"].value_numeric == 6.5
+    # The name is printed bare; the specimen is what files it as stool.
+    assert {item.specimen for item in parsed.values()} == {"кал"}
 
 
 def test_eskulab_coprogram_pairs_each_subheading_with_its_own_quantity():
@@ -901,9 +904,9 @@ def test_eskulab_coprogram_pairs_each_subheading_with_its_own_quantity():
     the quantities are named rather than counted.
     """
     parsed = coprogram()
-    assert parsed["М'язові волокна змінені (кал)"].value_text == "поодиноко"
-    assert parsed["М'язові волокна не змінені (кал)"].value_text == "невелика к-сть."
-    assert "М'язові волокна (кал)" not in parsed
+    assert parsed["М'язові волокна змінені"].value_text == "поодиноко"
+    assert parsed["М'язові волокна не змінені"].value_text == "невелика к-сть."
+    assert "М'язові волокна" not in parsed
 
 
 CULTURE_ROWS = [
@@ -977,9 +980,9 @@ def test_eskulab_coprogram_continues_onto_a_page_with_no_header():
             "EskuLab", "laboratory", eskulab_page(CONTINUATION_ROWS, ESKULAB_STOOL_X)
         )
     }
-    assert parsed["Найпростіші (кал)"].value_text == "не виявлено"
-    assert parsed["Яйця гельмінтів (кал)"].value_text == "не виявлено"
-    assert "Елементи гриба, подібного до дріжджевого (кал)" in parsed
+    assert parsed["Найпростіші"].value_text == "не виявлено"
+    assert parsed["Яйця гельмінтів"].value_text == "не виявлено"
+    assert parsed["Елементи гриба, подібного до дріжджевого"].specimen == "кал"
 
 
 def test_a_page_announcing_its_own_table_is_not_a_coprogram_continuation():

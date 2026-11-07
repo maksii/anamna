@@ -85,12 +85,13 @@ SYNEVO = (
 
 
 def test_synevo_column_caption_is_not_part_of_the_title_and_every_panel_is_named():
+    # A department prints its results straight under it; the title names them.
     single = classify(SYNEVO + "Біохімія Індикатор зони підвищеної уваги\nГлюкоза 5.0 ммоль/л 3.3 - 5.5\n")
-    assert single.title == "Біохімія"
+    assert single.title == "Глюкоза"
     assert single.order_identifier == "12345678"  # eight-digit barcode of the older reports
     assert single.collected_at == "2016-04-03T08:51"
     city = classify(SYNEVO + "Імунологія Київ Індикатор зони підвищеної уваги\nТест 0.3 R R < 0.8\n")
-    assert city.title == "Імунологія"
+    assert city.title == "Тест"
     two = classify(
         SYNEVO + "Пакет №4.18.1 (Вітаміни і Мікроелементи) Індикатор зони підвищеної уваги\n"
         "Магній 0.9 ммоль/л 0.66 - 1.07\nПакет №371 (Фолатний обмін міні)\nФолієва кислота 9 нг/мл 3.9 - 26.8\n"

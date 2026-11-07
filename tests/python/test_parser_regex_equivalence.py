@@ -176,10 +176,12 @@ CASES = [
     ),
     (
         "_COLONY_POWER_ROW",
-        r"^(?P<name>.+?)\s+10\^(?P<power>\d+)\s+КУО/г$", re.I, parsers._COLONY_POWER_ROW, ("match",),
+        r"^(?P<name>.+?)\s+10\^(?P<power>\d+)\s+(?P<unit>КУО/(?:г|мл))$", re.I, parsers._COLONY_POWER_ROW,
+        ("match",),
         [
             "Staphylococcus aureus 10^5 КУО/г", "Escherichia coli  10^7  куо/Г", "  10^5 КУО/г", " 10^5 КУО/г",
             "\t 10^5 КУО/г", "\n 10^5 КУО/г", "a \n 10^5 КУО/г", "x 10^5 КУО/г 10^6 КУО/г",
+            "Gardnerella vaginalis 10^5 КУО/мл", "a 10^5 КУО/мл 10^6 КУО/г",
         ],
         "КУО/г",
     ),

@@ -472,6 +472,13 @@ UNIT_SYNONYMS = {
     "мм.рт.ст.": "mmHg",
     "мм.рт.ст": "mmHg",
     "мсек": "ms",
+    # Colonies per millilitre: a urine culture's count, where a stool culture
+    # counts per gram («КУО/г», CFU/g above).  Not the same quantity, so not
+    # folded together; this only gives the per-millilitre spelling its name.
+    "куо/мл": "CFU/mL",
+    # EskuLab's partner coprogram heads its unit column «кількість в п/з»: a
+    # count per field of view, the same unit as «в п/з».
+    "кількість в п/з": "per HPF",
 }
 
 #: Same number, different label -- registered per concept and never globally.
