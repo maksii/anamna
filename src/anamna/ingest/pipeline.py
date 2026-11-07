@@ -28,7 +28,7 @@ from ..i18n import (
 )
 from ..immunizations import is_visit_vaccination, parse_immunizations, parse_visit_vaccinations, store_document_doses
 from ..reference import canonical_unit
-from .classifier import KNOWN_CLINICAL_TYPES, UNKNOWN_VENDOR, Classification, classify_document
+from .classifier import KNOWN_CLINICAL_TYPES, RESULT_TYPES, UNKNOWN_VENDOR, Classification, classify_document
 from .concepts import (
     CONCEPT_DEFINITIONS,
     NON_ANALYTE_LABELS,
@@ -1617,9 +1617,16 @@ def classify_pages(
     page_vendors = {item.vendor for item in per_page if item.vendor != UNKNOWN_VENDOR}
     page_dates = {item.report_date for item in per_page if item.report_date}
     page_types = {item.clinical_type for item in per_page if item.clinical_type != "clinical_report"}
+    # One laboratory order whose pages are a culture and a urinalysis is one
+    # report of that order, not a bundle of unrelated ones: it kept no date
+    # and no order number of its own.
+    page_orders = {item.order_identifier for item in per_page}
+    one_order = len(page_orders) == 1 and None not in page_orders and page_types <= RESULT_TYPES
     is_compound = len(pages) > 1 and (
-        len(page_vendors) > 1 or len(page_dates) > 1 or len(page_types) > 1
+        len(page_vendors) > 1 or len(page_dates) > 1 or (len(page_types) > 1 and not one_order)
     )
+    if not is_compound and one_order and len(page_types) > 1:
+        classification = replace(classification, clinical_type="laboratory")
     if is_compound:
         classification = Classification(
             vendor="Multiple vendors" if len(page_vendors) > 1 else classification.vendor,

@@ -86,12 +86,21 @@ ORDER_PATTERNS = [
     r"№\s*обстеження:\s*([^\s]+)",
     r"Стать:\s*\S+\s+(\d{8,10})\b",
     r"Ідентифікаційний номер зразка:(?:[^\d\n]*\n){0,2}[^\d\n]*(\d{8,12})\b",
+    # Synevo's illustrated companion report: «Штрих-код <barcode>-<suffix>».
+    r"Штрих-код\s+(\d{8,12})-\d+\b",
 ]
+#: How lab sync names a laboratory's download: «eskulab-<order>.pdf»,
+#: «synevo-<barcode>-1.pdf», «ekspert-<order>.pdf».  The number is the lab's
+#: own order id, the one to fall back on when the page prints none.
+LAB_SYNC_FILENAME_RE = re.compile(r"^(?:eskulab|synevo|ekspert)-(\d{5,})(?:-\d+)?$")
 
 
-def extract_order_identifier(text: str) -> str | None:
+def extract_order_identifier(text: str, filename: str = "") -> str | None:
     match = first_match(ORDER_PATTERNS, text)
-    return match.group(1) if match else None
+    if match:
+        return match.group(1)
+    named = LAB_SYNC_FILENAME_RE.match(Path(filename).stem)
+    return named.group(1) if named else None
 
 
 def repair_order_identifiers(connection) -> int:
@@ -119,7 +128,8 @@ def extract_date(text: str, filename: str) -> str | None:
     prioritized = first_match(
         [
             r"Дата візиту:\s*(\d{2})[./](\d{2})[./](\d{4})",
-            r"Дата замовлення:\s*(\d{2})[./](\d{2})[./](\d{4})",
+            # The companion report prints the label without its colon.
+            r"Дата замовлення:?\s*(\d{2})[./](\d{2})[./](\d{4})",
             r"Зам\s*овлення:\s*\S+\s*/\s*(\d{2})[./](\d{2})[./](\d{4})",
             r"Дата обстеження:\s*(\d{2})[./](\d{2})[./](\d{4})",
             r"^Дата:\s*(\d{2})[./](\d{2})[./](\d{4})",
@@ -132,6 +142,11 @@ def extract_date(text: str, filename: str) -> str | None:
             # two lines below its label.
             r"Дата(?:[ \t]+\S+)?\s+дослідження:(?:[^\n]*\n){0,2}?[^\n]*?(\d{2})[./](\d{2})[./](\d{4})",
             r"дата інтерпретації\s*(\d{2})[./](\d{2})[./](\d{4})",
+            # Expert Hospital's laboratory header: «Пацієнт: <name>, <birth
+            # date> <order date>», the second date unlabelled.
+            r"^Пацієнт:[^\n]*?\d{2}[./]\d{2}[./]\d{4}[ \t]+(\d{2})[./](\d{2})[./](\d{4})[ \t]*$",
+            # A POLYCHECK chip, read on the day of the examination.
+            r"^Скануй\s+(\d{2})[./](\d{2})[./](\d{4})",
         ],
         text,
     )
@@ -173,7 +188,7 @@ _DMY = r"(\d{2})[./](\d{2})[./](\d{4})"
 _HM = r"(?:,?[ \t]+(\d{1,2}):(\d{2}))?"
 #: Labelled sample-collection moments, most specific first.
 COLLECTED_PATTERNS = [
-    re.compile(rf"Дата замовлення:\s*{_DMY}{_HM}", re.I),  # Synevo
+    re.compile(rf"Дата замовлення:?\s*{_DMY}{_HM}", re.I),  # Synevo
     re.compile(rf"Дата здачі аналізу:\s*{_DMY}{_HM}", re.I),  # St Paraskeva forms
     re.compile(rf"ЗАБІР КРОВІ\s+(?:НАДРУКОВАНИЙ НА\s+)?{_DMY}", re.I),  # ALEX²
     re.compile(rf"Дата операції:?\s*{_DMY}", re.I),  # pathology: when tissue was taken
@@ -181,6 +196,8 @@ COLLECTED_PATTERNS = [
 ISSUED_PATTERNS = [
     re.compile(rf"Дата видачі:\s*{_DMY}{_HM}", re.I),  # EskuLab
     re.compile(rf"Час виконання:\s*{_DMY}{_HM}", re.I),  # EskuLab, older header
+    re.compile(rf"Дата виконання:\s*{_DMY}{_HM}", re.I),  # EskuLab, 2026 header
+    re.compile(rf"Дата видруку:?\s*{_DMY}{_HM}", re.I),  # Synevo companion report
     re.compile(rf"ЗАБІР КРОВІ\s+НАДРУКОВАНИЙ НА\s+{_DMY}\s+{_DMY}", re.I),  # ALEX², two columns
     re.compile(rf"НАДРУКОВАНИЙ НА\s+{_DMY}", re.I),
 ]
@@ -390,7 +407,10 @@ def clean_title(value: str) -> str:
     # These PDFs print the hyphen as U+00AD («ортопеда\xadтравматолога»).
     value = INVISIBLE_RE.sub("", value.replace("\u00ad", "-"))
     value = _sub_with_space_before(SYNEVO_INDICATOR_RE, " ", value)
-    value = re.sub(r"-{2,}", "-", collapse_space(value)).strip(" .;,:")
+    value = re.sub(r"-{2,}", "-", collapse_space(value)).strip(" ;,:")
+    # «A · B · ...» says more panels follow; stripping its dots left «A · B ·».
+    if not value.endswith(" · ..."):
+        value = value.strip(" .;,:")
     value = re.sub(r"\(\s+", "(", _sub_with_space_before(CLOSING_BRACKET_RE, ")", value))
     if _mostly_upper(value):
         value = sentence_case(value)
@@ -407,12 +427,16 @@ def extract_specimen(title: str) -> str | None:
     return found.pop() if len(found) == 1 else None
 
 
-def _joined(names: list[str]) -> str:
+#: Room a joined title leaves for « · ...» under `clean_title`'s 240.
+JOINED_TITLE_LIMIT = 234
+
+
+def joined_title(names: list[str]) -> str:
     title = ""
     for name in names:
         candidate = f"{title} · {name}" if title else name
-        if len(candidate) > 120:
-            return f"{title} · ..."
+        if len(candidate) > JOINED_TITLE_LIMIT:
+            return f"{title} · ..." if title else name
         title = candidate
     return title
 
@@ -432,29 +456,79 @@ def _with_wrapped_tail(heading: str, following_lines: list[str]) -> str:
     return heading
 
 
+#: «1. Кальпротектин <24.0 мг/кг», «1. Хелікобактер пілорі, кал не виявлено»:
+#: a single test EskuLab prints without a panel code.  Its name ends where
+#: the result starts.
+ESKULAB_TEST_RE = re.compile(r"^\d+\.\s+(?![A-Z]\d{4}\s)(\S.*)$")
+ESKULAB_RESULT_START_RE = re.compile(
+    r"\s+(?:[<>≤≥]?\s?\d|не виявлено|виявлено|від`ємна|негативний|позитивний)", re.I
+)
+#: The next line may finish the name: «(СА-125)», «(АМГ, AMH Advanced) сироватка
+#: крові …», «трансглютамінази (t-TG), ELiA …» -- a bracket, after at most one
+#: lower-case word.  «Діти (ж) ≤ 60 д.» and «плазма крові новонароджені (1
+#: день)» are the reference and specimen columns, not the name.
+ESKULAB_NAME_TAIL_RE = re.compile(r"^(?:[а-яіїєґa-z][\w-]*\s+)?\([^)]*\)")
+#: The rest of a bracket the name left open: «(реакція» / «мікропреципітації)».
+ESKULAB_BRACKET_CLOSE_RE = re.compile(r"^[^\d()]*\)")
+#: A packet whose result the report does not carry («Даний результат можна
+#: отримати лише на пункті забору»): the order names it, the paper does not hold it.
+ESKULAB_RESULT_ELSEWHERE_RE = re.compile(r"результат можна отримати лише", re.I)
+#: EskuLab's older form, attached to an order as an image: «30511 Копрограма»
+#: under its table header.
+ESKULAB_FORM_HEADER = "Показники Результат Од. виміру"
+ESKULAB_FORM_HEADING_RE = re.compile(r"^\d{4,6}\s+([^\d\s].*)$")
+
+
+def _eskulab_test_name(line: str, following: str) -> str | None:
+    match = ESKULAB_TEST_RE.match(line)
+    result = ESKULAB_RESULT_START_RE.search(match.group(1)) if match else None
+    if not result:
+        return None
+    name = match.group(1)[:result.start()].strip()
+    if name.count("(") > name.count(")"):
+        closed = ESKULAB_BRACKET_CLOSE_RE.match(following)
+        name = f"{name} {closed.group(0)}" if closed else name[:name.rindex("(")].strip()
+    else:
+        tail = ESKULAB_NAME_TAIL_RE.match(following)
+        if tail:
+            name = f"{name} {tail.group(0)}"
+    return name or None
+
+
 def _eskulab_title(lines: list[str]) -> str | None:
     # An EskuLab order prints one coded heading per panel («2. F2005 Пакет №6.
     # Ліпідограма», «1. F5000 Коагулограма»).  The first "Пакет" line named a
     # seven-page order of lipids, liver tests, coagulation and a blood count
     # after its lipid panel alone, and that is the label every list shows.
+    # A test ordered on its own prints no code («1. Феритин 26.4 нг/мл»);
+    # an order of only such tests was titled by its file name.  Panels come
+    # first: each is many results, so a title cut for length keeps them.
     headings: list[str] = []
+    tests: list[str] = []
+    numbered_tests = any(line.startswith("Результати дослідження №") for line in lines)
     for index, line in enumerate(lines):
         match = ESKULAB_HEADING_RE.match(line)
+        if not match and index and lines[index - 1].startswith(ESKULAB_FORM_HEADER):
+            match = ESKULAB_FORM_HEADING_RE.match(line)
+        following = lines[index + 1:index + 3]
         if not match:
+            name = _eskulab_test_name(line, following[0] if following else "") if numbered_tests else None
+            if name and name not in tests:
+                tests.append(name)
             continue
-        heading = _with_wrapped_tail(match.group(1), lines[index + 1:index + 3])
+        if any(ESKULAB_RESULT_ELSEWHERE_RE.search(item) for item in lines[index + 1:index + 4]):
+            continue
+        heading = _with_wrapped_tail(match.group(1), following)
         if heading not in headings:
             headings.append(heading)
-    if not headings:
-        return None
-    if len(headings) == 1:
-        return headings[0]
+    if len(headings) + len(tests) <= 1:
+        return (headings or tests or [None])[0]
     names: list[str] = []
     for heading in headings:
         name = re.sub(r"^Пакет\s*№\s*[\d.]+\.?\s*", "", heading).strip(" .")
         if name and name not in names:
             names.append(name)
-    return _joined(names)
+    return joined_title(names + [test for test in tests if test not in names])
 
 
 def _heading_block_title(lines: list[str]) -> str | None:
@@ -478,31 +552,98 @@ def _heading_block_title(lines: list[str]) -> str | None:
     return None
 
 
+#: Synevo departments whose name says nothing about the test: the test's own
+#: heading is the line below («Загальна клініка» / «Копрограма»).
+SYNEVO_DEPARTMENTS = frozenset({"Загальна клініка"})
+#: Text a heading never carries: a result's digits, the footer's «Примітка:».
+SYNEVO_NOT_HEADING_RE = re.compile(r"\d|^Примітка")
+
+
+def _synevo_heading(lines: list[str], index: int) -> str:
+    """The heading on line `index`, with the line that closes its bracket."""
+    heading = _sub_with_space_before(SYNEVO_INDICATOR_RE, " ", lines[index]).strip()
+    following = lines[index + 1] if index + 1 < len(lines) else ""
+    if heading.count("(") > heading.count(")") and following.endswith(")") and "(" not in following:
+        heading = f"{heading} {following}"
+    return heading
+
+
+def _synevo_sections(lines: list[str]) -> list[str]:
+    """The section under the first table header, or the tests under a department.
+
+    The section is the line under the table header.  On a continuation page
+    that line may be a result row («Глікований гемоглобін (HbA1c) 5.24 % 4.8
+    - 5.9») or the footer's «Примітка:», neither of which names anything.
+    Under a department, each page's first heading is a test of its own.
+    """
+    sections: list[str] = []
+    department = False
+    for index, line in enumerate(lines[:-1]):
+        if line != SYNEVO_TABLE_HEADER:
+            continue
+        first = lines[index + 1]
+        if not SYNEVO_INDICATOR_RE.search(first) and SYNEVO_NOT_HEADING_RE.search(first):
+            if department:
+                continue
+            break
+        section = _strip_synevo_city(_synevo_heading(lines, index + 1))
+        if section in SYNEVO_DEPARTMENTS and index + 2 < len(lines):
+            if SYNEVO_NOT_HEADING_RE.search(lines[index + 2]):
+                return [section]
+            department, section = True, _synevo_heading(lines, index + 2)
+        if section and section not in sections:
+            sections.append(section)
+        if not department:
+            break
+    return sections
+
+
 def _synevo_title(lines: list[str]) -> str | None:
     if SYNEVO_TABLE_HEADER not in lines:
         return None
-    # The section («Біохімія», «Аналіз крові розгорнутий (ЗАК)») is the line
-    # under the table header.  On a continuation page that line may be a
-    # result row («Глікований гемоглобін (HbA1c) 5.24 % 4.8 - 5.9») or the
-    # footer's «Примітка:», neither of which names anything.
-    section_lines = lines[lines.index(SYNEVO_TABLE_HEADER) + 1:][:1]
-    section = ""
-    if section_lines and (
-        SYNEVO_INDICATOR_RE.search(section_lines[0])
-        or not re.search(r"\d|^Примітка", section_lines[0])
-    ):
-        section = _sub_with_space_before(SYNEVO_INDICATOR_RE, " ", section_lines[0]).strip()
     panels: list[tuple[str, str]] = []
-    for line in lines:
-        line = _sub_with_space_before(SYNEVO_INDICATOR_RE, " ", line).strip()
+    for index, line in enumerate(lines):
+        line = _synevo_heading(lines, index)
         match = re.match(r"^Пакет\s*№\s*[\d.]+\s*\((.+)\)$", line)
         if match and line not in [panel for panel, _ in panels]:
             panels.append((line, match.group(1)))
     if len(panels) == 1:
         return panels[0][0]
     if panels:
-        return _joined([name for _, name in panels])
-    return _strip_synevo_city(section) or None
+        return joined_title([name for _, name in panels])
+    # The section («Біохімія», «Аналіз крові розгорнутий (ЗАК)») is the line
+    # under the table header; a department is replaced by the test under it.
+    return joined_title(_synevo_sections(lines)) or None
+
+
+#: The footer of Synevo's illustrated companion report: «<patient> / Пакет № 183
+#: (Все під контролем для жінок) / 13.05.2023 / стор. 2».  Its cover prints the
+#: packet name over three lines, and the first alone («Пакет № 183») was the title.
+SYNEVO_COMPANION_FOOTER_RE = re.compile(r"/ (Пакет\s*№\s*[\d.]+\s*\([^)]+\)) / \d{2}\.\d{2}\.\d{4}")
+
+
+def _synevo_companion_title(text: str) -> str | None:
+    match = SYNEVO_COMPANION_FOOTER_RE.search(text)
+    return match.group(1) if match else None
+
+
+#: A POLYCHECK chip prints its panel beside the patient's surname: «<surname>
+#: Харчова 20-I».  The labels are images; the panel name is the last two words.
+POLYCHECK_PANEL_RE = re.compile(r"(\S+\s+\d+-[IVX]+)$")
+#: Latin letters POLYCHECK's software writes inside Cyrillic words («Харчовa»).
+LATIN_HOMOGLYPHS = str.maketrans("aceiopxyABCEHIKMOPTX", "асеіорхуАВСЕНІКМОРТХ")
+
+
+def _polycheck_title(text: str, lines: list[str]) -> str | None:
+    if "polycheck" not in text.casefold() or not lines:
+        return None
+    panel = POLYCHECK_PANEL_RE.search(lines[0])
+    if not panel:
+        return "POLYCHECK"
+    name, code = panel.group(1).split(maxsplit=1)
+    if re.search(r"[а-яіїєґ]", name, re.I):
+        name = name.translate(LATIN_HOMOGLYPHS)
+    return f"POLYCHECK - {name} {code}"
 
 
 def _consultation_title(lines: list[str]) -> str | None:
@@ -640,6 +781,8 @@ def _keyword_title(lines: list[str]) -> str | None:
 
 #: A clinic document fetched by lab sync is saved as «<clinic>-<document id>
 #: <YYYY-MM-DD> <the clinic's own name for it>.pdf» (labsync.doctoreleks).
+#: «Висновок ЕЕГ»: a study's conclusion as a heading, named by its abbreviation.
+STUDY_CONCLUSION_RE = re.compile(r"^Висновок\s+[А-ЯІЇЄҐA-Z][А-ЯІЇЄҐA-Zа-яіїєґa-z]*[А-ЯІЇЄҐA-Z]$")
 CLINIC_FILENAME_RE = re.compile(r"^(?P<clinic>[a-z]+)-\d+(?:-\d+)?\s+(?P<day>\d{4}-\d{2}-\d{2})\s+(?P<title>\S.*)$")
 
 
@@ -673,8 +816,10 @@ def extract_title(text: str, filename: str, clinical_type: str) -> str:
     if clinic:
         # The clinic's own name for the document outranks a heading guessed
         # from its text («Консультація лікаря-кардіолога», not the first
-        # finding line of the ultrasound it quotes).
-        return clinic["title"][:240]
+        # finding line of the ultrasound it quotes) -- except a study the
+        # report prints at its head: the clinic filed an EEG as «Огляд лікаря».
+        study = next((line for line in text.splitlines()[:5] if STUDY_CONCLUSION_RE.match(line.strip())), None)
+        return clean_title(study) if study else clinic["title"][:240]
     if clinical_type == "diagnostic_image":
         return "Diagnostic image"
     if clinical_type == "electrocardiogram":
@@ -684,6 +829,8 @@ def extract_title(text: str, filename: str, clinical_type: str) -> str:
         lambda: _eskulab_title(lines),
         lambda: _heading_block_title(lines),
         lambda: _synevo_title(lines),
+        lambda: _synevo_companion_title(text),
+        lambda: _polycheck_title(text, lines),
         lambda: _typed_title(text, lines, clinical_type),
         lambda: _keyword_title(lines),
     )
@@ -706,7 +853,7 @@ _VENDOR_RULES: tuple[tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], st
     # «synevo-<order>.pdf» is how lab sync names a Synevo download; the
     # illustrated companion report it fetches prints no lab name at all.
     (("сінево", "synevo"), ("__synevo__", "synevo-"), (), "Synevo", "https://www.synevo.ua"),
-    (("esculab.com", "елаб"), ("__eskulab__",), ("Apache FOP",), "EskuLab", "https://esculab.com"),
+    (("esculab.com", "елаб"), ("__eskulab__", "eskulab-"), ("Apache FOP",), "EskuLab", "https://esculab.com"),
     # Medical centre «Veselka», operated by ТзОВ «Повноділ»; its
     # vaccination card prints only the operator's name.
     (("повноділ", "veselka.clinic"), (), (), "Veselka Medical Center", "https://veselka.clinic"),
@@ -723,6 +870,8 @@ LABORATORY_TOKENS = (
     "електроліти крові",
     "носійства гену hla",
     "аутоімунна стандартна",
+    # POLYCHECK (Biocheck) specific-IgE chips, as EskuLab issues them.
+    "polycheck",
 )
 #: Text that only a report carrying result values prints.
 RESULT_PRESENT_TOKENS = (
@@ -730,6 +879,8 @@ RESULT_PRESENT_TOKENS = (
     "результат дослідження", "мікроорганізм", "kual/l", "kua/l",
     "загальний ige:", "ige <", "росту аеробної", "антигени діапазон",
     "ro/ss-a 52", "показники одиниці результати", "форма № 225/о", "форма № 228/о",
+    # POLYCHECK's class legend, printed under the allergen rows.
+    "антитіла відсутні",
 )
 RESULT_TYPES = frozenset({"laboratory", "microbiology", "allergy"})
 
@@ -892,7 +1043,7 @@ def classify_document(
     if meaningful_chars < 80 and not has_embedded_ocr and mime_type == "application/pdf":
         status = "attachment_only"
 
-    order_identifier = extract_order_identifier(text)
+    order_identifier = extract_order_identifier(text, filename)
     title = extract_title(text, filename, clinical_type)
     confidence = 0.98 if vendor != UNKNOWN_VENDOR and clinical_type != "clinical_report" else 0.75
     if status in {"attachment_only", "result_not_present"}:
