@@ -10057,7 +10057,8 @@ def document_detail(
             pages=pages, tags=tags, relations=relations, concepts=concepts, part_candidates=part_candidates,
             dup_error=f"dup.error_{dup_error}" if dup_error in DUPLICATE_ERRORS else None,
             finding_error=f"doc.finding_error_{finding_error}" if finding_error in FINDING_ERRORS else None,
-            health_areas=localized_health_areas(),
+            # A written conclusion is never about what only a wearable measures.
+            health_areas=[area for area in localized_health_areas() if area["id"] not in _DEVICE_ONLY_AREAS],
             rescan_queued=rescan == "queued", parser_version=PARSER_VERSION,
             known_vendors=known_vendors, document_kinds=_document_kinds(),
             issue_reports=issue_reports, ai_scope_label=document["title_text"],
@@ -10426,6 +10427,12 @@ def apply_ai_metadata(
             document_id=document_id,
         )
     return RedirectResponse(f"/documents/{document_id}#side-panel-ai", status_code=303)
+
+#: Areas fed only by devices (sleep, activity, body, mobility, environment).
+_DEVICE_ONLY_AREAS = frozenset(
+    str(area["id"]) for area in HEALTH_AREAS
+    if area["categories"] and all(str(c).startswith("device_") or c == "body" for c in area["categories"])
+)
 
 @router.post("/documents/{document_id}/metadata", responses=_RESPONSES_400_401_403_404)
 def edit_document_metadata(

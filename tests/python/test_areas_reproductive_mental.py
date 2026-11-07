@@ -23,3 +23,9 @@ def test_mental_health_area_is_named_in_both_languages():
         assert translate_phrase(area["description"]) != area["description"]
     finally:
         reset_locale(token)
+
+
+def test_conclusion_form_offers_no_device_only_area():
+    from anamna.web.app import _DEVICE_ONLY_AREAS
+    assert {"sleep", "activity", "body", "mobility", "environment"} <= _DEVICE_ONLY_AREAS
+    assert not {"reproductive", "mental", "digestive", "heart"} & _DEVICE_ONLY_AREAS
