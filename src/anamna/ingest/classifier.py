@@ -870,8 +870,6 @@ LABORATORY_TOKENS = (
     "електроліти крові",
     "носійства гену hla",
     "аутоімунна стандартна",
-    # POLYCHECK (Biocheck) specific-IgE chips, as EskuLab issues them.
-    "polycheck",
 )
 #: Text that only a report carrying result values prints.
 RESULT_PRESENT_TOKENS = (
@@ -966,7 +964,9 @@ def _content_type(filename: str, mime_type: str, folded: str) -> str:
         clinical_type = "radiology_xray"
     elif _is_ultrasound(filename, folded):
         clinical_type = "ultrasound"
-    elif _any_in(folded, ("alex2", "алергодіагност", "алерген")):
+    # POLYCHECK (Biocheck) specific-IgE chips, as EskuLab issues them, are an
+    # allergy panel like ALEX²: the same reader and the same review.
+    elif _any_in(folded, ("alex2", "алергодіагност", "алерген", "polycheck")):
         clinical_type = "allergy"
     elif re.search(r"форма\s*№\s*(?:210|225|228)/о", folded):
         clinical_type = "laboratory"

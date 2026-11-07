@@ -235,10 +235,10 @@ POLYCHECK_TEXT = (
 )
 
 
-def test_a_polycheck_chip_from_eskulab_is_a_dated_laboratory_report():
+def test_a_polycheck_chip_from_eskulab_is_a_dated_allergy_report():
     pages = [page(POLYCHECK_TEXT, ocr="[Embedded image region 1]\nPOLYCHECK®\nwww.polycheck.de\n")]
     result = classify_document("eskulab-10000005.pdf", "application/pdf", pages)
-    assert (result.vendor, result.clinical_type, result.status) == ("EskuLab", "laboratory", "final")
+    assert (result.vendor, result.clinical_type, result.status) == ("EskuLab", "allergy", "final")
     assert (result.report_date, result.order_identifier) == ("2024-11-18", "10000005")
     # The panel as printed, its Latin «a» read as the Cyrillic letter it stands for.
     assert result.title == "POLYCHECK - Харчова 20-I"
