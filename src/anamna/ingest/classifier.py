@@ -832,10 +832,14 @@ def _labelled_study_title(lines: list[str], clinical_type: str) -> str | None:
 
 
 def _keyword_title(lines: list[str]) -> str | None:
-    for line in lines:
+    for index, line in enumerate(lines):
         if TITLE_STOP_RE.search(line):
             return None
         if len(line) <= 240 and any(token in line.upper() for token in KEYWORD_TITLE_TOKENS):
+            # A bracket the heading leaves open closes on the next line:
+            # «Бакпосів ... + антибіотикограма (у разі виявлення» /
+            # «умовно-патогенної та патогенної мікрофлори)».
+            line = _synevo_heading(lines, index)
             return normalise_heading(re.sub(r"^Ділянка обстеження:\s*", "", line))
     return None
 
