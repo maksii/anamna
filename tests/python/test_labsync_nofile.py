@@ -220,3 +220,22 @@ def test_the_pages_say_where_the_values_came_from(tmp_path: Path, monkeypatch, l
     assert source_text in client.get(f"/metrics/{ANTIGEN}").text
     listing = client.get("/documents").text
     assert ("Lab&#39;s online record, no PDF" if locale == "en" else "Дані лабораторії, без PDF") in listing
+
+
+def test_method_lines_of_a_lab_record_are_not_its_reference(tmp_path: Path, monkeypatch):
+    """«Безціанидовий SLS-метод» under the bands says how, not what is normal."""
+    row = {"test": "Гемоглобін (HGB)", "result": "131", "units": "г/л", "resulttype": "", "state": "normal",
+           "norm": ["Жінки: 120.0 - 140.0", "Безціанидовий SLS-метод", "Метод ІФА: до 5.0"]}
+    parsed = labsync._record_value(row)
+    assert parsed.reference_text == "Жінки: 120.0 - 140.0; Метод ІФА: до 5.0"
+    settings, user_id, _ = connected(tmp_path, monkeypatch)
+    stub_intake(monkeypatch, settings, user_id, {})
+    sync(settings, user_id, monkeypatch, NOFILE)
+    # A record filed before the rule existed is cleaned by the repair.
+    with connect(settings) as connection:
+        connection.execute("UPDATE observations SET vendor_reference_text=?",
+                           ("Жінки: 120.0 - 140.0; Виконано на аналізаторі VES MATIC CUBE 30",))
+    assert labsync.recheck(settings)["references"] == 1
+    with connect(settings) as connection:
+        assert connection.execute("SELECT vendor_reference_text FROM observations").fetchone()[0] == "Жінки: 120.0 - 140.0"
+    assert labsync.recheck(settings)["references"] == 0

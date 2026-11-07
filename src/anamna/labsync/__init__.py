@@ -1488,6 +1488,16 @@ def _record_line(row: dict) -> str:
     return f"{row['test']}: {value}" + (f" ({norm})" if norm else "")
 
 
+#: A line of the lab's reference block that says how it was measured
+#: («Безціанидовий SLS-метод», «Виконано на аналізаторі ...»), not what is normal.
+_METHOD_NOTE_RE = re.compile(r"метод|аналізатор|реагент|тест-систем|обладнан|^\s*виконано", re.I)
+_INTERVAL_RE = re.compile(r"\d\s*[-–]\s*\d|[<>≤≥]\s*\d|\bдо\s+\d")
+
+
+def _method_note(line: str) -> bool:
+    return bool(_METHOD_NOTE_RE.search(line)) and not _INTERVAL_RE.search(line)
+
+
 def _record_value(row: dict) -> ParsedObservation | None:
     """A lab row as a value, or None for a heading, a descriptive block
     (microbiology, cytology — kept in the record file, not split into values)
@@ -1497,7 +1507,7 @@ def _record_value(row: dict) -> ParsedObservation | None:
             or _PLACEHOLDER_RE.search(result)):
         return None
     sign, number = parse_result(result)
-    norm = "; ".join(row["norm"]) or None
+    norm = "; ".join(line for line in row["norm"] if not _method_note(line)) or None
     low, high = _bounds(norm)
     return ParsedObservation(
         raw_name=row["test"], value_numeric=number, value_text=None if number is not None else result,
@@ -1941,7 +1951,11 @@ def _apply_lab_flags(connection, user_id: str, key: str, order_id: str, check: d
         if not obs:
             continue
         agrees = item["cls"] in {"match", "name_mismatch"}
-        if agrees and item["flag"] == "lab_out_ours_in":
+        # An adopted flag is read again too: its band depends on the
+        # person's age and sex, and a reading made before the profile had
+        # them ("borderline" between a woman's and a man's bands) must not
+        # outlive the profile being filled in.
+        if agrees and (item["flag"] == "lab_out_ours_in" or (obs["from_lab"] and item["flag"] == "lab_flag_adopted")):
             done["set"] += _flag_from_lab(connection, user_id, key, order_id, item, obs)
         elif obs["from_lab"] and not (agrees and item["flag"] == "lab_flag_adopted"):
             done["undone"] += _undo_lab_flag(connection, user_id, key, order_id, obs)
@@ -1962,9 +1976,11 @@ def _flag_from_lab(connection, user_id: str, key: str, order_id: str, item: dict
                                        else None)
     changed = connection.execute(
         """UPDATE observations SET vendor_interpretation=?, vendor_interpretation_source='lab_record'
-            WHERE id=? AND owner_user_id=? AND vendor_interpretation_source IS NULL
-              AND (vendor_interpretation IS NULL OR vendor_interpretation IN ('', 'within_vendor_range'))""",
-        (item["lab_reading"], obs["id"], user_id),
+            WHERE id=? AND owner_user_id=? AND (
+                  (vendor_interpretation_source IS NULL
+                   AND (vendor_interpretation IS NULL OR vendor_interpretation IN ('', 'within_vendor_range')))
+               OR (vendor_interpretation_source='lab_record' AND COALESCE(vendor_interpretation, '') <> ?))""",
+        (item["lab_reading"], obs["id"], user_id, item["lab_reading"]),
     ).rowcount
     if not changed:
         return 0
@@ -2073,15 +2089,38 @@ def _review_tasks(connection, user_id: str, document_id: str, lab_name: str, ord
         (user_id, document_id, f"The {lab_name} record of order {order_id} %")).fetchall()
 
 
+def _clean_record_references(connection) -> int:
+    """Drop the method lines a lab record filed into its values' reference
+    text before :func:`_method_note` existed; the bounds are read again from
+    what is left.  Only the lab's own record rows, never a parsed report."""
+    changed = 0
+    for row in connection.execute(
+            "SELECT id, vendor_reference_text FROM observations WHERE extraction_method=? "
+            "AND vendor_reference_text IS NOT NULL", (LAB_RECORD,)).fetchall():
+        lines = str(row["vendor_reference_text"]).split("; ")
+        kept = [line for line in lines if not _method_note(line)]
+        if len(kept) == len(lines):
+            continue
+        norm = "; ".join(kept) or None
+        low, high = _bounds(norm)
+        connection.execute(
+            "UPDATE observations SET vendor_reference_text=?, vendor_reference_low=?, vendor_reference_high=? WHERE id=?",
+            (norm, low, high, row["id"]))
+        changed += 1
+    return changed
+
+
 def recheck(settings: Settings) -> dict[str, int]:
     """Re-run every stored order's post-sync steps without calling any lab:
     the repair after a deploy that changed them.  Idempotent — a second run
     changes nothing.  Takes back unfit units, re-points an order linked to a
     document with no values at the one holding its results, then
     :func:`apply_check` per order."""
-    summary = {"orders": 0, "relinked": 0, "units": 0, "units_undone": 0, "flags": 0, "flags_undone": 0, "tasks": 0}
+    summary = {"orders": 0, "relinked": 0, "units": 0, "units_undone": 0, "flags": 0, "flags_undone": 0, "tasks": 0,
+               "references": 0}
     with transaction(settings) as connection:
         summary["units_undone"] = undo_unfit_units(connection)
+        summary["references"] = _clean_record_references(connection)
         for row in connection.execute(
                 """SELECT * FROM lab_orders WHERE state IN ('imported', 'linked') AND document_id IS NOT NULL
                     ORDER BY owner_user_id, provider, ordered_at, order_id""").fetchall():

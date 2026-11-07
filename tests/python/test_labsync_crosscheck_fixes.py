@@ -383,3 +383,25 @@ def test_the_admin_recheck_needs_an_administrator_and_reports_what_changed(tmp_p
     assert "Re-checked 0 orders" in page
     client.cookies.set("anamna_lang", "uk")
     assert "Перевірено замовлень: 0" in client.get(done.headers["location"]).text
+
+
+def test_an_adopted_flag_is_read_again_once_the_profile_says_who_the_person_is(tmp_path: Path, monkeypatch):
+    """Adopted while the profile had no sex: between a woman's and a man's band
+    the direction is unknown.  Filling in the profile must not leave it so."""
+    settings, user_id, _ = make(tmp_path)
+    document_id = seed_doc(settings, user_id, vendor="EskuLab", order="9702", day="2026-01-10", values=[
+        ("Гемоглобін (HGB)", 118.0, "г/л", None)])
+    obs_id = f"{document_id}-0"
+    set_reference(settings, obs_id, "Жінки: 120-140 Чоловіки: 130-160", None, None, None)
+    rows = {"9702": [lab_row("Гемоглобін (HGB)", "118", "г/л", state="critical")]}
+    connect_eskulab(settings, user_id, monkeypatch, eskulab_routes([order(9702, ready=1, total=1)], rows))
+    stub_intake(monkeypatch, settings, user_id, {})
+    with connect(settings) as connection:
+        connection.execute("UPDATE patients SET sex_at_birth=NULL WHERE owner_user_id=?", (user_id,))
+    labsync.sync(settings, user_id, "eskulab", inline=True)
+    before = observation(settings, obs_id)["vendor_interpretation"]
+    with connect(settings) as connection:
+        connection.execute("UPDATE patients SET sex_at_birth='female' WHERE owner_user_id=?", (user_id,))
+    labsync.recheck(settings)
+    after = observation(settings, obs_id)
+    assert before != "low" and (after["vendor_interpretation"], after["vendor_interpretation_source"]) == ("low", "lab_record")
