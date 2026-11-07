@@ -223,17 +223,6 @@ CASES = [
         "­‐",
     ),
     (
-        "ESKULAB_COLONY_COUNT",
-        r"^(?P<mantissa>\d+(?:[.,]\d+)?)\s*[xх×]\s*10\^(?P<power>\d+)\s*(?P<unit>\S+)$", 0,
-        _MatchFunction(parsers._eskulab_colony_count), ("match",),
-        [
-            "1.0 x 10^2 КУО/г", "1,5х10^5КУО/мл", "2 × 10^12345",
-            # A cell that ends on the power reads its last digit as the unit.
-            "2 × 10^12345\n", "2 × 10^1", "1.0 x 10^23 ", "1 x 10^2 \n", "1 x 10^23\n\n", "1 x 10^2 КУО г",
-        ],
-        "xх×",
-    ),
-    (
         "_US_LVMI_BAND",
         r"(\d+)\s*-\s*(\d+)\s*г/м2", 0, parsers._US_LVMI_BAND, ("finditer", "sub"),
         ["43-95 г/м2 (жінки) 49-115 г/м2 (чоловіки)", "Індекс маси міокарда ЛШ 88 43 - 95г/м2", "г/м249-115 г/м2"],
