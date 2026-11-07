@@ -1651,6 +1651,9 @@ MESSAGES: dict[str, dict[str, str]] = {
     # away, so without this the reviewer is asked to certify a number against
     # evidence that is not on screen.
     "doc.evidence_line": {"en": "Read from the page as", "uk": "Зчитано зі сторінки"},
+    # Free text the report or the lab's own record keeps beside a result,
+    # shown as written: «… є контамінантом», «… природньо резистентний до …».
+    "doc.note_line": {"en": "Note from the laboratory or report", "uk": "Примітка лабораторії або документа"},
     # A derived eGFR row: say it was calculated, from what, and how.
     "doc.derived_from": {"en": "Calculated from", "uk": "Розраховано за"},
     "doc.derived_egfr": {

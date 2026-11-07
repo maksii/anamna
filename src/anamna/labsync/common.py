@@ -240,6 +240,13 @@ def name_key(name: object) -> str:
     return re.sub(r"\s+", "", text).strip(".,:;")
 
 
+def word_key(name: object) -> str:
+    """:func:`name_key` with single spaces kept, so a name can be found in a
+    sentence as whole words («Слиз» is not in «слизових оболонок»)."""
+    text = unicodedata.normalize("NFKC", str(name or "")).casefold().translate(_HOMOGLYPHS)
+    return " ".join(text.split())
+
+
 def loose_name_key(name: object) -> str:
     """:func:`name_key` without bracketed groups (specimen, abbreviation) and
     without a leading section label («Аналіз крові: …»).  The cross-check uses

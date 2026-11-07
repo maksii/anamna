@@ -375,6 +375,7 @@ for _determination in (
 #: Synevo prints all six of these; the app already held the other spelling.
 UNIT_SYNONYMS = {
     "мкмо/мл": _MIU_L,  # µIU/mL and mIU/L are the same quantity, exactly 1:1
+    "ммо/мл": "IU/L",   # «мМО/мл», mIU/mL: 10^-3 IU per 10^-3 L is exactly IU/L (Synevo beta-hCG)
     "f/л": "fL",         # one lab's spelling; «фл» above is what Ukrainian shows
     "пг": "pg",
     "мм/год.": "mm/h",   # the trailing full stop is the lab's, not a new unit
