@@ -1118,6 +1118,8 @@ DOCUMENT_TYPE_TITLES = {
     "administrative": "Administrative document",
     "clinical_report": "Clinical report",
     "immunization_record": "Vaccination card",
+    # A screening scale someone filled in (ASRS, NICHQ Vanderbilt).
+    "questionnaire": "Questionnaire",
 }
 
 #: A stored title that is really the ingest filename.  Showing it as the

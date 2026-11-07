@@ -319,6 +319,8 @@ PHRASES: dict[str, str] = {
     "administrative": "Адміністративний документ",
     "clinical_report": "Медичний висновок",
     "immunization_record": "Карта щеплень",
+    "questionnaire": "Опитувальник",
+    "Questionnaire": "Опитувальник",
     "Vaccination card": "Карта профілактичних щеплень",
     "native_text": "Текстовий шар PDF",
     # The extraction methods and strategies that had no Ukrainian name. A
@@ -667,6 +669,13 @@ PHRASES: dict[str, str] = {
     "LONO Clinic": "Клініка «ЛОНО»",
     "Lviv Medical Center": "Львів Медікал Центр",
     "Lviv Regional Clinical Perinatal Center": "Львівський обласний клінічний перинатальний центр",
+    "Lviv Territorial Medical Association": "КНП «Львівське територіальне медичне об'єднання»",
+    "Second Clinical Territorial Medical Association of Lviv": (
+        "КНП «Друге клінічне територіальне медичне об'єднання м. Львова»"
+    ),
+    "First Territorial Medical Association of Lviv, St. Luke's Hospital": (
+        "КНП «1 ТМО м. Львова», ВП «Лікарня Святого Луки»"
+    ),
 
     # Document type fallbacks
     "Laboratory report": "Результати аналізів",

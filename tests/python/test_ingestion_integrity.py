@@ -138,6 +138,21 @@ def test_tiff_pages_are_ocrd_separately_with_their_original_page_numbers(tmp_pat
     assert all(p["ocr_text"] == "" for p in without_ocr["pages"])
 
 
+def test_iphone_jpeg_gain_map_is_not_a_second_page(tmp_path, monkeypatch):
+    # An iPhone saves a photo as MPO: the picture, then its HDR gain map at a
+    # lower resolution.  One sheet was stored as two pages and filed as a bundle.
+    source = tmp_path / "IMG_0001.JPG"
+    Image.new("RGB", (60, 80), "white").save(
+        source, format="MPO", save_all=True, append_images=[Image.new("RGB", (30, 40), "gray")]
+    )
+    with Image.open(source) as image:
+        assert image.format == "MPO" and image.n_frames == 2
+    monkeypatch.setattr(extract, "ocr_layout_rows", lambda path, psm: "one sheet")
+    extracted = extract.extract_document(source)
+    assert extracted["page_count"] == 1
+    assert [page["ocr_text"] for page in extracted["pages"]] == ["one sheet"]
+
+
 def test_image_orientation_is_applied_before_ocr(tmp_path, monkeypatch):
     source = tmp_path / "phone.jpg"
     image = Image.new("RGB", (40, 60), "white")
