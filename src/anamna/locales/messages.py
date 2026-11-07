@@ -1508,8 +1508,16 @@ MESSAGES: dict[str, dict[str, str]] = {
     "dup.title": {"en": "Same report in another file", "uk": "Той самий документ в іншому файлі"},
     "dup.same_as": {"en": "Same report as", "uk": "Той самий документ, що й"},
     "dup.reason_text": {
-        "en": "Both files carry the same text, apart from letter case, line breaks and a file path printed in a footer.",
-        "uk": "Текст обох файлів однаковий, якщо не зважати на регістр літер, перенесення рядків і шлях до файлу в нижньому колонтитулі.",
+        "en": "Both files carry the same text, apart from letter case, line breaks, page numbers, the date and time of printing, and a file path or web address in a header or footer.",
+        "uk": "Текст обох файлів однаковий, якщо не зважати на регістр літер, перенесення рядків, номери сторінок, дату й час друку та шлях до файлу чи веб-адресу в колонтитулі.",
+    },
+    "dup.reason_content_hash": {
+        "en": "Both files were read to exactly the same text.",
+        "uk": "З обох файлів зчитано точно той самий текст.",
+    },
+    "dup.reason_same_order": {
+        "en": "Both print the same order: the same order or barcode number with the same date, or the same order and result times.",
+        "uk": "В обох надруковано те саме замовлення: той самий номер замовлення чи штрихкод із тією самою датою або той самий час замовлення й результату.",
     },
     "dup.reason_report_number": {
         "en": "Both carry the same printed report number and issue date.",
@@ -1534,6 +1542,18 @@ MESSAGES: dict[str, dict[str, str]] = {
     "dup.suggested": {
         "en": "Suggested: keep the older import. The record has been counting its values.",
         "uk": "Радимо залишити файл, імпортований раніше: його значення вже враховано в картці.",
+    },
+    "dup.reason_page_text": {
+        "en": "Nearly every word and number of one file is also in the other. A photo or scan prints no order number, so its text was compared.",
+        "uk": "Майже кожне слово й число одного файлу є і в іншому. На фото чи скані немає номера замовлення, тож порівняно текст.",
+    },
+    "dup.suggested_lab_order": {
+        "en": "Suggested: keep the file linked to the lab's order. Its values are checked against the lab's own record.",
+        "uk": "Радимо залишити файл, пов'язаний із замовленням у лабораторії: його значення звіряються із записом лабораторії.",
+    },
+    "dup.suggested_whole": {
+        "en": "Suggested: keep the whole report. The other file is a photo, screenshot or part of it.",
+        "uk": "Радимо залишити повний звіт. Інший файл - це його фото, знімок екрана чи частина.",
     },
     "dup.keep_other": {
         "en": "Keep that one: mark this copy as a duplicate",
@@ -1564,6 +1584,28 @@ MESSAGES: dict[str, dict[str, str]] = {
     "dup.rel_overlaps": {"en": "Shares some results with", "uk": "Частина результатів збігається з документом"},
     "dup.rel_results_for": {"en": "Holds the results for the order cover", "uk": "Містить результати до бланка замовлення"},
     "dup.rel_results_in": {"en": "The results for this order are in", "uk": "Результати цього замовлення є в документі"},
+    "dup.rel_supplement_of": {
+        "en": "Supplement printed for the same order as",
+        "uk": "Додаток, надрукований до того самого замовлення, що й",
+    },
+    "dup.rel_has_supplement": {
+        "en": "A supplement for this order (cell images, explanations) is in",
+        "uk": "Додаток до цього замовлення (зображення клітин, пояснення) є в документі",
+    },
+    "dup.rel_part_of": {
+        "en": "Screenshot of one report, uploaded with its first part:",
+        "uk": "Знімок екрана одного звіту, надісланий разом із його першою частиною:",
+    },
+    "dup.rel_has_part": {"en": "Next screenshot of this report:", "uk": "Наступний знімок екрана цього звіту:"},
+    "dup.parts_explain": {
+        "en": "These screenshots were uploaded together and show one report: they print the same order, or one picks up where the other ends. Each keeps its own values to check. If one belongs to another report, unlink it.",
+        "uk": "Ці знімки екрана надіслано разом, і вони показують один звіт: на них те саме замовлення, або один продовжує інший. Значення кожного перевіряються окремо. Якщо знімок належить до іншого звіту, від'єднайте його.",
+    },
+    "dup.not_part": {"en": "Not part of this report", "uk": "Це не частина цього звіту"},
+    "dup.card_part": {
+        "en": "Screenshot of one report sent in several parts. Open to see the other parts",
+        "uk": "Знімок екрана звіту, надісланого кількома частинами. Відкрийте, щоб побачити інші частини",
+    },
     "dup.explain": {
         "en": "A copy is a second file of a report already in the record. The same PDF exported again, for example. Marking it keeps the file but counts its values once, from the document you keep, and takes it out of the review queue. You can undo it from the copy.",
         "uk": "Копія - це другий файл звіту, який уже є в записі, наприклад той самий PDF, експортований ще раз. Позначена копія зберігається, але її значення враховуються один раз, з документа, який ви залишаєте, і вона зникає з черги перевірки. Це можна скасувати на сторінці копії.",
@@ -1591,6 +1633,10 @@ MESSAGES: dict[str, dict[str, str]] = {
     "dup.error_ruled": {
         "en": "Nothing was changed: this copy holds values a person checked, corrected, entered or set aside that the document you keep does not hold. Check those values on the document you keep first, or keep both.",
         "uk": "Нічого не змінено: у цій копії є значення, які людина звірила, виправила, внесла вручну чи відхилила, а в документі, який ви залишаєте, їх немає. Спершу звірте ці значення в документі, який залишаєте, або залиште обидва.",
+    },
+    "dup.error_missing": {
+        "en": "Nothing was changed: this copy holds a test the document you keep does not hold at all, so marking it would remove that result from the record. Keep this one instead, or keep both.",
+        "uk": "Нічого не змінено: у цій копії є аналіз, якого зовсім немає в документі, який ви залишаєте, тож позначення прибрало б цей результат із запису. Залиште натомість цей файл або обидва.",
     },
     "dup.error_not_duplicate": {
         "en": "Nothing was changed: this file is not marked as a copy.",

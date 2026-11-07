@@ -36,7 +36,7 @@ from .. import paperless
 from ..config import Settings, resolve_source_path
 from ..db import connect, transaction, utc_now
 from .extract import file_sha256
-from .pipeline import SUPPORTED_SUFFIXES, RereadRefused, ingest_file, reingest_document
+from .pipeline import SUPPORTED_SUFFIXES, RereadRefused, ingest_file, record_document_relations, reingest_document
 
 
 logger = logging.getLogger(__name__)
@@ -567,6 +567,7 @@ def _run_document(settings: Settings, job) -> None:
         observations=count,
     )
     if action == "ingested":
+        _relate_upload_parts(settings, str(job["owner_user_id"]), str(result["document_id"]))
         # After _finish, so a slow or absent Paperless never holds the queue's
         # progress display; push_document checks the feature and the person's
         # opt-in itself.
@@ -584,6 +585,22 @@ def _run_document(settings: Settings, job) -> None:
                 "paperless: mirroring document %s failed after a successful ingest",
                 result["document_id"], exc_info=True,
             )
+
+
+def _relate_upload_parts(settings: Settings, owner_user_id: str, document_id: str) -> None:
+    """Relate an image once its upload job names it.
+
+    Screenshots of one report are recognised by the upload batch they came in
+    (`part_of`), and the import itself runs before the job is linked to the
+    document, so an image is related again here.  Best effort: a failure
+    leaves the document imported and unlinked, never the job failed."""
+    try:
+        with transaction(settings) as connection:
+            row = connection.execute("SELECT mime_type FROM documents WHERE id=?", (document_id,)).fetchone()
+            if row and str(row["mime_type"] or "").startswith("image/"):
+                record_document_relations(connection, owner_user_id, document_id)
+    except Exception:  # noqa: BLE001
+        logger.warning("intake: relating upload %s to its batch failed", document_id, exc_info=True)
 
 
 def _run_device_export(settings: Settings, job) -> None:

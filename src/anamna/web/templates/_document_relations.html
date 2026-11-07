@@ -30,7 +30,7 @@
       <p class="an-relations-line"><strong>{{ t('dup.same_as') }} <a href="/documents/{{ other.id }}">{{ other.title_text }}</a></strong>
         <span class="an-reread-page">{{ other.report_date|datefmt }} · {{ t('doc.imported', date=other.imported_at[:10]|datefmt) }}</span></p>
       <p>{{ item.reason }}</p>
-      {% if can_act %}<p>{{ t('dup.suggested') }}</p>{% endif %}
+      {% if can_act %}<p>{{ t(item.suggested) }}</p>{% endif %}
     </div>
     {% if can_act %}
     <div class="an-reread-actions">
@@ -59,10 +59,19 @@
     {% endif %}
   </div>
   {% endfor %}
+  {% if rel.parts %}<p>{{ t('dup.parts_explain') }}</p>{% endif %}
   {% if rel.related or rel.copies %}
   <ul class="an-reread-list">
     {% for item in rel.related %}
-    <li class="an-reread-item"><p class="an-relations-line">{{ item.label }} <a href="/documents/{{ item.document.id }}">{{ item.document.title_text }}</a> <span class="an-reread-page">{{ item.document.report_date|datefmt }}</span></p></li>
+    <li class="an-reread-item"><p class="an-relations-line">{{ item.label }} <a href="/documents/{{ item.document.id }}">{{ item.document.title_text }}</a> <span class="an-reread-page">{{ item.document.report_date|datefmt }}</span></p>
+      {% if item.part and can_act %}
+      <form method="post" action="/documents/{{ document.id }}/duplicate" class="an-reread-actions">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="other_id" value="{{ item.document.id }}">
+        <button class="secondary" name="action" value="keep_both" type="submit">{{ t('dup.not_part') }}</button>
+      </form>
+      {% endif %}
+    </li>
     {% endfor %}
     {% for copy in rel.copies %}
     <li class="an-reread-item"><p class="an-relations-line">{{ t('dup.copy_held') }} <a href="/documents/{{ copy.id }}">{{ copy.title_text }}</a> <span class="an-reread-page">{{ t('doc.imported', date=copy.imported_at[:10]|datefmt) }}</span></p></li>
