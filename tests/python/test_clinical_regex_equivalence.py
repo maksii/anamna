@@ -90,6 +90,10 @@ def _old_attention(summary):
         if not clause.strip() or negated.search(clause):
             continue
         for family, pattern in health._ATTENTION_TERMS:
+            # The organ gate (a polyp of the endometrium is not the bowel's)
+            # came later and is not part of what is compared here.
+            if family == "colorectal_polyp" and health._NOT_BOWEL.search(clause):
+                continue
             for match in pattern.finditer(clause):
                 if not health._NEGATED_WORD.search(clause[: match.start()]) and family not in families:
                     families.append(family)

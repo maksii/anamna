@@ -2485,6 +2485,16 @@ _STAMP = re.compile(r"(?<!\d)(\d{1,2})[./](\d{1,2})[./]((?:19|20)\d{2})[\s,|]{1,
 #: among the last lines of one screenshot and the first of the next.
 _MIN_SEAM_LINE = 25
 _SEAM_LINES = 8
+#: Lines that are never a seam: the clinic's letterhead (address, phones,
+#: e-mail) and the person's header (name, date of birth, the visit's date).
+#: Two separate papers of one visit print them alike at the top of each, and
+#: a short paper's last lines are its first.
+_NOT_A_SEAM = re.compile(
+    r"www\.|https?://|@\w|\.com\b|\+?\s*38\s*\(?0\d|\bтел\b|тел\.|\bвул\.|\bпросп|\bбуд\.|\bтзов\b|\bтов\b|ліцензі|єдрпоу"
+    r"|ел\.?\s*пошта|e-?mail|прізвище|\bпіб\b|пацієнт\w*\s*[:：]"
+    r"|дата\s+(?:народження|звернення|візиту|прийому|обстеження|консультації)",
+    re.I,
+)
 
 
 @dataclass(frozen=True)
@@ -2528,6 +2538,10 @@ def _page_texts(connection, document_ids: list[str]) -> dict[str, _PageText]:
         folded = [" ".join(_NOT_LETTER_OR_DIGIT.sub(" ", line.casefold()).split()) for line in raw]
         words = [word for line in folded for word in line.split()]
         long_lines = [line for line in folded if len(line) >= _MIN_SEAM_LINE]
+        seam_lines = [
+            line for line, printed in zip(folded, raw)
+            if len(line) >= _MIN_SEAM_LINE and not _NOT_A_SEAM.search(printed)
+        ]
         found[document_id] = _PageText(
             key=" ".join(sorted(words)),
             words=frozenset(word for word in words if len(word) >= 4 and not any(c.isdigit() for c in word)),
@@ -2541,8 +2555,8 @@ def _page_texts(connection, document_ids: list[str]) -> dict[str, _PageText]:
                 if int(hour) < 24 and int(minute) < 60 and 1 <= int(month) <= 12 and 1 <= int(day) <= 31
             ),
             lines=frozenset(long_lines),
-            head=tuple(long_lines[:_SEAM_LINES]),
-            tail=tuple(long_lines[-_SEAM_LINES:]),
+            head=tuple(seam_lines[:_SEAM_LINES]),
+            tail=tuple(seam_lines[-_SEAM_LINES:]),
         )
     return found
 

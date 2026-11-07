@@ -3342,11 +3342,23 @@ _VISIT_LINE = tuple(
 _VISIT_FEVER = re.compile(
     r"(?<!\w)(?:Суб)?[Фф]ебрильн\w*\s+Т\s*\(\s*(?P<value>\d{2}[.,]\d)\s*(?:[\u00ad\-‐]\s*)?на\s+прийомі\s*\)"
 )
-_VISIT_BP_LABEL = re.compile(r"(?<!\w)(?:АТ|А\.\s*Т\.|Артеріальний\s+тиск)(?:\s*:|\s+[-–]\s)")
-#: One reading after «АТ:», with the arm when the note names one.
-_VISIT_BP_READING = re.compile(
-    rf"(?:(?P<site>(?:прав|лів)\w*\s+рук\w*)\s*:?\s*)?(?P<systolic>\d{{2,3}})\s*/\s*(?P<diastolic>\d{{2,3}})\s*(?P<unit>{_VISIT_MMHG})"
+#: OCR of a photo reads «АТ» in Latin letters and may drop the colon:
+#: «AT 90/55 мм р» -- then the reading itself, with its millimetres, must
+#: follow the label directly.
+_VISIT_BP_LABEL = re.compile(
+    r"(?<!\w)(?:[АA][ТT]|А\.\s*Т\.|Артеріальний\s+тиск)(?:\s*:|\s+[-–]\s|\s+(?=\d{2,3}\s*/\s*\d{2,3}\s*мм))"
 )
+#: One reading after «АТ:», with the arm when the note names one.  A photo's
+#: OCR cuts «мм рт.ст.» short («мм р»); it is still millimetres of mercury.
+_VISIT_BP_READING = re.compile(
+    rf"(?:(?P<site>(?:прав|лів)\w*\s+рук\w*)\s*:?\s*)?(?P<systolic>\d{{2,3}})\s*/\s*(?P<diastolic>\d{{2,3}})\s*"
+    rf"(?P<unit>{_VISIT_MMHG}|мм\.?\s*р(?:т\.?)?(?!\w))"
+)
+#: A weight or a height on a line of its own with no unit printed: «Вага - 54»,
+#: «Зріст 1.64».  A body weight in a Ukrainian note is kilograms; a height
+#: written as 1.40-2.20 is metres and is stored in the catalogue's
+#: centimetres (164, the same measurement).
+_VISIT_BARE = re.compile(r"^(?P<label>Вага|Зріст)(?:\s*[:\-–]\s*|\s+)(?P<value>\d{1,3}(?:[.,]\d{1,2})?)\.?$")
 
 #: Header-row tables: a line of column names, then a line of values under
 #: them.  Each column says which unit its cell may carry; a row that does not
@@ -3417,8 +3429,9 @@ def _visit_pressure(match: re.Match, page_number: int, evidence: str, observed_a
     # keeps the side of a paired organ: one concept, so both arms share one
     # trend and one verdict, yet two identical «120/80» readings stay two rows.
     site = collapse_space(match.group("site")).casefold() if match.group("site") else None
+    unit = match.group("unit") if re.fullmatch(_VISIT_MMHG, match.group("unit")) else "мм рт.ст."
     for kind, name in (("systolic", "Систолічний артеріальний тиск"), ("diastolic", "Діастолічний артеріальний тиск")):
-        item = _visit_value(kind, name, match.group(kind), match.group("unit"), page_number, evidence, observed_at, site)
+        item = _visit_value(kind, name, match.group(kind), unit, page_number, evidence, observed_at, site)
         if item:
             yield item
 
@@ -3486,6 +3499,20 @@ def _visit_table_rows(
     return found
 
 
+def _visit_bare(match: re.Match, page_number: int, evidence: str, observed_at: str | None) -> list[ParsedObservation]:
+    printed = match.group("value")
+    if match.group("label") == "Вага":
+        item = _visit_value("weight", "Вага", printed, "кг", page_number, evidence, observed_at)
+        return [item] if item else []
+    metres = parse_decimal(printed)
+    if metres is None or not 1.4 <= metres <= 2.2 or not re.search(r"[.,]", printed):
+        item = _visit_value("height", "Зріст", printed, "см", page_number, evidence, observed_at)
+        return [item] if item else []
+    item = _visit_value("height", "Зріст", str(round(metres * 100, 1)), "см", page_number, evidence, observed_at)
+    # The paper's figure is metres; the stored one is not that token.
+    return [replace(item, value_printed=None)] if item else []
+
+
 def _visit_line_rows(line: str, page_number: int, observed_at: str | None) -> list[ParsedObservation]:
     """The labelled values, the quoted fever and the pressures on one line."""
     found: list[ParsedObservation] = []
@@ -3493,6 +3520,9 @@ def _visit_line_rows(line: str, page_number: int, observed_at: str | None) -> li
     matches = [whole] if whole else [
         (kind, match) for kind, pattern in _VISIT_INLINE for match in pattern.finditer(line)
     ]
+    bare = None if matches else _VISIT_BARE.match(line)
+    if bare:
+        found.extend(_visit_bare(bare, page_number, line, observed_at))
     for kind, match in matches:
         item = _visit_value(
             kind, _visit_label(match.group("label")), match.group("value"),
@@ -4307,18 +4337,31 @@ def _us_n(group: str) -> str:
 
 #: «81 * 35.1», «_81_ х _23_» (Cyrillic х), «9,4х4,6», «116,4 x 56,9».
 _US_TIMES = r"\s*[*xхXХ×]\s*"
-_US_PAIR = rf"{_us_n('a')}{_US_TIMES}{_us_n('b')}\s*мм"
+#: Between two dimensions, Latin or Cyrillic, either case: OCR reads InMed's
+#: «7x4» as «7X4» and «7,2х3,3» as «7,2Х3,3».
+_US_X = r"[xхXХ×]"
+#: Millimetres as a photo's OCR spells them: «мм», «м.м» (typed so on the
+#: paper), Latin «MM».
+_US_MM = r"[мМmM]\.?[мМmM]"
+_US_PAIR = rf"{_us_n('a')}{_US_TIMES}{_us_n('b')}\s*{_US_MM}"
 #: The organ headings an abdominal protocol prints, Expert's and Veselka's
 #: alike.  A measurement is read only inside its own organ's text, so the
 #: «Розмірами: A * B мм» every organ prints cannot be filed under another one.
+#: UltraMed prints them in capitals («ПЕЧІНКА.», «ЖОВЧНИЙ МІХУР.») and spells
+#: the gallbladder «Жовчний»; a lower-case «печінка» inside prose is not a
+#: heading, so only the two printed cases are read.
+_US_ORGAN_NAMES = (
+    "Печінка", "Жовчевий міхур", "Жовчний міхур", "Підшлункова залоза", "Права нирка", "Права Нирка",
+    "Ліва нирка", "Ліва Нирка", "Селезінка", "Сечовий міхур", "Висновок",
+)
 _US_ORGAN = re.compile(
-    r"(Печінка|Жовчевий міхур|Підшлункова залоза|Права [Нн]ирка|Ліва [Нн]ирка|Селезінка|Сечовий міхур|ВИСНОВОК|Висновок)"
+    "(" + "|".join(dict.fromkeys(form for name in _US_ORGAN_NAMES for form in (name, name.upper()))) + r")(?![^\W\d_])"
 )
 
 
 def _us_organ_key(heading: str) -> str:
-    """InMed capitalises «Права Нирка»; one key per organ either way."""
-    return heading.replace(" Нирка", " нирка")
+    """One key per organ, however the protocol cases or spells its heading."""
+    return heading.capitalize().replace("Жовчний", "Жовчевий")
 
 
 def _us_heading(text: str) -> str | None:
@@ -4490,6 +4533,13 @@ def _us_bladder_volume(bladder: str, page_number: int) -> list[ParsedObservation
     return rows
 
 
+def _us_note(printed: str | None, *more: str | None) -> str | None:
+    """A row's note: the size as printed (a triple read down to its largest
+    figure keeps all three here), then anything else the row carries."""
+    parts = [collapse_space(printed).rstrip(" .;,") if printed else None, *more]
+    return "; ".join(part for part in parts if part) or None
+
+
 def _us_thyroid(flat: str, page_number: int) -> list[ParsedObservation]:
     """Isthmus, lobe length and the TI-RADS category per lobe.
 
@@ -4507,7 +4557,8 @@ def _us_thyroid(flat: str, page_number: int) -> list[ParsedObservation]:
         rf"(?P<site>Права частка|Ліва частка)\s*:\s*{_us_n('a')}\s*/\s*{_us_n('b')}\s*/\s*{_us_n('c')}\s*мм", flat
     ):
         length = max((found.group("a"), found.group("b"), found.group("c")), key=parse_decimal)
-        rows.append(_us_row("Thyroid lobe length", length, "мм", found.group(0), page_number, specimen=found.group("site")))
+        item = _us_row("Thyroid lobe length", length, "мм", found.group(0), page_number, specimen=found.group("site"))
+        rows.append(replace(item, note=_us_note(found.group(0))) if item else None)
     scale = re.search(r"TI-?RADS\s*:?(?P<body>(?:\s*(?:Права|Ліва) частка\s*[-–]\s*\d\s*категорі\w*)+)", flat)
     for found in re.finditer(r"(?P<site>Права частка|Ліва частка)\s*[-–]\s*(?P<v>\d)\s*категорі\w*", scale.group("body") if scale else ""):
         item = _us_row("Thyroid TI-RADS category", found.group("v"), "", found.group(0), page_number, specimen=found.group("site"))
@@ -4892,10 +4943,12 @@ def _us_inmed_thyroid(flat: str, page_number: int) -> list[ParsedObservation]:
                              rf"(?P<v>{_US_N})\s*см\b\.?(?:\s*куб)?", flat):
         site = _US_LOBE[found.group("site")]
         rows.append(_us_row("Thyroid volume", found.group("v"), "см3", found.group(0), page_number, specimen=site))
-        dims = re.fullmatch(rf"\s*({_US_N})\s*[xх×]\s*({_US_N})\s*[xх×]\s*({_US_N})\s*(?:мм)?\s*;?\s*", found.group("dims"))
+        dims = re.fullmatch(rf"\s*({_US_N})\s*{_US_X}\s*({_US_N})\s*{_US_X}\s*({_US_N})\s*(?:мм)?\s*;?\s*", found.group("dims"))
         if dims:
-            rows.append(_us_row("Thyroid lobe length", max(dims.groups(), key=parse_decimal), "мм", found.group(0),
-                                page_number, specimen=site))
+            item = _us_row("Thyroid lobe length", max(dims.groups(), key=parse_decimal), "мм", found.group(0),
+                           page_number, specimen=site)
+            printed = found.group(0)[: found.end("dims") - found.start()]
+            rows.append(replace(item, note=_us_note(printed)) if item else None)
     found = re.search(rf"Сумарний\s+об['’]єм\s+(?P<v>{_US_N})\s*см\b\.?(?:\s*куб)?", flat)
     if found:
         rows.append(_us_row("Thyroid volume", found.group("v"), "см3", found.group(0), page_number, specimen="Сумарний"))
@@ -5039,8 +5092,8 @@ def _us_pelvic(lines: list[str], page_number: int) -> list[ParsedObservation]:
     cycle = _us_cycle_note(body)
     rows: list[ParsedObservation | None] = []
     uterus = re.search(
-        rf"(?:Тіло\s+матки:|Розмір\w*:)\s*довж(?:ина|\.|,)?\s*(?P<l>{_US_N})\s*мм[.;,]?\s*"
-        rf"передньо-задн(?:ій|\.)(?:\s+розмір)?\s*(?P<ap>{_US_N})\s*мм[.;,]?\s*(?:поперечний\s+розмір|ширина)\s*(?P<w>{_US_N})\s*мм",
+        rf"(?:Тіло\s+матки:|Розмір\w*:)\s*довж(?:ина|\.|,)?\s*(?P<l>{_US_N})\s*{_US_MM}[.;,]?\s*"
+        rf"передньо-задн(?:ій|\.)(?:\s+розмір)?\s*(?P<ap>{_US_N})\s*{_US_MM}[.;,]?\s*(?:поперечний\s+розмір|ширина)\s*(?P<w>{_US_N})\s*{_US_MM}",
         body, re.I,
     )
     if uterus and _us_clean(uterus.group("l"), uterus.group("ap"), uterus.group("w")):
@@ -5057,8 +5110,8 @@ def _us_pelvic(lines: list[str], page_number: int) -> list[ParsedObservation]:
 
 def _us_endometrium(body: str, page_number: int, cycle: str | None) -> list[ParsedObservation]:
     found = re.search(
-        rf"Ендометрій\b(?:(?!Шийка|яйник|яєчник).){{0,80}}?(?:Товщина\s+в\s+передньо-задньому\s+напрямку|товщиною)\s*(?P<v>{_US_N})\s*мм"
-        rf"|Товщина\s+маткового\s+М-ехо:\s*(?P<m>{_US_N})\s*мм",
+        rf"Ендометрій\b(?:(?!Шийка|яйник|яєчник).){{0,80}}?(?:Товщина\s+в\s+передньо-задньому\s+напрямку|товщиною)\s*(?P<v>{_US_N})\s*{_US_MM}"
+        rf"|Товщина\s+маткового\s+М-ехо:\s*(?P<m>{_US_N})\s*{_US_MM}",
         body, re.I,
     )
     if not found:
@@ -5068,7 +5121,7 @@ def _us_endometrium(body: str, page_number: int, cycle: str | None) -> list[Pars
     note = "; ".join(part for part in (cycle, phase.group(0) if phase else None) if part) or None
     item = _us_row("Endometrial thickness", value, "мм", found.group(0), page_number)
     rows = [replace(item, note=note)] if item and _us_clean(value) else []
-    thickening = re.search(rf"потовщення\s+(?P<a>{_US_N})\s*[xх×]\s*(?P<b>{_US_N})\s*мм", body[found.start(): found.end() + 120])
+    thickening = re.search(rf"потовщення\s+(?P<a>{_US_N})\s*{_US_X}\s*(?P<b>{_US_N})\s*{_US_MM}", body[found.start(): found.end() + 120])
     if thickening:
         rows.extend(_us_lesion("Uterine lesion largest diameter", "Uterine lesion smaller diameter",
                                [thickening.group("a"), thickening.group("b")], thickening.group(0), page_number,
@@ -5084,7 +5137,7 @@ def _us_uterine_lesions(body: str, page_number: int) -> list[ParsedObservation]:
     rows: list[ParsedObservation] = []
     text = myometrium.group("text")
     for found in re.finditer(
-        rf"(?:вузол|ділянк\w*)[^.;]{{0,40}}?розміром\s*(?P<a>{_US_N})(?:\s*[xх×]\s*(?P<b>{_US_N}))?\s*мм", text
+        rf"(?:вузол|ділянк\w*)[^.;]{{0,40}}?розміром\s*(?P<a>{_US_N})(?:\s*{_US_X}\s*(?P<b>{_US_N}))?\s*{_US_MM}", text
     ):
         before = text[max(0, found.start() - 60): found.start()]
         wall = re.search(r"по\s+(передній|задній|бічній)\s+стінці|в\s+дні", before)
@@ -5098,7 +5151,7 @@ def _us_uterine_lesions(body: str, page_number: int) -> list[ParsedObservation]:
 
 
 def _us_cervix(body: str, page_number: int) -> list[ParsedObservation]:
-    labelled = re.search(rf"Шийка\s+матки:\s*довжина\s+(?P<l>{_US_N})\s*мм;\s*товщина\s+(?P<t>{_US_N})\s*мм", body, re.I)
+    labelled = re.search(rf"Шийка\s+матки:\s*довжина\s+(?P<l>{_US_N})\s*{_US_MM};\s*товщина\s+(?P<t>{_US_N})\s*{_US_MM}", body, re.I)
     if labelled and _us_clean(labelled.group("l"), labelled.group("t")):
         rows = [_us_row("Cervical length", labelled.group("l"), "мм", labelled.group(0), page_number),
                 _us_row("Cervical thickness", labelled.group("t"), "мм", labelled.group(0), page_number)]
@@ -5112,14 +5165,16 @@ def _us_cervix(body: str, page_number: int) -> list[ParsedObservation]:
 def _us_ovary(text: str, side: str, page_number: int, cycle: str | None) -> list[ParsedObservation]:
     rows: list[ParsedObservation | None] = []
     dims = re.search(
-        rf"(?:Розміри|Розмірами|розміри):?\s*(?P<a>{_US_N})\s*(?:мм\.?)?\s*[xх×]?\s*(?P<b>{_US_N})(?:\s*(?:мм\.?)?\s*[xх×]?\s*(?P<c>{_US_N}))?\s*мм",
+        rf"(?:Розміри|Розмірами|розміри):?\s*(?P<a>{_US_N})\s*(?:{_US_MM}\.?)?\s*{_US_X}?\s*(?P<b>{_US_N})(?:\s*(?:{_US_MM}\.?)?\s*{_US_X}?\s*(?P<c>{_US_N}))?\s*{_US_MM}",
         text,
     )
     if dims:
         values = [value for value in dims.groups() if value]
         if len(values) >= 2 and _us_clean(*values):
+            # Which of the other two figures is width or depth is not
+            # printed; the note keeps all three as the paper prints them.
             item = _us_row("Ovary length", max(values, key=parse_decimal), "мм", dims.group(0), page_number, specimen=side)
-            rows.append(replace(item, note=cycle) if item else None)
+            rows.append(replace(item, note=_us_note(dims.group(0), cycle)) if item else None)
     volume = re.search(rf"Об['’]єм\w*:?\s*(?P<v>{_US_N})\s*(?:см3|см\.?\s*куб|мл)", text)
     if volume:
         rows.append(_us_row("Ovarian volume", volume.group("v"), "см3", volume.group(0), page_number, specimen=side))
@@ -5128,12 +5183,12 @@ def _us_ovary(text: str, side: str, page_number: int, cycle: str | None) -> list
         item = _us_row("Antral follicle count", count.group("v"), "", count.group(0), page_number, specimen=side)
         rows.append(replace(item, unit_raw=None, note=cycle) if item else None)
     rows.append(_us_follicle(text, side, page_number, cycle))
-    luteum = re.search(rf"жовте\s+тіло\s*(?:діаметром\s*|розміром\s*)?(?P<v>{_US_N})\s*мм", text)
+    luteum = re.search(rf"жовте\s+тіло\s*(?:діаметром\s*|розміром\s*)?(?P<v>{_US_N})\s*{_US_MM}", text)
     if luteum and _us_clean(luteum.group("v")):
         item = _us_row("Corpus luteum diameter", luteum.group("v"), "мм", luteum.group(0), page_number, specimen=side)
         rows.append(replace(item, note=cycle) if item else None)
     for found in re.finditer(
-        rf"(?:утвір|утворення|рідинне)\b[^;]{{0,120}}?(?:розміром|діаметром)\s*(?P<a>{_US_N})(?:\s*[xх×]\s*(?P<b>{_US_N}))?\s*мм",
+        rf"(?:утвір|утворення|рідинне)\b[^;]{{0,120}}?(?:розміром|діаметром)\s*(?P<a>{_US_N})(?:\s*{_US_X}\s*(?P<b>{_US_N}))?\s*{_US_MM}",
         text,
     ):
         rows.extend(_us_lesion("Ovarian cyst largest diameter", "Ovarian cyst smaller diameter",
@@ -5149,7 +5204,7 @@ def _us_ovary(text: str, side: str, page_number: int, cycle: str | None) -> list
 def _us_follicle(text: str, side: str, page_number: int, cycle: str | None) -> ParsedObservation | None:
     """The largest follicle: a dominant one named with its size, else «фолікули до 13 мм» as «≤ 13»."""
     named = re.search(
-        rf"(?:найбільший\s+фолікул|домінуюч\w*\s+фолікул\w*)\s*(?:діаметром\s*)?(?P<a>{_US_N})(?:\s*(?:та|і|,)\s*(?P<b>{_US_N}))?\s*мм",
+        rf"(?:найбільший\s+фолікул|домінуюч\w*\s+фолікул\w*)\s*(?:діаметром\s*)?(?P<a>{_US_N})(?:\s*(?:та|і|,)\s*(?P<b>{_US_N}))?\s*{_US_MM}",
         text,
     )
     comparator = None
@@ -5157,7 +5212,7 @@ def _us_follicle(text: str, side: str, page_number: int, cycle: str | None) -> P
         values = [value for value in (named.group("a"), named.group("b")) if value]
         found = named
     else:
-        found = re.search(rf"фолікул\w*\s*(?:діаметром\s*)?до\s*(?P<a>{_US_N})\s*(?:мм|;)|max\.?\s*d\s*(?P<m>{_US_N})\s*мм", text)
+        found = re.search(rf"фолікул\w*\s*(?:діаметром\s*)?до\s*(?P<a>{_US_N})\s*(?:{_US_MM}|;)|max\.?\s*d\s*(?P<m>{_US_N})\s*{_US_MM}", text)
         if not found:
             return None
         values = [found.group("a") or found.group("m")]
@@ -5174,7 +5229,7 @@ def _us_follicle(text: str, side: str, page_number: int, cycle: str | None) -> P
 _US_BREAST_START = re.compile(r"(?P<side>Права|Ліва)\s+грудна\s+залоза", re.I)
 _US_BREAST_END = re.compile(r"BI-?RADS|Заключення|Висновок", re.I)
 _US_SIZE_PHRASE = re.compile(
-    rf"(?:діаметром|розміром)\s*(?P<le>до\s*)?(?P<nums>{_US_N}(?:\s*(?:мм)?\s*(?:[xх×]|та|і|,)\s*{_US_N})*)\s*мм"
+    rf"(?:діаметром|розміром)\s*(?P<le>до\s*)?(?P<nums>{_US_N}(?:\s*(?:{_US_MM})?\s*(?:{_US_X}|та|і|,)\s*{_US_N})*)\s*{_US_MM}"
 )
 
 
@@ -5202,17 +5257,22 @@ def _us_breast(lines: list[str], page_number: int) -> list[ParsedObservation]:
             (r"Підшкірна\s+жирова\s+клітковина\s+товщиною", "Breast subcutaneous fat thickness"),
             (r"Залозиста\s+тканина\s+товщиною", "Breast glandular tissue thickness"),
         ):
-            thickness = re.search(rf"{label}\s*(?P<v>{_US_N})\s*мм", text)
+            thickness = re.search(rf"{label}\s*(?P<v>{_US_N})\s*{_US_MM}", text)
             if thickness and _us_clean(thickness.group("v")):
                 rows.append(_us_row(name, thickness.group("v"), "мм", thickness.group(0), page_number, specimen=side))
-        lesion = re.search(rf"гіпоехогенне\s+утворення[^;]{{0,80}}?розміром\s*(?P<a>{_US_N})\s*[xх×]\s*(?P<b>{_US_N})\s*мм", text)
+        lesion = re.search(rf"гіпоехогенне\s+утворення[^;]{{0,80}}?розміром\s*(?P<a>{_US_N})\s*{_US_X}\s*(?P<b>{_US_N})\s*{_US_MM}", text)
         if lesion:
             clock = re.findall(r"на\s+(\d{1,2})\s*год", text[max(0, lesion.start() - 120): lesion.start()], re.I)
             rows.extend(_us_lesion("Breast lesion largest diameter", "Breast lesion smaller diameter",
                                    [lesion.group("a"), lesion.group("b")], lesion.group(0), page_number,
                                    specimen=side, note=f"{clock[-1]} год" if clock else None))
         rows.append(_us_breast_cyst(text, side, page_number))
-    category = re.search(r"BI-?RADS\s*:?\s*(?P<v>[0-6])(?P<sub>[abcABC])?\b", flat)
+    # OCR of InMed's «BI-RADS 2 - контрольне обстеження кожних 6-12 місяців»
+    # can split it over two lines, the figure first: «2 обстеження кожних
+    # 6-12 місяців» / «BI-RADS - контрольне».
+    category = re.search(r"BI-?\s?RADS\s*:?\s*(?P<v>[0-6])(?P<sub>[abcABC])?\b", flat) or re.search(
+        r"(?<![\w.,])(?P<v>[0-6])(?P<sub>)\s+обстеження\s+кожних[^.;]{0,30}?BI-?\s?RADS\s*[-–]\s*контрольне", flat
+    )
     if category:
         item = _us_row("Breast BI-RADS category", category.group("v"), "", category.group(0), page_number)
         if item and category.group("sub"):
@@ -5222,11 +5282,29 @@ def _us_breast(lines: list[str], page_number: int) -> list[ParsedObservation]:
     return [row for row in rows if row is not None]
 
 
+#: A cyst named in a breast's text: «киста», «кисти», «кистозне включення».
+_US_CYST = re.compile(r"(?<![^\W\d_])(?:кист|кіст)\w*", re.I)
+
+
 def _us_breast_cyst(text: str, side: str, page_number: int) -> ParsedObservation | None:
+    """The largest cyst of one breast: the maximum of every size printed for it.
+
+    When a cyst is named and its size cannot be read (OCR of a photo loses or
+    shifts the figures: «на 4 год проста киста діаметром з …», «-на 12 год.
+    кистозне включення» with no size), nothing is stored: the largest of the
+    sizes that survived is not the largest the paper printed.
+    """
     best: tuple[float, str, str, bool] | None = None
-    for clause in re.split(r";|\.\s", text):
+    # «макс. діаметром 6 мм» is one clause: an abbreviation's full stop does not end it.
+    for clause in re.split(r";|(?<!макс)(?<!мін)\.\s", text):
         if not re.search(r"кист", clause, re.I) or re.search(r"скупчення|кластер", clause, re.I):
             continue
+        if not re.search(r"не\s+виявлен|\bнемає\b|відсутн", clause, re.I):
+            mentions = list(_US_CYST.finditer(clause))
+            for index, mention in enumerate(mentions):
+                end = mentions[index + 1].start() if index + 1 < len(mentions) else len(clause)
+                if not _US_SIZE_PHRASE.search(clause, mention.end(), end):
+                    return None
         for found in _US_SIZE_PHRASE.finditer(clause):
             values = re.findall(_US_N, found.group("nums"))
             if not values or not _us_clean(*values):
