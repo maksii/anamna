@@ -249,9 +249,9 @@ def resolve_source_path(settings: Settings, stored: str) -> Path:
     Lives here rather than in the web layer because a rescan re-reads the same
     file the viewer serves, and the ingest package cannot import the app.
     """
-    path = Path(stored)
-    if path.exists():  # a file, or a device export's unpacked directory
-        return path
+    # The configured directory wins over the recorded prefix: a copied checkout
+    # whose original still exists would otherwise keep reading the original's
+    # files, and a file is a device export's unpacked directory as often as not.
     # ponytail: matches on a literal "sources" path segment; fails for a
     # custom-named local sources dir - store relative paths if that ever matters
     parts = PurePath(stored.replace("\\", "/")).parts
@@ -259,4 +259,4 @@ def resolve_source_path(settings: Settings, stored: str) -> Path:
         candidate = settings.source_dir.joinpath(*parts[parts.index("sources") + 1:])
         if candidate.exists():
             return candidate
-    return path
+    return Path(stored)
