@@ -14,7 +14,7 @@ from .text import collapse_space, parse_decimal
 # the files it names.  Two changes reached `main` without a bump -- 196 lines of
 # new rules in 4472233, and the Latin unit spellings below -- so every row those
 # produced is indistinguishable from a row the previous parser produced.
-PARSER_VERSION = "2026.11.07-1"
+PARSER_VERSION = "2026.11.07-2"
 
 #: The kinds of report this module reads values out of.  Everything else --
 #: ultrasound, MRI, consultation, pathology, radiology -- it returns nothing
@@ -696,7 +696,7 @@ def _expert_microscopy_match(line: str) -> re.Match[str] | None:
     return _EXPERT_MICROSCOPY.match(line) or _EXPERT_MICROSCOPY_BLANK_END.match(line)
 
 
-_EXPERT_HEADER = re.compile(r"ПОКАЗНИК\s+РЕЗУЛЬТАТ\s+НОРМА", re.I)
+_EXPERT_HEADER = re.compile(r"ПОКАЗНИК\s+РЕЗУЛЬТАТ\s+(?:НОРМА|РЕФЕРЕНТНІ\s+ЗНАЧЕННЯ)", re.I)
 _EXPERT_FOOTER = re.compile(r"Результати досліджень не є", re.I)
 
 
@@ -861,7 +861,7 @@ def _expert_microscopy_rows(lines: list[str], page_number: int, used: set[int]) 
 def parse_expert_page(text: str, page_number: int) -> list[ParsedObservation]:
     """Expert Hospital's results read as text: three passes, each taking the
     lines the passes before it left unread."""
-    if "ПОКАЗНИК РЕЗУЛЬТАТ НОРМА" not in text.upper():
+    if not _EXPERT_HEADER.search(text):
         return []
     lines = _expert_body_lines(text)
     used: set[int] = set()
@@ -887,6 +887,15 @@ _EXPERT_VALUE = re.compile(
 )
 
 
+#: The header row, word for word.  The blood count prints «РЕФЕРЕНТНІ
+#: ЗНАЧЕННЯ» where every other panel prints «НОРМА»; matching only the latter
+#: left a whole blood count (27 results) with no observations at all.
+_EXPERT_TABLE_HEADERS = (
+    ["ПОКАЗНИК", "РЕЗУЛЬТАТ", "НОРМА"],
+    ["ПОКАЗНИК", "РЕЗУЛЬТАТ", "РЕФЕРЕНТНІ", "ЗНАЧЕННЯ"],
+)
+
+
 def parse_expert_table(words: list, page_number: int) -> list[ParsedObservation] | None:
     """Read an Expert Hospital results table off the page's word positions.
 
@@ -909,7 +918,7 @@ def parse_expert_table(words: list, page_number: int) -> list[ParsedObservation]
     header_index = next(
         (
             index for index, line in enumerate(lines)
-            if [word[3] for word in line] == ["ПОКАЗНИК", "РЕЗУЛЬТАТ", "НОРМА"]
+            if [word[3] for word in line] in _EXPERT_TABLE_HEADERS
         ),
         None,
     )
@@ -1260,7 +1269,7 @@ def parse_wrapped_hba1c(text: str, page_number: int) -> list[ParsedObservation]:
     constant: the constant this replaced was the 2025-02 report's scale, and
     was then shown on a report that prints «4.0 - 5.7».
     """
-    if "ПОКАЗНИК РЕЗУЛЬТАТ НОРМА" not in text.upper():
+    if not _EXPERT_HEADER.search(text):
         return []
     lines = _expert_body_lines(text)
     label_index = next((index for index, line in enumerate(lines) if _HBA1C_LABEL.match(line)), None)
@@ -1747,11 +1756,15 @@ def _numeric_observation(
     if value is None:
         return None
     low, high = reference_bounds(reference)
+    # `parse_decimal` drops a leading «<»; the comparator has to be kept here
+    # or «<1» is stored as the measured value 1 (EskuLab amino acids;
+    # calprotectin «<24.0»).
+    comparator = _COMPARATOR.match(raw_value.strip())
     return ParsedObservation(
         raw_name=name,
         value_numeric=value,
         value_text=None,
-        comparator=None,
+        comparator=comparator.group(0) if comparator else None,
         unit_raw=unit,
         reference_text=reference,
         reference_low=low,
@@ -2076,9 +2089,12 @@ ESKULAB_END = re.compile(
 #: indistinguishable by position from a name that wrapped.  A closed vocabulary
 #: rather than a pattern, because «сечі» -- the tail of "К-сть клітин схожих на
 #: атипові в мкл сечі" -- differs from «сеча», the specimen, by one letter.
+#: «кал»: a stool test wraps «Приносний» / «матеріал, кал», and without it the
+#: tail was read as more of the name («Панкреатична еластаза (кал) матеріал,
+#: кал»).
 ESKULAB_SPECIMEN_WORDS = frozenset(
     """приносний матеріал сеча сироватка сироватці крові кров цільна
-       плазма зак виділення""".split()
+       плазма зак виділення кал""".split()
 )
 
 
@@ -2368,7 +2384,9 @@ def _eskulab_observation(
     # leading digit made the shared name check reject the row outright.  Only
     # the numbering goes -- «25-Гідроксивітамін D» leads with its position on
     # the molecule and keeps it, which is why this cannot simply strip digits.
-    name = re.sub(r"^\d+\.\s+(?=[^\W\d_])", "", name)
+    # Both at once is «2. 25-Гідроксивітамін D»: requiring a letter straight
+    # after the numbering left it on, and the row was rejected.
+    name = re.sub(r"^\d+\.\s+(?=[^\W\d_]|\d+-[^\W\d_])", "", name)
     if not valid_analyte_name(name) and not re.match(r"^\d+-[^\W\d_]", name):
         return None
     # The whole printed block is kept, every band of it.  Reducing it here to
@@ -2474,7 +2492,11 @@ class _EskulabPanel:
 
     def _read_table_line(self, cells: list[str], segments: list[str], left_margin: bool) -> None:
         first, value, measure, band = cells
-        specimen = _eskulab_specimen(first)
+        # At the left margin a specimen word is the specimen's wrapped tail
+        # only once the indented specimen has begun («сироватка» / «крові»).
+        # Before that it ends the name: «Концентрація Ig А в сироватці» /
+        # «крові», with «сироватка крові» indented under it.
+        specimen = _eskulab_specimen(first) and (not left_margin or bool(self.specimen))
         if first and not value and self.name and specimen:
             self.specimen.append(first)
         # A second table, printed inside the rows the reference column wraps
@@ -3368,9 +3390,9 @@ def _synevo_columns(lines: list[list[tuple[float, float, float, str]]]) -> tuple
         return None
     result_x = next(word[0] for word in header if word[3] == _RESULT_HEADING)
     unit_x = next(word[0] for word in header if word[3] == "Од.")
-    # Values are centred under «Результат», so they start up to twenty points
-    # left of it; units sit under «Од.»; the reference column starts past it.
-    return result_x - 20.0, unit_x - 12.0, unit_x + 25.0
+    # Values are centred under «Результат», so a long one starts well left of
+    # it («не виявлені (в нормі - не виявлені)» 23 points left); units sit under «Од.»; the reference column starts past it.
+    return result_x - 25.0, unit_x - 12.0, unit_x + 25.0
 
 
 def _sediment_section(lines: list[list[tuple[float, float, float, str]]]) -> list | None:
@@ -3459,6 +3481,112 @@ def parse_synevo_sediment(words: list, page_number: int) -> list[ParsedObservati
         item = _sediment_observation(row, columns, page_number)
         if item is not None:
             observations.append(item)
+    return observations
+
+
+#: The norm Synevo sometimes prints inside the result cell itself:
+#: «не виявлені (в нормі - не виявлені)».
+_SYNEVO_INLINE_NORM = re.compile(r"^(?P<value>.+?)\s*(?P<norm>\(в нормі[^)]*\))$", re.I)
+_SYNEVO_NUMBER = re.compile(rf"(?P<comparator>[<>≤≥])?\s*(?P<number>{_DECIMAL})")
+
+
+def _synevo_unitless_rows(lines: list, columns: tuple[float, float, float]) -> list[tuple[int, list[int], str | None]]:
+    """(first line, every line, heading) of each table row up to the microscopy or the footer.
+
+    A row starts on a line whose name column's first word carries a capital; every other
+    line -- a wrapped name («найпростіших»), a wrapped value («невеликій» /
+    «кількості»), more of the reference block -- continues the row above.  A
+    name with an unclosed bracket continues even onto a capital («HDL)»).
+    """
+    value_from = columns[0]
+    header = next(
+        (index for index, line in enumerate(lines)
+         if any(word[3] == _RESULT_HEADING for word in line) and any(word[3] == "Од." for word in line)),
+        None,
+    )
+    rows: list[tuple[int, list[int], str | None]] = []
+    heading: str | None = None
+    for index in range(header + 1 if header is not None else len(lines), len(lines)):
+        line = lines[index]
+        text = collapse_space(" ".join(word[3] for word in line))
+        if SYNEVO_SEDIMENT_HEADING.match(text) or SYNEVO_SEDIMENT_END.match(text):
+            break
+        name = " ".join(word[3] for word in line if word[0] < value_from)
+        open_name = bool(rows) and _unclosed_bracket(
+            " ".join(word[3] for row_line in rows[-1][1] for word in lines[row_line] if word[0] < value_from)
+        )
+        # «pH» opens lowercase; a wrapped name tail («найпростіших») has no capital.
+        if any(char.isupper() for char in name.split(" ")[0]) and not open_name:
+            if not any(word[0] >= value_from for word in line):
+                heading = name  # a section heading: «Копрограма»
+            rows.append((index, [index], heading))
+        elif rows:
+            rows[-1][1].append(index)
+    return rows
+
+
+def _unclosed_bracket(name: str) -> bool:
+    return name.count("(") > name.count(")")
+
+
+def parse_synevo_unitless(words: list, page_number: int) -> list[ParsedObservation]:
+    """Synevo rows with nothing in the unit column, read by column.
+
+    A coprogram row wraps its *result* under itself, with the reference cell
+    in between: «Дріжджовий грибок | виявлений в | не виявлений» over
+    «невеликій» over «кількості».  Read as flat text the categorical pass took
+    «виявлений в» as more of the name and the reference «не виявлений» as the
+    result -- yeast the laboratory found was published as not found.  The
+    columns say which word is which; rows with a unit stay with the text
+    passes, which read them well.  Rows carry their section heading so the
+    coprogram's «Яйця гельмінтів» is not merged into the parasite panel's.
+    """
+    lines = _word_lines(words)
+    columns = _synevo_columns(lines)
+    if columns is None:
+        return []
+    observations: list[ParsedObservation] = []
+    for first, row, heading in _synevo_unitless_rows(lines, columns):
+        cells: dict[str, list[str]] = {"name": [], "value": [], "unit": [], "reference": []}
+        for index in row:
+            for x0, _x1, _top, text in lines[index]:
+                cells[_sediment_column(x0, columns)].append(text)
+        name = collapse_space(" ".join(cells["name"])).strip(" ,-:")
+        value = collapse_space(" ".join(cells["value"]))
+        if not value or cells["unit"] or not valid_analyte_name(name):
+            continue
+        reference = _synevo_block(lines, first, columns) or None
+        inline = _SYNEVO_INLINE_NORM.match(value)
+        if inline and not reference:
+            value, reference = inline.group("value"), inline.group("norm")
+        if not reference:
+            # A result row prints its norm; a line with none is a panel heading
+            # or a note in the result column («Звіт з описом лабораторних
+            # показників | Ваш результат готовий ...»), and stays with the
+            # text passes as before.
+            continue
+        number = _SYNEVO_NUMBER.fullmatch(value)
+        # A block of several lines is a labelled scale (coprogram pH: «7. 0 -
+        # 7.5: в нормі», «5.5 – 6.75: кисла», ...); its first pair of numbers
+        # is not the interval («0 - 7.5» put an acidic 6.75 inside it), so only
+        # a one-line reference gives bounds.
+        first_reference = collapse_space(" ".join(word[3] for word in lines[first] if word[0] >= columns[2]))
+        limits = reference_limits(reference) if number and reference == first_reference else ReferenceLimits()
+        observations.append(ParsedObservation(
+            raw_name=name,
+            value_numeric=parse_decimal(number.group("number")) if number else None,
+            value_text=None if number else value,
+            comparator=number.group("comparator") if number else None,
+            unit_raw=None,
+            reference_text=reference,
+            reference_low=limits.low,
+            reference_high=limits.high,
+            page_number=page_number,
+            evidence_text=collapse_space(" ".join(" ".join(word[3] for word in lines[index]) for index in row)),
+            confidence=0.93,
+            value_printed=number.group("number") if number else None,
+            section=heading,
+        ))
     return observations
 
 
@@ -4256,6 +4384,15 @@ def _synevo_by_column(
         else item
         for item in observations
     ]
+    # The column reader owns every unit-less row it read: a flat reading of the
+    # same printed line is the one that swapped a wrapped result for its norm.
+    unitless = parse_synevo_unitless(words, page_number)
+    if unitless:
+        row_texts = [item.evidence_text for item in unitless]
+        observations = [
+            item for item in observations
+            if not any(row.startswith(item.evidence_text) or item.evidence_text.startswith(row) for row in row_texts)
+        ] + unitless
     sediment = parse_synevo_sediment(words, page_number)
     if not sediment:
         return observations

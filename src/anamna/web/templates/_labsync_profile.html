@@ -165,6 +165,7 @@
       lab's date of birth and sex match that record's profile. -#}
   <h3 class="an-lab-subhead" id="lab-people-{{ card.key }}">{{ t('labsync.people_heading') }}</h3>
   <p class="tiny muted" id="lab-link-hint-{{ card.key }}">{{ t('labsync.link_target_hint') }}</p>
+  {% if card.persons|length > 1 %}<p class="tiny muted">{{ t('labsync.people_same_person_hint') }}</p>{% endif %}
   {% if not card.family %}<p class="tiny muted">{{ t('labsync.people_family_hint') }} <a href="/profile?tab=sharing">{{ t('labsync.people_family_link') }}</a></p>{% endif %}
   <ul class="an-lab-people">
     {% for person in card.persons %}
@@ -175,7 +176,7 @@
         <input type="hidden" name="person_id" value="{{ person.id }}">
         <div class="an-lab-person-head">
           <strong>{{ person.lastname }} {{ person.firstname }} {{ person.middlename }}</strong>
-          <small>{{ t('labsync.person_born') }} {{ person.birthday|datefmt if person.birthday else t('labsync.unknown') }} · {{ t('labsync.sex_' ~ (person.sex or 'unknown')) }}</small>
+          <small>{{ t('labsync.person_born') }} {{ person.birthday|datefmt if person.birthday else t('labsync.unknown') }} · {{ t('labsync.sex_' ~ (person.sex or 'unknown')) }} · {{ t('labsync.person_lab_id', id=person.lab_id) }}</small>
         </div>
         {% set link = person.link %}
         {% if link %}
@@ -206,9 +207,9 @@
                   onchange="var o=this.selectedOptions[0];this.form.querySelector('.an-lab-confirm').hidden=!this.value||o.dataset.ok==='1'">
             <option value="" {{ 'selected' if not person.selected else '' }}>{{ t('labsync.link_target_none') }}</option>
             {% for option in person.options %}
-            <option value="{{ option.id }}" data-ok="{{ '1' if option.match.ok else '0' }}" {{ 'selected' if person.selected == option.id else '' }} {{ 'disabled' if option.taken or not option.has_profile else '' }}>
+            <option value="{{ option.id }}" data-ok="{{ '1' if option.match.ok else '0' }}" {{ 'selected' if person.selected == option.id else '' }} {{ 'disabled' if not option.has_profile else '' }}>
               {{ t('labsync.link_target_self', name=option.name) if option.self else option.name }} -
-              {% if not option.has_profile %}{{ t('labsync.link_option_no_profile') }}{% elif option.taken %}{{ t('labsync.link_option_taken') }}{% elif option.match.ok %}{{ t('labsync.link_option_matches') }}{% elif option.match.birthday is false or option.match.sex is false %}{{ t('labsync.link_option_differs') }}{% else %}{{ t('labsync.link_option_unknown') }}{% endif %}
+              {% if not option.has_profile %}{{ t('labsync.link_option_no_profile') }}{% elif option.match.ok %}{{ t('labsync.link_option_matches') }}{% elif option.match.birthday is false or option.match.sex is false %}{{ t('labsync.link_option_differs') }}{% else %}{{ t('labsync.link_option_unknown') }}{% endif %}{% if option.also %} · {{ t('labsync.link_option_also', names=option.also|join(', ')) }}{% endif %}
             </option>
             {% endfor %}
           </select>

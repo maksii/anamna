@@ -4928,6 +4928,11 @@ MESSAGES: dict[str, dict[str, str]] = {
     "labsync.forget_action": {"en": "Forget the credential", "uk": "Видалити ключ"},
     "labsync.working": {"en": "Working...", "uk": "Виконується..."},
     "labsync.person_born": {"en": "born", "uk": "нар."},
+    "labsync.person_lab_id": {"en": "lab ID {id}", "uk": "ID у лабораторії {id}"},
+    "labsync.people_same_person_hint": {
+        "en": "A lab can list one person more than once, for example a profile under a previous surname. Link each of them to the same record: results arrive once, whichever profile they are filed under.",
+        "uk": "Лабораторія може показувати одну людину кілька разів, наприклад профіль із попереднім прізвищем. Пов’яжіть кожен із них з однією карткою: результати потраплять туди один раз, хоч би в якому профілі вони були.",
+    },
     "labsync.unknown": {"en": "unknown", "uk": "невідомо"},
     "labsync.sex_male": {"en": "male", "uk": "чоловік"},
     "labsync.sex_female": {"en": "female", "uk": "жінка"},
@@ -4989,7 +4994,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "uk": "неможливо порівняти (у тому профілі або в лабораторії немає дати народження чи статі), потрібне ваше підтвердження",
     },
     "labsync.link_option_no_profile": {"en": "no profile yet", "uk": "профілю ще немає"},
-    "labsync.link_option_taken": {"en": "already receives another person", "uk": "уже отримує результати іншої людини"},
+    "labsync.link_option_also": {"en": "also receives {names}", "uk": "також отримує: {names}"},
     "labsync.link_target_hint": {
         "en": "Matches: the lab's date of birth and sex equal this record's profile.",
         "uk": "Збіг означає, що дата народження і стать у лабораторії такі самі, як у профілі цієї картки.",
@@ -5017,8 +5022,8 @@ MESSAGES: dict[str, dict[str, str]] = {
     "labsync.link_saved_running": {"en": "Saved. A sync is already running; this person is included from the next one.", "uk": "Збережено. Синхронізація вже триває, тож ця людина потрапить у наступну."},
     "labsync.link_removed": {"en": "This person's results are no longer imported.", "uk": "Результати цієї людини більше не імпортуються."},
     "labsync.error_link_target": {
-        "en": "That record cannot receive these results: it is not yours or shared with you, or it already receives another person from this lab account. Choose again.",
-        "uk": "Ця картка не може отримувати ці результати: вона не ваша й не спільна з вами або вже отримує результати іншої людини з цього облікового запису лабораторії. Оберіть ще раз.",
+        "en": "That record cannot receive these results: it is neither yours nor shared with you. Choose again.",
+        "uk": "Ця картка не може отримувати ці результати: вона не ваша й не спільна з вами. Оберіть ще раз.",
     },
     "labsync.inbox_heading": {"en": "Lab results shared with you", "uk": "Результати аналізів, якими з вами поділилися"},
     "labsync.inbox_lead": {

@@ -685,7 +685,7 @@ def test_a_family_members_results_wait_for_their_acceptance(tmp_path: Path, monk
     kicked: list = []
     monkeypatch.setattr(labsync, "start_sync", lambda s, uid, key: kicked.append(uid))
 
-    # Only family can receive, and one lab person per record.
+    # Only family can receive.
     with pytest.raises(common.LabSyncError) as caught:
         labsync.link_person(settings, holder, "eskulab", "222", stranger, confirmed=True)
     assert caught.value.key == "labsync.error_link_target"
@@ -693,8 +693,6 @@ def test_a_family_members_results_wait_for_their_acceptance(tmp_path: Path, monk
     labsync.link_person(settings, holder, "eskulab", "111", "self", confirmed=False)
     linked = labsync.link_person(settings, holder, "eskulab", "222", member, confirmed=False)  # DOB and sex agree
     assert linked["consent"] == "asked"
-    with pytest.raises(common.LabSyncError):
-        labsync.link_person(settings, holder, "eskulab", "111", member, confirmed=True)
 
     calls = stub_intake(monkeypatch, settings, holder, {
         "eskulab-9001.pdf": {"vendor": "EskuLab", "order": "9001", "day": "2026-01-10",
@@ -750,6 +748,62 @@ def test_a_family_members_results_wait_for_their_acceptance(tmp_path: Path, monk
     labsync.unlink_person(settings, holder, "eskulab", "222")
     assert labsync.inbox(settings, {"id": member}) == []
     assert labsync.link_person(settings, holder, "eskulab", "222", member, confirmed=False)["consent"] == "asked"
+
+
+def test_two_lab_profiles_of_one_person_feed_one_record(tmp_path: Path, monkeypatch):
+    """A lab keeps a second profile after a surname change: both are linked to
+    the same record, each profile's orders arrive, and nothing arrives twice."""
+    settings, holder, client = make(tmp_path)
+    persons = [
+        {"id": 111, "firstname": "Test", "lastname": "Person", "fathername": "", "birthday": "1990-03-14", "sex": "M",
+         "main": True},
+        {"id": 333, "firstname": "Test", "lastname": "Maiden", "fathername": "", "birthday": "1990-03-14", "sex": "M",
+         "main": False},
+    ]
+    orders = [order(9001, ready=1, total=1), order(9301, ready=1, total=1, patient=333)]
+    routes = eskulab_routes(orders, {"9001": [es_row("Гемоглобін (HGB)", "151", "г/л")]}, persons=persons)
+    routes[("GET", "/api/customers/getOrdersResult/9301/333")] = lambda body, headers: [es_row("Глюкоза", "5.1", "ммоль/л")]
+    routes[("GET", "/api/results/getResults/333/9301")] = lambda body, headers: b"%PDF-1.4 synthetic 9301"
+    monkeypatch.setattr(common, "_http", router(routes))
+    labsync.save_credentials(settings, holder, "eskulab", {"token": TOKEN, "phone": PHONE})
+    labsync.check_account(settings, holder, "eskulab")
+
+    labsync.link_person(settings, holder, "eskulab", "111", "self", confirmed=False)
+    card = labsync.profile_cards(settings, {"id": holder})[0]
+    second = next(p for p in card["persons"] if p["id"] == "333")
+    me = next(o for o in second["options"] if o["self"])
+    assert me["also"] == ["Person Test"] and second["selected"] == "self" and second["lab_id"] == "333"
+    assert labsync.link_person(settings, holder, "eskulab", "333", "self", confirmed=False)["consent"] == "owner"
+
+    calls = stub_intake(monkeypatch, settings, holder, {
+        "eskulab-9001.pdf": {"vendor": "EskuLab", "order": "9001", "day": "2026-01-10",
+                             "values": [("Гемоглобін (HGB)", 151.0, "г/л", None)]},
+        "eskulab-9301.pdf": {"vendor": "EskuLab", "order": "9301", "day": "2026-01-10",
+                             "values": [("Глюкоза", 5.1, "ммоль/л", None)]},
+    })
+    summary = labsync.sync(settings, holder, "eskulab", inline=True)
+    assert (summary["people"], summary["imported"]) == (2, 2)
+    assert sorted(calls) == ["eskulab-9001.pdf", "eskulab-9301.pdf"]
+    again = labsync.sync(settings, holder, "eskulab", inline=True)
+    assert (again["imported"], again["already"]) == (0, 2) and len(calls) == 2
+    with connect(settings) as connection:
+        assert dict(connection.execute(
+            "SELECT order_id, remote_person_id FROM lab_orders WHERE owner_user_id=?", (holder,)).fetchall()) == {
+            "9001": "111", "9301": "333"}
+    page = client.get("/profile?tab=connections").text
+    assert "lab ID 333" in page and "also receives Maiden Test" in page and "also receives Person Test" in page
+    assert page.count("Goes to your record") == 2
+
+    # Our own calculation beside the parsed values (eGFR from creatinine) is
+    # not the lab's to confirm, so it never counts as "not in the lab record".
+    with connect(settings) as connection:
+        row = dict(connection.execute(
+            "SELECT * FROM observations WHERE owner_user_id=? AND raw_name='Глюкоза'", (holder,)).fetchone())
+        row.update(id="derived-egfr", raw_name="eGFR (CKD-EPI 2021)", extraction_method="derived_ckd_epi_2021")
+        connection.execute(f"INSERT INTO observations({', '.join(row)}) VALUES ({', '.join('?' * len(row))})",
+                           tuple(row.values()))
+    counts = {o["order_id"]: o["counts"] for o in labsync.profile_cards(settings, {"id": holder})[0]["orders"]}
+    assert counts["9301"]["extra"] == 0 and counts["9301"]["match"] == 1
 
 
 def test_the_inbox_routes_need_the_member_and_csrf(tmp_path: Path, monkeypatch):

@@ -25,6 +25,39 @@ offering `check()`, `orders(person)`, `rows(order, person)` and
 vendor name `ingest/classifier.py` gives that lab's PDFs: older uploads that
 print no order number are matched by vendor, date and values.
 
+## Whose record each lab person feeds
+
+`check()` lists every person the lab account can see. Each one is linked
+separately (`lab_person_links`, one row per account, provider and lab person)
+to the holder's own record, to a family member's (anyone in a `record_shares`
+relation, either direction), or to nobody.
+
+- **Several lab people, one record.** A lab often lists one person more than
+  once: EskuLab keeps a profile per registration (a profile under a maiden name
+  survives a surname change), and Synevo keeps both profiles after renaming one.
+  Link each of them to the same record. Orders are keyed per record by their
+  number (`lab_orders` primary key `owner_user_id, provider, order_id`), so an
+  order listed under two profiles, or reached through two people's accounts,
+  arrives once. The picker says when a record already receives another lab
+  person ("also receives ..."), and shows the lab's own number for each person
+  (`lab ID`), which is what tells two identically named profiles apart.
+- **The guard is the profile, not the count.** A link is saved without asking
+  only when the lab's date of birth and sex both equal the record's profile;
+  anything else (a difference, or a value missing on either side) needs the
+  holder's explicit confirmation, recorded as `mismatch_confirmed`. A record
+  with no date of birth or sex in its profile therefore confirms every link.
+- **Another person's results wait.** A link into somebody else's record
+  fetches their orders as `awaiting`; nothing enters that record until they
+  accept (each time, or from then on). See `migrations/036_lab_person_links.sql`.
+- **The same person through two accounts.** A partner's family account may list
+  you as well as your own account does, often under different lab ids. Both
+  links can feed your record; whichever account reaches an order first keeps it
+  (`account_user_id`), and the other sees it as already in the record.
+- One lab login per person and provider (`lab_accounts` primary key
+  `user_id, provider`): a second sign-in at the same lab replaces the first.
+  Several profiles under one login, and the same person on a family member's
+  login, are covered above.
+
 ## Orders with values but no PDF
 
 Some finished orders have results in the lab's record but no file:

@@ -315,7 +315,7 @@ def test_beta_streptococcus_pattern_lost_only_a_redundant_group():
         (parsers._HYPHEN_BREAK, r"(?<=\w)- (?=\w)", 0),
         (parsers._HBA1C_LABEL, r"Глікований гемоглобін\s*\(HbA1c\)", re.I),
         (parsers._EXPERT_TABLE_END, r"Результати досліджень\b|Лікар\b|Сайт лікарні", 0),
-        (parsers._EXPERT_HEADER, r"ПОКАЗНИК\s+РЕЗУЛЬТАТ\s+НОРМА", re.I),
+        (parsers._EXPERT_HEADER, r"ПОКАЗНИК\s+РЕЗУЛЬТАТ\s+(?:НОРМА|РЕФЕРЕНТНІ\s+ЗНАЧЕННЯ)", re.I),
         (parsers._BLOOD_GROUP_ROW, r"^(Група крові)\s+([ABАВOОIІVХ]+\s*\([^)]*\))$", re.I),
         (parsers.GARMIN_WEEK_VALUES, r"^(\d{2,3})\s*-\s*(\d{2,3})\s+(\d{2,3})\s*-\s*(\d{2,3})\s+(\d+)$", 0),
     ],

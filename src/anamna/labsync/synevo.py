@@ -11,12 +11,17 @@ the newest value so the stored connection keeps rolling.
 * ``POST /api/cabinet/get-results`` ``{page}`` → paged result groups, one per
   service, including in-lab ("offline") orders that have no web id
 * ``POST /api/order/download-pdf`` ``{orderId: WebOrderId}`` → time-limited
-  blob links to the official PDF (``main``) and any extra files
+  blob links to the official PDF (``main``) and any extra files.  The lab
+  builds the files on this call: an order not asked for in a while can take
+  past 20 s, when Synevo's own gateway gives up with an empty HTTP 500, and
+  the same call made again a moment later answers (observed 2026-11-07 on an
+  order from 2023 with an extra file: 500 after 20.2 s, then 200 in 13.6 s).
 """
 
 from __future__ import annotations
 
 import re
+import time
 import urllib.parse
 
 from . import common
@@ -31,6 +36,11 @@ COOKIE = "next-auth.session-token"
 #: nowhere else (plus the configured origin itself, for a local test server).
 BLOB_HOSTS = frozenset({"synevostatic.blob.core.windows.net"})
 MAX_PAGES = 50
+#: download-pdf: long enough to outlast the lab's own 20 s gateway, so a slow
+#: build ends in its 500 rather than in our timeout; then asked again.
+PDF_LINK_TIMEOUT = 60
+PDF_LINK_ATTEMPTS = 3
+PDF_LINK_RETRY_SECONDS = 3.0
 
 _SECRET_RE = re.compile(r"[A-Za-z0-9._~+/=%-]{40,8192}")
 _ID_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
@@ -84,9 +94,9 @@ class Client:
         cookie = f"{COOKIE}={self.secret}"
         return cookie + (f"; selectedPatient={person['id']}" if person else "")
 
-    def _call(self, method: str, path: str, *, payload=None, person: dict | None = None):
+    def _call(self, method: str, path: str, *, payload=None, person: dict | None = None, timeout: int | None = None):
         reply, cookies = common.call(method, self.base_url + path, payload=payload,
-                                     headers={"Cookie": self._cookie(person)})
+                                     headers={"Cookie": self._cookie(person)}, timeout=timeout)
         for header in cookies:
             match = _SET_COOKIE_RE.match(header)
             if match and _SECRET_RE.fullmatch(match.group(1)):
@@ -216,10 +226,28 @@ class Client:
             return True
         return (parsed.scheme, parsed.netloc) == (own.scheme, own.netloc)
 
+    def _pdf_links(self, web_id: str, person: dict):
+        """download-pdf, asked again while the lab is still building the files
+        (a 5xx, or no answer at all); a refusal or a 4xx is final."""
+        def ask():
+            return self._call("POST", "/api/order/download-pdf", payload={"orderId": web_id}, person=person,
+                              timeout=PDF_LINK_TIMEOUT)
+
+        for attempt in range(1, PDF_LINK_ATTEMPTS):
+            try:
+                return ask()
+            except LabSyncError as exc:
+                if exc.key != "labsync.error_unreachable" and not (exc.key == ERROR_REPLY and (exc.status or 0) >= 500):
+                    raise
+                common.logger.info("labsync: synevo download-pdf attempt %s answered %s, asking again",
+                                   attempt, exc.status or exc.key)
+                time.sleep(PDF_LINK_RETRY_SECONDS)
+        return ask()
+
     def pdfs(self, order: dict, person: dict) -> list[bytes]:
         if not order.get("remote_ref"):
             raise LabSyncError(order.get("unavailable") or "labsync.unavailable_offline")
-        reply = self._call("POST", "/api/order/download-pdf", payload={"orderId": order["remote_ref"]}, person=person)
+        reply = self._pdf_links(order["remote_ref"], person)
         results = reply.get("results") if isinstance(reply, dict) and reply.get("res") == "ok" else None
         if not isinstance(results, dict) or not results.get("main"):
             raise LabSyncError("labsync.error_pdf")

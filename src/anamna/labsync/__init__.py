@@ -564,15 +564,11 @@ def link_person(settings: Settings, user_id: str, key: str, remote_id: str, targ
     match = demographics(chosen, candidate["patient"])
     if not match["ok"] and not confirmed:
         raise LabSyncError("labsync.error_confirm")
+    # Several lab people may feed one record: a lab keeps a second profile for
+    # the same person after a surname change or a second registration.  Orders
+    # are keyed per record by their number, so one listed under both arrives
+    # once; the date-of-birth and sex check above guards against a stranger.
     with transaction(settings) as connection:
-        taken = connection.execute(
-            """SELECT 1 FROM lab_person_links WHERE account_user_id=? AND provider=? AND target_user_id=?
-                AND remote_person_id<>?""", (user_id, key, target_id, str(remote_id)),
-        ).fetchone()
-        if taken:
-            # One lab person per record and lab: two would import each
-            # other's results into one history.
-            raise LabSyncError(ERROR_LINK_TARGET)
         if (existing is not None and str(existing["target_user_id"]) not in (target_id, user_id)):
             _drop_held(connection, str(existing["target_user_id"]), user_id, key, remote_id)
         consent = _link_consent(existing, target_id, user_id)
@@ -803,6 +799,9 @@ def _observation_rows(connection, owner_user_id: str, document_ids: list[str]) -
               FROM observations o LEFT JOIN reports r ON r.id=o.report_id
              WHERE o.owner_user_id=? AND o.document_id IN ({marks})
                AND o.verification_status <> 'rejected'
+               -- Our own calculation (eGFR from creatinine) is not the lab's to
+               -- confirm: it would show as "not in the lab's record" on every report.
+               AND COALESCE(o.extraction_method, '') NOT LIKE 'derived!_%' ESCAPE '!'
              ORDER BY o.document_id, o.page_number, o.rowid""",
         (owner_user_id, *document_ids),
     )]
@@ -2308,23 +2307,30 @@ def _held_states(connection, links: dict, user_id: str, key: str) -> dict[str, d
     return held
 
 
-def _card_person(person: dict, link, candidates: list[dict], taken: dict, names: dict, held: dict,
+def _person_label(person: dict) -> str:
+    return " ".join(str(person.get(part) or "").strip() for part in ("lastname", "firstname", "middlename")).strip()
+
+
+def _card_person(person: dict, link, candidates: list[dict], fed: dict, names: dict, held: dict,
                  user_id: str) -> dict:
+    """``fed``: record id -> the lab people already linked to it on this account."""
     options = [
         {"id": "self" if c["self"] else c["id"], "user_id": c["id"], "name": c["name"], "self": c["self"],
          "has_profile": c["patient"] is not None, "match": demographics(person, c["patient"]),
-         "taken": taken.get(c["id"]) not in (None, person["id"])}
+         "also": [label for remote_id, label in fed.get(c["id"], []) if remote_id != person["id"]]}
         for c in candidates
     ]
     target = str(link["target_user_id"]) if link else None
-    suggested = target or next((o["user_id"] for o in options
-                                if o["match"]["ok"] and not o["taken"] and o["has_profile"]), None)
+    suggested = target or next((o["user_id"] for o in options if o["match"]["ok"] and o["has_profile"]), None)
     if not suggested:
         selected = ""
     else:
         selected = "self" if suggested == user_id else suggested
     return {
         **person,
+        # What tells two profiles with the same name apart: the lab's own
+        # number for the person (Synevo's patient code, EskuLab's patient id).
+        "lab_id": next((str(m) for m in reversed(person.get("match_ids") or []) if str(m).isdigit()), str(person["id"])),
         "options": options,
         "selected": selected,
         "link": None if link is None else {
@@ -2364,8 +2370,12 @@ def _card(settings: Settings, user_id: str, key: str) -> dict:
     listed = _people(row)
     people = listed + [json.loads(link["remote_person_json"]) for remote_id, link in links.items()
                        if remote_id not in {person["id"] for person in listed}]
-    taken = {str(link["target_user_id"]): remote_id for remote_id, link in links.items()}
-    persons = [_card_person(person, links.get(person["id"]), candidates, taken, names, held, user_id)
+    fed: dict[str, list[tuple[str, str]]] = {}
+    for remote_id, link in links.items():
+        if link["consent"] != "refused":
+            fed.setdefault(str(link["target_user_id"]), []).append(
+                (remote_id, _person_label(json.loads(link["remote_person_json"]))))
+    persons = [_card_person(person, links.get(person["id"]), candidates, fed, names, held, user_id)
                for person in people]
     secret = str(row["secret"]) if row else ""
     return {
