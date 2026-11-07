@@ -5354,6 +5354,430 @@ def finalise(
     return cast(ParsedObservation, replace(item, **changes))
 
 
+# --- SILAB prints read from a scan ------------------------------------------
+#
+# The partner clinic «Мати та дитина» (ТОВ «НЕОМЕД 2007») hands its results out
+# of SILAB, its laboratory information system, and people keep them as browser
+# prints of the clinic portal: one screenshot per page, nothing but OCR to read.
+# OCR of those screenshots drops strokes and whole cells: «Ступінь чистоти III»
+# arrives as «І», «tt» or «Il», «33 генотип» as «38», «в п/з» as «вп/з» or
+# «n/s», a unit as «т».  So this reader knows the form instead of guessing at
+# it: every row is a printed name it knows, in the section that prints it, with
+# a value, unit and reference each of the shape that row prints.  A row that
+# does not read exactly so is left out -- review reports it missing, which is
+# true, where a reading of the noise would put a wrong value in the record.
+
+SILAB_PRINT = re.compile(r"системи\s+SILAB|mdclinics|НЕОМЕД|NEOMED", re.I)
+#: Synevo's own copy of the same order prints its rows in no fixed order, so a
+#: smear row there cannot be told to be vaginal or cervical from where it sits.
+SILAB_PORTAL_COPY = re.compile(r"Дата забору матеріалу", re.I)
+
+#: «не виявлені»; OCR reads the lower-case «не» as the Latin capitals «He»,
+#: which `_silab_clean` folds to «Не», so the case is put back by `_silab_case`.
+_S_NEG = r"[Нн]е виявлен(?:і|а|о|ий)"
+_S_QTY = r"[ву] (?:помірній|великій|невеликій) кількості"
+_S_FIELD = r"\d{1,3}-\d{1,3} в ?п/з\.?"
+_S_RANGE = r"\d{1,3}(?:[.,]\d{1,3})? ?- ?\d{1,3}(?:[.,]\d{1,3})?"
+#: Junk OCR leaves in front of a cell: the table rule, an opening quote, a stray bracket.
+_S_JUNK = r"[\s|'‘’\"«(*]*"
+
+#: The section headings, as OCR still reads them, and the key of their rows.
+_SILAB_SECTIONS = (
+    (re.compile(r"^Аналіз сечі(?: загальний|:? Мікроскопія осаду)", re.I), "urine"),
+    (re.compile(r"^Аналіз \S{1,4} мазка на мікрофлору", re.I), "smear"),
+    (re.compile(r"^Цитологія на атипові клітини", re.I), "cytology"),
+    (re.compile(r"^ПЛР\. ВПЛ \S{3} \(генотипування, якісне", re.I), "hpv"),
+    (re.compile(r"^ПАП.тест методом рідинної цитології", re.I), "pap"),
+    (re.compile(r"^ПЛР\b|^Цитологічні дослідження|^Загальна клініка|^Бакпосів|^\d+\. Панель", re.I), None),
+)
+#: Where a row's printed cells stop: the page footer and the method notes under a row.
+_SILAB_END = re.compile(r"^(?:Результати (?:лаборатор|пабор)|Обробка|Стор|Примітка|Дата друку|Показник)", re.I)
+_SILAB_NOTE = re.compile(
+    r"^\(?(?:Метод|Реагенти|Аналізатор|Ан[ап]лізатор|сертифіковані|\S+ визначаються за|активністю|"
+    r"лейкоцитестерази|псевдопероксидази)",
+    re.I,
+)
+_SILAB_SITE = re.compile(r"^(?:ТОЧКА|TOUKA)\s*[\dЗ]?\s+(?P<site>URETRA|VAGINA|CERVIX)\b\s*[;:]?\s*(?P<rest>.*)$")
+#: The fourteen high-risk genotypes the panel prints, in its order.
+SILAB_HPV_GENOTYPES = frozenset({16, 18, 31, 33, 35, 39, 45, 51, 52, 56, 58, 59, 66, 68})
+
+
+@dataclass(frozen=True)
+class _SilabRow:
+    """One printed row of the form: its label, and the shape of each cell."""
+
+    name: str
+    value: str
+    unit: str | None = None
+    reference: str | None = None
+    #: Plus-tiers of a dipstick scale printed one per line under the row.
+    tiers: int = 0
+    #: The end of the label, wrapped onto the line under the value.
+    name_tail: str | None = None
+    #: The value or reference cell may wrap onto lines that match this.
+    wrap: str | None = None
+    #: A pattern for the label where `name` is not printed verbatim: a
+    #: numbered row, a label wrapped or spelt otherwise than the stored name.
+    label: str | None = None
+
+
+def _silab_urine_rows() -> tuple[_SilabRow, ...]:
+    simple = (
+        "Еритроцити (дисморфізм)", "Клітини ниркового епітелію", "Клітини епітелію сечового міхура",
+        "Гіалінові циліндри", "Еритроцитарні циліндри", "Лейкоцитарні циліндри", "Воскоподібні циліндри",
+        "Зернисті циліндри", "Епітеліальні циліндри", "Кристали трипельфосфатів", "Кристали оксалату кальцію",
+        "Кристали сечової кислоти", "Кристали біурата амонію", "Кристали карбонату кальцію",
+        "Кристали білірубіну", "Кристали фосфату кальцію", "Кристали фосфорнокислого вапна", "Аморфні фосфати",
+        "Аморфні урати", "Бактерії", "Дріжджеподібні гриби", "Трихомонади", "Сперматозоїди", "Нітрити", "Слиз",
+    )
+    found = rf"{_S_NEG}|виявлен(?:і|а|о|ий)|\+{{1,4}}|{_S_QTY}"
+    return (
+        _SilabRow(
+            "Колір", r"(?:світло-|темно-|солом'яно-)?жовтий|бурштиновий|безбарвний|червоний|бурий|коричневий",
+            reference="від світло-жовтого до жовтого кольору", wrap="кольору",
+        ),
+        _SilabRow("Прозорість", r"прозора|(?:злегка )?каламутна", reference="прозора"),
+        _SilabRow("Відносна щільність", r"1[.,]0\d\d", unit="г/мл", reference=r"1\.0\d\d ?- ?1\.0\d\d"),
+        _SilabRow("pH", r"\d(?:[.,]\d)?", reference=r"\d\.\d ?- ?\d\.\d"),
+        _SilabRow("Лейкоцити", rf"{_S_NEG}|\d+", unit=r"Leu/[µu]L", reference=_S_NEG, tiers=3),
+        _SilabRow("Еритроцити", rf"{_S_NEG}|\d+", unit=r"Ery/[µu]L", reference=_S_NEG, tiers=5),
+        _SilabRow("Білок", rf"{_S_NEG}|\d+(?:[.,]\d+)?", unit="г/л", reference=_S_NEG, tiers=4),
+        _SilabRow("Глюкоза", rf"{_S_NEG}|\d+(?:[.,]\d+)?", unit="ммоль/л", reference=_S_NEG, tiers=4),
+        _SilabRow("Кетонові тіла", rf"{_S_NEG}|\d+(?:[.,]\d+)?", unit="ммоль/л", reference=_S_NEG, tiers=4),
+        _SilabRow("Уробіліноген", r"сліди|\d+", unit="мкмоль/л", reference="сліди", tiers=4),
+        _SilabRow("Білірубін", rf"{_S_NEG}|\d+", unit="мкмоль/л", reference=_S_NEG, tiers=3),
+        # Microscopy: counted per microlitre, which is the unit OCR loses most.
+        _SilabRow("Лейкоцити", r"\d+-\d+|<\d+|\d+", unit=r"/[µu]L", reference=r"<\d+"),
+        _SilabRow("Еритроцити", r"\d+-\d+|<\d+|\d+", unit=r"/[µu]L", reference=r"<\d+"),
+        _SilabRow(
+            "Клітини плоского епітелію", rf"{_S_NEG}|поодинокі(?: в препараті)?|\d+-\d+",
+            unit=r"/[µu]L", reference=rf"{_S_NEG}, 1-15",
+        ),
+        _SilabRow(
+            "Клітини перехідного епітелію", rf"{_S_NEG}|поодинокі(?: в препараті)?|\d+-\d+",
+            unit=r"/[µu]L", reference=rf"{_S_NEG}, 1-5",
+        ),
+        *(_SilabRow(name, found, reference=_S_NEG) for name in simple),
+    )
+
+
+_SILAB_ROWS: dict[str, tuple[_SilabRow, ...]] = {
+    "urine": _silab_urine_rows(),
+    "smear": (
+        _SilabRow(
+            "Лейкоцити",
+            rf"{_S_FIELD}|(?:в тяжах слизу(?: майже)? )?вкривають все поле зору|в тяжах слизу- ?\d{{1,3}}-\d{{1,3}}",
+        ),
+        _SilabRow("Еритроцити", rf"{_S_NEG}|{_S_FIELD}|поодинокі в п/з\.?"),
+        _SilabRow("Епітелій", _S_QTY),
+        _SilabRow("Слиз", rf"{_S_QTY}|{_S_NEG}"),
+        _SilabRow(
+            "Флора", rf"(?:дрібні палички|палички|коки) {_S_QTY}", wrap=rf"(?:дрібні палички|палички|коки) {_S_QTY}"
+        ),
+        _SilabRow("Trichomonas vaginalis", _S_NEG),
+        _SilabRow("Дріжджоподібний грибок", rf"{_S_NEG}|(?:міцелій|спори|бластоспори) {_S_QTY}"),
+    ),
+    "cytology": tuple(
+        # A written result wraps over as many lines as it needs; the value
+        # pattern, not the wrap, is what keeps noise out.
+        _SilabRow(name, value, label=label, wrap=r".+")
+        for name, label, value in (
+            (
+                "Плоский епітелій ({n})", r"Плоский епітелій \((?P<n>\d)\)",
+                rf"Клітини {_S_QTY}, розташовані окремо(?:, (?:невеликими )?(?:групами|пластами))*\.",
+            ),
+            (
+                "Залозистий епітелій ({n})", r"Залозистий епітелій \((?P<n>\d)\)",
+                rf"Клітини {_S_QTY}, розташовані окремо(?:, (?:невеликими )?(?:групами|пластами))*\.",
+            ),
+            (
+                "Опис морфологічних змін плоского епітелію", r"Опис морфологічних змін плоск\S* епітел\S*",
+                r"Ядра поодиноких клітин незначно збільшені\. Реактивні зміни\.|Не виявлені зміни\.",
+            ),
+            (
+                "Опис морфологічних змін залозистого епітелію", r"Опис морфологічних змін залозист\S* епітел\S*",
+                r"Ядра поодиноких клітин незначно збільшені\. Реактивні зміни\.|Не виявлені зміни\.",
+            ),
+            (
+                "Клітинні зміни, не пов'язані з неопластичним процесом",
+                r"Клітинні зміни, не пов'язані з неопластичним",
+                r"Не виявлені зміни\.|Плоскоклітинна метаплазія\.",
+            ),
+            ("Лейкоцити ({n})", r"Лейкоцити \((?P<n>\d)\)", rf"[ВУ] (?:помірній|великій|невеликій) кількості\."),
+            ("Інфекційні агенти", r"Інфекційні агенти", r"Не виявлені\.|Виявлені\."),
+            # Synevo's print of the same test calls the conclusion
+            # «Цитоморфологічний висновок»; one name keeps both on one concept.
+            (
+                "Цитоморфологічний висновок", r"Висновок:?|Цитоморфологічний висновок",
+                r"Тип [IV]{1,3}\. (?:Запальний тип мазка\.|Запалення\.?)(?: Реактивні зміни клітин плоского епітелію\.)?",
+            ),
+        )
+    ),
+    "hpv": (),
+    "pap": (
+        _SilabRow(
+            "Оцінка якості матеріалу/препарату урогенітального зішкрібу", r"Матеріал (?:не)?задовільний",
+            label=r"Оцінка якості матеріалу/препарату", name_tail="урогенітального зішкрібу",
+        ),
+        _SilabRow("Специфічні інфекційні агенти", r"Не виявлені|Виявлені"),
+        _SilabRow(
+            "Клітинні зміни, не пов'язані з неопластичними процесами", r"Не виявлені|Виявлені",
+            label=r"Клітинні зміни, не пов'язані з", name_tail="неопластичними процесами",
+        ),
+        _SilabRow("Реактивні зміни", r"Запальні \(включаючи репаративні\) виражені|Не виявлені"),
+        _SilabRow("Висновок: зміни плаского епітелію", r"NILM, \(тип [IV]{1,3}, запальний тип мазка\)|NILM|Не виявлені"),
+        _SilabRow("Висновок: зміни залозистого епітелію", r"Не виявлені"),
+    ),
+}
+#: A roman numeral OCR has not touched: Latin capitals only.  «Il», «tI», a
+#: Cyrillic «І» or «ПІ» are what «III» became on these scans, so none of them
+#: is read as a grade at all.
+_SILAB_GRADE = re.compile(r"^Висновок Ступінь чистоти (?P<grade>I{1,3}|IV)\.?$")
+_SILAB_GENOTYPE = re.compile(rf"^(?P<type>\d{{2}}) генотип (?P<value>{_S_NEG}|виявлено){_S_JUNK}(?P<ref>{_S_NEG})$")
+#: BD FocalPoint's quintile rank: its label wraps under the value, the method text beside it.
+_SILAB_QUINTILE = re.compile(r"^Квінтильний ранг препарату за (?P<rank>[1-5]) Автоматизована система\b")
+#: The tail as OCR reads it: «технологією ВО РосаїРоїпі» is BD FocalPoint.
+_SILAB_QUINTILE_TAIL = re.compile(r"^технологією \S{2} \S+")
+
+
+def _silab_clean(line: str) -> str:
+    """One OCR line with the homoglyphs a scan swaps in folded back.
+
+    «He виявлені» is «Не виявлені» in Latin letters; «невиявлена» lost its space.
+    """
+    line = collapse_space(line)
+    line = re.sub(r"^[|'‘’\"«\[]+\s*", "", line)
+    line = re.sub(r"^\((?=[^\W\d_]{4})", "", line)
+    line = re.sub(r"(?<![^\W\d_])H(?=e ?виявл)", "Н", line)
+    line = re.sub(r"(?<![^\W\d_])h(?=e ?виявл)", "н", line)
+    line = re.sub(r"(?<=[НнHh])e(?= ?виявл)", "е", line)
+    return re.sub(r"\b([Нн]е)виявл", r"\1 виявл", line)
+
+
+def _silab_case(text: str | None, section: str | None) -> str | None:
+    """«не виявлені» as the urine, smear and PCR tables print it: lower case."""
+    if text and section in {"urine", "smear", "hpv"} and text.startswith("Не виявл"):
+        return "н" + text[1:]
+    return text
+
+
+def _silab_noise(line: str) -> bool:
+    """A line OCR made out of a stamp, a rule or a signature: under three letters."""
+    return len(re.findall(r"[^\W\d_]", line)) < 3
+
+
+def _silab_section(line: str) -> tuple[bool, str | None]:
+    for pattern, key in _SILAB_SECTIONS:
+        if pattern.search(line):
+            return True, key
+    return False, None
+
+
+def _silab_label(row: _SilabRow, line: str) -> re.Match[str] | None:
+    pattern = rf"(?:{row.label or re.escape(row.name)})(?= |$)"
+    # The first letter's case is the one thing OCR gets wrong on a clean label.
+    return re.match(pattern, line) or re.match(pattern, line[:1].upper() + line[1:])
+
+
+def _silab_row_start(section: str | None, line: str) -> bool:
+    return any(_silab_label(row, line) for row in _SILAB_ROWS.get(section or "", ()))
+
+
+def _silab_cells(lines: list[str], index: int, section: str | None) -> list[str]:
+    """The lines under row `index` that belong to it, up to the next row.
+
+    Every label is printed with a capital, and a wrapped cell goes on in lower
+    case (a reference's «кольору», a scale's «25 = +»): a capitalised line is
+    the next row even when OCR spoiled its label.  A cytology result is
+    written in sentences, so there only a label OCR could read ends it.
+    """
+    cells: list[str] = []
+    in_note = False
+    for line in lines[index + 1:]:
+        if (
+            _silab_section(line)[0] or _SILAB_SITE.match(line) or _SILAB_END.match(line)
+            or line.startswith("Висновок") or _silab_row_start(section, line)
+            or _SILAB_GENOTYPE.match(line) or (section != "cytology" and line[0].isupper())
+        ):
+            break
+        if _SILAB_NOTE.match(line):
+            in_note = True
+        if in_note or (_silab_noise(line) and not _SILAB_TIER.fullmatch(line)):
+            continue
+        cells.append(line)
+    return cells
+
+
+_SILAB_TIER = re.compile(r"(\d+(?:[.,]\d+)?) ?= ?(\++)")
+
+
+def _silab_tiers(lines: list[str], count: int) -> str | None:
+    """«25 = + 100 = ++ 500 = +++» when exactly `count` rising tiers were read."""
+    tiers = []
+    for position, line in enumerate(lines, start=1):
+        found = _SILAB_TIER.fullmatch(line)
+        if not found or len(found.group(2)) != position:
+            return None
+        if tiers and parse_decimal(found.group(1)) <= parse_decimal(tiers[-1][0]):
+            return None
+        tiers.append((found.group(1), found.group(2)))
+    if len(tiers) != count:
+        return None
+    return " ".join(f"{number} = {plus}" for number, plus in tiers)
+
+
+def _silab_observation(
+    name: str, value: str, unit: str | None, reference: str | None, evidence: str, page_number: int,
+    *, specimen: str | None = None, section: str | None = None,
+) -> ParsedObservation:
+    value = re.sub(r"(\d) ?- ?(\d)", r"\1-\2", re.sub(r"в ?п/з", "в п/з", value))
+    number = re.fullmatch(r"(?P<comparator>[<>])?(?P<number>\d+(?:[.,]\d+)?)", value)
+    item = ParsedObservation(
+        raw_name=name, value_numeric=parse_decimal(number.group("number")) if number else None,
+        value_text=None if number else value, comparator=number.group("comparator") if number else None,
+        unit_raw=unit, reference_text=None, reference_low=None, reference_high=None,
+        page_number=page_number, evidence_text=evidence, confidence=0.9, value_printed=None,
+        specimen=specimen, section=section,
+    )
+    return _with_reference(item, reference)
+
+
+def _silab_cells_match(row: _SilabRow, rest: str, cells: list[str]) -> tuple[str, str | None, str | None] | None:
+    """The row's value, unit and reference read from its line and the lines under it, or None."""
+    unit = rf"{_S_JUNK}(?P<unit>{row.unit})" if row.unit else ""
+    reference = rf"{_S_JUNK}(?P<ref>{row.reference})" if row.reference else ""
+    if row.wrap and cells and all(re.fullmatch(row.wrap, cell) for cell in cells):
+        rest, cells = " ".join([rest, *cells]), []
+    found = re.fullmatch(rf"{_S_JUNK}(?P<value>{row.value})\*?{unit}{reference}", rest)
+    if not found:
+        return None
+    value = found.group("value")
+    printed_unit = re.sub(r"[µu]L$", "µL", found.group("unit")) if row.unit else None
+    printed = found.group("ref") if row.reference else None
+    if row.tiers:
+        scale = _silab_tiers(cells, row.tiers)
+        # A number on a dipstick is one of the tiers it was read against.
+        if not scale or (value[0].isdigit() and not re.search(rf"(?<![\d.]){re.escape(value)} =", scale)):
+            return None
+        return value, printed_unit, f"{printed} {scale}"
+    if cells:
+        return None
+    if printed and re.fullmatch(_S_RANGE, printed):
+        printed = re.sub(r" ?- ?", " - ", printed)
+    return value, printed_unit, printed
+
+
+def _silab_row(
+    section: str, line: str, cells: list[str], page_number: int, site: str | None
+) -> ParsedObservation | None:
+    for row in _SILAB_ROWS[section]:
+        label = _silab_label(row, line)
+        if not label:
+            continue
+        name = row.name.format(**label.groupdict()) if label.groupdict() else row.name
+        if row.name_tail:
+            if not cells or cells[0] != row.name_tail:
+                continue
+            cells = cells[1:]
+        read = _silab_cells_match(row, line[label.end():].strip(), cells)
+        if read is None:
+            continue
+        value, unit, reference = read
+        value, reference = _silab_case(value, section), _silab_case(reference, section)
+        microscopy = section == "urine" and (row.unit or "").startswith("/")
+        return _silab_observation(
+            name, value, unit, reference, " ".join([line, *cells]), page_number,
+            specimen="сеча" if section == "urine" else site,
+            section="Мікроскопія осаду сечі" if microscopy else None,
+        )
+    return None
+
+
+def parse_silab_page(
+    text: str, page_number: int, *, sites_in_order: bool = True, state: dict[str, str | None] | None = None
+) -> list[ParsedObservation]:
+    """Every row of one scanned SILAB page this reader recognises with confidence.
+
+    ``state`` carries the section and smear site over a page break: a page
+    opens with the rows the previous one ran out of room for, above its own
+    repeated heading.  It is updated in place for the next page.
+    """
+    state = {} if state is None else state
+    lines = [line for line in (_silab_clean(raw) for raw in text.splitlines()) if line]
+    observations: list[ParsedObservation] = []
+    section, site = state.get("section"), state.get("site")
+    for index, line in enumerate(lines):
+        heading, key = _silab_section(line)
+        if heading:
+            section, site = key, None
+            continue
+        if section is None:
+            continue
+        if section == "smear":
+            found = _SILAB_SITE.match(line)
+            if found:
+                site = found.group("site") if sites_in_order else None
+                if site and found.group("rest") == "Матеріал відсутній":
+                    observations.append(_silab_observation(
+                        "Мазок на мікрофлору", "Матеріал відсутній", None, None, line, page_number, specimen=site,
+                    ))
+                continue
+            if site and line == "Матеріал відсутній":
+                observations.append(_silab_observation(
+                    "Мазок на мікрофлору", line, None, None, line, page_number, specimen=site,
+                ))
+                continue
+            grade = _SILAB_GRADE.match(line)
+            if grade:
+                observations.append(_silab_observation("Ступінь чистоти", grade.group("grade"), None, None, line, page_number))
+                site = None
+                continue
+            if not site:
+                continue
+        if section == "hpv":
+            found = _SILAB_GENOTYPE.match(line)
+            if found and int(found.group("type")) in SILAB_HPV_GENOTYPES:
+                observations.append(_silab_observation(
+                    f"{found.group('type')} генотип", _silab_case(found.group("value"), section), None,
+                    _silab_case(found.group("ref"), section), line, page_number,
+                ))
+            continue
+        if section == "pap":
+            found = _SILAB_QUINTILE.match(line)
+            if found and index + 1 < len(lines) and _SILAB_QUINTILE_TAIL.match(lines[index + 1]):
+                observations.append(_silab_observation(
+                    "Квінтильний ранг препарату за технологією BD FocalPoint", found.group("rank"), None, None,
+                    f"{line} {lines[index + 1]}", page_number,
+                ))
+                continue
+        row = _silab_row(section, line, _silab_cells(lines, index, section), page_number, site)
+        if row is not None:
+            observations.append(row)
+    state.update(section=section, site=site)
+    return observations
+
+
+def silab_print(pages: list[dict[str, object]]) -> str | None:
+    """«form» for a SILAB print, «portal» for Synevo's copy of one, else None."""
+    text = "\n".join(str(page.get(field) or "") for page in pages for field in ("native_text", "ocr_text"))
+    if not SILAB_PRINT.search(text):
+        return None
+    return "portal" if SILAB_PORTAL_COPY.search(text) else "form"
+
+
+def _unique_genotypes(observations: list[ParsedObservation]) -> list[ParsedObservation]:
+    """Genotype rows whose number the document prints once.
+
+    A misread number (33 read as 38 is caught by the panel; 56 read as 58 is
+    not) shows as the same genotype twice, and neither reading can be trusted.
+    """
+    counts: dict[str, int] = {}
+    for item in observations:
+        if item.raw_name.endswith(" генотип"):
+            counts[item.raw_name] = counts.get(item.raw_name, 0) + 1
+    return [item for item in observations if counts.get(item.raw_name, 1) == 1]
+
+
 def _special_layout_rows(clinical_type: str, pages: list[dict[str, object]]) -> list[ParsedObservation] | None:
     """The rows of a report read whole rather than page by page, or None."""
     if clinical_type in ULTRASOUND_TYPES:
@@ -5389,7 +5813,7 @@ def _carry_leading_reference(observations: list[ParsedObservation], page_words: 
 
 def _page_rows(
     vendor: str, clinical_type: str, page: dict[str, object], columns_own_page: bool,
-    issues: list[ParseIssue] | None,
+    issues: list[ParseIssue] | None, silab: str | None = None, silab_state: dict | None = None,
 ) -> list[ParsedObservation]:
     """Every row of one page, from its native text layer and from its OCR."""
     page_number = int(page["page_number"])
@@ -5406,9 +5830,14 @@ def _page_rows(
         # Word positions describe the native text layer only; OCR of an
         # embedded image has its own geometry and none of it is this.
         words = page.get("words") if field == "native_text" else None
-        for observation in parse_source_text(
-            vendor, clinical_type, text, page_number, words, issues
-        ):
+        # A scanned SILAB print is read by the reader that knows its form,
+        # and by nothing else: the flat passes read its OCR noise as values.
+        read = (
+            parse_silab_page(text, page_number, sites_in_order=silab == "form", state=silab_state)
+            if silab and field == "ocr_text"
+            else parse_source_text(vendor, clinical_type, text, page_number, words, issues)
+        )
+        for observation in read:
             rows.append(
                 replace(
                     observation,
@@ -5475,6 +5904,7 @@ def parse_document(
     if clinical_type not in PARSED_CLINICAL_TYPES:
         return []
     observations: list[ParsedObservation] = []
+    silab, silab_state = silab_print(pages), {}
     for page in pages:
         page_words = page.get("words")
         # An EskuLab page whose native layer draws the table is read from its
@@ -5486,7 +5916,9 @@ def parse_document(
         if columns_own_page and observations:
             # The previous page's last block, continued over the break.
             _carry_leading_reference(observations, page_words, int(page["page_number"]))
-        observations.extend(_page_rows(vendor, clinical_type, page, columns_own_page, issues))
+        observations.extend(_page_rows(vendor, clinical_type, page, columns_own_page, issues, silab, silab_state))
+    if silab:
+        observations = _unique_genotypes(observations)
     observations = _antibiogram_material(observations)
     return [finalise(item, age_years, sex) for item in _distinct_rows(observations)]
 
