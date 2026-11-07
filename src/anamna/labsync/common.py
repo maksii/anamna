@@ -227,7 +227,7 @@ def lab_row(*, test: object, result: object, units: object = "", resulttype: str
 _HOMOGLYPHS = str.maketrans(
     {"а": "a", "в": "b", "е": "e", "к": "k", "м": "m", "н": "h", "о": "o",
      "р": "p", "с": "c", "т": "t", "у": "y", "х": "x", "і": "i",
-     "’": "'", "ʼ": "'", "`": "'", "ʹ": "'", "–": "-", "—": "-", "−": "-"}
+     "’": "'", "ʼ": "'", "`": "'", "ʹ": "'", '"': "'", "–": "-", "—": "-", "−": "-"}
 )
 _BRACKETS_RE = re.compile(r"\([^()]*\)")
 _SECTION_RE = re.compile(r"^[^:()]{3,60}:\s+(?=\S)")

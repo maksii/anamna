@@ -8,6 +8,7 @@ from pathlib import Path
 
 from ..config import local_overrides
 from ..immunizations import is_vaccination_card
+from .concepts import specimen_family
 from .text import collapse_space, combined_page_text
 
 
@@ -225,7 +226,15 @@ ORDER_PATTERNS = [
     # barcode beside the client's name instead.
     r"(?:замовл|samosn)[^\s\d]*\s*(\d{8,12})\b",
     r"^Клієнт:[^\n\d]*(\d{10})\b",
+    # The SILAB cytology passport: «ШК <barcode>» (штрих-код) beside the
+    # client's name, which OCR reads as «WK».
+    r"(?<!\w)(?:ШК|WK)\s+(\d{10})\b",
 ]
+#: BD FocalPoint's cytology passport printed beside a PAP test: micrographs
+#: and method text, no result of its own.  Its heading reaches OCR spoilt
+#: («ui итологічний паспо ee»); the line naming the images does not.
+CYTOLOGY_PASSPORT_RE = re.compile(
+    r"індивідуальні цифрові зображення|^\W*\w{0,3}\W*\w?итологічний\s+паспо\w*\W*\w{0,3}\W*$", re.I | re.M)
 #: How lab sync names a laboratory's download: «eskulab-<order>.pdf»,
 #: «synevo-<barcode>-1.pdf», «ekspert-<order>.pdf».  The number is the lab's
 #: own order id, the one to fall back on when the page prints none.
@@ -647,13 +656,19 @@ def clean_title(value: str) -> str:
 
 
 def extract_specimen(title: str) -> str | None:
+    """The one specimen a page's title names, or None.  A title joining a
+    blood count and a urinalysis («Аналіз крові розгорнутий (ЗАК) · Аналіз
+    сечі загальний») names two, though only the urine one is spelled the way
+    `SPECIMEN_RE` reads: taken as «сеча», it filed 17 blood rows as urine.
+    Each row's own section heading decides there (`pipeline.parse_pages`)."""
     if title.endswith(("…", "...")):
         return None  # a truncated panel list may hide a second specimen
     found = {
         "сеча" if match.group(2) else match.group(1).casefold()
         for match in SPECIMEN_RE.finditer(title)
     }
-    return found.pop() if len(found) == 1 else None
+    families = {specimen_family(part) for part in title.split(" · ")} - {None}
+    return found.pop() if len(found) == 1 and len(families) <= 1 else None
 
 
 #: Room a joined title leaves for « · ...» under `clean_title`'s 240.
@@ -1297,6 +1312,8 @@ def extract_title(text: str, filename: str, clinical_type: str) -> str:
         return clean_title(named) if named else "Diagnostic image"
     if clinical_type == "electrocardiogram":
         return "Kardia 6-lead ECG recording" if "6l recording" in text.casefold() else "Kardia ECG recording"
+    if clinical_type == "pathology" and CYTOLOGY_PASSPORT_RE.search(text):
+        return "Цитологічний паспорт"
     lines = [line for line in (collapse_space(raw) for raw in text.splitlines()) if line]
     candidates = (
         lambda: _eskulab_title(lines),
@@ -1570,6 +1587,8 @@ def _clinical_type(filename: str, mime_type: str, text: str, folded: str) -> str
         clinical_type = "immunization_record"
     elif visit_note_structure(folded):
         clinical_type = "consultation"
+    elif CYTOLOGY_PASSPORT_RE.search(folded):
+        clinical_type = "pathology"
     # «… не замінить ендоскопію з біопсією» is an ultrasound's disclaimer.
     elif re.search(r"(?<!з )біопсі|гістолог", folded):
         clinical_type = "pathology"

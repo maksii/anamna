@@ -72,6 +72,7 @@ from ..ingest.pipeline import (
     mark_document_duplicate,
     open_review_task,
     reason_part,
+    resolve_parsed_concept,
     stored_unit,
 )
 from ..ingest.positions import store_positions
@@ -975,6 +976,15 @@ def _inside_printed_band(obs: dict, row: dict, age: int | None, sex: str | None)
     return False
 
 
+def _states_no_interval(obs: dict, row: dict) -> bool:
+    """Neither the report nor the lab's record prints anything to judge by:
+    «-» or nothing at all.  EskuLab's API marks such a row "critical" (every
+    row of some 2022 orders) while the paper prints no flag, and a "critical"
+    with no interval to point a direction is no reading of ours to adopt."""
+    texts = [str(obs.get("vendor_reference_text") or ""), *(str(line) for line in row.get("norm") or [])]
+    return not any(re.sub(r"[\s\-–—]+", "", text) for text in texts)
+
+
 def _lab_units(unit: str) -> set[str]:
     """Every canonical form the lab's spelling may stand for: as printed, and
     with explanatory words dropped."""
@@ -1655,6 +1665,7 @@ def _record_value(row: dict, site: str | None = None) -> ParsedObservation | Non
         # bound «5.5 - 7.0» includes is the bounds' reading, in range).
         vendor_interpretation=_lab_reading(row, {}, number)
         if row["state"] == "critical" and not _inside_printed_band({"value_numeric": number}, row, None, None)
+        and not _states_no_interval({}, row)
         else None,
         specimen=site,
     )
@@ -2331,13 +2342,16 @@ def _flag_from_lab(connection, user_id: str, key: str, order_id: str, item: dict
         return "set", 0
     sex = person["sex_at_birth"] if person["sex_at_birth"] in {"male", "female"} else None
     item["lab_reading"] = _lab_reading(item["lab"], dict(person), None, _age(person), sex)
-    if _inside_printed_band(dict(person), item["lab"], _age(person), sex):
+    if _inside_printed_band(dict(person), item["lab"], _age(person), sex) or _states_no_interval(
+            dict(person), item["lab"]):
         # The band printed for this person holds the value -- on an inclusive
         # bound too (pH 5.5 against «5.5 - 7.0», basophils 1 against «0-1»)
         # -- and the paper prints no flag: the printed band decides.  EskuLab's
         # API sets "critical" on such values, and on whole 2022 orders; a copy
         # of the same report with no lab order judges them in range, and one
         # result must not be judged two ways.  An adoption is taken back.
+        # So is one over a row that prints no interval at all («-»): the
+        # "critical" points no direction and the paper flags nothing.
         return "undone", _undo_lab_flag(connection, user_id, key, order_id, obs) if obs["from_lab"] else 0
     changed = connection.execute(
         """UPDATE observations SET vendor_interpretation=?, vendor_interpretation_source='lab_record'
@@ -2488,19 +2502,22 @@ def _refresh_record_values(settings: Settings, connection) -> int:
     guessed: a stored value is paired with its row by the row's own line (in
     order, so the vaginal and cervical «Еритроцити: не виявлені» keep apart).
     A value that is no longer one is deleted, and one that is renamed is
-    updated, only while nobody has ruled on it ('extracted').  The concept
-    follows the new name on the next semantic repair.
+    updated, only while nobody has ruled on it ('extracted').  A renamed value
+    takes the concept its new name resolves to at once (the bare «16 генотип»
+    concepts kept the HPV rows renamed «ПЛР. ВПЛ ВКР, 16 генотип» until a
+    restart), and a reference an earlier reader dropped comes back from the
+    record (the quintile percentage's scale explanation).
     """
     changed = 0
     for document in connection.execute(
-            "SELECT id, source_path FROM documents WHERE extraction_strategy=?", (LAB_RECORD,)).fetchall():
+            "SELECT id, source_path, vendor_id FROM documents WHERE extraction_strategy=?", (LAB_RECORD,)).fetchall():
         try:
             payload = json.loads(resolve_source_path(settings, str(document["source_path"])).read_text(encoding="utf-8"))
         except (OSError, ValueError, TypeError):
             continue
         stored = connection.execute(
             "SELECT id, raw_name, value_text, specimen, evidence_text, verification_status, concept_id, "
-            "vendor_interpretation_source FROM observations "
+            "vendor_interpretation_source, vendor_reference_text, report_id, unit_raw FROM observations "
             "WHERE document_id=? AND extraction_method=? ORDER BY rowid", (document["id"], LAB_RECORD)).fetchall()
         unused = list(stored)
         for row, parsed in _record_values(payload.get("rows") or []):
@@ -2517,17 +2534,32 @@ def _refresh_record_values(settings: Settings, connection) -> int:
                 connection.execute("DELETE FROM observations WHERE id=?", (match["id"],))
                 changed += 1
                 continue
+            touched = False
             if match["vendor_interpretation_source"] == "lab_record" and not parsed.vendor_interpretation:
                 # A "critical" the record's own interval contradicts: the bounds' reading.
                 connection.execute(
                     "UPDATE observations SET vendor_interpretation=?, vendor_interpretation_source=NULL WHERE id=?",
                     (interpretation(parsed, match["concept_id"]), match["id"]))
-                changed += 1
+                touched = True
             if (parsed.raw_name, parsed.value_text, parsed.specimen) != (
                     match["raw_name"], match["value_text"], match["specimen"]):
                 connection.execute("UPDATE observations SET raw_name=?, value_text=?, specimen=? WHERE id=?",
                                    (parsed.raw_name, parsed.value_text, parsed.specimen, match["id"]))
-                changed += 1
+                touched = True
+            if match["vendor_reference_text"] is None and parsed.reference_text:
+                connection.execute(
+                    "UPDATE observations SET vendor_reference_text=?, vendor_reference_low=?, vendor_reference_high=?, "
+                    "vendor_reference_low_inclusive=?, vendor_reference_high_inclusive=? WHERE id=?",
+                    (parsed.reference_text, parsed.reference_low, parsed.reference_high,
+                     int(parsed.reference_low_inclusive), int(parsed.reference_high_inclusive), match["id"]))
+                touched = True
+            concept_id, preferred = resolve_parsed_concept(connection, parsed, match["report_id"],
+                                                           str(document["vendor_id"]), parsed.specimen)
+            if concept_id != match["concept_id"]:
+                connection.execute("UPDATE observations SET concept_id=?, unit_canonical=? WHERE id=?",
+                                   (concept_id, stored_unit(match["unit_raw"], preferred, concept_id), match["id"]))
+                touched = True
+            changed += touched
     return changed
 
 

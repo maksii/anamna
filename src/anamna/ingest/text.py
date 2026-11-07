@@ -13,11 +13,24 @@ def collapse_space(value: str) -> str:
     return SPACE_RE.sub(" ", value).strip()
 
 
+#: A Roman numeral typed partly or wholly in Cyrillic («ІІ», «ІV», «ХІІ»):
+#: the lab's record writes «тип ІІ» where the OCR of its print reads «тип II».
+#: Two letters at least, so the conjunction «і» stays a word.
+_CYRILLIC_ROMAN_RE = re.compile(r"(?<!\w)(?=\w*[іх])[ivxіх]{2,}(?!\w)")
+_ROMAN_TO_LATIN = str.maketrans("іх", "ix")
+
+
 def normalized_key(value: str) -> str:
     value = unicodedata.normalize("NFKC", value).casefold()
-    value = value.replace("’", "'").replace("`", "'")
+    # Every apostrophe look-alike is one: ' ’ ʼ ` and the «"» a lab's record
+    # types for it (the punctuation becomes a space below).
+    value = value.translate(_APOSTROPHES)
     value = re.sub(r"[^\w%#+/.-]+", " ", value, flags=re.UNICODE)
+    value = _CYRILLIC_ROMAN_RE.sub(lambda match: match.group(0).translate(_ROMAN_TO_LATIN), value)
     return collapse_space(value)
+
+
+_APOSTROPHES = str.maketrans({"’": "'", "`": "'", "ʼ": "'", "ʹ": "'", "‘": "'"})
 
 
 def text_sha256(value: str) -> str:

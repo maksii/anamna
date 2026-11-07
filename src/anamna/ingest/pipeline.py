@@ -963,11 +963,19 @@ def ensure_concept(
            ORDER BY a.vendor_id IS NULL ASC LIMIT 1""",
         (normalized, vendor_id, value_type, *excluded),
     ).fetchone()
+    if alias_row is None or alias_row["id"] not in _DEFINED_CONCEPT_IDS:
+        # An auto concept is one per label across vendors, as its unique name
+        # already makes it: a label that differs only in a key-folded
+        # character («пов'язані» / «пов"язані») is the same one too, and the
+        # vendor-scoped alias each spelling taught must not keep two series.
+        alias_row = _first_auto_concept(connection, normalized, value_type, excluded) or alias_row
     if alias_row:
-        if alias_row["category"] == "unmapped" and inferred_category != "unmapped":
-            connection.execute(
-                "UPDATE concepts SET category=? WHERE id=?", (inferred_category, alias_row["id"])
-            )
+        # Reused through its learned alias, an auto concept's category is
+        # read again too: the 39 serum amino acids kept «urinalysis» here
+        # after the inference stopped giving it (start-up repair runs this).
+        category = _auto_category(alias_row["id"], alias_row["category"], inferred_category)
+        if category != alias_row["category"]:
+            connection.execute("UPDATE concepts SET category=? WHERE id=?", (category, alias_row["id"]))
         return alias_row["id"], alias_row["preferred_unit"]
     concept_id, preferred_unit = _store_unmapped_concept(
         connection, raw_name, normalized, value_type, inferred_category, unit_raw
@@ -979,6 +987,21 @@ def ensure_concept(
             (concept_id, vendor_id, collapse_space(raw_name), normalized),
         )
     return concept_id, preferred_unit
+
+
+def _first_auto_concept(connection: sqlite3.Connection, normalized: str, value_type: str, excluded: list[str]):
+    """The earliest auto concept any vendor's alias with this key names."""
+    for row in connection.execute(
+        f"""SELECT DISTINCT c.id, c.preferred_unit, c.category, c.created_at FROM concept_aliases a
+           JOIN concepts c ON c.id = a.concept_id
+           WHERE a.normalized_alias = ? AND (c.value_type = ? OR c.value_type = 'mixed')
+             AND c.category NOT IN ({",".join("?" * len(excluded)) or "''"})
+           ORDER BY c.created_at, c.id""",
+        (normalized, value_type, *excluded),
+    ):
+        if row["id"] not in _DEFINED_CONCEPT_IDS:
+            return row
+    return None
 
 
 def _specimen_qualified(raw_name: str, family: str | None, specimen: str | None) -> str:
@@ -1097,20 +1120,23 @@ def _store_unmapped_concept(
         concept_id = existing["id"]
         preferred_unit = existing["preferred_unit"] or preferred_unit
         resolved_type = existing["value_type"] if existing["value_type"] == value_type else "mixed"
-        # An auto concept's category is an inference, and a better one replaces
-        # it: 39 serum amino acids kept the «urinalysis» a substring of the
-        # title once gave them.  A defined concept's category is the catalogue's.
-        # ponytail: the last row read wins for a label two specimens share
-        # under one name; `_specimen_qualified` keeps the known ones apart.
-        defined = existing["id"] in _DEFINED_CONCEPT_IDS
-        resolved_category = existing["category"] if defined else (
-            category if category != "unmapped" or existing["category"] == "urinalysis" else existing["category"]
-        )
+        resolved_category = _auto_category(existing["id"], existing["category"], category)
         connection.execute(
             "UPDATE concepts SET category=?, value_type=?, preferred_unit=COALESCE(preferred_unit, ?) WHERE id=?",
             (resolved_category, resolved_type, preferred_unit, concept_id),
         )
     return concept_id, preferred_unit
+
+
+def _auto_category(concept_id: str, stored: str, inferred: str) -> str:
+    """An auto concept's category is an inference, and a better one replaces
+    it; «unmapped» replaces only a «urinalysis» (the one category a stray
+    substring of a title once gave).  A defined concept's is the catalogue's.
+    ponytail: the last row read wins for a label two specimens share under one
+    name; `_specimen_qualified` keeps the known ones apart."""
+    if concept_id in _DEFINED_CONCEPT_IDS:
+        return stored
+    return inferred if inferred != "unmapped" or stored == "urinalysis" else stored
 
 
 #: Concepts whose report prints a three-tier index scale rather than an
@@ -1333,9 +1359,10 @@ def observation_specimen(parsed: ParsedObservation, fallback: str | None = None)
     own = getattr(parsed, "specimen", None)
     if own:
         return own
-    if specimen_family(getattr(parsed, "section", None)) == "stool":
-        return "кал"
-    return fallback
+    # A blood section of a page that also holds a urinalysis is blood, not
+    # the page's material (the page names none then, `extract_specimen`).
+    family = specimen_family(getattr(parsed, "section", None))
+    return {"stool": "кал", "urinalysis": "сеча", "hematology": None}.get(family, fallback) if family else fallback
 
 
 def resolve_parsed_concept(
@@ -1603,12 +1630,40 @@ def repair_observation_semantics(connection: sqlite3.Connection) -> int:
                 (concept_id, unit_canonical, low, high, low_inclusive, high_inclusive, refreshed, row["id"]),
             )
             changed += 1
+    _follow_remaining_units(connection)
     # Stored review reasons are repaired on the same start-up pass: a task
     # written before migration 037 gets its catalogue parts read back from
     # its English sentence, so it renders in the reader's language.
     backfill_review_reason_keys(connection)
     repair_review_tasks(connection)
     refresh_derived_observations(connection)
+    return changed
+
+
+def _follow_remaining_units(connection: sqlite3.Connection) -> int:
+    """An auto concept's preferred unit is the one its rows print.  Split by
+    specimen, the stool «Lactobacillus spp.» moved to its «(кал)» concept and
+    left the urine reading (КУО/мл) alone on a concept that still preferred the
+    stool unit (КУО/г).  Where no row prints the preferred unit any more, the
+    unit most of the remaining rows print replaces it.  A defined concept's
+    unit is the catalogue's."""
+    units: dict[str, Counter[str]] = {}
+    preferred: dict[str, str] = {}
+    for row in connection.execute(
+        """SELECT c.id, c.preferred_unit, o.unit_raw FROM concepts c JOIN observations o ON o.concept_id=c.id
+            WHERE c.preferred_unit IS NOT NULL AND TRIM(COALESCE(o.unit_raw, '')) <> ''"""
+    ):
+        if row["id"] in _DEFINED_CONCEPT_IDS:
+            continue
+        units.setdefault(row["id"], Counter())[str(row["unit_raw"]).strip()] += 1
+        preferred[row["id"]] = str(row["preferred_unit"])
+    changed = 0
+    for concept_id, printed in units.items():
+        if canonical_unit(preferred[concept_id]) in {canonical_unit(unit) for unit in printed}:
+            continue
+        connection.execute("UPDATE concepts SET preferred_unit=? WHERE id=?",
+                           (printed.most_common(1)[0][0], concept_id))
+        changed += 1
     return changed
 
 
@@ -1694,7 +1749,58 @@ def page_classifications(
     results = [classify_document(filename, mime_type, [page], metadata) for page in pages]
     _inherit_neighbour_vendors(results)
     _continue_previous_reports(results)
+    if _one_report(results) and len({item.vendor for item in results if item.vendor != UNKNOWN_VENDOR}) > 1:
+        results = _one_report_pages(results, classify_document(filename, mime_type, pages, metadata))
     return _shared_report_dates(results)
+
+
+#: The header fields one printed report repeats on every page.
+_REPORT_HEADER = ("order_identifier", "report_date", "collected_at", "issued_at")
+
+
+def _header_value(results: list[Classification], field: str) -> tuple[bool, str | None]:
+    """Whether the pages agree on one header field, and the fullest value
+    printed («2025-11-28» agrees with «2025-11-28T15:30»).  A page that prints
+    none agrees with any."""
+    values = sorted({str(getattr(item, field)) for item in results if getattr(item, field)}, key=len)
+    agree = all(values[-1].startswith(value) for value in values)
+    return agree, values[-1] if values else None
+
+
+def _one_report(results: list[Classification]) -> bool:
+    """Result pages of one order: no page prints another order number, date,
+    draw or result moment, and some page prints the order or the draw.  A
+    Synevo print for a partner clinic carries the clinic's logo on some pages
+    and the laboratory's table on others; read page by page that was two
+    vendors, a «compound bundle», and the pages under the logo lost their rows
+    to a parser that does not know the clinic (eight HPV genotypes)."""
+    if len(results) < 2 or not {
+        item.clinical_type for item in results if item.clinical_type != "clinical_report"
+    } <= RESULT_TYPES:
+        return False
+    # A page that is no result page and prints no header of its own (an
+    # undated consultation scanned behind the results) is not shown to be
+    # part of the order.
+    keyed = ("order_identifier", "collected_at", "issued_at")
+    if any(item.clinical_type not in RESULT_TYPES and not any(getattr(item, field) for field in keyed)
+           for item in results):
+        return False
+    found = {field: _header_value(results, field) for field in _REPORT_HEADER}
+    return all(agree for agree, _value in found.values()) and any(found[field][1] for field in keyed)
+
+
+def _one_report_pages(results: list[Classification], whole: Classification) -> list[Classification]:
+    """Every page of one report under the vendor the whole file reads as (the
+    laboratory, whose rule outranks the clinic's logo), with the header any
+    page printed."""
+    vendors = {item.vendor for item in results}
+    vendor, website = (whole.vendor, whole.website) if whole.vendor in vendors else (results[0].vendor, results[0].website)
+    header = {field: _header_value(results, field)[1] for field in _REPORT_HEADER}
+    return [
+        replace(item, vendor=vendor, website=website,
+                **{field: getattr(item, field) or value for field, value in header.items()})
+        for item in results
+    ]
 
 
 def create_reports(
@@ -1808,10 +1914,11 @@ def classify_pages(
     # One laboratory order whose pages are a culture and a urinalysis is one
     # report of that order, not a bundle of unrelated ones: it kept no date
     # and no order number of its own.
-    page_orders = {item.order_identifier for item in per_page}
-    one_order = len(page_orders) == 1 and None not in page_orders and page_types <= RESULT_TYPES
-    is_compound = len(pages) > 1 and (
-        len(page_vendors) > 1 or len(page_dates) > 1 or (len(page_types) > 1 and not one_order)
+    # So is a print whose pages share one order or draw header: a page that
+    # prints no order number is not another report for that alone.
+    one_order = _one_report(per_page)
+    is_compound = len(pages) > 1 and not one_order and (
+        len(page_vendors) > 1 or len(page_dates) > 1 or len(page_types) > 1
     )
     if not is_compound and one_order and len(page_types) > 1:
         classification = replace(classification, clinical_type="laboratory")
@@ -1945,7 +2052,8 @@ def parse_pages(
         )
         for index in run:
             page = pages[index]
-            on_page = [parsed for parsed in rows if parsed.page_number == page["page_number"]]
+            on_page = _under_headings(
+                [parsed for parsed in rows if parsed.page_number == page["page_number"]], page, per_page[index].title)
             # A page that prints forty results and yields three leaves no trace
             # anywhere: no error, no review task, just a document that reads as
             # though the laboratory ran fewer tests.  One line per page is
@@ -1961,6 +2069,38 @@ def parse_pages(
             )
             found.extend((parsed, per_page[index]) for parsed in on_page)
     return found
+
+
+def _under_headings(rows: list[ParsedObservation], page: dict[str, object], title: str) -> list[ParsedObservation]:
+    """Each row with the heading it is printed under, where the page's title
+    joins several («Аналіз крові розгорнутий (ЗАК) · Аналіз сечі загальний»):
+    the heading's specimen is the row's (`observation_specimen`).  A row the
+    parser already sectioned, or one whose line is not found, is left alone."""
+    headings = [heading for heading in title.split(" · ") if heading != "..."]
+    if len(headings) < 2 or not rows:
+        return rows
+    lines = [normalized_key(line) for line in combined_page_text(page).splitlines()]
+    marks = sorted(
+        (index, heading) for heading in headings
+        for index in [next((number for number, line in enumerate(lines)
+                            if line and normalized_key(heading)[:40] in line), None)]
+        if index is not None)
+    if not marks:
+        return rows
+    placed: list[ParsedObservation] = []
+    start = 0
+    for row in rows:
+        evidence = normalized_key(row.evidence_text or "")
+        # In page order first; a pass that reads its rows later (words
+        # after numbers) looks again from the top.
+        at = next((number for number in [*range(start, len(lines)), *range(start)]
+                   if len(lines[number]) >= 6 and evidence.startswith(lines[number])), None)
+        heading = None if at is None else next((name for mark, name in reversed(marks) if mark <= at), None)
+        if heading and not row.section:
+            row = replace(row, section=heading)
+        start = at if at is not None else start
+        placed.append(row)
+    return placed
 
 
 def _nothing_read_reason(classification: Classification) -> dict[str, object]:
@@ -2456,9 +2596,28 @@ def _attachment_relation(document, document_id: str, other) -> tuple[str, str, s
     return (export, cover, "attachment_of")
 
 
+def _same_print(document, other) -> bool:
+    """One print of one order: the same order and result times to the minute,
+    and no order number that says otherwise (a half-size scan may have lost it)."""
+    stamps = all(
+        document[field] and "T" in str(document[field]) and document[field] == other[field]
+        for field in ("collected_at", "issued_at")
+    )
+    orders = {str(row["order_identifier"]) for row in (document, other) if row["order_identifier"]}
+    return stamps and len(orders) <= 1
+
+
+def _shared_values_agree(mine: set, theirs: set) -> bool:
+    """Every result both hold reads the same in both."""
+    concepts = {key[0] for key in mine} & {key[0] for key in theirs}
+    return bool(concepts) and {key for key in mine if key[0] in concepts} == {
+        key for key in theirs if key[0] in concepts}
+
+
 def _result_relation(document, document_id: str, other, mine: set, theirs: set) -> tuple[str, str, str]:
     other_id = str(other["id"])
-    if mine == theirs:
+    # A copy that lost rows to OCR is still the same report, not a part of it.
+    if mine == theirs or (_same_print(document, other) and _shared_values_agree(mine, theirs)):
         return (*_newer_first(document, document_id, other), "duplicate")
     if mine > theirs:
         return (document_id, other_id, "contains")
@@ -3350,6 +3509,48 @@ def _has_drifted(row, expected: tuple[object, ...]) -> bool:
     )
 
 
+def _content_concepts(connection, document_id: str) -> dict[tuple[object, ...], str | None]:
+    """The concept each fingerprint of :func:`_content_counts` is filed under."""
+    return {
+        _fingerprint(row): row["concept_id"]
+        for row in connection.execute(
+            """SELECT page_number, raw_name, value_numeric, value_text, unit_canonical,
+                      comparator, observed_at, concept_id
+                 FROM observations WHERE document_id=? AND verification_status='extracted'
+                  AND extraction_method <> ?""",
+            (document_id, DERIVED_EGFR_METHOD),
+        )
+    }
+
+
+def _fingerprint(row) -> tuple[object, ...]:
+    return (
+        int(row["page_number"] or 0),
+        normalized_key(str(row["raw_name"] or "")),
+        row["value_numeric"],
+        collapse_space(str(row["value_text"] or "")),
+        row["unit_canonical"] if row["value_numeric"] is not None else None,
+        row["comparator"],
+        row["observed_at"],
+    )
+
+
+def _renamed_count(
+    gone: Counter[tuple[object, ...]], new: Counter[tuple[object, ...]],
+    before: dict[tuple[object, ...], str | None], after: dict[tuple[object, ...], str | None],
+) -> int:
+    """Rows only the printed label changed on: same page, concept and value.
+    «Колір (кал)» read again as «Колір» is neither a vanished value nor a new
+    one, and 28 of them told a person to go looking for 28 lost results."""
+    def by_concept(counter: Counter, concepts: dict) -> Counter:
+        out: Counter[tuple[object, ...]] = Counter()
+        for key, count in counter.items():
+            concept = concepts.get(key)
+            out[(key[0], concept, *key[2:]) if concept else key] += count
+        return out
+    return sum((by_concept(gone, before) & by_concept(new, after)).values())
+
+
 def _content_counts(connection, document_id: str) -> Counter[tuple[object, ...]]:
     """What a document's unverified rows *say*, as a multiset.
 
@@ -3361,15 +3562,7 @@ def _content_counts(connection, document_id: str) -> Counter[tuple[object, ...]]
     quietly counted once.
     """
     return Counter(
-        (
-            int(row["page_number"] or 0),
-            normalized_key(str(row["raw_name"] or "")),
-            row["value_numeric"],
-            collapse_space(str(row["value_text"] or "")),
-            row["unit_canonical"] if row["value_numeric"] is not None else None,
-            row["comparator"],
-            row["observed_at"],
-        )
+        _fingerprint(row)
         for row in connection.execute(
             """SELECT page_number, raw_name, value_numeric, value_text, unit_canonical,
                       comparator, observed_at
@@ -4298,6 +4491,7 @@ def reingest_document(
             # fingerprinted by what they say -- page, printed label, value, unit
             # -- and compared against what this parse produces.
             previous_values = _content_counts(connection, document_id)
+            previous_concepts = _content_concepts(connection, document_id)
             discarded = connection.execute(
                 "DELETE FROM observations WHERE document_id=? AND verification_status='extracted'",
                 (document_id,),
@@ -4382,7 +4576,11 @@ def reingest_document(
             # A row this parse read and paired with a checked row was produced
             # -- it simply was not inserted twice -- so it has not vanished.
             paired_values = _paired_values(fresh, paired_new)
-            vanished = sum((previous_values - current_values - paired_values).values())
+            gone = previous_values - current_values - paired_values
+            renamed = _renamed_count(gone, current_values - previous_values, previous_concepts,
+                                     _content_concepts(connection, document_id))
+            vanished = sum(gone.values()) - renamed
+            appeared -= renamed
 
             search_content = " ".join(
                 [
