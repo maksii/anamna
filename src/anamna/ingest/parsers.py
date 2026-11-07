@@ -3291,7 +3291,8 @@ _VISIT_FIELDS = (
     ("temperature", r"Температура(?:\s+тіла)?", r"\d{2}(?:[.,]\d)?", _VISIT_TEMPERATURE),
     ("respiratory_rate", r"Частота\s+дихання|ЧД", r"\d{1,2}", r"/\s*хв"),
     ("spo2", r"SpO2|SpO₂|Сатурація", r"\d{2,3}", r"%"),
-    ("heart_rate", r"ЧСС", r"\d{2,3}", _VISIT_BPM),
+    # Expert's form 028/о: «ЧСС - 78/хв.»; per minute behind ЧСС is beats.
+    ("heart_rate", r"ЧСС", r"\d{2,3}", rf"{_VISIT_BPM}|/\s*хв"),
     ("weight", r"Вага(?:\s+тіла)?|Маса\s+тіла", r"\d{1,3}(?:[.,]\d{1,2})?", r"кг"),
     ("height", r"Зріст(?:\s+тіла)?", r"\d{2,3}(?:[.,]\d)?", r"см"),
     # Printed without a unit: «Індекс маси тіла ﴾ІМТ﴿ [Співвідношення] 31,8».
@@ -3308,7 +3309,9 @@ def _visit_pattern(label: str, value: str, unit: str | None, *, whole_line: bool
     tail = rf"\s*(?P<unit>{unit})(?!\w)" if unit else r"(?![\d.,]*\d)"
     if whole_line:
         return re.compile(rf"^(?P<label>{label})\s+(?P<value>{value}){tail}\.?$")
-    return re.compile(rf"(?<!\w)(?P<label>{label})\s*:\s*(?P<value>{value}){tail}")
+    # Expert's form 028/о writes «ЧД - 16/хв, SpO2 - 98%»: a spaced dash
+    # stands for the colon (an unspaced one would be a range).
+    return re.compile(rf"(?<!\w)(?P<label>{label})(?:\s*:|\s+[-–])\s*(?P<value>{value}){tail}")
 
 
 _VISIT_INLINE = tuple(
@@ -3325,7 +3328,7 @@ _VISIT_LINE = tuple(
 _VISIT_FEVER = re.compile(
     r"(?<!\w)(?:Суб)?[Фф]ебрильн\w*\s+Т\s*\(\s*(?P<value>\d{2}[.,]\d)\s*(?:[\u00ad\-‐]\s*)?на\s+прийомі\s*\)"
 )
-_VISIT_BP_LABEL = re.compile(r"(?<!\w)(?:АТ|А\.\s*Т\.|Артеріальний\s+тиск)\s*:")
+_VISIT_BP_LABEL = re.compile(r"(?<!\w)(?:АТ|А\.\s*Т\.|Артеріальний\s+тиск)(?:\s*:|\s+[-–]\s)")
 #: One reading after «АТ:», with the arm when the note names one.
 _VISIT_BP_READING = re.compile(
     rf"(?:(?P<site>(?:прав|лів)\w*\s+рук\w*)\s*:?\s*)?(?P<systolic>\d{{2,3}})\s*/\s*(?P<diastolic>\d{{2,3}})\s*(?P<unit>{_VISIT_MMHG})"
@@ -3383,6 +3386,9 @@ def _visit_value(
     low, high = _VISIT_LIMITS[kind]
     if value is None or not low <= value <= high:
         return None
+    if kind == "heart_rate" and unit and unit.lstrip().startswith("/"):
+        # A bare «/хв» folds to breaths per minute; behind ЧСС it is beats.
+        unit = "уд/хв"
     return ParsedObservation(
         raw_name=name, value_numeric=value, value_text=None, comparator=None,
         unit_raw=collapse_space(unit) if unit else None, reference_text=None,

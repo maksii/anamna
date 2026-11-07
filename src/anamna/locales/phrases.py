@@ -58,8 +58,8 @@ PHRASES: dict[str, str] = {
     "Dermatology consultations and skin findings": "Консультації дерматолога й зміни на шкірі",
     "Brain & nervous system": "Головний мозок і нервова система",
     "Brain": "Мозок",
-    "Brain recordings such as the EEG (electroencephalogram, a recording of the brain's electrical activity) and their conclusions": (
-        "Записи роботи мозку, як-от ЕЕГ (електроенцефалограма, запис електричної активності головного мозку), та їхні висновки"
+    "Brain recordings such as the EEG (electroencephalogram, a recording of the brain's electrical activity), and visits for headaches and other nervous-system complaints": (
+        "Записи роботи мозку, як-от ЕЕГ (електроенцефалограма, запис електричної активності головного мозку), і консультації з приводу головного болю та інших скарг нервової системи"
     ),
     "Electroencephalogram (EEG)": "Електроенцефалограма (ЕЕГ)",
     "Other results": "Інші результати",
@@ -457,6 +457,13 @@ PHRASES: dict[str, str] = {
     "Spine radiograph": "Рентгенограма хребта",
     "Knee MRI": "МРТ колінного суглоба",
     "Elbow MRI": "МРТ ліктьового суглоба",
+    "Allergy consultation": "Консультація алерголога",
+    "Gastroenterology consultation": "Консультація гастроентеролога",
+    "Endocrinology consultation": "Консультація ендокринолога",
+    "General practitioner consultation": "Консультація терапевта",
+    "Gastrointestinal tract ultrasound": "УЗД шлунково-кишкового тракту",
+    "Upper GI endoscopy (EGD)": "Езофагогастродуоденоскопія (ЕФГДС)",
+    "Breath test for small-intestinal bacterial overgrowth": "Дихальний тест на надмірний бактерійний ріст у тонкій кишці",
 
     # Findings summaries
     "The pathology report describes small-intestinal mucosal changes consistent with chronic inactive ileitis and polypectomy fragments consistent with serrated adenoma; a hyperplastic polyp is not excluded. Clinical correlation was requested.": (
