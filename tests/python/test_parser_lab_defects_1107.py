@@ -161,9 +161,9 @@ def test_synevo_coprogram_wrapped_result_is_the_value_not_the_norm():
     assert found["Крохмальні зерна позаклітинні"] == ("поодинокі в препараті", "не виявлені")
     assert found["Вегетативні форми і цисти найпростіших"] == ("не виявлені", "не виявлені")
     assert found["Запах"] == ("специфічний каловий", "специфічний каловий")
-    # The bracket is printed in the result cell, not the reference column: it is
-    # no reference (review 2026-11-07, second pass).
-    assert found["Лейкоцити (копрограма)"] == ("не виявлені", None)
+    # The bracket is printed in the result cell, and it is the row's norm (round-2
+    # review): the value without it, the reference without its brackets.
+    assert found["Лейкоцити (копрограма)"] == ("не виявлені", "в нормі - не виявлені")
     # Rows the categorical vocabulary does not know are read at all now.
     assert found["Форма"] == ("не оформлений", "оформлений")
     assert found["Реакція"] == ("слабокисла", "нейтральна")

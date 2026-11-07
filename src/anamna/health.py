@@ -13,8 +13,10 @@ from .i18n import get_locale, t, translate_phrase
 from .ingest.parsers import (
     DEMOGRAPHIC_REFERENCE_RE,
     NON_NORMAL_BAND_RE,
+    SPLIT_DECIMAL_RE,
     demographic_reference,
     reference_bounds,
+    reference_limits,
 )
 from .ingest.text import collapse_space, normalized_key, search_key
 from .locales.concepts_en import CONCEPT_NAMES_EN
@@ -677,7 +679,8 @@ _SEX_TOKENS = {
     # indistinguishable from the women's, and a block naming both sexes read as
     # naming neither.  Only the parenthesised forms are accepted -- a bare «ч»
     # is a letter in half the words on the page.
-    "male": re.compile(r"чолов|\(\s*ч\s*\)|\bmale\b|\bmen\b", re.I),
+    # «чол.» is the abbreviation EskuLab's liver panel prints beside «жін.».
+    "male": re.compile(r"чолов|\bчол\b|\(\s*ч\s*\)|\bmale\b|\bmen\b", re.I),
     "female": re.compile(r"жін|\(\s*ж\s*\)|\bfemale\b|\bwomen\b|вагіт|pregnan|триместр", re.I),
 }
 _CHILD_RE = re.compile(r"новонарод|дитин|діт|немовл|newborn|child|infant|p(a)?ediatric", re.I)
@@ -775,9 +778,13 @@ def _unresolvable(age_years: int, *bounds: float) -> bool:
 #: letter run counts, so the space before the next band's «Чоловіки» keeps that
 #: label out; the run may cross a solidus, because the same block also prints
 #: «<20мм/ год» with the extractor's space inside the unit.
+#: The upper bound may be written as a word, «жін.: до 33», «Дорослі: до 21»:
+#: read only as a comparator, the liver panel's adult rows had no interval and
+#: ALT, AST and bilirubin went unjudged for every adult.  The colon may carry a
+#: stray point, «Жінки старші 50р. :. <30мм/год».
 _BAND_RE = re.compile(
-    r"(?P<label>[^:]*):\s*"
-    r"(?P<interval>[<>≤≥]?\s*-?\d+(?:[.,]\d+)?(?:\s*[-–—]\s*-?\d+(?:[.,]\d+)?)?)"
+    r"(?P<label>[^:]*):[\s.]*"
+    r"(?P<interval>(?:до\s*|[<>≤≥]\s*)?-?\d+(?:[.,]\d+)?(?:\s*[-–—]\s*-?\d+(?:[.,]\d+)?)?)"
     r"(?P<unit>[^\W\d_]+(?:\s*/\s*[^\W\d_]+)*)?"
 )
 
@@ -814,7 +821,9 @@ _NEWBORN_RE = re.compile(r"новонарод|newborn|neonat", re.I)
 #: beginning -- «Діти 0-5 днів: <49.0 5 днів - 6 місяців: <56.0» has a real
 #: interval followed by a real age, and dropping it took the only paediatric
 #: band ALT had.
-_TIME_UNIT = r"(?:днів|день|дня|тижн|тиж\b|міс\b|місяц|рок|рік|роки|год\.)"
+#: The single-letter «р.» is an age too: «Жінки: 18-25 р.: 0.96-13.34» (AMH)
+#: offered «18-25» as the women's interval, once per age row.
+_TIME_UNIT = r"(?:днів|день|дня|тижн|тиж\b|міс\b|місяц|рок|рік|роки|р\b|год\.)"
 #: A comparator opens the next band's label only after a blank: «38-153
 #: ≥18 років: 42-156» is a 2-17-year band followed by the adults' label, and
 #: reading «≥18 років» as the tail of an age took the amino acids' 2-17 band
@@ -842,6 +851,10 @@ _POPULATION_RE = re.compile(
             # «≥18 років» names its population by the bound: started at the
             # word, the qualifier kept only «років» and lost the age.
             r"[<>≤≥]\s*\d{1,3}\s*" + _YEAR_UNIT,
+            # The same bound in words, «старше 12 років: <25», «до 40 р.: <60,5»:
+            # without it the qualifier began at «років», lost its number, and
+            # named nobody, so gliadin IgG and HE4 had no band for an adult.
+            r"(?:від|до|старш\w*)\s*\d{1,3}\s*" + _YEAR_UNIT,
         )
     ),
     re.I,
@@ -997,15 +1010,56 @@ def _band_specificity(label: str, sex: str | None) -> tuple[int, int]:
     score = 0
     if sex and _SEX_TOKENS[sex].search(label):
         score += 4
-    if _AGE_WINDOW_RE.search(label) or _AGE_FROM_RE.search(label) or _AGE_TO_RE.search(label):
+    # An open lower age bound short of adulthood is no narrower than "adults":
+    # «старші 1 року: 60,0-80,0» is the children's tail of total protein's
+    # block, and outranking «Дорослі 66,0-87,0» it gave every adult the
+    # paediatric interval.
+    lower = _AGE_FROM_RE.search(label)
+    if _AGE_WINDOW_RE.search(label) or _AGE_TO_RE.search(label) or (lower and _bound_years(lower) >= 18):
         score += 2
     if _ADULT_RE.search(label):
         score += 1
     return score, len(label)
 
 
+#: «Дорослі 66,0-87,0 1 день - 4 тижні: 46,0-68,0»: the adults' row printed with
+#: no colon, so its interval read as the start of the next band's label.  A
+#: colon is put back only before an interval, never before an age window
+#: («Дорослі 20-65 років: ...»).
+_UNCOLONED_ADULT_RE = re.compile(
+    r"(?:дорослі|дорослих|\badults?\b)"
+    rf"(?=\s+\d++(?:[.,]\d++)?\s*[-–—]\s*\d++(?:[.,]\d++)?(?![\d.,])(?!\s*{_AGE_UNIT}))",
+    re.I,
+)
+
+
+#: A population heading with its age bands under it, «Жінки: 31-35 р.: 0.07-7.35»
+#: (AMH), «Діти: <1 року: 3.0 - 5.4».  The heading's own colon made the age
+#: window read as the interval and the band's label begin at «р.», so no woman
+#: had an AMH band.  The colon before an age qualifier that ends in a colon of
+#: its own is dropped, and the heading becomes part of the label.
+_NESTED_AGE_LABEL_RE = re.compile(
+    rf":(?=\s*(?:[<>≤≥]\s*)?\d{{1,3}}(?:\s*[-–—]\s*\d{{1,3}})?\s*{_AGE_UNIT}\s*:)", re.I
+)
+
+
+def _reading(value: float, interval: str) -> str | None:
+    """Which side of one printed interval a value falls on; ``None`` when it has no bounds."""
+    limits = reference_limits(interval)
+    if limits.low is None and limits.high is None:
+        return None
+    if limits.high is not None and (value > limits.high or (value == limits.high and not limits.high_inclusive)):
+        return "high"
+    if limits.low is not None and (value < limits.low or (value == limits.low and not limits.low_inclusive)):
+        return "low"
+    return "within"
+
+
 def applicable_band(
-    reference: str | None, age_years: int | None = None, sex: str | None = None
+    reference: str | None,
+    age_years: int | None = None,
+    sex: str | None = None,
+    value: float | None = None,
 ) -> str | None:
     """The one band of a multi-population reference block that describes this patient.
 
@@ -1023,10 +1077,16 @@ def applicable_band(
     ``None`` for a block that is not a list of labelled bands, and for one whose
     every band belongs to another population -- refusing remains the answer when
     nothing fits, and it must not become a guess.
+
+    ``value``, when the caller has one, settles a tie between equally specific
+    bands that every one of them reads the same way: a 50-year-old woman's ESR
+    of 6 is inside both «Жінки 17-50р: <20» and «Жінки старші 50р: <30», and
+    refusing there left a normal result unjudged.  Where they disagree it is
+    still refused.
     """
     if not reference:
         return None
-    text = collapse_space(reference)
+    text = _NESTED_AGE_LABEL_RE.sub("", _UNCOLONED_ADULT_RE.sub(r"\g<0>:", collapse_space(reference)))
     bands = [
         (
             collapse_space(found.group("label")),
@@ -1063,14 +1123,47 @@ def applicable_band(
     ranked.sort(key=lambda item: item[0], reverse=True)
     # Two bands equally entitled to the same patient are not a choice to make on
     # his behalf: an unresolved reference is recoverable and a wrong one is not.
-    if len(ranked) > 1 and ranked[0][0][0] == ranked[1][0][0] and ranked[0][2] != ranked[1][2]:
+    # Unless every one of them reads this value the same way.  One label with
+    # several intervals is a misread block, never a tie («Жінки: 18-25 р.:
+    # 0.96-13.34 Жінки: 26-30 р.: ...» offering its age windows), and agreement
+    # between misreadings proves nothing.
+    tied = [(item[1], item[2]) for item in ranked if item[0][0] == ranked[0][0][0]]
+    intervals = {interval for _, interval in tied}
+    if len(intervals) > 1 and (
+        value is None
+        or len({label for label, _ in tied}) < len(tied)
+        or None in (readings := {_reading(value, interval) for interval in intervals})
+        or len(readings) > 1
+    ):
         return None
     _, qualifier, interval = ranked[0]
     return f"{qualifier}: {interval}"
 
 
+#: A risk index printed as one cut-off with a reading on either side of it,
+#: ROMA's «≥7.4% - високий ризик ... <7.4% - низький ризик».  Not a tier of a
+#: graded scale, which stays refused: there are two readings, the low-risk one
+#: is the expected result, and the cut-off is exactly where the laboratory's
+#: own reading changes.  Refused with the graded scales, a premenopausal ROMA
+#: of 10.2 % was shown unjudged under a threshold the report prints.
+_LOW_RISK_CUTOFF_RE = re.compile(r"<\s*(\d+(?:[.,]\d+)?)\s*%?\s*[-–—:]?\s*низьк\w*\s+ризик", re.I)
+_HIGH_RISK_CUTOFF_RE = re.compile(r"(?:≥|>)\s*(\d+(?:[.,]\d+)?)\s*%?\s*[-–—:]?\s*висок\w*\s+ризик", re.I)
+
+
+def _risk_cutoff(text: str) -> float | None:
+    """The cut-off of a two-reading risk index, as the low-risk side's exclusive upper bound."""
+    low_risk = _LOW_RISK_CUTOFF_RE.findall(text)
+    high_risk = _HIGH_RISK_CUTOFF_RE.findall(text)
+    if len(low_risk) != 1 or len(high_risk) != 1 or low_risk[0].replace(",", ".") != high_risk[0].replace(",", "."):
+        return None
+    return float(low_risk[0].replace(",", "."))
+
+
 def applicable_reference_bounds(
-    reference: str | None, age_years: int | None = None, sex: str | None = None
+    reference: str | None,
+    age_years: int | None = None,
+    sex: str | None = None,
+    value: float | None = None,
 ) -> tuple[float | None, float | None]:
     """Numeric bounds from a printed reference, only when they fit the patient.
 
@@ -1090,7 +1183,7 @@ def applicable_reference_bounds(
     # population `demographic_reference` recognises -- vitamin D's «Ризик
     # дефіциту: < 10.0 Дорослі: 30.0-50.0 Інтоксикація: >150.0» names only
     # adults, and reading it whole left the first number pair to chance.
-    band = applicable_band(clean, age_years, sex)
+    band = applicable_band(clean, age_years, sex, value)
     if band is not None:
         return reference_bounds(band.rsplit(":", 1)[-1])
     if not demographic_reference(clean):
@@ -1114,6 +1207,9 @@ def applicable_reference_bounds(
     # published as this man's lower bound: a moderate-risk boundary read as the
     # floor of a healthy range, which put his acceptable 1.11 mmol/L below range
     # and downgraded the curated verdict to a lab-versus-guideline conflict.
+    cutoff = _risk_cutoff(clean)
+    if cutoff is not None:
+        return None, cutoff
     if _CONDITION_BAND_RE.search(clean) or NON_NORMAL_BAND_RE.search(clean):
         return None, None
     # The interval is what follows the qualifier: "Дорослі (20-65 років):
@@ -1184,22 +1280,29 @@ def _single_interval_text(clean: str) -> str | None:
 
 
 def display_reference(
-    reference: str | None, age_years: int | None = None, sex: str | None = None
+    reference: str | None,
+    age_years: int | None = None,
+    sex: str | None = None,
+    value: float | None = None,
 ) -> str:
     if not reference:
         return t("ref.not_supplied")
-    clean, refusal = _reference_for_reader(collapse_space(reference), age_years, sex)
+    # «7. 0 - 7.5» as the text layer gave it is 7.0, which is what the verdict used.
+    printed = SPLIT_DECIMAL_RE.sub(r"\1.\2", collapse_space(reference))
+    clean, refusal = _reference_for_reader(printed, age_years, sex, value)
     if refusal is not None:
         return refusal
     return _localized_reference(clean)
 
 
-def _reference_for_reader(clean: str, age_years: int | None, sex: str | None) -> tuple[str, str | None]:
+def _reference_for_reader(
+    clean: str, age_years: int | None, sex: str | None, value: float | None = None
+) -> tuple[str, str | None]:
     """The reference text to show this reader, or the message shown instead."""
     # The band that describes this reader, labelled, so «8.0-61.0» arrives as
     # "men: 8.0-61.0" and not as a bare pair of numbers whose population they
     # have to take on trust.
-    band = applicable_band(clean, age_years, sex)
+    band = applicable_band(clean, age_years, sex, value)
     if band is not None:
         return band, None
     if not demographic_reference(clean):
@@ -1319,6 +1422,30 @@ REFERENCE_FRAGMENTS_EN: dict[str, str] = {
     "дорослі": "adults",
     "чоловіки": "men",
     "жінки": "women",
+    # The liver panel's abbreviated sexes, «жін.: до 33 чол.: до 41».
+    "жін.": "women",
+    "чол.": "men",
+    # ROMA's two readings and the populations they are printed for.  «РЯ» is
+    # «рак яєчників», ovarian cancer, spelled out rather than abbreviated.
+    "жінки репродуктивного віку": "women of reproductive age",
+    "жінки в постменопаузі": "postmenopausal women",
+    "високий ризик виявлення епітеліального ря": "high risk of epithelial ovarian cancer",
+    "низький ризик виявлення епітеліального ря": "low risk of epithelial ovarian cancer",
+    "високий ризик виявлення ря": "high risk of ovarian cancer",
+    "низький ризик виявлення ря": "low risk of ovarian cancer",
+    "низький ризик": "low risk",
+    # The coprogram's pH scale, every band named.
+    "в нормі нейтральна або слаболужна": "normal, neutral or slightly alkaline",
+    "різко кисла": "strongly acidic",
+    "кисла": "acidic",
+    "різко лужна": "strongly alkaline",
+    "лужна": "alkaline",
+    # A colony count's norm: «не більше 1.0 x 10^4 КУО», «Не менше 1.0*10^6 КУО/г».
+    "не більше": "no more than",
+    "не менше": "at least",
+    "куо/г": "CFU/g",
+    "куо/мл": "CFU/mL",
+    "куо": "CFU",
     # «Чоловіки старші 50р» is one of the two men's ESR rows, and the band
     # selector surfaces whichever of them the reader falls in.
     "старші": "over",

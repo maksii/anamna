@@ -248,8 +248,9 @@ def test_culture_rows_with_a_reference_column_are_read_with_their_sections_mater
     assert (bacteriuria.value_numeric, bacteriuria.unit_raw, bacteriuria.value_printed) == (1000.0, "КУО/мл", "1,0*10^3")
     staph = parsed[(1, "Staphylococcus epidermidis")]
     assert (staph.value_numeric, staph.reference_text, staph.specimen) == (1e7, "не більше 1.0 x 10^4 КУО", "кал")
-    # A power-of-ten reference is never read as the number before the caret.
-    assert (staph.reference_low, staph.reference_high) == (None, None)
+    # A power-of-ten norm is read with its power written out, never as the
+    # number before the caret.
+    assert (staph.reference_low, staph.reference_high) == (None, 1e4)
     absent = parsed[(1, "E.сoli із зміненими властивостями")]
     assert (absent.value_text, absent.reference_text, absent.specimen) == ("не виявлено", "в нормі <10^6", "кал")
     # The organism name wrapped onto the next line.

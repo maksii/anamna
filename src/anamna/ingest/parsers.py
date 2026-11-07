@@ -179,6 +179,8 @@ class ParseIssue:
 # were their range.  One predicate, used by the parser and by the display layer.
 DEMOGRAPHIC_REFERENCE_RE = re.compile(
     r"новонарод|дитин|діт|рок(?:ів|и|у)?\b|місяц|чолов|жін|вагіт|триместр|"
+    # «чол.: до 41 жін.: до 33» (ALT): the men's row abbreviated.
+    r"\bчол\b|"
     # «12-16р.: 40-65» is an age band spelled the way EskuLab spells it in the
     # blood count.  Without this the whole segmented-neutrophil block read as
     # one plain interval and `reference_bounds` returned its first pair -- the
@@ -202,6 +204,33 @@ ABNORMAL_BAND_RE = re.compile(r"високий|підвищен|низьк(?:и�
 #: `reference_bounds` refuses whatever it cannot read exactly, and this is not
 #: an exception to that.
 POWER_NOTATION_RE = re.compile(r"\d\s*\^\s*\d")
+
+#: A colony count's norm is written in powers of ten too, and it *is* an
+#: interval: «не більше 1.0 x 10^4 КУО», «Не менше 1.0*10^6 КУО/г», «в нормі -
+#: 10^7 КУО/г - 10^9 КУО/г».  Refused with the PCR threshold above, every row of
+#: a stool culture went unjudged, the 10^7 Staphylococcus the antibiogram was
+#: run for included.  Its powers are written out as plain numbers, which leaves
+#: no caret to stop at; a PCR «>10^4 ГЄ/мл» names neither a count unit nor a
+#: norm, and stays refused.
+_COUNT_NORM_RE = re.compile(r"КУО|CFU|в\s+нормі|не\s+більше|не\s+менше", re.I)
+_POWER_TERM_RE = re.compile(r"(?:(?P<mantissa>\d+(?:\.\d+)?)\s*[xх×*]\s*)?10\s*\^\s*(?P<power>\d{1,2})", re.I)
+_COUNT_UNIT_RE = re.compile(r"\s*(?:КУО|CFU)(?:\s*/\s*[^\W\d_]+)?", re.I)
+
+
+def _expanded_count(value: str) -> str:
+    """A colony-count norm with its powers of ten written out and its units dropped."""
+    value = _POWER_TERM_RE.sub(
+        lambda found: f"{float(found['mantissa'] or 1) * 10 ** int(found['power']):.15g}", value
+    )
+    value = re.sub(r"не\s+більше", "≤", _COUNT_UNIT_RE.sub("", value), flags=re.I)
+    return re.sub(r"не\s+менше", "≥", value, flags=re.I)
+
+
+#: «7. 0 - 7.5»: a decimal point the text layer printed a blank after.  Read as
+#: written, the stool pH scale's first pair became «0 - 7.5» and an acidic 6.75
+#: was published inside it.  Only before a range dash, where the number cannot
+#: be the end of a sentence.
+SPLIT_DECIMAL_RE = re.compile(r"(?<![\d.])(\d{1,3})\.\s(\d+)(?=\s*[-–—])")
 
 #: Words naming a band that is *not* the healthy one.  Immediately before an
 #: interval they mark it as some other tier of the same scale, not the range
@@ -468,6 +497,9 @@ def reference_limits(reference: str | None) -> ReferenceLimits:
     # left with no direction.  Only zero: a lone «5» could be either limit.
     if re.fullmatch(r"\s*0(?:\.0+)?\s*", value):
         return ReferenceLimits(None, 0.0, True, True)
+    value = SPLIT_DECIMAL_RE.sub(r"\1.\2", value)
+    if POWER_NOTATION_RE.search(value) and _COUNT_NORM_RE.search(value):
+        value = _expanded_count(value)
     if refused_reference(value):
         return ReferenceLimits()
     if (
@@ -2562,6 +2594,9 @@ def _eskulab_result(
     )
 
 
+_WRAPPED_UNIT = re.compile(r"(\d[^\W\d_]+/) (?=[^\W\d_])")
+
+
 def _eskulab_observation(
     name: str, result: str, unit: str, reference: list[str], page_number: int
 ) -> ParsedObservation | None:
@@ -2585,7 +2620,9 @@ def _eskulab_observation(
     # among the bands is `health.applicable_band`'s job: it knows the reader's
     # age and sex, which the parser does not, and it is the same choice the
     # display and the verdict both have to make.
-    band = collapse_space(" ".join(part for part in reference if part)) or None
+    # A unit wrapped at its solidus («<20мм/» over «год») rejoins without the
+    # blank the line break became: «<20мм/ год» is not how the lab printed it.
+    band = _WRAPPED_UNIT.sub(r"\1", collapse_space(" ".join(part for part in reference if part))) or None
     joined = band or ""
     unit = unit.strip() or None
     evidence = collapse_space(f"{name} {result} {unit or ''} {joined}")
@@ -3543,12 +3580,14 @@ def _culture_row(
         mantissa = parse_decimal(count.group("mantissa"))
         if mantissa is None:
             return None
+        # The norm is a power of ten too; `reference_limits` writes its powers
+        # out (`_expanded_count`).  The printed text is kept whole.
+        limits = reference_limits(reference)
         return ParsedObservation(
             raw_name=name, value_numeric=mantissa * (10 ** int(count.group("power"))), value_text=None,
             comparator=count.group("comparator"), unit_raw=count.group("unit"),
-            # A power-of-ten reference yields no bounds (`POWER_NOTATION_RE`);
-            # the printed text is kept whole.
-            reference_text=reference or None, reference_low=None, reference_high=None,
+            reference_text=reference or None, reference_low=limits.low, reference_high=limits.high,
+            reference_low_inclusive=limits.low_inclusive, reference_high_inclusive=limits.high_inclusive,
             page_number=page_number, evidence_text=evidence, confidence=0.97,
             value_printed=collapse_space(count.group("printed")), specimen=specimen,
         )
@@ -3991,11 +4030,12 @@ def parse_synevo_unitless(words: list, page_number: int) -> list[ParsedObservati
         inline = _SYNEVO_INLINE_NORM.match(value) if not reference else None
         if inline:
             # «не виявлені (в нормі - не виявлені)» is all result column (the
-            # words start inside it, left of the reference header), the row's
-            # reference column is empty, and the lab's own record has no norm
-            # for it.  Moved into the reference, a gloss in the result cell was
-            # published as an interval the laboratory never printed.
+            # words start inside it, left of the reference header) and the
+            # row's reference column is empty: the bracket is where this lab
+            # prints the coprogram's leukocyte and erythrocyte norm.  It is the
+            # row's reference, without the brackets.
             value = inline.group("value")
+            reference = inline.group("norm").strip("() ")
         if not reference and not inline and not _SYNEVO_GENOTYPE.match(value):
             # A result row prints its norm; a line with none is a panel heading
             # or a note in the result column («Звіт з описом лабораторних
@@ -5140,17 +5180,17 @@ def scale_interpretation(value: float, reference: str | None) -> str | None:
 
 
 def _demographic_limits(
-    reference: str, age_years: int | None, sex: str | None
+    reference: str, age_years: int | None, sex: str | None, value: float | None = None
 ) -> ReferenceLimits | None:
     """This patient's band of a block printed for several populations."""
     from ..health import applicable_band, applicable_reference_bounds
 
-    band = applicable_band(reference, age_years, sex)
+    band = applicable_band(reference, age_years, sex, value)
     if band is not None:
         limits = reference_limits(band.rsplit(":", 1)[-1])
         if limits.low is not None or limits.high is not None:
             return limits
-    low, high = applicable_reference_bounds(reference, age_years, sex)
+    low, high = applicable_reference_bounds(reference, age_years, sex, value)
     if low is None and high is None:
         return None
     text = reference.replace(",", ".")
@@ -5242,7 +5282,7 @@ def _patient_bounds(
         low, high = item.sex_bands[sex]
         return ReferenceLimits(low, high, bounds.low_inclusive, bounds.high_inclusive)
     if demographic_reference(reference) and (age_years is not None or sex):
-        patient = _demographic_limits(reference, age_years, sex)
+        patient = _demographic_limits(reference, age_years, sex, item.value_numeric)
         if patient is not None:
             return patient
     return bounds
