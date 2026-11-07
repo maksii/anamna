@@ -434,7 +434,11 @@ def extract_document(path: Path, run_ocr: bool = True) -> dict[str, object]:
     # than the upright image the person saw in their photo viewer.
     pages = []
     with Image.open(path) as image, tempfile.TemporaryDirectory(prefix="anamna-image-") as directory:
-        for index in range(getattr(image, "n_frames", 1)):
+        # Only a TIFF's frames are sheets.  An iPhone JPEG opens as MPO, its
+        # second frame the HDR gain map of the same picture: read as a page,
+        # it filed one photographed sheet as a two-page bundle.
+        sheets = getattr(image, "n_frames", 1) if image.format == "TIFF" else 1
+        for index in range(sheets):
             image.seek(index)
             ocr_text = ""
             if run_ocr:

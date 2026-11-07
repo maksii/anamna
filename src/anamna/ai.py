@@ -1172,7 +1172,7 @@ DOCUMENT_KINDS = (
     "laboratory", "radiology_mri", "radiology_xray", "ultrasound", "pathology",
     "diagnostic_image", "compound_bundle", "consultation", "allergy", "microbiology",
     "electrocardiogram", "blood_pressure", "administrative", "clinical_report",
-    "immunization_record",
+    "immunization_record", "questionnaire",
 )
 
 OVERVIEW_RESPONSE_FORMAT = _json_schema(

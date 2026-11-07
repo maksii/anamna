@@ -28,7 +28,9 @@ from ..i18n import (
 )
 from ..immunizations import is_visit_vaccination, parse_immunizations, parse_visit_vaccinations, store_document_doses
 from ..reference import canonical_unit
-from .classifier import KNOWN_CLINICAL_TYPES, RESULT_TYPES, UNKNOWN_VENDOR, Classification, classify_document
+from .classifier import (
+    KNOWN_CLINICAL_TYPES, RESULT_TYPES, UNKNOWN_VENDOR, Classification, classify_document, misread_order,
+)
 from .concepts import (
     CONCEPT_DEFINITIONS,
     NON_ANALYTE_LABELS,
@@ -847,6 +849,29 @@ def seed_reference_rules(connection: sqlite3.Connection) -> None:
     from ..reference import seed_reference_library
 
     seed_reference_library(connection)
+
+
+def checked_order(
+    connection: sqlite3.Connection, patient_id: object, order: str | None, day: str | None, document_id: str | None = None
+) -> str | None:
+    """The order number to store: none when OCR read a known order one digit off.
+
+    A photo of a results sheet printed the same day as an order already on
+    file, whose number differs from it in one digit, is that order misread
+    (an 8 read as a 6): storing it would invent an order nobody placed.
+    """
+    if not (order and day):
+        return order
+    known = {
+        row[0]
+        for row in connection.execute(
+            """SELECT order_identifier FROM documents
+                WHERE patient_id=? AND id IS NOT ? AND order_identifier IS NOT NULL
+                  AND (report_date=? OR substr(collected_at, 1, 10)=?)""",
+            (str(patient_id), document_id, day, day),
+        )
+    }
+    return None if misread_order(order, known) else order
 
 
 def ensure_vendor(connection: sqlite3.Connection, name: str, website: str | None) -> str:
@@ -2041,7 +2066,7 @@ def ingest_file(
                     classification.clinical_type,
                     classification.extraction_strategy,
                     classification.confidence,
-                    classification.order_identifier,
+                    checked_order(connection, patient_id, classification.order_identifier, classification.report_date),
                     classification.report_date,
                     utc_now(),
                     classification.status,
@@ -3235,7 +3260,8 @@ def classification_drift_ids(connection, owner_user_id: str) -> list[str]:
     """
     rows = connection.execute(
         """SELECT id, original_filename, mime_type, content_sha256, title, title_set_by, clinical_type,
-                  classified_by, report_date, report_date_set_by, order_identifier, collected_at, issued_at
+                  classified_by, report_date, report_date_set_by, order_identifier, collected_at, issued_at,
+                  patient_id
              FROM documents WHERE owner_user_id=?
               -- A lab's own record of an order (labsync) was never classified
               -- from text: there is no reading for the classifier to redo.
@@ -3248,6 +3274,9 @@ def classification_drift_ids(connection, owner_user_id: str) -> list[str]:
         if expected is not None and not expected[4] and row["collected_at"]:
             # The page prints no collection time; the lab's own order does.
             expected = (*expected[:4], lab_order_collected_at(connection, str(row["id"])), *expected[5:])
+        if expected is not None and expected[3]:
+            order = checked_order(connection, row["patient_id"], str(expected[3]), expected[2], str(row["id"]))
+            expected = (*expected[:3], order, *expected[4:])
         if expected is not None and _has_drifted(row, expected):
             drifted.append(str(row["id"]))
     return drifted
@@ -3881,7 +3910,10 @@ def _update_reread_document(
             classification.clinical_type,
             classification.extraction_strategy,
             classification.confidence,
-            classification.order_identifier,
+            checked_order(
+                connection, document["patient_id"], classification.order_identifier, classification.report_date,
+                document_id,
+            ),
             # `_apply_human_classification` already put a person's
             # date on `classification`; this keeps it even when the
             # classifier read none.
