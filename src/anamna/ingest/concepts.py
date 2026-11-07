@@ -69,7 +69,7 @@ CONCEPT_DEFINITIONS: list[dict[str, object]] = [
     {"name": "Free triiodothyronine", "category": "thyroid", "unit": "pmol/L", "aliases": ["трийодтиронін вільний (ft3)", "ft3"]},
     {"name": "Free thyroxine", "category": "thyroid", "unit": "pmol/L", "aliases": ["тироксин вільний (ft4)", "тироксин вільний (t4 вільний)", "ft4"]},
     {"name": "Ferritin", "category": "iron", "unit": "ng/mL", "aliases": ["феритин", "ferritin"]},
-    {"name": "Serum iron", "category": "iron", "unit": "µmol/L", "aliases": ["залізо", "залізо (сироватка крові)", "iron"]},
+    {"name": "Serum iron", "category": "iron", "unit": "µmol/L", "aliases": ["залізо", "залізо (сироватка крові)", "iron", "залізо сироваткове"]},
     {"name": "25-hydroxyvitamin D", "category": "vitamins", "unit": "ng/mL", "aliases": ["total 25-hydroxyvitamin d", "вітамін д (25-гідроксивітамін d, 25", "вітамін д (25-гідроксивітамін d, 25-(oh)d)", "загальний вітамін d (25-гідроксивітамін d)", "25-гідроксивітамін d (вітамін d загальний)", "25-oh vitamin d", "vitamin d", "вітамін d загальний"]},
     {"name": "Vitamin B12", "category": "vitamins", "unit": "pg/mL", "aliases": ["ціанокобаламін (вітамін b12)", "вітамін b12", "вітамін в12 (ціанокобаламін)", "vitamin b12"]},
     {"name": "Folate, serum", "category": "vitamins", "unit": "ng/mL", "aliases": ["фолієва кислота (сироватка)", "фолієва кислота", "folate"]},
@@ -81,7 +81,7 @@ CONCEPT_DEFINITIONS: list[dict[str, object]] = [
     {"name": "Calcium, ionized", "category": "electrolytes", "unit": "mmol/L", "aliases": ["кальцій іонізований (сироватка)", "кальцій іонізований", "ionized calcium"]},
     {"name": "INR", "category": "coagulation", "unit": "ratio", "aliases": ["мнг", "мнв", "inr", "international normalized ratio", "міжнародне нормалізоване відношення", "міжнародне нормалізоване відношення(мнв/inr)", "міжнародне нормалізоване відношення (мнв/inr)"]},
     {"name": "Fibrinogen", "category": "coagulation", "unit": "g/L", "aliases": ["фібриноген", "fibrinogen", "фібриноген по клаусу"]},
-    {"name": "Total immunoglobulin E", "category": "allergy", "unit": "kU/L", "aliases": ["загальний ige", "total ige"]},
+    {"name": "Total immunoglobulin E", "category": "allergy", "unit": "kU/L", "aliases": ["загальний ige", "total ige", "загальний ig e"]},
     {"name": "HLA-B27", "category": "immunogenetics", "unit": None, "value_type": "mixed", "aliases": ["виявлення носійства гену hla b-27", "hla-b27"]},
     {"name": "Aerobic and facultative anaerobic microbiota growth", "category": "microbiology", "unit": None, "value_type": "text", "aliases": ["ріст аеробної та факультативно-анаеробної мікробіоти"]},
     {"name": "Yeast and mould growth", "category": "microbiology", "unit": None, "value_type": "text", "aliases": ["дріжджові та плісняві гриби"]},
@@ -199,8 +199,8 @@ CONCEPT_DEFINITIONS: list[dict[str, object]] = [
     {"name": "Platelet large cell ratio", "category": "hematology", "unit": "%", "aliases": ["коефіцієнт великих тромбоцитів (p-lcr)", "p-lcr коефіцієнт великих тромбоцитів"]},
     {"name": "Plateletcrit", "category": "hematology", "unit": "%", "aliases": ["тромбокрит (pct)", "тромбокрит (рст)", "тромбокрит (pст)", "тромбокрит"]},
     {"name": "Activated partial thromboplastin time", "category": "coagulation", "unit": "s", "aliases": ["ачтч", "aptt", "активований частковий тромбопластиновий час (ачтч,артт)"]},
-    {"name": "Prothrombin time", "category": "coagulation", "unit": "s", "aliases": ["птч (протромбіновий час)", "протромбіновий час", "протромбіновий час (пч)", "пч"]},
-    {"name": "Quick prothrombin index", "category": "coagulation", "unit": "%", "aliases": ["протромбіновий індекс по квіку", "протромбіновий індекс (протромбін по квіку, %)"]},
+    {"name": "Prothrombin time", "category": "coagulation", "unit": "s", "aliases": ["птч (протромбіновий час)", "протромбіновий час", "протромбіновий час (пч)", "пч", "протромбіновий час (пч, рт, сек.)"]},
+    {"name": "Quick prothrombin index", "category": "coagulation", "unit": "%", "aliases": ["протромбіновий індекс по квіку", "протромбіновий індекс (протромбін по квіку, %)", "протромбін за квіком, %"]},
     {"name": "Thrombin time", "category": "coagulation", "unit": "s", "aliases": ["тромбіновий час", "тромбіновий час (тч)", "тч"]},
     # Standard CRP (an acute-phase test reported against «до 5») and
     # high-sensitivity CRP (cardiovascular-risk tiers below 1 / 1-3 / above 3
@@ -254,7 +254,12 @@ CONCEPT_DEFINITIONS: list[dict[str, object]] = [
     {"name": "Urine erythrocytes (dipstick)", "category": "urinalysis", "unit": "cells/µL", "value_type": "mixed", "aliases": ["еритроцити (за активністю пероксидази)", "еритроцити (за активністю пероксидази), кл/мкл", "еритроцити/гемоглобін (c-bld)", "еритроцити/гемоглобін (c-bld) - мг/дл приносний", "кров (c-bld)", "кров у сечі", "urine blood", "blood (dipstick)", "urine erythrocytes (dipstick)"]},
     {"name": "Urine erythrocytes per high-power field", "category": "urinalysis", "unit": "per HPF", "value_type": "mixed", "aliases": ["еритроцити (rbc), в п/з", "еритроцити, в п/з", "еритроцити в п/з", "еритроцити в полі зору", "urine erythrocytes per high-power field", "rbc/hpf", "erythrocytes per hpf"]},
     # «Незмінені еритроцити (NL RBC)» is EskuLab's automated count of the same
-    # unchanged (isomorphic) cells the microscopy row counts per field.
+    # unchanged (isomorphic) cells the microscopy row counts per field -- but
+    # in cells/µL, and there is no conversion between a microlitre and a
+    # field.  ``refine_definition`` files a per-microlitre row under its own
+    # series, so the per-field decision threshold never reads 16.4 cells/µL
+    # as 16 cells per field.
+    {"name": "Urine erythrocytes, unchanged (per microlitre)", "category": "urinalysis", "unit": "cells/µL", "value_type": "mixed", "aliases": ["urine erythrocytes, unchanged (per microlitre)"]},
     {"name": "Urine erythrocytes, unchanged", "category": "urinalysis", "unit": "per HPF", "value_type": "mixed", "aliases": ["еритроцити (не змінені)", "еритроцити не змінені, в п/з", "незмінені еритроцити (nl rbc)", "незмінені еритроцити", "nl rbc", "urine erythrocytes, unchanged"]},
     {"name": "Urine bacteria", "category": "urinalysis", "unit": "cells/µL", "value_type": "mixed", "aliases": ["бактерії", "бактерії в мкл (bact)", "бактерії, в п/з", "urine bacteria"]},
     # "mixed" across the sediment cluster: EskuLab's automated microscopy
@@ -271,7 +276,7 @@ CONCEPT_DEFINITIONS: list[dict[str, object]] = [
     {"name": "Waxy casts in urine", "category": "urinalysis", "unit": None, "value_type": "text", "aliases": ["циліндри воскоподібні", "восковидні циліндри", "воскоподібні циліндри", "waxy casts in urine", "циліндри восковидні"]},
     {"name": "Urine mucus", "category": "urinalysis", "unit": None, "value_type": "text", "aliases": ["слиз", "слиз, в п/з", "urine mucus"]},
     {"name": "Urine salts", "category": "urinalysis", "unit": None, "value_type": "text", "aliases": ["солі", "urine salts"]},
-    {"name": "H. pylori stool antigen", "category": "infection", "unit": None, "value_type": "text", "aliases": ["h.pylori антиген у калі (якісне визначення)", "h. pylori stool antigen"]},
+    {"name": "H. pylori stool antigen", "category": "infection", "unit": None, "value_type": "text", "aliases": ["h.pylori антиген у калі (якісне визначення)", "h. pylori stool antigen", "хелікобактер пілорі, кал"]},
     # Synevo prints «HBcorAg, антитіла сумарні»: total antibodies to the core
     # antigen, not the antigen itself.  Renamed from "Hepatitis B core antigen
     # marker" with its id kept (CONCEPT_ID_OVERRIDES), so the old address and
@@ -363,7 +368,7 @@ CONCEPT_DEFINITIONS: list[dict[str, object]] = [
     # recorded -- these are qualitative findings whose expected value the
     # report states for itself, and that printed reference is stored with
     # each observation.
-    {"name": "Stool colour", "category": "stool", "unit": None, "value_type": "text", "aliases": ["колір (кал)"]},
+    {"name": "Stool colour", "category": "stool", "unit": None, "value_type": "text", "aliases": ["колір (кал)", "колір калових мас"]},
     {"name": "Stool form", "category": "stool", "unit": None, "value_type": "text", "aliases": ["форма (кал)"]},
     {"name": "Stool consistency", "category": "stool", "unit": None, "value_type": "text", "aliases": ["консистенція (кал)"]},
     {"name": "Stool odour", "category": "stool", "unit": None, "value_type": "text", "aliases": ["запах (кал)"]},
@@ -374,26 +379,26 @@ CONCEPT_DEFINITIONS: list[dict[str, object]] = [
     {"name": "Stool pus", "category": "stool", "unit": None, "value_type": "text", "aliases": ["гній (кал)"]},
     {"name": "Stool tissue fragments", "category": "stool", "unit": None, "value_type": "text", "aliases": ["шматочки тканини (кал)"]},
     {"name": "Stool concretions", "category": "stool", "unit": None, "value_type": "text", "aliases": ["конкременти (копроліти) (кал)"]},
-    {"name": "Stool pH", "category": "stool", "unit": None, "value_type": "numeric", "aliases": ["реакція (кал)"]},
-    {"name": "Stool muscle fibres, altered", "category": "stool", "unit": None, "value_type": "text", "aliases": ["м'язові волокна змінені (кал)"]},
+    {"name": "Stool pH", "category": "stool", "unit": None, "value_type": "numeric", "aliases": ["реакція (кал)", "ph (кал)"]},
+    {"name": "Stool muscle fibres, altered", "category": "stool", "unit": None, "value_type": "text", "aliases": ["м'язові волокна змінені (кал)", "м'язові волокна перетравлені (кал)"]},
     {"name": "Stool muscle fibres, slightly altered", "category": "stool", "unit": None, "value_type": "text", "aliases": ["м'язові волокна малозмінені (кал)"]},
-    {"name": "Stool muscle fibres, unaltered", "category": "stool", "unit": None, "value_type": "text", "aliases": ["м'язові волокна не змінені (кал)"]},
-    {"name": "Stool plant fibre, undigested", "category": "stool", "unit": None, "value_type": "text", "aliases": ["рослинна клітковина неперетравлена (кал)"]},
-    {"name": "Stool plant fibre, digested", "category": "stool", "unit": None, "value_type": "text", "aliases": ["рослинна клітковина перетравлена (кал)"]},
-    {"name": "Stool starch, intracellular", "category": "stool", "unit": None, "value_type": "text", "aliases": ["крохмаль внутріклітинний (кал)"]},
-    {"name": "Stool starch, extracellular", "category": "stool", "unit": None, "value_type": "text", "aliases": ["крохмаль позаклітинний (кал)"]},
+    {"name": "Stool muscle fibres, unaltered", "category": "stool", "unit": None, "value_type": "text", "aliases": ["м'язові волокна не змінені (кал)", "м'язові волокна неперетравлені (кал)"]},
+    {"name": "Stool plant fibre, undigested", "category": "stool", "unit": None, "value_type": "text", "aliases": ["рослинна клітковина неперетравлена (кал)", "неперетравлена клітковина (кал)"]},
+    {"name": "Stool plant fibre, digested", "category": "stool", "unit": None, "value_type": "text", "aliases": ["рослинна клітковина перетравлена (кал)", "перетравлена клітковина (кал)"]},
+    {"name": "Stool starch, intracellular", "category": "stool", "unit": None, "value_type": "text", "aliases": ["крохмаль внутріклітинний (кал)", "крохмальні зерна внутрішньоклітинні (кал)"]},
+    {"name": "Stool starch, extracellular", "category": "stool", "unit": None, "value_type": "text", "aliases": ["крохмаль позаклітинний (кал)", "крохмальні зерна позаклітинні (кал)"]},
     {"name": "Stool neutral fat", "category": "stool", "unit": None, "value_type": "text", "aliases": ["нейтральний жир (кал)"]},
     {"name": "Stool fatty acids", "category": "stool", "unit": None, "value_type": "text", "aliases": ["жирні кислоти (кал)"]},
-    {"name": "Stool soaps", "category": "stool", "unit": None, "value_type": "text", "aliases": ["мило (кал)"]},
+    {"name": "Stool soaps", "category": "stool", "unit": None, "value_type": "text", "aliases": ["мило (кал)", "мила (кал)"]},
     {"name": "Stool crystals", "category": "stool", "unit": None, "value_type": "text", "aliases": ["кристали (кал)"]},
     {"name": "Stool epithelium", "category": "stool", "unit": None, "value_type": "text", "aliases": ["епітелій (кал)"]},
-    {"name": "Stool leukocytes", "category": "stool", "unit": None, "value_type": "text", "aliases": ["лейкоцити (кал)"]},
-    {"name": "Stool erythrocytes", "category": "stool", "unit": None, "value_type": "text", "aliases": ["еритроцити (кал)"]},
+    {"name": "Stool leukocytes", "category": "stool", "unit": None, "value_type": "text", "aliases": ["лейкоцити (кал)", "лейкоцити (копрограма)"]},
+    {"name": "Stool erythrocytes", "category": "stool", "unit": None, "value_type": "text", "aliases": ["еритроцити (кал)", "еритроцити (копрограма)"]},
     {"name": "Stool cells with malignant features", "category": "stool", "unit": None, "value_type": "text", "aliases": ["елементи з ознаками злоякісності (кал)"]},
-    {"name": "Stool iodophilic flora", "category": "stool", "unit": None, "value_type": "text", "aliases": ["йодофільна флора (кал)"]},
-    {"name": "Stool protozoa", "category": "stool", "unit": None, "value_type": "text", "aliases": ["найпростіші (кал)"]},
+    {"name": "Stool iodophilic flora", "category": "stool", "unit": None, "value_type": "text", "aliases": ["йодофільна флора (кал)", "йодофільні бактерії (кал)"]},
+    {"name": "Stool protozoa", "category": "stool", "unit": None, "value_type": "text", "aliases": ["найпростіші (кал)", "найпростіші (цисти лямблій) (кал)", "вегетативні форми і цисти найпростіших (кал)"]},
     {"name": "Stool helminth eggs", "category": "stool", "unit": None, "value_type": "text", "aliases": ["яйця гельмінтів (кал)"]},
-    {"name": "Stool yeast-like fungal elements", "category": "stool", "unit": None, "value_type": "text", "aliases": ["елементи гриба, подібного до дріжджевого (кал)"]},
+    {"name": "Stool yeast-like fungal elements", "category": "stool", "unit": None, "value_type": "text", "aliases": ["елементи гриба, подібного до дріжджевого (кал)", "дріжджовий грибок (кал)"]},
     {"name": "Transitional epithelial cells in urine", "category": "urinalysis", "unit": None, "value_type": "mixed", "aliases": ["клітини перехідного епітелію , в п/з"]},
     {"name": "Renal epithelial cells in urine", "category": "urinalysis", "unit": None, "value_type": "mixed", "aliases": ["клітини ниркового епітелію , в п/з"]},
     {"name": "Hyaline casts in urine", "category": "urinalysis", "unit": None, "value_type": "mixed", "aliases": ["циліндри гіалінові, в п/з"]},
@@ -640,9 +645,49 @@ def _build_index() -> dict[str, list[dict[str, object]]]:
 _ALIAS_INDEX = _build_index()
 _BY_NAME = {str(definition["name"]): definition for definition in CONCEPT_DEFINITIONS}
 
-_PER_FIELD = re.compile(r"п\s*/\s*з|п\.\s*з|полі\s+зору|hpf", re.IGNORECASE)
+#: «в п/з», «у полі зору», "HPF" -- and «поодинокі в препараті», the
+#: microscopist's word for a few cells on the slide: Synevo's manual sediment
+#: erythrocyte row prints no field at all («не виявлені, поодинокі в
+#: препараті»), only the slide, and without it the row joined the analyser's
+#: per-microlitre series.
+_PER_FIELD = re.compile(r"п\s*/\s*з|п\.\s*з|полі\s+зору|hpf|в\s+препараті", re.IGNORECASE)
 _STRIP_UNIT = re.compile(r"^\s*(leu|ery)\s*/", re.IGNORECASE)
 _RISK_TIERS = re.compile(r"ризик|risk", re.IGNORECASE)
+_PER_MICROLITRE = re.compile(r"мкл|[µμu]l\b", re.IGNORECASE)
+
+#: The material a row was measured in, by the words that name it, mapped to
+#: the category of the concepts measured in it.  Word starts, so «калій»
+#: (potassium) is not stool and «кров'яний» still is blood.
+_SPECIMEN_FAMILIES = (
+    ("stool", re.compile(r"\bкал(?:у|ом|і|ов\w*)?\b|копрограм|фекал|\bstool|\bfa?eces", re.IGNORECASE)),
+    ("urinalysis", re.compile(r"\bсеч|\burine", re.IGNORECASE)),
+    ("smear", re.compile(r"мазк|мазок|цитолог|пап[\s-]*тест|зішкріб|урогеніт|піхв|цервік|уретр|\bvagin|\bcervi|\bsmear", re.IGNORECASE)),
+    ("hematology", re.compile(r"\bкров|сироват|плазм|\bblood|\bserum|\bplasma", re.IGNORECASE)),
+)
+#: Concepts that exist for one specimen only.  A bare «Слиз», «pH» or
+#: «Лейкоцити» is seeded once for urine; printed in a stool or a smear it
+#: is not that measurement, whatever the alias says.
+_SPECIMEN_BOUND = frozenset({"urinalysis", "stool"})
+#: A count per litre is a blood count: «Лейкоцити (WBC) 6.84 10^9 клітин/л»
+#: printed in a urinalysis order is the white cell count, not urine.  Urine
+#: counts are per microlitre or per field.  «Г/л» is giga-per-litre.
+_BLOOD_COUNT_UNIT = re.compile(r"10\s*(?:\^|\*\*?)?\s*(?:9|12|⁹|¹²)(?!\d)|^\s*Г/[лЛ]\s*$")
+
+
+def specimen_family(*texts: str | None) -> str | None:
+    """The specimen the first text that names exactly one names: "stool",
+    "urinalysis", "smear", "hematology" (blood), or ``None``."""
+    for text in texts:
+        if not text:
+            continue
+        found = {family for family, pattern in _SPECIMEN_FAMILIES if pattern.search(text)}
+        if len(found) == 1:
+            return found.pop()
+    return None
+
+
+def blood_count_unit(unit: str | None) -> bool:
+    return bool(unit and _BLOOD_COUNT_UNIT.search(unit))
 
 #: (definition the label resolved to, test on the row, definition it belongs to).
 #: For labels that do not name their method: the unit, the report or the
@@ -654,6 +699,7 @@ _REFINEMENTS = (
     # the unit column, so all three are read.
     ("Urine leukocytes", lambda row: _PER_FIELD.search(" ".join((row["unit"], row["value_text"], row["reference"]))), "Urine leukocytes per high-power field"),
     ("Urine erythrocytes", lambda row: _PER_FIELD.search(" ".join((row["unit"], row["value_text"], row["reference"]))), "Urine erythrocytes per high-power field"),
+    ("Urine erythrocytes, unchanged", lambda row: _PER_MICROLITRE.search(row["unit"]), "Urine erythrocytes, unchanged (per microlitre)"),
     ("Pulse rate", lambda row: row["clinical_type"] == "electrocardiogram", "ECG heart rate"),
     ("C-reactive protein", lambda row: _RISK_TIERS.search(row["reference"]), "High-sensitivity C-reactive protein"),
 )
@@ -683,8 +729,17 @@ def refine_definition(
     return definition
 
 
+def foreign_categories(alias: str, specimen: str | None) -> frozenset[str]:
+    """The specimen-bound categories a label may not resolve into, measured
+    in ``specimen``: none when the label names its own specimen
+    («Колір калових мас», «Лейкоцити в сечі») or no specimen is known."""
+    if not specimen or specimen_family(alias):
+        return frozenset()
+    return _SPECIMEN_BOUND - {specimen}
+
+
 def concept_for_alias(
-    alias: str, value_type: str | None = None, category: str | None = None
+    alias: str, value_type: str | None = None, category: str | None = None, specimen: str | None = None
 ) -> dict[str, object] | None:
     """Resolve a printed label to a definition.
 
@@ -693,19 +748,32 @@ def concept_for_alias(
     both a blood and a urine concept, and without the context the definition
     order decides: numeric always won blood, so a urinalysis printing a bare
     numeric dipstick row would file its count under the blood concept.
+
+    ``specimen`` is a ``specimen_family`` the row itself establishes (its
+    printed material, its section, a blood-count unit).  It is binding, not a
+    preference: a coprogram's «pH» and «Слиз» are not urine whatever the
+    alias table says, so urine concepts are not candidates there.  In stool the
+    EskuLab «… (кал)» spelling of the label is tried first, which is how
+    Synevo's bare «Форма» or «Слиз» reaches the stool concept.
     """
+    excluded = foreign_categories(alias, specimen)
+    preferred = specimen if specimen in _SPECIMEN_BOUND else category
 
     def choose(matches: list[dict[str, object]]) -> dict[str, object] | None:
         matches = [
             definition
             for definition in matches
-            if value_type is None
-            or str(definition.get("value_type", "numeric")) in {value_type, "mixed"}
+            if (value_type is None or str(definition.get("value_type", "numeric")) in {value_type, "mixed"})
+            and definition["category"] not in excluded
         ]
         if not matches:
             return None
-        return next((item for item in matches if item["category"] == category), matches[0])
+        return next((item for item in matches if item["category"] == preferred), matches[0])
 
+    if specimen == "stool" and not label_key(alias).endswith(" кал"):
+        found = choose(_ALIAS_INDEX.get(label_key(f"{alias} (кал)"), []))
+        if found:
+            return found
     found = choose(_ALIAS_INDEX.get(label_key(alias), []))
     if found:
         return found

@@ -241,6 +241,20 @@ UNIT_CONVERSIONS[("urine-urobilinogen", "umol/l", _MG_DL)] = 1.0 / 16.9
 # AMA Manual of Style SI conversion table ("Thyroxine, free: ng/dL x 12.87").
 UNIT_CONVERSIONS[("free-thyroxine", "ng/dl", "pmol/l")] = 12.87
 UNIT_CONVERSIONS[("free-thyroxine", "pmol/l", "ng/dl")] = 1.0 / 12.87
+# Free triiodothyronine: Synevo prints pg/mL where the library band is pmol/L.
+# Liothyronine C15H12I3NO4, molar mass 650.97 g/mol (PubChem CID 5920), so
+# 1 pg/mL = 1 ng/L / 650.97 g/mol = 1.536 pmol/L -- the AMA Manual of Style SI
+# conversion table's factor ("Triiodothyronine, free: pg/dL x 0.01536 =
+# pmol/L", and 1 pg/mL = 100 pg/dL).
+UNIT_CONVERSIONS[("free-triiodothyronine", "pg/ml", "pmol/l")] = 1.536
+UNIT_CONVERSIONS[("free-triiodothyronine", "pmol/l", "pg/ml")] = 1.0 / 1.536
+# Total IgE «МО/мл» (IU/mL) against the library's kU/L: by prefix arithmetic
+# 1 IU/mL = 1 kIU/L, and the kU/L of total-IgE immunoassays is the
+# international unit of the WHO IgE reference preparation (75/502, 1 IU =
+# 2.42 ng IgE), so the two labels carry the same number.  Scoped to this
+# concept: elsewhere "U" is an enzyme unit, not an international unit.
+UNIT_CONVERSIONS[("total-immunoglobulin-e", "iu/ml", "ku/l")] = 1.0
+UNIT_CONVERSIONS[("total-immunoglobulin-e", "ku/l", "iu/ml")] = 1.0
 
 # Same number, different label: the per-concept table lives beside the unit
 # synonyms in health.py, which also folds the stored unit on the way in.

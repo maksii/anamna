@@ -32,9 +32,12 @@ from .classifier import KNOWN_CLINICAL_TYPES, RESULT_TYPES, UNKNOWN_VENDOR, Clas
 from .concepts import (
     CONCEPT_DEFINITIONS,
     NON_ANALYTE_LABELS,
+    blood_count_unit,
     clean_label,
     concept_for_alias,
+    foreign_categories,
     refine_definition,
+    specimen_family,
     stable_concept_id,
 )
 from .extract import extract_document, file_sha256
@@ -862,6 +865,7 @@ def ensure_concept(
     context: str | None = None,
     value_text: str | None = None,
     reference_text: str | None = None,
+    specimen: str | None = None,
 ) -> tuple[str, str | None]:
     """``context`` is the report title, when the caller has one.
 
@@ -873,10 +877,24 @@ def ensure_concept(
     ``unit_raw``, ``value_text``, ``reference_text`` and ``clinical_type`` let
     ``refine_definition`` file a label that is the same word across methods
     (strip vs microscopy, ECG vs cuff, CRP vs hs-CRP) by what the row says.
+
+    ``specimen`` is the row's stored material (``observation_specimen``).
+    It, then a blood-count unit, then a title naming only stool or only a
+    smear, settle which specimen the row was measured in -- and that binds
+    (``concept_for_alias``): «Лейкоцити (WBC) 6.84 10^9 клітин/л» in an order
+    titled as a urinalysis is the white cell count, and a smear's «Слиз» is
+    not urine mucus.  A urinalysis or blood title stays a preference only:
+    such orders routinely carry the other specimen's rows too.
     """
     raw_name = clean_label(raw_name)
     normalized = normalized_key(raw_name)
-    inferred_category = _inferred_category(normalized, clinical_type, context)
+    titled = specimen_family(context)
+    family = (
+        specimen_family(specimen)
+        or ("hematology" if blood_count_unit(unit_raw) else None)
+        or (titled if titled in {"stool", "smear"} else None)
+    )
+    inferred_category = _inferred_category(normalized, clinical_type, context, family)
     # Canonical definitions are resolved before learned vendor aliases because
     # the same printed label can mean different things in different specimen
     # contexts (for example blood glucose versus urine glucose).
@@ -884,20 +902,34 @@ def ensure_concept(
         raw_name,
         value_type,
         category=None if inferred_category == "unmapped" else inferred_category,
+        specimen=family,
     )
     definition = refine_definition(
         by_label, unit=unit_raw, value_text=value_text, reference=reference_text,
         clinical_type=clinical_type,
     )
     if definition:
-        return _store_defined_concept(connection, definition, by_label, vendor_id, raw_name, normalized)
+        # Learned only when the label decided: a coprogram's «Форма» or
+        # «Кристали» is stool because of its section, and learned as a bare
+        # alias it would file the next unsectioned «Кристали» as stool too.
+        label_decided = family is None or by_label is concept_for_alias(
+            raw_name, value_type, category=None if inferred_category == "unmapped" else inferred_category
+        )
+        return _store_defined_concept(
+            connection, definition, by_label if label_decided else None, vendor_id, raw_name, normalized
+        )
+    # A learned alias obeys the same specimen: Synevo's urinalysis taught
+    # «лейкоцити» -> urine leukocytes, and a smear's «Лейкоцити» must not
+    # inherit it.
+    excluded = sorted(foreign_categories(raw_name, family))
     alias_row = connection.execute(
-        """SELECT c.id, c.preferred_unit, c.category FROM concept_aliases a
+        f"""SELECT c.id, c.preferred_unit, c.category FROM concept_aliases a
            JOIN concepts c ON c.id = a.concept_id
            WHERE a.normalized_alias = ? AND (a.vendor_id = ? OR a.vendor_id IS NULL)
              AND (c.value_type = ? OR c.value_type = 'mixed')
+             AND c.category NOT IN ({",".join("?" * len(excluded)) or "''"})
            ORDER BY a.vendor_id IS NULL ASC LIMIT 1""",
-        (normalized, vendor_id, value_type),
+        (normalized, vendor_id, value_type, *excluded),
     ).fetchone()
     if alias_row:
         if alias_row["category"] == "unmapped" and inferred_category != "unmapped":
@@ -917,9 +949,18 @@ def ensure_concept(
     return concept_id, preferred_unit
 
 
-def _inferred_category(normalized: str, clinical_type: str | None, context: str | None) -> str:
+def _inferred_category(
+    normalized: str, clinical_type: str | None, context: str | None, family: str | None = None
+) -> str:
     if clinical_type in {"allergy", "microbiology"}:
         return clinical_type
+    # The established specimen outranks the tokens: a smear's «Епітелій» and a
+    # coprogram's «Йодофільні бактерії» carry «епітел»/«бактері» and were filed
+    # as urinalysis.  A smear is read for its flora, cells and infection agents.
+    if family == "stool":
+        return "stool"
+    if family == "smear":
+        return "microbiology"
     if any(token in normalized for token in ("сеч", "епітел", "циліндр", "бактері", "кристал", "urine")) or (
         context and any(token in normalized_key(context) for token in ("сеч", "urine"))
     ):
@@ -1168,10 +1209,30 @@ def parsed_interpretation(parsed: ParsedObservation, concept_id: str | None) -> 
     return getattr(parsed, "vendor_interpretation", None) or interpretation(parsed, concept_id)
 
 
+def observation_specimen(parsed: ParsedObservation, fallback: str | None = None) -> str | None:
+    """The material stored with a row: its own, its section's, the page's.
+
+    A Synevo coprogram prints its material once, as the section heading
+    («Копрограма», «Аналіз калу на кишкові паразити»), and every row under it
+    is a bare «Форма», «pH», «Слиз».  Stored on the row, the heading's
+    specimen is what lets ``repair_observation_semantics`` keep those rows on
+    the stool concepts on every later start; the section itself is not stored.
+    """
+    own = getattr(parsed, "specimen", None)
+    if own:
+        return own
+    if specimen_family(getattr(parsed, "section", None)) == "stool":
+        return "кал"
+    return fallback
+
+
 def resolve_parsed_concept(
-    connection: sqlite3.Connection, parsed: ParsedObservation, report_id: str | None, vendor_id: str
+    connection: sqlite3.Connection, parsed: ParsedObservation, report_id: str | None, vendor_id: str,
+    specimen: str | None = None,
 ) -> tuple[str, str | None]:
-    """The concept a parsed row files under, in its report's context."""
+    """The concept a parsed row files under, in its report's context.
+    ``specimen`` is the page's material, the fallback ``observation_specimen``
+    stores."""
     report_type_row = connection.execute(
         "SELECT clinical_type, title FROM reports WHERE id=?", (report_id,)
     ).fetchone()
@@ -1185,6 +1246,7 @@ def resolve_parsed_concept(
         context=report_type_row["title"] if report_type_row else None,
         value_text=parsed.value_text,
         reference_text=parsed.reference_text,
+        specimen=observation_specimen(parsed, specimen),
     )
 
 
@@ -1202,7 +1264,9 @@ def insert_observation(
     specimen: str | None = None,
 ) -> str:
     value_type = "numeric" if parsed.value_numeric is not None else "text"
-    concept_id, preferred_unit = resolved or resolve_parsed_concept(connection, parsed, report_id, vendor_id)
+    concept_id, preferred_unit = resolved or resolve_parsed_concept(
+        connection, parsed, report_id, vendor_id, specimen
+    )
     unit_canonical = stored_unit(parsed.unit_raw, preferred_unit, concept_id)
     low_inclusive, high_inclusive = parsed_inclusivity(parsed)
     observation_id = str(uuid.uuid4())
@@ -1233,7 +1297,7 @@ def insert_observation(
             parsed.unit_raw,
             unit_canonical,
             observed_at,
-            getattr(parsed, "specimen", None) or specimen,
+            observation_specimen(parsed, specimen),
             parsed.reference_text,
             parsed.reference_low,
             parsed.reference_high,
@@ -1370,6 +1434,7 @@ def repair_observation_semantics(connection: sqlite3.Connection) -> int:
             context=row["resolved_title"],
             value_text=row["value_text"],
             reference_text=row["vendor_reference_text"],
+            specimen=row["specimen"],
         )
         low, high, low_inclusive, high_inclusive = _repaired_bounds(row)
         provisional = ParsedObservation(
@@ -3053,7 +3118,7 @@ def _refresh_checked_row(
             *reference,
             verdict,
             new.get("value_printed"),
-            getattr(parsed, "specimen", None) or new["page_class"].specimen,  # type: ignore[union-attr]
+            observation_specimen(parsed, new["page_class"].specimen),  # type: ignore[union-attr]
             getattr(parsed, "note", None),
             observed_at,
             PARSER_VERSION,
@@ -3338,7 +3403,7 @@ def _fresh_rows(
     for parsed, page_class in parsed_with_context:
         report_id = page_to_report[parsed.page_number]
         concept_id, preferred_unit = resolve_parsed_concept(
-            connection, parsed, report_id, report_to_vendor[report_id]
+            connection, parsed, report_id, report_to_vendor[report_id], page_class.specimen
         )
         fresh.append(
             {
