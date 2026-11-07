@@ -605,6 +605,10 @@ UNITS_NOT_PRINTED_ON_A_RESULT_LINE |= {"g"}
 #: its meaning («Зріст: 186 см», «ЧД … 16 хв»); on a result line «см», «кг» and
 #: «хв» are exactly the dimensions, doses and durations the allowlist refuses.
 UNITS_NOT_PRINTED_ON_A_RESULT_LINE |= {"°C", "breaths/min", "kg", "cm", "kg/m²", "ms"}
+#: EEG rhythms («частотою 11 Гц та амплітудою до 230 мкВ») and breath-test
+#: hydrogen, read by their own protocol readers (``parse_eeg``,
+#: ``parse_breath_test``); «Гц» on a result line is a photostimulation setting.
+UNITS_NOT_PRINTED_ON_A_RESULT_LINE |= {"Hz", "µV", "ppm"}
 
 
 def test_every_concept_unit_has_a_spelling_the_parser_accepts():

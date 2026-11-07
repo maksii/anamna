@@ -4062,6 +4062,9 @@ def parse_ultrasound(text: str, page_number: int, previous: str = "") -> list[Pa
     the same organ («Печінка збільшена», «Стінка потовщена») is its vendor
     interpretation.  Nothing is inferred that the page does not say.
     """
+    # MD Clinics' text layer writes its semicolons as the Greek question mark
+    # U+037E, which looks identical and matches no «;» in a pattern.
+    text = text.replace(";", ";")
     lines = [collapse_space(line) for line in text.splitlines() if collapse_space(line)]
     flat = " ".join(lines)
     rows: list[ParsedObservation | None] = [
@@ -4078,6 +4081,14 @@ def parse_ultrasound(text: str, page_number: int, previous: str = "") -> list[Pa
     observations.extend(_us_thyroid(flat, page_number))
     observations.extend(_us_echo(lines, page_number))
     observations.extend(_us_duplex(flat, page_number))
+    observations.extend(_us_duplex_unbanded(flat, page_number))
+    observations.extend(_us_duplex_prose(flat, page_number))
+    observations.extend(_us_transcranial(lines, page_number))
+    observations.extend(_us_inmed_abdomen(flat, page_number))
+    observations.extend(_us_gallbladder_test(flat, page_number))
+    observations.extend(_us_inmed_thyroid(flat, page_number))
+    observations.extend(_us_pelvic(lines, page_number))
+    observations.extend(_us_breast(lines, page_number))
     observations.extend(_us_soft_tissue(flat, lines, page_number))
     return observations
 
@@ -4220,14 +4231,19 @@ _US_PAIR = rf"{_us_n('a')}{_US_TIMES}{_us_n('b')}\s*мм"
 #: alike.  A measurement is read only inside its own organ's text, so the
 #: «Розмірами: A * B мм» every organ prints cannot be filed under another one.
 _US_ORGAN = re.compile(
-    r"(Печінка|Жовчевий міхур|Підшлункова залоза|Права нирка|Ліва нирка|Селезінка|Сечовий міхур|ВИСНОВОК|Висновок)"
+    r"(Печінка|Жовчевий міхур|Підшлункова залоза|Права [Нн]ирка|Ліва [Нн]ирка|Селезінка|Сечовий міхур|ВИСНОВОК|Висновок)"
 )
+
+
+def _us_organ_key(heading: str) -> str:
+    """InMed capitalises «Права Нирка»; one key per organ either way."""
+    return heading.replace(" Нирка", " нирка")
 
 
 def _us_heading(text: str) -> str | None:
     """The organ a page break fell inside: the last heading on the previous page."""
     found = _US_ORGAN.findall(text or "")
-    return found[-1] if found else None
+    return _us_organ_key(found[-1]) if found else None
 
 
 def _us_segments(flat: str, carried: str | None) -> dict[str, str]:
@@ -4239,7 +4255,8 @@ def _us_segments(flat: str, carried: str | None) -> dict[str, str]:
     if carried and parts[0].strip():
         segments[carried] = parts[0]
     for heading, body in zip(parts[1::2], parts[2::2]):
-        segments[heading] = (segments.get(heading, "") + " " + heading + body).strip()
+        key = _us_organ_key(heading)
+        segments[key] = (segments.get(key, "") + " " + heading + body).strip()
     return segments
 
 
@@ -4316,7 +4333,7 @@ def _us_liver_sizes(liver: str, page_number: int) -> list[ParsedObservation | No
 
 
 def _us_gallbladder(gallbladder: str, page_number: int) -> list[ParsedObservation]:
-    found = re.search(rf"розмір\w*:\s*{_US_PAIR}", gallbladder)
+    found = re.search(rf"розмір\w*:\s*{_US_PAIR}", gallbladder, re.I)
     if not found:
         return []
     return _us_pair("Gallbladder length", "Gallbladder width", found, page_number,
@@ -4325,7 +4342,7 @@ def _us_gallbladder(gallbladder: str, page_number: int) -> list[ParsedObservatio
 
 def _us_pancreas(pancreas: str, page_number: int) -> list[ParsedObservation | None]:
     rows: list[ParsedObservation | None] = []
-    for part, name in (("головка", "Pancreatic head size"), ("тіло", "Pancreatic body size"), ("хвіст", "Pancreatic tail size")):
+    for part, name in (("(?:головка|голівка)", "Pancreatic head size"), ("тіло", "Pancreatic body size"), ("хвіст", "Pancreatic tail size")):
         found = re.search(rf"\b{part}\s*{_us_n('v')}\s*мм", pancreas)
         if found:
             rows.append(_us_size(name, found, "v", _us_evidence(pancreas, found), page_number))
@@ -4344,11 +4361,12 @@ def _us_pancreas(pancreas: str, page_number: int) -> list[ParsedObservation | No
 
 def _us_kidney(kidney: str, side: str, page_number: int) -> list[ParsedObservation | None]:
     rows: list[ParsedObservation | None] = []
-    found = re.search(rf"(?:Розмірами|розміри):\s*{_US_PAIR}", kidney)
+    found = re.search(rf"(?:Розмірами|[Рр]озміри):\s*{_US_PAIR}", kidney)
     if found:
         rows.extend(_us_pair("Kidney length", "Kidney width", found, page_number, specimen=side,
                              evidence=_us_evidence(kidney, found)))
-    found = re.search(rf"(?:Товщина паренхіми|паренхіма:\s*товщиною)\s*(?:до\s*)?{_us_n('v')}\s*мм", kidney)
+    # «паренхіма не потовщена, товщиною 17,0 мм» (InMed) as well as Veselka's colon.
+    found = re.search(rf"(?:Товщина паренхіми|паренхіма(?::|[^.;:]{{0,25}}?,)\s*товщиною)\s*(?:до\s*)?{_us_n('v')}\s*мм", kidney)
     if found:
         rows.append(_us_size("Renal parenchymal thickness", found, "v", _us_evidence(kidney, found),
                              page_number, specimen=side))
@@ -4363,7 +4381,7 @@ def _us_kidney(kidney: str, side: str, page_number: int) -> list[ParsedObservati
 
 
 def _us_spleen(spleen: str, page_number: int) -> list[ParsedObservation]:
-    found = re.search(rf"(?:Розмірами|розміри):\s*{_US_PAIR}", spleen)
+    found = re.search(rf"(?:Розмірами|[Рр]озміри):\s*{_US_PAIR}", spleen)
     if not found:
         return []
     reading = None
@@ -4401,7 +4419,7 @@ def _us_thyroid(flat: str, page_number: int) -> list[ParsedObservation]:
     is computed from all three, is read above.
     """
     rows: list[ParsedObservation | None] = []
-    found = re.search(rf"перешийок\s*{_us_n('v')}\s*мм", flat)
+    found = re.search(rf"перешийок\s*{_us_n('v')}\s*мм", flat, re.I)
     if found:
         rows.append(_us_row("Thyroid isthmus thickness", found.group("v"), "мм", found.group(0), page_number))
     for found in re.finditer(
@@ -4574,9 +4592,6 @@ def _us_soft_tissue(flat: str, lines: list[str], page_number: int) -> list[Parse
     different places never share one trend.  The depth beside it is not read:
     Veselka printed it «1,3 м», a unit no depth under the skin can have.
     """
-    found = re.search(rf"(?:утвір|утворення)(?:(?!\.\s).){{0,200}}?розмір\w*\s*{_US_PAIR}", flat)
-    if not found:
-        return []
     site = None
     for line in lines:
         located = _US_LESION_SITE.match(line)
@@ -4584,7 +4599,564 @@ def _us_soft_tissue(flat: str, lines: list[str], page_number: int) -> list[Parse
         if located:
             site = collapse_space(located.group("site")).strip(" .,")
             break
+    # Only a soft-tissue protocol, which names the lesion's site.  Every other
+    # study prints «утвір ... розміром A х B мм» too: an ovarian cyst or a
+    # breast fibroadenoma filed here joined one trend with a lump under the
+    # skin, with no site at all.
+    if site is None:
+        return []
+    found = re.search(rf"(?:утвір|утворення)(?:(?!\.\s).){{0,200}}?розмір\w*\s*{_US_PAIR}", flat)
+    if not found:
+        return []
     return _us_pair("Soft tissue lesion largest diameter", "Soft tissue lesion smaller diameter", found, page_number, specimen=site)
+
+
+# --- duplex rows without a printed norm, transcranial duplex ------------------
+
+_US_N = r"\d+(?:[.,]\d+)?"
+_US_SIDE = {"права": "права", "ліва": "ліва", "справа": "права", "зліва": "ліва", "правої": "права", "лівої": "ліва"}
+#: Where one vertebral row ends: the next vessel, or the prose under the table.
+_US_VESSEL_START = re.compile(
+    r"Хребцева\s+артерія|(?:Загальна|Внутрішня|Зовнішня)\s+сонна|Дистальні\s+відділи|Транскраніальн"
+)
+
+
+def _us_duplex_unbanded(flat: str, page_number: int) -> list[ParsedObservation]:
+    """Expert's other duplex table, which prints no norm beside the velocity.
+
+    «Загальна сонна артерія, права 108 Кровоплин …» -- the unit is only in the
+    column header («псш … см/сек»), so a page without that header is not read.
+    The vertebral rows name their segment («почат. сегмент», «дист.
+    сегмент») and wrap: the value, the side and the segment land on three
+    lines in either order, and the diameter's «мм» falls below its «D=3,4».
+    """
+    if not re.search(r"\b(?:псш|пшк)\b", flat, re.I):
+        return []
+    rows: list[ParsedObservation | None] = []
+    for found in re.finditer(
+        r"(?P<vessel>Загальна|Внутрішня|Зовнішня) сонна\s+артерія,?\s*(?P<side>права|ліва)?[^\d]{0,45}?"
+        r"(?<![\d.,=])(?P<v>\d{2,3})(?![\d.,])(?!\s*N=)\s*(?P<side2>права|ліва)?",
+        flat,
+    ):
+        side = found.group("side") or found.group("side2")
+        if not side:
+            continue
+        vessel = {"Загальна": "common", "Внутрішня": "internal", "Зовнішня": "external"}[found.group("vessel")]
+        rows.append(_us_row(f"Peak systolic velocity, {vessel} carotid artery", found.group("v"), _CM_PER_S,
+                            found.group(0), page_number, specimen=side))
+    starts = [match.start() for match in _US_VESSEL_START.finditer(flat)] + [len(flat)]
+    for start, end in zip(starts, starts[1:]):
+        chunk = flat[start:end]
+        if not chunk.startswith("Хребцева") or "N=" in chunk:
+            continue
+        side = re.search(r"\b(права|ліва)\b", chunk, re.I)
+        if not side:
+            continue
+        side_name = side.group(1).casefold()
+        segment = "початковий сегмент" if "почат" in chunk else (
+            "дистальний сегмент" if re.search(r"дист|\bди\b.*\bст\.", chunk) else None
+        )
+        diameter = re.search(rf"D=\s*(?P<v>{_US_N})(?:\s+сегмент)?\s*мм", chunk)
+        velocity = re.search(r"(?<![\d.,=])(\d{2,3})(?![\d.,])", re.sub(rf"D=\s*{_US_N}", " ", chunk))
+        if velocity:
+            rows.append(_us_row("Peak systolic velocity, vertebral artery", velocity.group(1), _CM_PER_S,
+                                chunk, page_number,
+                                specimen=f"{side_name}, {segment}" if segment else side_name))
+        if diameter:
+            rows.append(_us_row("Vertebral artery diameter", diameter.group("v"), "мм", chunk, page_number,
+                                specimen=side_name))
+    return [row for row in rows if row is not None]
+
+
+def _us_duplex_prose(flat: str, page_number: int) -> list[ParsedObservation]:
+    """InMed's duplex, written as sentences.
+
+    «Загальна сонна артерія: швидкість справа 98 см/с; зліва 111 см/с»,
+    «Діаметр правої вертебральної артерії: у сегменті V2 - 3,6 мм» followed
+    by «Швидкість у початковому сегменті 54 см/с, RI 0,63», and «Права
+    внутрішня яремна вена 12 мм. (N до 14 мм)».  A range («справа 0,5-0,6
+    мм») is not one measurement and is not read.
+    """
+    rows: list[ParsedObservation | None] = []
+    vessels = (
+        (r"Загальна сонна артерія", "common"),
+        (r"(?:Проксимальний відділ\s+)?внутрішньої сонної артерії", "internal"),
+        (r"Зовнішня сонна артерія", "external"),
+    )
+    for label, vessel in vessels:
+        found = re.search(
+            rf"{label}:\s*швидкість\s+справа\s+(?P<r>\d{{2,3}})\s*см/с[;,]\s*зліва\s+(?P<l>\d{{2,3}})\s*см/с", flat
+        )
+        if found:
+            for group, side in (("r", "права"), ("l", "ліва")):
+                rows.append(_us_row(f"Peak systolic velocity, {vessel} carotid artery", found.group(group), "см/с",
+                                    found.group(0), page_number, specimen=side))
+    for found in re.finditer(
+        rf"Діаметр\s+(?P<side>правої|лівої)\s+вертебральної\s+артерії:\s*у\s+сегменті\s+[VУ]2\s*[-–]\s*(?P<d>{_US_N})\s*мм"
+        rf"(?P<rest>(?:(?!Діаметр).){{0,160}})",
+        flat,
+    ):
+        side = _US_SIDE[found.group("side")]
+        rows.append(_us_row("Vertebral artery diameter", found.group("d"), "мм", found.group(0)[:90], page_number,
+                            specimen=side))
+        initial = re.search(rf"[Шш]видкість\s+у\s+початковому\s+сегменті\s+(?P<v>\d{{2,3}})\s*см/с(?:,\s*RI\s+(?P<ri>0[.,]\d+))?",
+                            found.group("rest"))
+        if initial:
+            rows.append(_us_row("Peak systolic velocity, vertebral artery", initial.group("v"), "см/с", initial.group(0),
+                                page_number, specimen=f"{side}, початковий сегмент"))
+            if initial.group("ri"):
+                item = _us_row("Vertebral artery resistive index", initial.group("ri"), "", initial.group(0), page_number,
+                               specimen=f"{side}, початковий сегмент")
+                rows.append(replace(item, unit_raw=None) if item else None)
+        distal = re.search(r"[Шш]видкість\s+у\s+дистальному\s+сегменті\s+(?P<v>\d{2,3})\s*см/с", found.group("rest"))
+        if distal:
+            rows.append(_us_row("Peak systolic velocity, vertebral artery", distal.group("v"), "см/с", distal.group(0),
+                                page_number, specimen=f"{side}, дистальний сегмент"))
+    for found in re.finditer(
+        rf"(?P<side>Права|Ліва)\s+внутрішня\s+яремна\s+вена\s+(?P<v>{_US_N})\s*мм\.?"
+        rf"(?:\s*\((?P<ref>[NМM]\s*до\s*(?P<high>{_US_N})\s*мм)\))?",
+        flat,
+    ):
+        rows.append(_us_row("Internal jugular vein diameter", found.group("v"), "мм", found.group(0), page_number,
+                            reference=found.group("ref"), high=parse_decimal(found.group("high") or ""),
+                            specimen=found.group("side").casefold()))
+    return [row for row in rows if row is not None]
+
+
+#: «ПМА права 102 N-87-95», «ХА (V4) права 68 N-63-69», «Базилярна 77 N-70-78».
+_US_TRANSCRANIAL = re.compile(
+    r"(?P<artery>ПМА|СМА|ХА\s*\(V4\)|Базилярна)\s*(?P<side>права|ліва)?\s+(?P<v>\d{2,3})\s+"
+    r"(?P<ref>N-(?P<low>\d+)-(?P<high>\d+))"
+)
+_US_TRANSCRANIAL_NAMES = {
+    "ПМА": "Peak systolic velocity, anterior cerebral artery",
+    "СМА": "Peak systolic velocity, middle cerebral artery",
+    "ХА(V4)": "Peak systolic velocity, intracranial vertebral artery (V4)",
+    "Базилярна": "Peak systolic velocity, basilar artery",
+}
+
+
+def _us_transcranial(lines: list[str], page_number: int) -> list[ParsedObservation]:
+    """The transcranial table under «Артерії Vps, см/с»: one artery per line.
+
+    The posterior cerebral artery has no concept yet and is not read.
+    """
+    rows: list[ParsedObservation | None] = []
+    for line in lines:
+        found = _US_TRANSCRANIAL.fullmatch(line)
+        if not found:
+            continue
+        name = _US_TRANSCRANIAL_NAMES[re.sub(r"\s+", "", found.group("artery"))]
+        rows.append(_us_row(name, found.group("v"), "см/с", line, page_number, reference=found.group("ref"),
+                            low=float(found.group("low")), high=float(found.group("high")),
+                            specimen=found.group("side")))
+    return [row for row in rows if row is not None]
+
+
+# --- InMed abdomen and thyroid, gallbladder emptying ---------------------------
+
+
+def _us_inmed_abdomen(flat: str, page_number: int) -> list[ParsedObservation]:
+    """The two labels InMed prints in Latin, wherever the liver's heading fell:
+    «V.portae: 10 мм», «d.choledochus: 3,0 мм»."""
+    rows: list[ParsedObservation | None] = []
+    for label, name in ((r"V\.\s*portae", "Portal vein diameter"), (r"d\.\s*choledochus", "Common bile duct diameter")):
+        found = re.search(rf"\b{label}\s*:\s*(?P<v>{_US_N})\s*мм", flat, re.I)
+        if found:
+            rows.append(_us_row(name, found.group("v"), "мм", found.group(0), page_number))
+    return [row for row in rows if row is not None]
+
+
+def _us_gallbladder_test(flat: str, page_number: int) -> list[ParsedObservation]:
+    """A gallbladder emptying test with a choleretic breakfast.
+
+    «-натще 65х22х25 мм, об'єм 18,6 см.куб.», «-через 15 хв … об'єм 13,6
+    см.куб.» (OCR reads «через» as «чепез»), and the result «скоротився на
+    67% … (норма 40-70%)».  The volume per time point is the specimen.
+    """
+    rows: list[ParsedObservation | None] = []
+    test = re.search(r"жовчогінн\w*\s+сніданк", flat, re.I)
+    for found in re.finditer(
+        rf"(?P<when>натще|(?:через|чепез)\s+(?P<minutes>\d{{1,3}})\s*хв)\s+[\d.,xх×\s]+мм,?\s*об['’]єм\s*(?P<v>{_US_N})\s*см\.?\s*куб",
+        flat if test else "",
+    ):
+        when = "натще" if found.group("when") == "натще" else f"через {found.group('minutes')} хв"
+        rows.append(_us_row("Gallbladder volume", found.group("v"), "см3", found.group(0), page_number, specimen=when))
+    # The result can sit on the next sheet, which a photo carries alone.
+    found = re.search(
+        r"міхур[^.]{0,60}?скоротився\s+на\s+(?P<v>\d{1,3})\s*%(?P<tail>[^()]{0,90}\((?P<ref>норма\s*(?P<low>\d{1,2})\s*-\s*(?P<high>\d{2,3})\s*%)\))?",
+        flat,
+    )
+    if found:
+        rows.append(_us_row(
+            "Gallbladder ejection fraction", found.group("v"), "%", found.group(0), page_number,
+            reference=found.group("ref"), low=parse_decimal(found.group("low") or ""),
+            high=parse_decimal(found.group("high") or ""),
+        ))
+    return [row for row in rows if row is not None]
+
+
+_US_LOBE = {"правої": "Права частка", "лівої": "Ліва частка"}
+
+
+def _us_inmed_thyroid(flat: str, page_number: int) -> list[ParsedObservation]:
+    """InMed: «Розміри правої частки: 15,0 х 15,5 х 47,0 Об'єм 5,90 см. куб.»,
+    «Сумарний об'єм 10,80 см. куб.», and one «TI-RADS 1» for the gland.
+
+    No norm is printed.  The lobe's length is its largest figure, as for
+    Expert's lobes; its volume is read even when OCR garbled a dimension.
+    """
+    rows: list[ParsedObservation | None] = []
+    for found in re.finditer(r"Розміри\s+(?P<site>правої|лівої)\s+частки:\s*(?P<dims>[^О]{0,40}?)Об['’]єм\s*"
+                             rf"(?P<v>{_US_N})\s*см\b\.?(?:\s*куб)?", flat):
+        site = _US_LOBE[found.group("site")]
+        rows.append(_us_row("Thyroid volume", found.group("v"), "см3", found.group(0), page_number, specimen=site))
+        dims = re.fullmatch(rf"\s*({_US_N})\s*[xх×]\s*({_US_N})\s*[xх×]\s*({_US_N})\s*(?:мм)?\s*;?\s*", found.group("dims"))
+        if dims:
+            rows.append(_us_row("Thyroid lobe length", max(dims.groups(), key=parse_decimal), "мм", found.group(0),
+                                page_number, specimen=site))
+    found = re.search(rf"Сумарний\s+об['’]єм\s+(?P<v>{_US_N})\s*см\b\.?(?:\s*куб)?", flat)
+    if found:
+        rows.append(_us_row("Thyroid volume", found.group("v"), "см3", found.group(0), page_number, specimen="Сумарний"))
+    gland = re.search(r"TI-?RADS\s*:?\s*(?P<v>[1-5])\b(?!\s*категорі)", flat)
+    if gland and not re.search(r"(?:Права|Ліва) частка\s*[-–]\s*\d\s*категорі", flat):
+        item = _us_row("Thyroid TI-RADS category", gland.group("v"), "", gland.group(0), page_number)
+        rows.append(replace(item, unit_raw=None) if item else None)
+    return [row for row in rows if row is not None]
+
+
+# --- pelvic (gynaecological) ultrasound ---------------------------------------
+
+#: A size no pelvic or breast structure in an adult reaches; a reading above
+#: it is a typo on the paper («рідинний утвір діаметром 267 мм») or OCR
+#: («345x22» for «35x22»), and nothing is stored rather than a wrong number.
+_US_MAX_MM = 150.0
+#: The two-column MD Clinics layout: «Праві додатки Ліві додатки», then each
+#: line carries the right ovary's text first and the left ovary's second.
+_US_ADNEXA_HEADER = re.compile(r"Праві\s+додатки\s+Ліві\s+додатки", re.I)
+_US_ADNEXA_LABEL = re.compile(r"(?:Правий|Лівий)\s+яєчник|Розміри:|Розташування:|Контури|Структура:")
+_US_ADNEXA_END = re.compile(r"маткова\s+труба|Позаматковий|Висновок|Заключення", re.I)
+_US_OVARY_START = re.compile(r"(?P<side>Правий|Лівий)\s+(?:яйник|яєчник)|(?P<adnexa>Праві|Ліві)\s+додатки:", re.I)
+_US_PELVIC_END = re.compile(r"Шийка\s+матки|Структура\s+шийки|Маткові\s+труби|маткова\s+труба|Позаматковий|Заключення|Висновок", re.I)
+_US_DANGLING = re.compile(r"(?:утвір|утворення|кисту|рідинне)\s*$", re.I)
+
+
+def _us_clean(*values: str | None) -> bool:
+    return all(value is None or (parse_decimal(value) or 0) <= _US_MAX_MM for value in values)
+
+
+def _us_adnexa_columns(lines: list[str]) -> dict[str, str] | None:
+    """Each ovary's text from the two-column layout, or None without one."""
+    start = next((index for index, line in enumerate(lines) if _US_ADNEXA_HEADER.fullmatch(line)), None)
+    if start is None:
+        return None
+    left: list[str] = []
+    right: list[str] = []
+    for line in lines[start + 1:]:
+        if _US_ADNEXA_END.search(line):
+            break
+        labels = [match.start() for match in _US_ADNEXA_LABEL.finditer(line)]
+        if len(labels) >= 2:
+            left.append(line[: labels[1]].strip())
+            right.append(line[labels[1]:].strip())
+            continue
+        if labels:
+            left.append(line)
+            continue
+        # A continuation line: what precedes «розмір…» finishes the right
+        # ovary's sentence (left column), the size completes whichever
+        # column's sentence was left hanging on «утвір».
+        size = re.search(r"розмір\w*|діаметр\w*", line, re.I)
+        head, tail = (line[: size.start()].strip(), line[size.start():]) if size else ("", line)
+        dangling_right = bool(right and _US_DANGLING.search(right[-1]))
+        dangling_left = bool(left and _US_DANGLING.search(left[-1]))
+        if head:
+            left[-1:] = [f"{left[-1]} {head}" if left else head]
+        if dangling_right:
+            right[-1] = f"{right[-1]} {tail}"
+        elif dangling_left or not size:
+            left[-1:] = [f"{left[-1]} {tail}" if left else tail]
+    return {"права": " ".join(left), "ліва": " ".join(right)}
+
+
+def _us_ovary_segments(flat: str) -> dict[str, str]:
+    """Each ovary's text from a report that describes one ovary after the other."""
+    segments: dict[str, str] = {}
+    starts = list(_US_OVARY_START.finditer(flat))
+    for index, found in enumerate(starts):
+        end = starts[index + 1].start() if index + 1 < len(starts) else len(flat)
+        stop = _US_PELVIC_END.search(flat, found.end(), end)
+        word = (found.group("side") or found.group("adnexa")).casefold()
+        side = "права" if word.startswith("прав") else "ліва"
+        segments.setdefault(side, flat[found.start(): stop.start() if stop else end])
+    return segments
+
+
+def _us_numbered(rows: list[ParsedObservation]) -> list[ParsedObservation]:
+    """Two lesions of one kind at one site («ліва») get «ліва, 2» for the second,
+    so they never read as one lesion measured twice on the same day."""
+    seen: dict[tuple[str, str | None], int] = {}
+    numbered = []
+    for row in rows:
+        if "largest" not in row.raw_name and "smaller" not in row.raw_name:
+            numbered.append(row)
+            continue
+        key = (row.raw_name, row.specimen)
+        seen[key] = seen.get(key, 0) + 1
+        numbered.append(row if seen[key] == 1 else replace(row, specimen=f"{row.specimen or ''}, {seen[key]}".lstrip(", ")))
+    return numbered
+
+
+def _us_lesion(
+    long_name: str, short_name: str, values: list[str], evidence: str, page_number: int, *,
+    specimen: str | None, note: str | None = None, comparator: str | None = None,
+) -> list[ParsedObservation]:
+    """One lesion's printed size: the largest figure, and the smaller one if two."""
+    if not values or not _us_clean(*values):
+        return []
+    ordered = sorted(values, key=parse_decimal, reverse=True)
+    names = [long_name, short_name][: min(len(ordered), 2)]
+    rows = []
+    for name, value in zip(names, ordered):
+        item = _us_row(name, value, "мм", evidence, page_number, specimen=specimen)
+        if item is not None:
+            rows.append(replace(item, note=note, comparator=comparator))
+    return rows
+
+
+def _us_cycle_note(flat: str) -> str | None:
+    found = re.search(
+        # OCR reads «На» as a Latin «Ha».
+        r"День\s+МЦ:\s*(?P<a>\d{1,2})|(?:на|ha)\s+(?P<b>\d{1,2})\s+день\s+менструального\s+циклу|"
+        r"День\s+менструального\s+циклу:\s*(?P<c>\d{1,2})",
+        flat, re.I,
+    )
+    if not found:
+        return None
+    return f"День МЦ: {found.group('a') or found.group('b') or found.group('c')}"
+
+
+def _us_pelvic(lines: list[str], page_number: int) -> list[ParsedObservation]:
+    """Uterus, endometrium, cervix and both ovaries of a pelvic ultrasound.
+
+    Three templates are read: MD Clinics («Тіло матки: довжина 53,0 мм;
+    передньо-задній розмір …», the ovaries in two columns), InMed
+    («Розміром: довж. 47 мм, передньо-задн. 35 мм, ширина 49 мм», «Правий
+    яйник … Розмірами 35 x 22 мм») and the regional perinatal centre
+    («Праві додатки: розміри 32 мм. 21 мм. 25 мм.»).  The cycle day goes in
+    the note of every row and the endometrium's phase in its own, because the
+    endometrium and the follicles are read against the cycle.  An ovary's
+    three unlabelled dimensions give its length (the largest); which of the
+    other two is width or depth is not printed.
+    """
+    flat = " ".join(lines)
+    if not (re.search(r"матк", flat, re.I) and re.search(r"яєчник|яйник|додатк", flat, re.I)):
+        return []
+    # The conclusion repeats categories and sizes («(O-RADS 2)»); only the
+    # description above it is read.
+    body = re.split(r"\b(?:Заключення|Висновок)\b", flat, maxsplit=1)[0]
+    cycle = _us_cycle_note(body)
+    rows: list[ParsedObservation | None] = []
+    uterus = re.search(
+        rf"(?:Тіло\s+матки:|Розмір\w*:)\s*довж(?:ина|\.|,)?\s*(?P<l>{_US_N})\s*мм[.;,]?\s*"
+        rf"передньо-задн(?:ій|\.)(?:\s+розмір)?\s*(?P<ap>{_US_N})\s*мм[.;,]?\s*(?:поперечний\s+розмір|ширина)\s*(?P<w>{_US_N})\s*мм",
+        body, re.I,
+    )
+    if uterus and _us_clean(uterus.group("l"), uterus.group("ap"), uterus.group("w")):
+        for group, name in (("l", "Uterine body length"), ("ap", "Uterine body anteroposterior diameter"), ("w", "Uterine body width")):
+            rows.append(_us_row(name, uterus.group(group), "мм", uterus.group(0), page_number))
+    rows.extend(_us_uterine_lesions(body, page_number))
+    rows.extend(_us_endometrium(body, page_number, cycle))
+    rows.extend(_us_cervix(body, page_number))
+    sides = _us_adnexa_columns(lines) or _us_ovary_segments(body)
+    for side, text in sides.items():
+        rows.extend(_us_ovary(text, side, page_number, cycle))
+    return _us_numbered([row for row in rows if row is not None])
+
+
+def _us_endometrium(body: str, page_number: int, cycle: str | None) -> list[ParsedObservation]:
+    found = re.search(
+        rf"Ендометрій\b(?:(?!Шийка|яйник|яєчник).){{0,80}}?(?:Товщина\s+в\s+передньо-задньому\s+напрямку|товщиною)\s*(?P<v>{_US_N})\s*мм"
+        rf"|Товщина\s+маткового\s+М-ехо:\s*(?P<m>{_US_N})\s*мм",
+        body, re.I,
+    )
+    if not found:
+        return []
+    value = found.group("v") or found.group("m")
+    phase = re.search(r"відповідає\s+(?:фазі\s+\w+|I{1,2}\s+фазі\s+МЦ|середині\s+МЦ)", body[found.end(): found.end() + 80], re.I)
+    note = "; ".join(part for part in (cycle, phase.group(0) if phase else None) if part) or None
+    item = _us_row("Endometrial thickness", value, "мм", found.group(0), page_number)
+    rows = [replace(item, note=note)] if item and _us_clean(value) else []
+    thickening = re.search(rf"потовщення\s+(?P<a>{_US_N})\s*[xх×]\s*(?P<b>{_US_N})\s*мм", body[found.start(): found.end() + 120])
+    if thickening:
+        rows.extend(_us_lesion("Uterine lesion largest diameter", "Uterine lesion smaller diameter",
+                               [thickening.group("a"), thickening.group("b")], thickening.group(0), page_number,
+                               specimen="ендометрій"))
+    return rows
+
+
+def _us_uterine_lesions(body: str, page_number: int) -> list[ParsedObservation]:
+    """A myoma node or an adenomyosis focus in the myometrium, with its wall."""
+    myometrium = re.search(r"Міометрій(?P<text>.*?)(?=Ендометрій|ендометрій|$)", body, re.I)
+    if not myometrium:
+        return []
+    rows: list[ParsedObservation] = []
+    text = myometrium.group("text")
+    for found in re.finditer(
+        rf"(?:вузол|ділянк\w*)[^.;]{{0,40}}?розміром\s*(?P<a>{_US_N})(?:\s*[xх×]\s*(?P<b>{_US_N}))?\s*мм", text
+    ):
+        before = text[max(0, found.start() - 60): found.start()]
+        wall = re.search(r"по\s+(передній|задній|бічній)\s+стінці|в\s+дні", before)
+        place = None
+        if wall:
+            place = {"передній": "передня стінка", "задній": "задня стінка", "бічній": "бічна стінка"}.get(wall.group(1) or "", "дно")
+        rows.extend(_us_lesion("Uterine lesion largest diameter", "Uterine lesion smaller diameter",
+                               [value for value in (found.group("a"), found.group("b")) if value], found.group(0),
+                               page_number, specimen=f"міометрій, {place}" if place else "міометрій"))
+    return rows
+
+
+def _us_cervix(body: str, page_number: int) -> list[ParsedObservation]:
+    labelled = re.search(rf"Шийка\s+матки:\s*довжина\s+(?P<l>{_US_N})\s*мм;\s*товщина\s+(?P<t>{_US_N})\s*мм", body, re.I)
+    if labelled and _us_clean(labelled.group("l"), labelled.group("t")):
+        rows = [_us_row("Cervical length", labelled.group("l"), "мм", labelled.group(0), page_number),
+                _us_row("Cervical thickness", labelled.group("t"), "мм", labelled.group(0), page_number)]
+        return [row for row in rows if row is not None]
+    pair = re.search(rf"(?:Шийка\s+матки\s+розміром|Структура\s+шийки\s+матки:)\s*{_US_PAIR}", body, re.I)
+    if pair and _us_clean(pair.group("a"), pair.group("b")):
+        return _us_pair("Cervical length", "Cervical thickness", pair, page_number)
+    return []
+
+
+def _us_ovary(text: str, side: str, page_number: int, cycle: str | None) -> list[ParsedObservation]:
+    rows: list[ParsedObservation | None] = []
+    dims = re.search(
+        rf"(?:Розміри|Розмірами|розміри):?\s*(?P<a>{_US_N})\s*(?:мм\.?)?\s*[xх×]?\s*(?P<b>{_US_N})(?:\s*(?:мм\.?)?\s*[xх×]?\s*(?P<c>{_US_N}))?\s*мм",
+        text,
+    )
+    if dims:
+        values = [value for value in dims.groups() if value]
+        if len(values) >= 2 and _us_clean(*values):
+            item = _us_row("Ovary length", max(values, key=parse_decimal), "мм", dims.group(0), page_number, specimen=side)
+            rows.append(replace(item, note=cycle) if item else None)
+    volume = re.search(rf"Об['’]єм\w*:?\s*(?P<v>{_US_N})\s*(?:см3|см\.?\s*куб|мл)", text)
+    if volume:
+        rows.append(_us_row("Ovarian volume", volume.group("v"), "см3", volume.group(0), page_number, specimen=side))
+    count = re.search(r"(?P<v>\d{1,2})\s+антральн\w*\s+фолікул", text)
+    if count:
+        item = _us_row("Antral follicle count", count.group("v"), "", count.group(0), page_number, specimen=side)
+        rows.append(replace(item, unit_raw=None, note=cycle) if item else None)
+    rows.append(_us_follicle(text, side, page_number, cycle))
+    luteum = re.search(rf"жовте\s+тіло\s*(?:діаметром\s*|розміром\s*)?(?P<v>{_US_N})\s*мм", text)
+    if luteum and _us_clean(luteum.group("v")):
+        item = _us_row("Corpus luteum diameter", luteum.group("v"), "мм", luteum.group(0), page_number, specimen=side)
+        rows.append(replace(item, note=cycle) if item else None)
+    for found in re.finditer(
+        rf"(?:утвір|утворення|рідинне)\b[^;]{{0,120}}?(?:розміром|діаметром)\s*(?P<a>{_US_N})(?:\s*[xх×]\s*(?P<b>{_US_N}))?\s*мм",
+        text,
+    ):
+        rows.extend(_us_lesion("Ovarian cyst largest diameter", "Ovarian cyst smaller diameter",
+                               [value for value in (found.group("a"), found.group("b")) if value], found.group(0),
+                               page_number, specimen=side, note=cycle))
+    category = re.search(r"O-?RADS\s*:?\s*(?P<v>[0-5])\b", text)
+    if category:
+        item = _us_row("Ovarian O-RADS category", category.group("v"), "", category.group(0), page_number, specimen=side)
+        rows.append(replace(item, unit_raw=None) if item else None)
+    return [row for row in rows if row is not None]
+
+
+def _us_follicle(text: str, side: str, page_number: int, cycle: str | None) -> ParsedObservation | None:
+    """The largest follicle: a dominant one named with its size, else «фолікули до 13 мм» as «≤ 13»."""
+    named = re.search(
+        rf"(?:найбільший\s+фолікул|домінуюч\w*\s+фолікул\w*)\s*(?:діаметром\s*)?(?P<a>{_US_N})(?:\s*(?:та|і|,)\s*(?P<b>{_US_N}))?\s*мм",
+        text,
+    )
+    comparator = None
+    if named:
+        values = [value for value in (named.group("a"), named.group("b")) if value]
+        found = named
+    else:
+        found = re.search(rf"фолікул\w*\s*(?:діаметром\s*)?до\s*(?P<a>{_US_N})\s*(?:мм|;)|max\.?\s*d\s*(?P<m>{_US_N})\s*мм", text)
+        if not found:
+            return None
+        values = [found.group("a") or found.group("m")]
+        comparator = "≤" if found.group("a") else None
+    if not _us_clean(*values):
+        return None
+    item = _us_row("Largest ovarian follicle diameter", max(values, key=parse_decimal), "мм", found.group(0), page_number,
+                   specimen=side)
+    return replace(item, note=cycle, comparator=comparator) if item else None
+
+
+# --- breast ultrasound --------------------------------------------------------
+
+_US_BREAST_START = re.compile(r"(?P<side>Права|Ліва)\s+грудна\s+залоза", re.I)
+_US_BREAST_END = re.compile(r"BI-?RADS|Заключення|Висновок", re.I)
+_US_SIZE_PHRASE = re.compile(
+    rf"(?:діаметром|розміром)\s*(?P<le>до\s*)?(?P<nums>{_US_N}(?:\s*(?:мм)?\s*(?:[xх×]|та|і|,)\s*{_US_N})*)\s*мм"
+)
+
+
+def _us_breast(lines: list[str], page_number: int) -> list[ParsedObservation]:
+    """Each breast's skin, fat and glandular thickness, its solid lesion and
+    its largest simple cyst, and the report's BI-RADS category (InMed).
+
+    A lesion's clock position («на 11 год») is its note: OCR of a photo has
+    moved a cyst's size onto the wrong clock line, so a position is never the
+    specimen a trend is split by.  A cluster of cysts («скупчення кист,
+    загальним розміром …») is not one cyst and is not read as one.
+    """
+    flat = " ".join(lines)
+    starts = list(_US_BREAST_START.finditer(flat))
+    if not starts:
+        return []
+    rows: list[ParsedObservation | None] = []
+    for index, found in enumerate(starts):
+        side = "права" if found.group("side").casefold().startswith("прав") else "ліва"
+        end = starts[index + 1].start() if index + 1 < len(starts) else len(flat)
+        stop = _US_BREAST_END.search(flat, found.end(), end)
+        text = flat[found.start(): stop.start() if stop else end]
+        for label, name in (
+            (r"Шкіра[^.]{0,30}?товщиною", "Breast skin thickness"),
+            (r"Підшкірна\s+жирова\s+клітковина\s+товщиною", "Breast subcutaneous fat thickness"),
+            (r"Залозиста\s+тканина\s+товщиною", "Breast glandular tissue thickness"),
+        ):
+            thickness = re.search(rf"{label}\s*(?P<v>{_US_N})\s*мм", text)
+            if thickness and _us_clean(thickness.group("v")):
+                rows.append(_us_row(name, thickness.group("v"), "мм", thickness.group(0), page_number, specimen=side))
+        lesion = re.search(rf"гіпоехогенне\s+утворення[^;]{{0,80}}?розміром\s*(?P<a>{_US_N})\s*[xх×]\s*(?P<b>{_US_N})\s*мм", text)
+        if lesion:
+            clock = re.findall(r"на\s+(\d{1,2})\s*год", text[max(0, lesion.start() - 120): lesion.start()], re.I)
+            rows.extend(_us_lesion("Breast lesion largest diameter", "Breast lesion smaller diameter",
+                                   [lesion.group("a"), lesion.group("b")], lesion.group(0), page_number,
+                                   specimen=side, note=f"{clock[-1]} год" if clock else None))
+        rows.append(_us_breast_cyst(text, side, page_number))
+    category = re.search(r"BI-?RADS\s*:?\s*(?P<v>[0-6])(?P<sub>[abcABC])?\b", flat)
+    if category:
+        item = _us_row("Breast BI-RADS category", category.group("v"), "", category.group(0), page_number)
+        if item and category.group("sub"):
+            # 4a / 4b / 4c are three categories, not the number 4.
+            item = replace(item, value_numeric=None, value_text=category.group("v") + category.group("sub").lower())
+        rows.append(replace(item, unit_raw=None) if item else None)
+    return [row for row in rows if row is not None]
+
+
+def _us_breast_cyst(text: str, side: str, page_number: int) -> ParsedObservation | None:
+    best: tuple[float, str, str, bool] | None = None
+    for clause in re.split(r";|\.\s", text):
+        if not re.search(r"кист", clause, re.I) or re.search(r"скупчення|кластер", clause, re.I):
+            continue
+        for found in _US_SIZE_PHRASE.finditer(clause):
+            values = re.findall(_US_N, found.group("nums"))
+            if not values or not _us_clean(*values):
+                continue
+            largest = max(values, key=parse_decimal)
+            if best is None or parse_decimal(largest) > best[0]:
+                best = (parse_decimal(largest), largest, collapse_space(clause), bool(found.group("le")))
+    if best is None:
+        return None
+    item = _us_row("Largest breast cyst diameter", best[1], "мм", best[2], page_number, specimen=side)
+    return replace(item, comparator="≤") if item and best[3] else item
 
 
 #: Antibiotics an antibiogram in this record prints, plus the EUCAST agents the
@@ -5310,8 +5882,147 @@ def finalise(
     return cast(ParsedObservation, replace(item, **changes))
 
 
+def _page_text(page: dict[str, object]) -> str:
+    return "\n".join(str(page.get(field) or "") for field in ("native_text", "ocr_text"))
+
+
+#: «Домінує альфа‐ритм із середньою частотою 11 Гц та амплітудою до 230 мкВ».
+#: Veselka hyphenates with U+2010.
+_EEG_RHYTHM = re.compile(
+    rf"(?P<rhythm>альфа|бета|тета)[‐-]ритм\w*[^.]{{0,60}}?частотою\s+(?P<f>{_DECIMAL})\s*Гц"
+    rf"(?:\s+та\s+амплітудою\s+(?P<le>до\s+)?(?P<a>{_DECIMAL})\s*мкВ)?",
+    re.I,
+)
+_EEG_NAMES = {"альфа": "alpha", "бета": "beta", "тета": "theta"}
+
+
+def parse_eeg(pages: list[dict[str, object]]) -> list[ParsedObservation]:
+    """Each rhythm's mean frequency and largest amplitude from an EEG protocol.
+
+    The amplitude is printed as a ceiling («до 230 мкВ») and is stored with
+    «≤».  A rhythm described twice is read where it is first described; the
+    photic stimulation range («6‐24 Гц») is a setting of the test, not a
+    rhythm, and is not read.
+    """
+    rows: list[ParsedObservation] = []
+    for page in pages:
+        text = _page_text(page)
+        if not re.search(r"\bЕЕГ\b|електроенцефало|альфа[‐-]ритм", text, re.I):
+            continue
+        seen: set[str] = set()
+        for found in _EEG_RHYTHM.finditer(collapse_space(text)):
+            rhythm = _EEG_NAMES[found.group("rhythm").casefold()]
+            if rhythm in seen:
+                continue
+            seen.add(rhythm)
+            evidence = found.group(0)
+            item = _us_row(f"EEG {rhythm} rhythm frequency", found.group("f"), "Гц", evidence, int(page["page_number"]))
+            rows.extend([item] if item else [])
+            if found.group("a"):
+                item = _us_row(f"EEG {rhythm} rhythm amplitude", found.group("a"), "мкВ", evidence, int(page["page_number"]))
+                if item:
+                    rows.append(replace(item, comparator="≤") if found.group("le") else item)
+    return rows
+
+
+_BREATH_TEST = re.compile(r"дихальн\w*\s+(?:водневий\s+)?тест|бактерійного\s+росту", re.I)
+#: GastroLife's table rows: «1. базальний 2», «3. 40 хвилина 5».
+_BREATH_ROW = re.compile(r"^\s*\d\.\s*(?:(?P<basal>базальний)|(?P<minutes>\d{1,3})\s*хвилин\w*)\s+(?P<v>\d{1,3})\s*$", re.I | re.M)
+
+
+def parse_breath_test(pages: list[dict[str, object]]) -> list[ParsedObservation]:
+    """Hydrogen per time point of a SIBO breath test, and a 13C-urea H. pylori result.
+
+    Expert Hospital's Gastrolyzer report prints the readings only as data
+    labels over a chart: the text layer lists them among the y-axis ticks
+    («35 30 29 25 22 20 …»), so they are read from word positions, each label
+    filed under the time label («15 хв») straight below it, and nothing is
+    read without positions.  GastroLife prints a table.  The substrate
+    («Реагент: глюкоза») and the minute are the specimen, so a glucose and a
+    lactulose test never share a series.
+    """
+    rows: list[ParsedObservation] = []
+    for page in pages:
+        text = _page_text(page)
+        page_number = int(page["page_number"])
+        pylori = re.search(r"Результат\w*\s+тесту:\s*Helicobacter\s+pylori\s+(?P<v>не\s+виявлено|виявлено)", text, re.I)
+        if pylori and re.search(r"дихальн", text, re.I):
+            rows.append(ParsedObservation(
+                raw_name="H. pylori urea breath test", value_numeric=None, value_text=collapse_space(pylori.group("v")),
+                comparator=None, unit_raw=None, reference_text=None, reference_low=None, reference_high=None,
+                page_number=page_number, evidence_text=collapse_space(pylori.group(0)), confidence=0.9,
+            ))
+            continue
+        if not _BREATH_TEST.search(text):
+            continue
+        substrate = re.search(r"Реагент:\s*(глюкоза|лактулоза)", text, re.I)
+        prefix = f"{substrate.group(1).casefold()}, " if substrate else ""
+        unit = "ppm" if re.search(r"\bppm\b", text, re.I) else None
+        readings = _breath_chart(page.get("words") or []) or [
+            ("0 хв" if found.group("basal") else f"{found.group('minutes')} хв", found.group("v"), found.group(0))
+            for found in _BREATH_ROW.finditer(text)
+        ]
+        for minute, value, evidence in readings:
+            item = _us_row("Breath hydrogen", value, unit or "", collapse_space(evidence), page_number, specimen=prefix + minute)
+            if item:
+                rows.append(replace(item, unit_raw=unit))
+    return rows
+
+
+def _breath_chart(words: list) -> list[tuple[str, str, str]]:
+    """(minute, value, evidence) for each chart data label above a time label.
+
+    Time labels are a number and «хв» on one row; a data label is a bare
+    number above that row whose centre is within half a column of exactly one
+    time label.  The y-axis ticks sit left of the first column and are never
+    within reach.  A column with no label, or two, gives nothing.
+    """
+    def centre(word) -> float:
+        return (float(word[0]) + float(word[1])) / 2
+
+    times = [
+        (first, second) for first, second in zip(words, words[1:])
+        if re.fullmatch(r"\d{1,3}", str(first[3])) and str(second[3]) == "хв" and abs(float(first[2]) - float(second[2])) < 2
+    ]
+    if len(times) < 3:
+        return []
+    axis = min(float(first[2]) for first, _ in times)
+    columns = sorted((centre(first) + centre(second)) / 2 for first, second in times)
+    half = min(b - a for a, b in zip(columns, columns[1:])) / 2
+    numbers = [word for word in words if re.fullmatch(r"\d{1,3}", str(word[3])) and float(word[2]) < axis - 2]
+    # The chart is as tall as its y-axis: a phone number in the letterhead
+    # above can stand over a column too.
+    # The y-axis is the largest stack of numbers sharing one x left of the
+    # first column; a stray number out there is not part of it.
+    stacks: dict[int, list] = {}
+    for word in numbers:
+        if centre(word) < columns[0] - half:
+            stacks.setdefault(round(centre(word) / 5), []).append(word)
+    ticks = max(stacks.values(), key=len, default=[])
+    if len(ticks) < 3:
+        return []
+    top = min(float(word[2]) for word in ticks) - 10
+    labels = [word for word in numbers if float(word[2]) > top and centre(word) >= columns[0] - half]
+    readings = []
+    for (first, second), column in zip(sorted(times, key=lambda pair: centre(pair[0])), columns):
+        near = [word for word in labels if abs(centre(word) - column) < half]
+        if len(near) == 1:
+            minute = f"{first[3]} хв"
+            readings.append((minute, str(near[0][3]), f"{minute}: {near[0][3]}"))
+    return readings
+
+
 def _special_layout_rows(clinical_type: str, pages: list[dict[str, object]]) -> list[ParsedObservation] | None:
     """The rows of a report read whole rather than page by page, or None."""
+    if clinical_type == "diagnostic_image":
+        # A photo of a printed protocol is often typed as an image; the
+        # protocol readers below find nothing in a viewer screenshot.
+        return [
+            *(item for index, page in enumerate(pages)
+              for item in parse_ultrasound(_page_text(page), int(page["page_number"]),
+                                           _page_text(pages[index - 1]) if index else "")),
+            *parse_eeg(pages), *parse_breath_test(pages),
+        ]
     if clinical_type in ULTRASOUND_TYPES:
         texts = ["\n".join(str(page.get(field) or "") for field in ("native_text", "ocr_text")) for page in pages]
         # The previous page goes along so a measurement whose organ heading
@@ -5322,7 +6033,7 @@ def _special_layout_rows(clinical_type: str, pages: list[dict[str, object]]) -> 
             for item in parse_ultrasound(texts[index], int(page["page_number"]), texts[index - 1] if index else "")
         ]
     if clinical_type in VISIT_MEASUREMENT_TYPES:
-        return parse_visit_measurements(pages)
+        return [*parse_visit_measurements(pages), *parse_eeg(pages), *parse_breath_test(pages)]
     if clinical_type == "blood_pressure":
         return parse_garmin_blood_pressure(pages)
     if clinical_type == "electrocardiogram":

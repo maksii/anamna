@@ -35,12 +35,13 @@ HEALTH_AREAS: list[dict[str, object]] = [
     {"id": "spine", "name": "Bones & spine", "short": "Bones & spine", "categories": set(), "description": "Cervical, thoracic and lumbar imaging with related bone markers"},
     {"id": "joints", "name": "Joints & soft tissue", "short": "Joints", "categories": set(), "description": "Joint, tendon and soft-tissue imaging with related inflammation and urate results"},
     {"id": "lungs", "name": "Lungs & chest", "short": "Lungs", "categories": set(), "description": "Chest imaging and respiratory evidence"},
-    {"id": "digestive", "name": "Stomach & intestines", "short": "Stomach", "categories": {"stool"}, "description": "Stomach and intestinal pathology, procedures and related testing"},
+    {"id": "digestive", "name": "Stomach & intestines", "short": "Stomach", "categories": {"stool", "breath_test"}, "description": "Stomach and intestinal pathology, procedures and related testing"},
     {"id": "allergy", "name": "Allergy", "short": "Allergy", "categories": {"allergy"}, "description": "Allergen-specific and total IgE testing"},
     {"id": "infection", "name": "Infection & microbiology", "short": "Infection", "categories": {"infection", "microbiology"}, "description": "Cultures, organisms and infection markers"},
     {"id": "ent", "name": "ENT & sinuses", "short": "ENT", "categories": set(), "description": "Ear, nose, throat and sinus imaging"},
     {"id": "skin", "name": "Skin", "short": "Skin", "categories": set(), "description": "Dermatology consultations and skin findings"},
-    {"id": "brain", "name": "Brain & nervous system", "short": "Brain", "categories": set(), "description": "Brain recordings such as the EEG (electroencephalogram, a recording of the brain's electrical activity) and their conclusions"},
+    {"id": "brain", "name": "Brain & nervous system", "short": "Brain", "categories": {"neurophysiology"}, "description": "Brain recordings such as the EEG (electroencephalogram, a recording of the brain's electrical activity) and their conclusions"},
+    {"id": "reproductive", "name": "Reproductive & breast health", "short": "Reproductive", "categories": {"gynecology", "breast"}, "description": "Pelvic and breast ultrasound, colposcopy and gynaecological findings"},
     {"id": "body", "name": "Body composition", "short": "Body", "categories": {"device_body", "body"}, "description": "Weight, body mass index, body fat and lean mass"},
     {"id": "activity", "name": "Activity & fitness", "short": "Activity", "categories": {"device_activity", "device_fitness"}, "description": "Movement, exercise, energy and cardio fitness"},
     {"id": "mobility", "name": "Mobility & gait", "short": "Mobility", "categories": {"device_mobility"}, "description": "Walking speed, step length, steadiness and asymmetry"},
@@ -101,6 +102,7 @@ CONCEPT_RELATED_AREAS: dict[str, set[str]] = {
     # H. pylori is now categorised as an infection; the digestive view is
     # where a person looks for it.
     "H. pylori stool antigen": {"digestive"},
+    "H. pylori urea breath test": {"digestive"},
     # A respiratory infection: the lungs view is where a person looks for it.
     "SARS-CoV-2 antigen": {"lungs"},
 }
@@ -160,6 +162,10 @@ CATEGORY_LABELS = {
     "autoimmune": "Autoantibodies",
     "inflammation": "Inflammation",
     "stool": "Stool analysis",
+    "breath_test": "Breath tests",
+    "gynecology": "Gynaecological ultrasound",
+    "breast": "Breast ultrasound",
+    "neurophysiology": "EEG (brain electrical activity)",
     "allergy": "Allergy",
     "infection": "Infection",
     "microbiology": "Microbiology",
@@ -312,6 +318,9 @@ UNIT_TRANSLATIONS = {
     "мм": "mm",
     "г/м²": "g/m²",
     "см/с": "cm/s",
+    # EEG rhythm frequency and amplitude («11 Гц», «до 230 мкВ»).
+    "гц": "Hz",
+    "мкв": "µV",
     "мл/хв/1,73 м²": _EGFR_UNIT,
     "кг": "kg",
     # Grams: left ventricular mass on an echo report.
@@ -352,6 +361,8 @@ _UNIT_REVERSE["μu/ml"] = "мкОд/мл"
 # reads as pieces («326 шт.», not «326 кількість»); Apple's physical-effort
 # unit had no Ukrainian form at all.
 _UNIT_REVERSE["dba"] = "дБА"
+_UNIT_REVERSE["hz"] = "Гц"
+_UNIT_REVERSE["μv"] = "мкВ"
 _UNIT_REVERSE["count"] = "шт."
 _UNIT_REVERSE["met-like effort"] = "MET-еквівалент"
 # And the same again for the rhythm determinations.  A laboratory value reads
@@ -1480,6 +1491,8 @@ NARRATIVE_TYPES = {
     "radiology_xray", "ultrasound", "electrocardiogram", "clinical_report",
 }
 
+_NOT_CONSULTATION = frozenset(NARRATIVE_TYPES - {"consultation"})
+
 #: The study a report is, read from its own header (title, filename and the
 #: text above the conclusion).  First match wins, so specific studies come
 #: before the generic ones.  (key, English title, areas, clinical types or
@@ -1494,12 +1507,23 @@ _STUDIES: tuple[tuple[str, str, tuple[str, ...], frozenset[str] | None, re.Patte
         # «дуплекс сонних артерій»): the specialty decides, before any study.
         ("consult_cardiology", "Cardiology consultation", ("heart",), {"consultation"}, r"кардіолог|cardiolog"),
         ("consult_dermatology", "Dermatology consultation", ("skin",), {"consultation"}, r"дерматолог|dermatolog"),
+        ("consult_gynecology", "Gynaecology consultation", ("reproductive",), {"consultation"}, r"гінеколог|gyn(?:a)?ecolog"),
         ("echo", "Echocardiogram", ("heart",), None, r"дослідження\s+серця|узд\s+серця|ехокардіо|echocardiog"),
         ("carotid_duplex", "Carotid and vertebral artery ultrasound", ("heart",), None, r"сонних|carotid|вертебральних\s+артері"),
         ("thyroid_us", "Thyroid ultrasound", ("thyroid",), None, r"щитоподібн|щитовидн|thyroid"),
         ("abdominal_us", "Abdominal ultrasound", ("liver", "kidneys"), None, r"черевної\s+порожнини|abdominal"),
         ("soft_tissue_us", "Soft-tissue ultrasound", ("joints",), None, r"м['’]яких\s+тканин|soft[- ]tissue"),
         ("salivary_us", "Salivary-gland and cervical-node ultrasound", ("ent",), None, r"слинн|salivary"),
+        ("breast_us", "Breast ultrasound", ("reproductive",), None, r"грудн\w*\s+залоз|молочн\w*\s+залоз|breast"),
+        ("pelvic_us", "Pelvic ultrasound", ("reproductive",), None, r"малого\s+тазу|матк\w*\s+з\s+додатками|pelvic"),
+        # A procedure a visit note only quotes («ФГДС від ...», «кольпоскопія
+        # показала ...») is not that procedure's report: never a consultation.
+        ("colposcopy", "Colposcopy", ("reproductive",), _NOT_CONSULTATION, r"кольпоскоп|colposcop"),
+        ("egd", "Upper endoscopy (gastroscopy)", ("digestive",), _NOT_CONSULTATION,
+         r"езофагогастродуоденоскоп|панендоскоп|гастроскоп|\bе?фгдс\b|\bегдс\b|gastroscop|\begd\b"),
+        ("hp_breath", "H. pylori breath test", ("digestive",), _NOT_CONSULTATION, r"helicobacter|хелікобактер"),
+        ("breath_test", "Hydrogen breath test", ("digestive",), _NOT_CONSULTATION,
+         r"дихальн\w*\s+(?:водневий\s+)?тест|бактерійного\s+росту|breath\s+test|gastrolyzer"),
         ("intestinal_biopsy", "Intestinal biopsy (histology)", ("digestive",), {"pathology"}, r"кишк|intestin|colon|поліпектом"),
         ("ecg", "ECG recording", ("heart",), None, r"kardia|\bekg\b|\becg\b|\bекг\b|електрокардіо"),
         ("eeg", "Electroencephalogram (EEG)", ("brain",), None, r"\beeg\b|\bеег\b|електроенцефало|electroencephalo"),
@@ -1538,6 +1562,7 @@ _ORGAN_AREAS: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
         ("skin", r"\bдерматол|\bdermatol"),
         # «головного мозку», never the «спинного мозку» of a spine scan.
         ("brain", r"\bголовн\w*\s+мозк|\bbrain\b|\bенцефал|\bеег\b|\beeg\b"),
+        ("reproductive", r"\bматк|\bяєчник|\bяйник|\bендометр|\bovar|\buter|\bгрудн\w*\s+залоз|\bмолочн\w*\s+залоз|\bbreast"),
     )
 )
 #: A visit that gave a vaccine («Необхідність імунізації», «Вакцинації»):
@@ -1556,11 +1581,13 @@ _GENERIC_TITLES = {
 # «Висновок:» over its description and closes with «Висновок:» over the
 # radiologist's verdict.
 _CONCLUSION_LABELS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"(?:гістологічн\w*\s+)?(?:висновок(?:\s+лікаря)?|buchobok|заключення|impression|conclusion)\s*[:：]", re.I),
+    re.compile(r"(?:гістологічн\w*\s+)?(?:висновок(?:\s+лікаря)?|buchobok|заключення(?:\s+лікаря)?|impression|conclusion)\s*[:：]", re.I),
     re.compile(r"(?:уз|узд|мр)[- ]?ознаки\s*[:：]", re.I),
     re.compile(r"(?:попередн|заключн|остаточн|клінічн)\w*\s+діагноз\s*[:：]|^\s*діагноз\s*[:：]", re.I | re.M),
     re.compile(r"kardia\s+advanced\s+determination\s*[:：]", re.I),
     re.compile(r"^\s*огляд\s*(?:[:：]\s*)?$", re.I | re.M),
+    # A colposcopy protocol's verdict («Діагноз кольпоскопічний: ...»).
+    re.compile(r"діагноз\s+кольпоскопічн\w*\s*[:：]", re.I),
 )
 
 _CONCLUSION_END = re.compile(

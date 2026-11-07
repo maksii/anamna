@@ -539,6 +539,57 @@ CONCEPT_DEFINITIONS: list[dict[str, object]] = [
     {"name": "Vertebral artery diameter", "category": "cardiovascular", "unit": "mm", "aliases": ["vertebral artery diameter", "діаметр хребцевої артерії"]},
     {"name": "Soft tissue lesion largest diameter", "category": "body", "unit": "mm", "aliases": ["soft tissue lesion largest diameter", "найбільший діаметр утворення м'яких тканин"]},
     {"name": "Soft tissue lesion smaller diameter", "category": "body", "unit": "mm", "aliases": ["soft tissue lesion smaller diameter", "менший діаметр утворення м'яких тканин"]},
+    # Transcranial duplex (sandbox audit review 2, 2026-11-07): intracranial
+    # vessels, never mixed with the neck's extracranial series above.  The V4
+    # segment is the vertebral artery inside the skull.
+    {"name": "Peak systolic velocity, anterior cerebral artery", "category": "cardiovascular", "unit": "cm/s", "aliases": ["peak systolic velocity, anterior cerebral artery"]},
+    {"name": "Peak systolic velocity, middle cerebral artery", "category": "cardiovascular", "unit": "cm/s", "aliases": ["peak systolic velocity, middle cerebral artery"]},
+    {"name": "Peak systolic velocity, intracranial vertebral artery (V4)", "category": "cardiovascular", "unit": "cm/s", "aliases": ["peak systolic velocity, intracranial vertebral artery (v4)"]},
+    {"name": "Peak systolic velocity, basilar artery", "category": "cardiovascular", "unit": "cm/s", "aliases": ["peak systolic velocity, basilar artery", "базилярна артерія"]},
+    {"name": "Vertebral artery resistive index", "category": "cardiovascular", "unit": None, "aliases": ["vertebral artery resistive index"]},
+    {"name": "Internal jugular vein diameter", "category": "cardiovascular", "unit": "mm", "aliases": ["internal jugular vein diameter", "внутрішня яремна вена"]},
+    # Pelvic (gynaecological) ultrasound.  The ovary's side, the lesion's
+    # place in the uterus and the time point of a test go in the specimen.
+    {"name": "Uterine body length", "category": "gynecology", "unit": "mm", "aliases": ["uterine body length", "довжина тіла матки"]},
+    {"name": "Uterine body anteroposterior diameter", "category": "gynecology", "unit": "mm", "aliases": ["uterine body anteroposterior diameter", "передньо-задній розмір тіла матки"]},
+    {"name": "Uterine body width", "category": "gynecology", "unit": "mm", "aliases": ["uterine body width", "поперечний розмір тіла матки"]},
+    {"name": "Endometrial thickness", "category": "gynecology", "unit": "mm", "aliases": ["endometrial thickness", "товщина ендометрію", "м-ехо"]},
+    {"name": "Cervical length", "category": "gynecology", "unit": "mm", "aliases": ["cervical length", "довжина шийки матки"]},
+    {"name": "Cervical thickness", "category": "gynecology", "unit": "mm", "aliases": ["cervical thickness", "товщина шийки матки"]},
+    {"name": "Ovary length", "category": "gynecology", "unit": "mm", "aliases": ["ovary length", "довжина яєчника"]},
+    {"name": "Ovarian volume", "category": "gynecology", "unit": "mL", "aliases": ["ovarian volume", "об'єм яєчника"]},
+    {"name": "Antral follicle count", "category": "gynecology", "unit": "count", "aliases": ["antral follicle count", "кількість антральних фолікулів"]},
+    {"name": "Largest ovarian follicle diameter", "category": "gynecology", "unit": "mm", "aliases": ["largest ovarian follicle diameter", "найбільший фолікул", "домінантний фолікул"]},
+    {"name": "Corpus luteum diameter", "category": "gynecology", "unit": "mm", "aliases": ["corpus luteum diameter", "жовте тіло"]},
+    {"name": "Ovarian cyst largest diameter", "category": "gynecology", "unit": "mm", "aliases": ["ovarian cyst largest diameter", "найбільший діаметр кісти яєчника"]},
+    {"name": "Ovarian cyst smaller diameter", "category": "gynecology", "unit": "mm", "aliases": ["ovarian cyst smaller diameter", "менший діаметр кісти яєчника"]},
+    {"name": "Ovarian O-RADS category", "category": "gynecology", "unit": None, "aliases": ["ovarian o-rads category", "o-rads"]},
+    {"name": "Uterine lesion largest diameter", "category": "gynecology", "unit": "mm", "aliases": ["uterine lesion largest diameter"]},
+    {"name": "Uterine lesion smaller diameter", "category": "gynecology", "unit": "mm", "aliases": ["uterine lesion smaller diameter"]},
+    # Breast ultrasound: the breast's side is the specimen.
+    {"name": "Breast BI-RADS category", "category": "breast", "unit": None, "aliases": ["breast bi-rads category", "bi-rads"]},
+    {"name": "Breast lesion largest diameter", "category": "breast", "unit": "mm", "aliases": ["breast lesion largest diameter"]},
+    {"name": "Breast lesion smaller diameter", "category": "breast", "unit": "mm", "aliases": ["breast lesion smaller diameter"]},
+    {"name": "Largest breast cyst diameter", "category": "breast", "unit": "mm", "aliases": ["largest breast cyst diameter"]},
+    {"name": "Breast skin thickness", "category": "breast", "unit": "mm", "aliases": ["breast skin thickness"]},
+    {"name": "Breast subcutaneous fat thickness", "category": "breast", "unit": "mm", "aliases": ["breast subcutaneous fat thickness"]},
+    {"name": "Breast glandular tissue thickness", "category": "breast", "unit": "mm", "aliases": ["breast glandular tissue thickness", "залозиста тканина"]},
+    # Gallbladder emptying after a test breakfast (abdominal ultrasound).
+    {"name": "Gallbladder ejection fraction", "category": "liver", "unit": "%", "aliases": ["gallbladder ejection fraction"]},
+    {"name": "Gallbladder volume", "category": "liver", "unit": "mL", "aliases": ["gallbladder volume", "об'єм жовчного міхура"]},
+    # Routine EEG: the mean frequency and the largest amplitude of each rhythm
+    # the protocol describes («Домінує альфа-ритм із середньою частотою 11 Гц
+    # та амплітудою до 230 мкВ»).
+    {"name": "EEG alpha rhythm frequency", "category": "neurophysiology", "unit": "Hz", "aliases": ["eeg alpha rhythm frequency"]},
+    {"name": "EEG alpha rhythm amplitude", "category": "neurophysiology", "unit": "µV", "aliases": ["eeg alpha rhythm amplitude"]},
+    {"name": "EEG beta rhythm frequency", "category": "neurophysiology", "unit": "Hz", "aliases": ["eeg beta rhythm frequency"]},
+    {"name": "EEG beta rhythm amplitude", "category": "neurophysiology", "unit": "µV", "aliases": ["eeg beta rhythm amplitude"]},
+    {"name": "EEG theta rhythm frequency", "category": "neurophysiology", "unit": "Hz", "aliases": ["eeg theta rhythm frequency"]},
+    {"name": "EEG theta rhythm amplitude", "category": "neurophysiology", "unit": "µV", "aliases": ["eeg theta rhythm amplitude"]},
+    # Breath tests.  Hydrogen per time point; the substrate and minute are
+    # the specimen («глюкоза, 15 хв»), so two protocols never share a series.
+    {"name": "Breath hydrogen", "category": "breath_test", "unit": "ppm", "aliases": ["breath hydrogen", "водень у видихуваному повітрі"]},
+    {"name": "H. pylori urea breath test", "category": "infection", "unit": None, "aliases": ["h. pylori urea breath test", "дихальний тест на helicobacter pylori"]},
     # Measured by a clinician at a visit and printed in the note's objective
     # status («Температура: 36,6 ° C», «SpO2: 97 %», «Частота дихання: 18 /хв»).
     # Spot readings taken awake, so deliberately not the device metrics of
