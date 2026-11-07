@@ -76,7 +76,7 @@
         the conclusion reachable only as raw page text two tabs away. -#}
     {% set first_tab = 'conclusion' if narrative else 'observations' %}
     <div class="side-tabs" aria-label="{{ t('doc.side_panels') }}">
-      {% if narrative or findings %}
+      {% if narrative or findings or (not viewing and not observations) %}
       <button type="button" class="side-tab{{ ' is-active' if first_tab == 'conclusion' else '' }}" aria-expanded="{{ 'true' if first_tab == 'conclusion' else 'false' }}" aria-controls="side-panel-conclusion" data-side-tab="conclusion">{{ t('doc.tab_conclusion') }}</button>
       {% endif %}
       <button type="button" class="side-tab{{ ' is-active' if first_tab == 'observations' else '' }}" aria-expanded="{{ 'true' if first_tab == 'observations' else 'false' }}" aria-controls="side-panel-observations" data-side-tab="observations">{{ t('doc.tab_observations') }}{% if narrative %} ({{ observations|length|countfmt }}){% endif %}</button>
@@ -87,7 +87,7 @@
       {% endif %}
     </div>
 
-    {% if narrative or findings %}
+    {% if narrative or findings or (not viewing and not observations) %}
     <section class="panel side-panel{{ ' is-active' if first_tab == 'conclusion' else '' }}" id="side-panel-conclusion" data-side-panel="conclusion"{% if first_tab != 'conclusion' %} hidden{% endif %}>
       <div class="panel-head"><div><span class="eyebrow">{{ document.type_label }}</span><h2>{{ t('doc.conclusion_heading') }}</h2></div></div>
       {% if findings %}
@@ -109,7 +109,7 @@
           {% endif %}
           {% if finding.recommendations %}<p class="an-doc-finding__areas"><b>{{ t('area.finding_recommended') }}:</b> {{ finding.recommendations }}</p>{% endif %}
           {% if finding.areas %}<p class="an-doc-finding__areas"><b>{{ t('doc.finding_areas') }}:</b> {{ finding.areas|join(', ') }}</p>{% endif %}
-          {% if finding.corrected %}<p class="an-field-help an-doc-finding__corrected"><span class="pill">{{ t('doc.finding_corrected_badge') }}</span> {{ finding.corrected_text or t('doc.finding_corrected_help') }}</p>{% endif %}
+          {% if finding.corrected %}<p class="an-field-help an-doc-finding__corrected"><span class="pill">{{ t('doc.finding_added_badge' if finding.person_added else 'doc.finding_corrected_badge') }}</span> {{ finding.corrected_text or t('doc.finding_corrected_help') }}</p>{% endif %}
           {% if finding.read_text and finding.read_text != finding.text %}
           <details class="an-doc-finding__original"><summary>{{ t('doc.finding_read_text') }}</summary><blockquote>{{ finding.read_text }}</blockquote></details>
           {% endif %}
@@ -129,7 +129,8 @@
               <label>{{ t('area.finding_recommended') }}<textarea name="recommendations" rows="3" maxlength="6000">{{ finding.recommendations }}</textarea></label>
               <div class="an-reread-actions">
                 <button class="primary" name="action" value="correct" type="submit">{{ t('doc.finding_save') }}</button>
-                {% if finding.corrected %}<button class="secondary" name="action" value="revert" type="submit" formnovalidate>{{ t('doc.finding_revert') }}</button>{% endif %}
+                {% if finding.person_added %}<button class="secondary" name="action" value="remove" type="submit" formnovalidate>{{ t('doc.finding_remove') }}</button>
+                {% elif finding.corrected %}<button class="secondary" name="action" value="revert" type="submit" formnovalidate>{{ t('doc.finding_revert') }}</button>{% endif %}
               </div>
             </form>
           </details>
@@ -140,6 +141,25 @@
       {% else %}
       {{ empty_state(t('doc.conclusion_heading'), t('doc.conclusion_none'), 3) }}
       <p><button type="button" class="secondary" data-show-tab="text">{{ t('doc.conclusion_read_text') }}</button></p>
+      {% if not viewing %}
+      {#- A photo whose OCR missed the diagnosis line: a person writes it from the image. -#}
+      <h3 id="add-conclusion">{{ t('doc.finding_add_heading') }}</h3>
+      <p class="an-field-help">{{ t('doc.finding_add_help') }}</p>
+      {% if finding_error %}<div class="alert" role="alert">{{ t(finding_error) }}</div>{% endif %}
+      <form method="post" action="/documents/{{ document.id }}/findings" class="an-classify-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label>{{ t('doc.finding_summary_label') }}<textarea name="summary" rows="4" maxlength="6000" required></textarea></label>
+        <label>{{ t('area.finding_recommended') }}<textarea name="recommendations" rows="2" maxlength="6000"></textarea></label>
+        <label>{{ t('doc.finding_date_label') }}<input name="finding_date" type="date" value="{{ document.report_date or '' }}"></label>
+        <label>{{ t('doc.finding_area_label') }}
+          <select name="health_area">
+            <option value="">{{ t('doc.finding_area_auto') }}</option>
+            {% for area in health_areas %}<option value="{{ area.id }}">{{ area.name }}</option>{% endfor %}
+          </select>
+        </label>
+        <button class="primary" name="action" value="add" type="submit">{{ t('doc.finding_add') }}</button>
+      </form>
+      {% endif %}
       {% endif %}
       {#- Measurements the report printed, if any were read: an echo's mass
           index or a duct diameter belongs beside the conclusion it supports. -#}

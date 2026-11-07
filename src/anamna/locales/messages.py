@@ -1827,6 +1827,29 @@ MESSAGES: dict[str, dict[str, str]] = {
         "uk": "Виправлено людиною за зображенням звіту.",
     },
     "doc.finding_read_text": {"en": "Show the text as read", "uk": "Показати прочитаний текст"},
+    "doc.finding_add_heading": {"en": "Add the conclusion", "uk": "Додати висновок"},
+    "doc.finding_add_help": {
+        "en": "If the photo shows a conclusion or diagnosis that was not read, write it here as the image shows it. It is kept when the file is read again, and stays until you remove it.",
+        "uk": "Якщо на фото є висновок або діагноз, який не вдалося прочитати, напишіть його тут так, як його видно на зображенні. Він зберігається під час повторного читання файла, і залишається, доки ви його не видалите.",
+    },
+    "doc.finding_date_label": {"en": "Date of the conclusion", "uk": "Дата висновку"},
+    "doc.finding_area_label": {"en": "Health area", "uk": "Розділ здоров'я"},
+    "doc.finding_area_auto": {"en": "Decide from the text", "uk": "Визначити за текстом"},
+    "doc.finding_add": {"en": "Add the conclusion", "uk": "Додати висновок"},
+    "doc.finding_added_badge": {"en": "Written by a person", "uk": "Записано людиною"},
+    "doc.finding_remove": {"en": "Remove this conclusion", "uk": "Видалити цей висновок"},
+    "doc.finding_error_area": {
+        "en": "The text does not name an organ or a diagnosis code, so the health area could not be decided. Choose one in the list.",
+        "uk": "У тексті немає назви органа чи коду діагнозу, тому розділ здоров'я не визначено. Виберіть його у списку.",
+    },
+    "doc.finding_error_exists": {
+        "en": "This document already has a conclusion in that health area. Correct that one instead.",
+        "uk": "Цей документ уже має висновок у цьому розділі здоров'я. Виправте його замість додавання нового.",
+    },
+    "doc.finding_error_date": {
+        "en": "The date is not a calendar date. Use the date picker.",
+        "uk": "Дата не є календарною датою. Скористайтеся вибором дати.",
+    },
     "doc.finding_as_printed_uk": {
         "en": "As printed in the report, in Ukrainian. No English summary has been written for it.",
         "uk": "Як надруковано в документі, українською.",

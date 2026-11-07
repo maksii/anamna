@@ -11,6 +11,7 @@ Every name, number and date here is invented.
 
 from __future__ import annotations
 
+import html
 import json
 from pathlib import Path
 
@@ -241,3 +242,68 @@ def test_a_person_corrected_finding_survives_a_reread_of_its_document(tmp_path: 
         connection.commit()
         kept = {row[0] for row in connection.execute("SELECT summary_uk FROM clinical_findings WHERE document_id='us-1'")}
     assert len(rows) == 2 and kept == {"Норма."}
+
+
+@pytest.mark.parametrize("locale", ["en", "uk"])
+def test_a_person_adds_a_conclusion_the_software_did_not_read_and_can_remove_it(tmp_path: Path, locale: str):
+    settings, user_id, client = build(tmp_path)
+    client.cookies.set("anamna_lang", locale)
+    add_document(settings, "colpo", ocr="", mime="image/jpeg", clinical_type="consultation", report_date="2025-04-01")
+    words = {
+        "en": ("Add the conclusion", "Decide from the text", "Written by a person", "Remove this conclusion",
+               "the health area could not be decided"),
+        "uk": ("Додати висновок", "Визначити за текстом", "Записано людиною", "Видалити цей висновок",
+               "розділ здоров'я не визначено"),
+    }[locale]
+    page = client.get("/documents/colpo").text
+    assert words[0] in page and words[1] in page and 'value="2025-04-01"' in page
+
+    # A text that names no organ needs an area; the page says so and nothing is stored.
+    from test_rescan import csrf_for
+    refused = client.post("/documents/colpo/findings", data={
+        "action": "add", "summary": "Без особливостей.", "csrf_token": csrf_for(settings, user_id),
+    }, follow_redirects=True)
+    assert words[4] in html.unescape(refused.text)
+    assert scalar(settings, "SELECT COUNT(*) FROM clinical_findings") == 0
+
+    agent = _agent(settings, user_id)
+    with TestClient(create_app(settings)) as api:
+        assert api.post("/documents/colpo/findings", data={"action": "add", "summary": "Норма", "finding_date": "1.4.25",
+                                                          "health_area": "skin"}, headers=agent).json()["error"] == "date"
+        added = api.post("/documents/colpo/findings", data={
+            "action": "add", "summary": "Ектопія шийки матки.", "recommendations": "контроль через 6 місяців",
+        }, headers=agent)
+        assert added.status_code == 200
+        ids = added.json()["finding_ids"]
+        again = api.post("/documents/colpo/findings", data={"action": "add", "summary": "Ектопія шийки матки."},
+                         headers=agent)
+        assert again.status_code == 409 and again.json()["error"] == "exists"
+    with connect(settings) as connection:
+        row = dict(connection.execute("SELECT * FROM clinical_findings WHERE id=?", (ids[0],)).fetchone())
+    assert len(ids) == 1 and ids[0].startswith("person-finding-")
+    assert (row["health_area"], row["finding_date"], row["verification_status"], row["summary_uk"],
+            row["recommendations"]) == ("reproductive", "2025-04-01", "corrected", "Ектопія шийки матки.",
+                                        "контроль через 6 місяців")
+    details = json.loads(scalar(settings, "SELECT details_json FROM audit_events WHERE action='finding_added'"))
+    assert details["token_kind"] == "agent" and details["source"] == "image"
+
+    # Nothing automatic removes or rewrites it.
+    with connect(settings) as connection:
+        sync_clinical_findings(connection)
+        pipeline.record_document_relations(connection, user_id, "colpo")
+        connection.commit()
+    assert scalar(settings, "SELECT summary_uk FROM clinical_findings WHERE id=?", ids[0]) == "Ектопія шийки матки."
+    page = client.get("/documents/colpo").text
+    assert "Ектопія шийки матки." in page and words[2] in page and words[3] in page
+
+    with TestClient(create_app(settings)) as api:
+        # `revert` has no reading to go back to, and `remove` touches only a person's own.
+        api.post("/documents/colpo/findings", data={"action": "revert", "finding_id": ids}, headers=agent)
+        assert scalar(settings, "SELECT COUNT(*) FROM clinical_findings WHERE id=?", ids[0]) == 1
+        machine = _ultrasound(settings)[0]["id"]
+        assert api.post("/documents/us-1/findings", data={"action": "remove", "finding_id": machine},
+                        headers=agent).status_code == 404
+        assert api.post("/documents/colpo/findings", data={"action": "remove", "finding_id": ids},
+                        headers=agent).status_code == 200
+    assert scalar(settings, "SELECT COUNT(*) FROM clinical_findings WHERE document_id='colpo'") == 0
+    assert scalar(settings, "SELECT COUNT(*) FROM audit_events WHERE action='finding_removed'") == 1

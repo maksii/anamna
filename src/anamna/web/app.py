@@ -115,6 +115,7 @@ from ..health import (
     display_value,
     enum_label,
     finding_attention,
+    _diagnosis_areas,
     localized_health_areas,
     metric_area_ids,
     present_finding,
@@ -4320,6 +4321,7 @@ def _merge_finding(merged: dict[tuple[int, str], dict[str, object]], row: dict[s
         },
     )
     item["ids"].append(str(row["id"]))  # type: ignore[union-attr]
+    item["person_added"] = str(row["id"]).startswith(PERSON_FINDING_PREFIX)
     item["corrected"] = item["corrected"] or row.get("verification_status") == "corrected"
     if _FINDING_STATUS_RANK.get(str(row["status"]), 3) < _FINDING_STATUS_RANK.get(str(item["status"]), 3):
         item["status"] = str(row["status"])
@@ -4373,7 +4375,8 @@ def _finding_corrections(connection, owner_user_id: str, finding_ids: list[str])
     for row in connection.execute(
         f"""SELECT a.entity_id, a.created_at, a.details_json, COALESCE(u.display_name, u.email, '') name
               FROM audit_events a LEFT JOIN users u ON u.id=a.actor_user_id
-             WHERE a.owner_user_id=? AND a.entity_type='clinical_finding' AND a.action='finding_corrected'
+             WHERE a.owner_user_id=? AND a.entity_type='clinical_finding'
+               AND a.action IN ('finding_corrected', 'finding_added')
                AND a.entity_id IN ({",".join("?" * len(finding_ids))})
              ORDER BY a.id DESC""",
         (owner_user_id, *finding_ids),
@@ -9978,6 +9981,7 @@ def document_detail(
     rescan: str = "",
     hint: str = "",
     dup_error: str = "",
+    finding_error: str = "",
 ):
     settings = request.app.state.settings
     user = require_user(request)
@@ -10052,6 +10056,8 @@ def document_detail(
             negative_allergens=negative_allergens, findings=findings, narrative=narrative,
             pages=pages, tags=tags, relations=relations, concepts=concepts, part_candidates=part_candidates,
             dup_error=f"dup.error_{dup_error}" if dup_error in DUPLICATE_ERRORS else None,
+            finding_error=f"doc.finding_error_{finding_error}" if finding_error in FINDING_ERRORS else None,
+            health_areas=localized_health_areas(),
             rescan_queued=rescan == "queued", parser_version=PARSER_VERSION,
             known_vendors=known_vendors, document_kinds=_document_kinds(),
             issue_reports=issue_reports, ai_scope_label=document["title_text"],
@@ -10473,16 +10479,93 @@ def edit_document_metadata(
 
 #: Longest conclusion and recommendation a person may type.
 _FINDING_TEXT_MAX = 6000
+#: Id prefix of a conclusion a person wrote where the software read none:
+#: the only kind `remove` deletes, and the only kind `revert` leaves alone
+#: (there is no machine reading to go back to).
+PERSON_FINDING_PREFIX = "person-finding-"
+#: Why an added conclusion was refused, as the page names it.
+FINDING_ERRORS = ("area", "exists", "date")
+
+
+class _FindingRefused(ValueError):
+    """An `add` refused before anything changed; the value is the FINDING_ERRORS code."""
+
+
+def _finding_fields(text: str, recommended: str) -> dict[str, str]:
+    """The stored columns of a person's wording: its language, and a status
+    judged from the words themselves, as for the software's own reading."""
+    uk = bool(_CYRILLIC_RE.search(text))
+    reasons = finding_attention(text)
+    return {
+        "summary_uk": text if uk else "", "summary_en": "" if uk else text,
+        "recommendations": recommended, "status": "attention" if reasons else "information",
+        "attention_reasons": ",".join(reasons), "verification_status": "corrected",
+    }
+
+
+def _add_person_finding(
+    connection, user_id: str, document_id: str, text: str, recommended: str, finding_date: str, area: str,
+) -> list[str]:
+    """Write a conclusion the software did not read (photos whose OCR missed
+    the diagnosis line); the ids written.  Filed under the chosen area, else
+    under every area the diagnosis names (the rule narrative reports are
+    filed by, `_diagnosis_areas`), else under the one the document's title names."""
+    document = connection.execute(
+        "SELECT patient_id, vendor_id, report_date, title, clinical_type FROM documents WHERE id=? AND owner_user_id=?",
+        (document_id, user_id),
+    ).fetchone()
+    if document is None:
+        raise LookupError(document_id)
+    if finding_date:
+        try:
+            finding_date = date.fromisoformat(finding_date).isoformat()
+        except ValueError:
+            raise _FindingRefused("date") from None
+    areas = (area,) if area else (_diagnosis_areas(text) or _diagnosis_areas(str(document["title"] or "")))
+    if not areas:
+        raise _FindingRefused("area")
+    title = DOCUMENT_TYPE_TITLES.get(str(document["clinical_type"] or ""), "Clinical report")
+    fields = _finding_fields(text, recommended)
+    ids = []
+    for health_area in areas:
+        finding_id = f"{PERSON_FINDING_PREFIX}{uuid.uuid4()}"
+        try:
+            connection.execute(
+                """INSERT INTO clinical_findings(
+                       id, owner_user_id, patient_id, document_id, report_id, page_number, health_area, title,
+                       summary_en, summary_uk, recommendations, attention_reasons, original_text, finding_date,
+                       vendor_id, status, confidence, verification_status, created_at
+                   ) VALUES (?, ?, ?, ?, NULL, 1, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, 1, 'corrected', ?)""",
+                (finding_id, user_id, document["patient_id"], document_id, health_area, title,
+                 fields["summary_en"], fields["summary_uk"], recommended, fields["attention_reasons"],
+                 finding_date or document["report_date"], document["vendor_id"], fields["status"], utc_now()),
+            )
+        except sqlite3.IntegrityError:
+            raise _FindingRefused("exists") from None
+        ids.append(finding_id)
+    return ids
+
+
+def _audit_finding(connection, user, action: str, finding_id: str, details: dict[str, object]) -> None:
+    if user.get("token_kind"):
+        details["token_kind"] = user["token_kind"]
+    connection.execute(
+        """INSERT INTO audit_events(owner_user_id, actor_user_id, action, entity_type, entity_id,
+               details_json, created_at) VALUES (?, ?, ?, 'clinical_finding', ?, ?, ?)""",
+        (user["id"], user["id"], action, finding_id, json.dumps(details, ensure_ascii=False), utc_now()),
+    )
 
 
 @router.post("/documents/{document_id}/findings", responses=_RESPONSES_400_401_403_404)
 def correct_document_finding(
     request: Request,
     document_id: str,
-    finding_id: Annotated[list[str], Form()],
+    finding_id: Annotated[list[str], Form()] = [],  # noqa: B006 - FastAPI copies the default
     action: Annotated[str, Form()] = "correct",
     summary: Annotated[str, Form()] = "",
     recommendations: Annotated[str, Form()] = "",
+    finding_date: Annotated[str, Form()] = "",
+    health_area: Annotated[str, Form()] = "",
     csrf_token: Annotated[str, Form()] = "",
     next: Annotated[str, Form()] = "",
 ):
@@ -10494,66 +10577,92 @@ def correct_document_finding(
     the person's words.  The text before, who and when go to the audit log,
     and the page offers the text the software read.  `revert` puts back what
     the software read and lets the next rebuild refresh it.
+    `add` writes a conclusion where the software read none (`finding_date`,
+    default the document's date; `health_area`, default the areas the text
+    names); `remove` deletes one a person added, and nothing else.
     """
     settings = request.app.state.settings
     user = require_user(request)
     require_csrf(user, csrf_token)
     text, recommended = (value.replace("\r\n", "\n").strip() for value in (summary, recommendations))
-    if action not in {"correct", "revert"} or action == "correct" and not text:
+    if action not in {"correct", "revert", "add", "remove"} or action in {"correct", "add"} and not text:
         raise HTTPException(400)
     if len(text) > _FINDING_TEXT_MAX or len(recommended) > _FINDING_TEXT_MAX:
         raise HTTPException(400)
+    if health_area and health_area not in AREA_BY_ID:
+        raise HTTPException(400)
+    destination = _safe_next(next, f"/documents/{document_id}")
     with connect(settings) as connection:
         connection.execute("BEGIN IMMEDIATE")
+        if action == "add":
+            try:
+                ids = _add_person_finding(
+                    connection, user["id"], document_id, text, recommended, finding_date.strip(), health_area
+                )
+            except LookupError:
+                connection.rollback()
+                raise HTTPException(404) from None
+            except _FindingRefused as refused:
+                connection.rollback()
+                code = str(refused)
+                if _wants_json(request):
+                    return JSONResponse(
+                        {"ok": False, "error": code, "detail": t(f"doc.finding_error_{code}")}, status_code=409
+                    )
+                return RedirectResponse(f"{destination}?finding_error={code}#side-panel-conclusion", status_code=303)
+            for added in ids:
+                _audit_finding(connection, user, "finding_added", added, {
+                    "document_id": document_id, "source": "image", "after": _finding_fields(text, recommended),
+                })
+            connection.commit()
+            invalidate_catalog(user["id"])
+            if _wants_json(request):
+                return JSONResponse({"ok": True, "action": action, "finding_ids": ids})
+            return RedirectResponse(destination + "#side-panel-conclusion", status_code=303)
         rows = connection.execute(
             f"""SELECT * FROM clinical_findings WHERE owner_user_id=? AND document_id=?
                   AND verification_status<>'rejected' AND id IN ({",".join("?" * len(finding_id))})""",
             (user["id"], document_id, *finding_id),
         ).fetchall() if finding_id else []
+        if action == "remove":
+            rows = [row for row in rows if str(row["id"]).startswith(PERSON_FINDING_PREFIX)]
         if not rows:
             connection.rollback()
             raise HTTPException(404)
-        token_kind = user.get("token_kind")
         if action == "correct":
-            uk = bool(_CYRILLIC_RE.search(text))
-            reasons = finding_attention(text)
-            after = {
-                "summary_uk": text if uk else "", "summary_en": "" if uk else text,
-                "recommendations": recommended, "status": "attention" if reasons else "information",
-                "attention_reasons": ",".join(reasons), "verification_status": "corrected",
-            }
-        else:
+            after = _finding_fields(text, recommended)
+        elif action == "revert":
             history = _finding_corrections(connection, user["id"], [str(row["id"]) for row in rows])
         columns = ("summary_uk", "summary_en", "recommendations", "status", "attention_reasons", "verification_status")
         for row in rows:
+            before = {name: row[name] for name in columns}
+            if action == "remove":
+                connection.execute("DELETE FROM clinical_findings WHERE id=?", (row["id"],))
+                _audit_finding(connection, user, "finding_removed", str(row["id"]), {
+                    "document_id": document_id, "health_area": row["health_area"], "before": before,
+                })
+                continue
             if action == "revert":
-                if row["verification_status"] != "corrected":
+                # A person's own conclusion has no reading to go back to; it is removed instead.
+                if row["verification_status"] != "corrected" or str(row["id"]).startswith(PERSON_FINDING_PREFIX):
                     continue
-                after = {**{name: row[name] for name in columns}, "verification_status": "extracted",
+                after = {**before, "verification_status": "extracted",
                          **(history.get(str(row["id"]), {}).get("before") or {})}
             connection.execute(
                 f"UPDATE clinical_findings SET {', '.join(f'{name}=?' for name in columns)} WHERE id=?",
                 (*(after[name] for name in columns), row["id"]),
             )
-            details: dict[str, object] = {
-                "document_id": document_id, "source": "image",
-                "before": {name: row[name] for name in columns}, "after": after,
-            }
-            if token_kind:
-                details["token_kind"] = token_kind
-            connection.execute(
-                """INSERT INTO audit_events(owner_user_id, actor_user_id, action, entity_type, entity_id,
-                       details_json, created_at) VALUES (?, ?, ?, 'clinical_finding', ?, ?, ?)""",
-                (user["id"], user["id"], "finding_corrected" if action == "correct" else "finding_correction_reverted",
-                 row["id"], json.dumps(details, ensure_ascii=False), utc_now()),
+            _audit_finding(
+                connection, user, "finding_corrected" if action == "correct" else "finding_correction_reverted",
+                str(row["id"]), {"document_id": document_id, "source": "image", "before": before, "after": after},
             )
-        if action == "revert":
+        if action in {"revert", "remove"}:
             sync_clinical_findings(connection)  # an extracted row is refreshed from its page now
         connection.commit()
     invalidate_catalog(user["id"])
     if _wants_json(request):
         return JSONResponse({"ok": True, "action": action, "finding_ids": [str(row["id"]) for row in rows]})
-    return RedirectResponse(_safe_next(next, f"/documents/{document_id}") + "#side-panel-conclusion", status_code=303)
+    return RedirectResponse(destination + "#side-panel-conclusion", status_code=303)
 
 
 @router.post("/documents/{document_id}/tags", responses=_RESPONSES_401_403_404)
