@@ -27,7 +27,7 @@ from .db import connect, transaction, utc_now
 from .devices.queries import device_metric_catalog, device_metric_values
 from .health import concept_display_name
 from .ingest.text import search_key
-from .i18n import VISITOR_LOCALE, activate_locale, reset_locale, format_date_localized, format_number_localized, translate_phrase
+from .i18n import VISITOR_LOCALE, activate_locale, reset_locale, format_date_localized, format_number_localized, t, t_plural, translate_phrase
 from .locales.telegram import message
 from .telegram_transport import ERR_CONNECTION, MAX_FILE_BYTES, TelegramAPI, TelegramError
 
@@ -41,6 +41,17 @@ UPLOAD_WAIT = 2.0
 #: still registered here, and how soon it asks again after that check failed.
 WEBHOOK_CHECK_SECONDS = 6 * 3600
 WEBHOOK_RETRY_SECONDS = 600
+#: Files arriving within this many seconds of each other (an album, a
+#: multi-forward, a gallery selection) are one upload: one acknowledgement
+#: once they stop arriving, one summary when the last of them is read.
+BATCH_QUIET = 4.0
+#: A batch still collecting files is joined only by files this recent; an
+#: older one was left behind by a crash or a cleared queue.
+BATCH_WINDOW = 600
+#: The undo button of an upload works this long after the upload arrived.
+UNDO_SECONDS = 24 * 3600
+#: Per-file lines in one summary; the rest are counted, the queue lists all.
+SUMMARY_LINES = 20
 logger = logging.getLogger("anamna.telegram")
 SQL_CONFIG = "SELECT * FROM telegram_config WHERE id=1"
 SQL_ENABLED = "SELECT enabled FROM telegram_config WHERE id=1"
@@ -51,7 +62,14 @@ ERR_UNAVAILABLE = "telegram.unavailable"
 CB_METRICS = "metrics:0"
 CB_DOCS = "docs:0"
 #: What each slash command opens.
-_COMMAND_ACTIONS = {"/start": "home", "/menu": "home", "/cancel": "home", "/metrics": CB_METRICS, "/documents": CB_DOCS, "/search": "search", "/upload": "upload", "/language": "language", "/help": "help"}
+_COMMAND_ACTIONS = {"/start": "home", "/menu": "home", "/cancel": "home", "/metrics": CB_METRICS, "/documents": CB_DOCS, "/search": "search", "/upload": "upload", "/uploads": "recent", "/account": "account", "/unlink": "unlink", "/language": "language", "/help": "help"}
+#: Bot menu commands and the catalog key describing each.
+_COMMANDS = (("start", "home"), ("menu", "home"), ("metrics", "metrics"), ("documents", "documents"), ("search", "search"), ("upload", "upload"), ("uploads", "recent"), ("account", "account"), ("unlink", "unlink"), ("language", "language"), ("help", "help"), ("cancel", "cancel"))
+#: Door refusals a file is reported with in its batch summary.
+_FILE_ERRORS = {"telegram.error_type", "telegram.error_size", ERR_FILE}
+#: Telegram attachment kinds besides photos, and the name one without a filename gets.
+_MEDIA = (("document", "photo.jpg"), ("video", "video.mp4"), ("animation", "animation.mp4"), ("video_note", "video.mp4"), ("audio", "audio.mp3"), ("voice", "voice.ogg"))
+_SIGNATURES = {".pdf": (b"%PDF-",), ".jpg": (b"\xff\xd8\xff",), ".jpeg": (b"\xff\xd8\xff",), ".png": (b"\x89PNG\r\n\x1a\n",), ".tif": (b"II*\0", b"MM\0*"), ".tiff": (b"II*\0", b"MM\0*"), ".zip": (b"PK\x03\x04", b"PK\x05\x06")}
 
 
 def status_of(cfg) -> str:
@@ -75,13 +93,32 @@ def _epoch(stamp):
     except (TypeError, ValueError):
         return 0.0
 _ID = r"[A-Za-z0-9_-]{1,48}"
-_CALLBACK = re.compile(rf"(?:home|help|upload|search|language|lang:(?:en|uk)|(?:docs|metrics|find):[0-9]{{1,5}}|(?:d|o|m|v):{_ID})\Z")
+_CALLBACK = re.compile(rf"(?:home|help|upload|search|language|recent|account|unlink|unlink:yes|lang:(?:en|uk)|(?:docs|metrics|find):[0-9]{{1,5}}|(?:d|o|m|v|u|uy):{_ID})\Z")
 
 
 def _is_own_chat(msg, chat, sender) -> bool:
     """A private chat with a person (not a bot, group or business connection) talking as themselves."""
     return (chat.get("type") == "private" and type(chat.get("id")) is int and type(sender.get("id")) is int
             and sender.get("id") == chat.get("id") and not sender.get("is_bot") and not msg.get("business_connection_id"))
+
+
+def _attachment(msg):
+    """The file a message carries, with a filename; None for anything else.
+    Photos are a list of sizes, the largest last, and never carry a name."""
+    if not isinstance(msg, dict):
+        return None
+    photo = msg.get("photo")
+    if isinstance(photo, list) and photo and isinstance(photo[-1], dict):
+        return {**photo[-1], "file_name": "photo.jpg"}
+    for kind, name in _MEDIA:
+        file = msg.get(kind)
+        if isinstance(file, dict):
+            return {**file, "file_name": file.get("file_name") or name}
+    return None
+
+
+def _display_name(file) -> str:
+    return str(file.get("file_name") or "photo.jpg").replace("\\", "/").rsplit("/", 1)[-1][:240]
 
 
 def _audit(db, owner, action, entity="telegram", entity_id="account"):
@@ -104,6 +141,8 @@ class TelegramService:
         self._wake = threading.Event()
         self.idle_wait = IDLE_WAIT
         self._next_check = 0.0
+        #: Source files an undo removed from the record, deleted after commit.
+        self._after_commit = []
 
     def token(self):
         return env("TELEGRAM_BOT_TOKEN", "").strip()
@@ -150,11 +189,15 @@ class TelegramService:
 
     def unlink(self, owner):
         with transaction(self.settings, immediate=True) as db:
-            db.execute("DELETE FROM telegram_link_tokens WHERE owner_user_id=?", (owner,))
-            db.execute("DELETE FROM telegram_links WHERE owner_user_id=?", (owner,))
-            db.execute("DELETE FROM telegram_outbox WHERE owner_user_id=?", (owner,))
-            db.execute("DELETE FROM telegram_uploads WHERE owner_user_id=?", (owner,))
-            _audit(db, owner, "telegram_unlinked")
+            self._unlink(db, owner)
+
+    @staticmethod
+    def _unlink(db, owner):
+        db.execute("DELETE FROM telegram_link_tokens WHERE owner_user_id=?", (owner,))
+        db.execute("DELETE FROM telegram_links WHERE owner_user_id=?", (owner,))
+        db.execute("DELETE FROM telegram_outbox WHERE owner_user_id=?", (owner,))
+        db.execute("DELETE FROM telegram_uploads WHERE owner_user_id=?", (owner,))
+        _audit(db, owner, "telegram_unlinked")
 
     @staticmethod
     def _checked_config(enabled: bool, mode: str, public_url: str, webhook_secret: str) -> str:
@@ -192,7 +235,7 @@ class TelegramService:
         for locale in ("", "en", "uk"):
             command_menu = {
                 "scope": {"type": "all_private_chats"},
-                "commands": [{"command": command, "description": message(key, locale or VISITOR_LOCALE)} for command, key in (("start", "home"), ("menu", "home"), ("metrics", "metrics"), ("documents", "documents"), ("search", "search"), ("upload", "upload"), ("language", "language"), ("help", "help"), ("cancel", "cancel"))],
+                "commands": [{"command": command, "description": message(key, locale or VISITOR_LOCALE)} for command, key in _COMMANDS],
             }
             if locale:
                 command_menu["language_code"] = locale
@@ -273,7 +316,7 @@ class TelegramService:
         db.execute("INSERT OR IGNORE INTO telegram_outbox(id,owner_user_id,chat_id,method,payload,created_at) VALUES(?,?,?,?,?,?)", (f"{update_id}:{suffix}", owner, chat, method, json.dumps(payload, ensure_ascii=False), time.time()))
 
     def _home(self, locale):
-        return [[_button(message("metrics", locale), CB_METRICS), _button(message("documents", locale), CB_DOCS)], [_button(message("search", locale), "search"), _button(message("upload", locale), "upload")], [_button(message("language", locale), "language"), _button(message("help", locale), "help")]]
+        return [[_button(message("metrics", locale), CB_METRICS), _button(message("documents", locale), CB_DOCS)], [_button(message("search", locale), "search"), _button(message("upload", locale), "upload")], [_button(message("recent", locale), "recent"), _button(message("account", locale), "account")], [_button(message("language", locale), "language"), _button(message("help", locale), "help")]]
 
     def _nav(self, locale, back="home"):
         return [[_button(message("back", locale), back), _button(message("home", locale), "home")]]
@@ -395,47 +438,79 @@ class TelegramService:
 
     @staticmethod
     def _upload_info(file):
-        filename = str(file.get("file_name") or "photo.jpg").replace("\\", "/").rsplit("/", 1)[-1]
+        filename = _display_name(file)
         suffix = Path(filename).suffix.lower()
-        if suffix not in {".pdf", ".jpg", ".jpeg", ".png", ".tif", ".tiff", ".zip"}:
+        if suffix not in _SIGNATURES:
             raise TelegramError("telegram.error_type", permanent=True)
         if int(file.get("file_size", 0)) > MAX_FILE_BYTES:
             raise TelegramError("telegram.error_size", permanent=True)
         return filename, suffix
 
-    def _upload(self, db, update_id, owner, chat, file, data, written_paths):
-        filename, suffix = self._upload_info(file)
+    @staticmethod
+    def _patient(db, owner):
         patient = db.execute("SELECT id FROM patients WHERE owner_user_id=? ORDER BY created_at LIMIT 1", (owner,)).fetchone()
         if not patient:
             raise TelegramError(ERR_UNAVAILABLE, permanent=True)
+        return patient[0]
+
+    @staticmethod
+    def _job_ids(db, update_id, owner, chat):
+        """``(job id, batch id)`` for the file this update carries.
+
+        The job id comes from the inbox receipt, so a replacement bot's reused
+        update IDs can never overwrite an older bot's source document.  Files
+        join the batch this chat is still collecting (no acknowledgement sent
+        yet); the first file of a new batch names it."""
+        received_at = db.execute("SELECT received_at FROM telegram_updates WHERE update_id=?", (update_id,)).fetchone()[0]
+        job = "telegram-" + hashlib.sha256(f"{owner}:{update_id}:{received_at}".encode()).hexdigest()[:20]
+        batch = db.execute("""SELECT u.batch_id FROM telegram_uploads u JOIN telegram_updates t ON t.update_id=u.update_id
+            WHERE u.owner_user_id=? AND u.chat_id=? AND u.notified_state='' AND t.received_at>?
+            ORDER BY t.received_at DESC LIMIT 1""", (owner, chat, received_at - BATCH_WINDOW)).fetchone()
+        return job, batch[0] if batch else job
+
+    def _reject_upload(self, db, update_id, owner, chat, file, key) -> bool:
+        """Record a file refused at the door as a failed row of its batch, so
+        the summary names it beside the files that worked.  False when there
+        is no patient to file it under."""
+        try:
+            patient = self._patient(db, owner)
+        except TelegramError:
+            return False
+        job, batch = self._job_ids(db, update_id, owner, chat)
+        size = file.get("file_size")
+        db.execute("""INSERT INTO upload_jobs(id,owner_user_id,patient_id,batch_id,kind,filename,byte_size,state,detail_key,created_at,finished_at)
+            VALUES(?,?,?,?,'document',?,?,'failed',?,?,?)""", (job, owner, patient, batch, _display_name(file), size if type(size) is int else None, key, utc_now(), utc_now()))
+        db.execute("INSERT INTO telegram_uploads(update_id,owner_user_id,chat_id,batch_id) VALUES(?,?,?,?)", (update_id, owner, chat, batch))
+        _audit(db, owner, "telegram_upload_refused", "upload_job", job)
+        return True
+
+    def _upload(self, db, update_id, owner, chat, file, data, written_paths):
+        filename, suffix = self._upload_info(file)
+        patient = self._patient(db, owner)
         if not data or len(data) > MAX_FILE_BYTES:
             raise TelegramError("telegram.error_size", permanent=True)
         # Validate claimed type before publishing bytes into the trusted intake queue.
-        signatures = {".pdf": (b"%PDF-",), ".jpg": (b"\xff\xd8\xff",), ".jpeg": (b"\xff\xd8\xff",), ".png": (b"\x89PNG\r\n\x1a\n",), ".tif": (b"II*\0", b"MM\0*"), ".tiff": (b"II*\0", b"MM\0*"), ".zip": (b"PK\x03\x04", b"PK\x05\x06")}
-        if not data.startswith(signatures[suffix]):
+        if not data.startswith(_SIGNATURES[suffix]):
             raise TelegramError("telegram.error_type", permanent=True)
-        received_at = db.execute("SELECT received_at FROM telegram_updates WHERE update_id=?", (update_id,)).fetchone()[0]
-        identity = hashlib.sha256(f"{owner}:{update_id}:{received_at}".encode()).hexdigest()[:20]
-        batch = "telegram-" + identity
+        job, batch = self._job_ids(db, update_id, owner, chat)
         held = db.execute("SELECT id FROM documents WHERE owner_user_id=? AND sha256=? ORDER BY imported_at LIMIT 1", (owner, hashlib.sha256(data).hexdigest())).fetchone()
         # Keep an intelligible original filename without trusting it as a path.
-        # The inbox receipt identity also prevents a replacement bot's reused
-        # update IDs from overwriting an older bot's original source document.
         safe_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", filename).strip(" .")[:160]
         if not safe_name or safe_name.startswith(".") or re.fullmatch(r"(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])", Path(safe_name).stem, re.IGNORECASE):
             safe_name = "scan" + suffix
         if not safe_name.lower().endswith(suffix):
             safe_name = Path(safe_name).stem[:140] + suffix
-        target = self.settings.source_dir / "uploads" / utc_now()[:7] / batch / safe_name
+        # One directory per file: every Telegram photo is called photo.jpg.
+        target = self.settings.source_dir / "uploads" / utc_now()[:7] / job / safe_name
         state, detail = ("skipped", "intake.done_duplicate") if held else ("queued", "intake.step_waiting")
         if not held:
             target.parent.mkdir(parents=True, exist_ok=True)
             written_paths.append(target)
             target.write_bytes(data)
-        db.execute("""INSERT INTO upload_jobs(id,owner_user_id,patient_id,batch_id,kind,filename,source_path,byte_size,state,detail_key,document_id,created_at)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""", (batch, owner, patient[0], batch, "archive" if suffix == ".zip" else "document", filename[:240], str(target) if not held else None, len(data), state, detail, held[0] if held else None, utc_now()))
+        db.execute("""INSERT INTO upload_jobs(id,owner_user_id,patient_id,batch_id,kind,filename,source_path,byte_size,state,detail_key,document_id,created_at,finished_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""", (job, owner, patient, batch, "archive" if suffix == ".zip" else "document", filename, str(target) if not held else None, len(data), state, detail, held[0] if held else None, utc_now(), utc_now() if held else None))
         db.execute("INSERT INTO telegram_uploads(update_id,owner_user_id,chat_id,batch_id) VALUES(?,?,?,?)", (update_id, owner, chat, batch))
-        _audit(db, owner, "telegram_upload_queued", "upload_job", batch)
+        _audit(db, owner, "telegram_upload_queued", "upload_job", job)
 
     def _claim_update(self):
         """The next inbox update, marked as being processed; None when there is none."""
@@ -455,9 +530,9 @@ class TelegramService:
         try:
             update = json.loads(row["payload"])
             msg = update.get("message", {})
-            file = msg.get("document") or (msg.get("photo") or [None])[-1]
-            chat, sender = msg.get("chat", {}), msg.get("from", {})
-            if file and chat.get("type") == "private" and type(sender.get("id")) is int and sender.get("id") == chat.get("id") and not sender.get("is_bot") and not msg.get("business_connection_id"):
+            file = _attachment(msg)
+            if file and _is_own_chat(msg, msg.get("chat", {}), msg.get("from", {})):
+                chat, sender = msg["chat"], msg["from"]
                 with connect(self.settings) as db:
                     held = db.execute("""SELECT l.* FROM telegram_links l JOIN users u ON u.id=l.owner_user_id
                         WHERE l.chat_id=? AND l.telegram_user_id=? AND u.disabled_at IS NULL""", (chat["id"], sender["id"])).fetchone()
@@ -496,7 +571,7 @@ class TelegramService:
             return False
         update_id = row["update_id"]
         update, snapshot, downloaded, error = self._prefetch(row)
-        written_paths = []
+        written_paths, self._after_commit = [], []
         try:
             with transaction(self.settings, immediate=True) as db:
                 if not db.execute(SQL_ENABLED).fetchone()[0]:
@@ -511,7 +586,11 @@ class TelegramService:
                 if error:
                     if self._retry_update(db, row, error):
                         return True
-                    if snapshot:
+                    # A refused file is reported once, in its batch summary;
+                    # only a file with nowhere to be filed is answered alone.
+                    file = _attachment(update.get("message")) if snapshot and isinstance(update, dict) else None
+                    key = error.key if error.key in _FILE_ERRORS else ERR_FILE
+                    if snapshot and not (file and error.key != ERR_UNAVAILABLE and self._reject_upload(db, update_id, snapshot["owner_user_id"], snapshot["chat_id"], file, key)):
                         self._queue(db, update_id, snapshot["owner_user_id"], snapshot["chat_id"], message(error.key.removeprefix("telegram."), snapshot["locale"]), self._nav(snapshot["locale"]))
                 db.execute("UPDATE telegram_updates SET state='done',payload='{}',error_key=? WHERE update_id=?", (error.key if error else None, update_id))
         except Exception:
@@ -520,7 +599,11 @@ class TelegramService:
             for path in written_paths:
                 path.unlink(missing_ok=True)
             raise
-        from .ingest.intake import start_worker
+        from .ingest.intake import _discard_upload_copy, start_worker
+        for path in self._after_commit:
+            # Only beneath sources/uploads, never bytes a document still names.
+            _discard_upload_copy(self.settings, resolve_source_path(self.settings, str(path)))
+        self._after_commit = []
         start_worker(self.settings)
         return True
 
@@ -546,14 +629,15 @@ class TelegramService:
         return action
 
     def _message_action(self, db, update_id, owner, chat_id, msg, link, locale, downloaded, written_paths):
-        """The action a typed message asks for, or None when it was an upload (already queued)."""
+        """The action a typed message asks for, or None when it was an upload.
+        A file gets no reply of its own: its batch is acknowledged and
+        summarised once, by notify_uploads."""
         text = str(msg.get("text", ""))
         command = text.split(" ", 1)[0].split("@", 1)[0]
         action = _COMMAND_ACTIONS.get(command, "home")
-        file = msg.get("document") or (msg.get("photo") or [None])[-1]
+        file = _attachment(msg)
         if file:
             self._upload(db, update_id, owner, chat_id, file, downloaded, written_paths if written_paths is not None else [])
-            self._queue(db, update_id, owner, chat_id, message("queued", locale), self._nav(locale))
             return None
         if not text.startswith("/") and link["state"] == "search":
             if not 2 <= len(text.strip()) <= 100:
@@ -586,7 +670,18 @@ class TelegramService:
             db.execute("UPDATE telegram_links SET state=? WHERE owner_user_id=?", (action, owner))
             return message(action + "_prompt", locale), self._nav(locale)
         if action == "help":
-            return message("lead", locale) + "\n\n" + message("privacy", locale) + "\n\n" + message("upload_prompt", locale) + "\n/menu · /search · /metrics · /documents · /language · /cancel", self._nav(locale)
+            return message("lead", locale) + "\n\n" + message("upload_prompt", locale) + "\n\n" + message("help_commands", locale) + "\n\n" + message("privacy", locale), self._nav(locale)
+        if action == "recent":
+            return self._recent(db, owner, locale)
+        if action == "account":
+            return self._account(db, owner, locale)
+        if action == "unlink":
+            return message("unlink_ask", locale), [[_button(message("unlink", locale), "unlink:yes")], [_button(message("cancel", locale), "home")]]
+        if action == "unlink:yes":
+            return self._unlink_chat(db, update_id, owner, chat_id, locale)
+        if action.startswith(("u:", "uy:")):
+            kind, _, batch_id = action.partition(":")
+            return self._undo(db, owner, batch_id, locale, confirmed=kind == "uy")
         if action == "language" or action.startswith("lang:"):
             return self._language_card(db, owner, action, locale)
         if action.startswith(("docs:", "metrics:", "find:")):
@@ -634,44 +729,218 @@ class TelegramService:
         finally:
             reset_locale(context)
 
+    # --- uploads: batches, summaries, recent list, undo ---------------------
+
     @staticmethod
-    def _upload_notices(db):
-        """Telegram uploads whose progress message is due, as (upload, jobs, state),
-        plus whether any upload is still in flight.  Read-only."""
+    def _upload_notices(db, now=None):
+        """Telegram upload batches whose message is due, as (batch, jobs, state),
+        plus whether any batch is still in flight.  Read-only.
+
+        A batch collecting files (``notified_state`` empty) waits until files
+        have stopped arriving: BATCH_QUIET seconds since the last receipt and
+        no message of that chat still waiting in the inbox.  It then gets one
+        acknowledgement (``processing``), or straight away its summary when
+        every file is already settled (duplicates, refusals)."""
+        now = time.time() if now is None else now
         notices, in_flight = [], False
-        for upload in db.execute("SELECT u.*,l.locale FROM telegram_uploads u JOIN telegram_links l ON l.owner_user_id=u.owner_user_id AND l.chat_id=u.chat_id WHERE notified_state<>'done'").fetchall():
-            jobs = db.execute("SELECT state,document_id FROM upload_jobs WHERE owner_user_id=? AND batch_id=?", (upload["owner_user_id"], upload["batch_id"])).fetchall()
+        for batch in db.execute("""SELECT u.owner_user_id,u.chat_id,u.batch_id,MIN(u.update_id) first_update,COUNT(*) files,
+                MIN(u.notified_state) notified_state,MAX(t.received_at) last_received,l.locale
+            FROM telegram_uploads u JOIN telegram_updates t ON t.update_id=u.update_id
+            JOIN telegram_links l ON l.owner_user_id=u.owner_user_id AND l.chat_id=u.chat_id
+            WHERE u.notified_state<>'done' GROUP BY u.owner_user_id,u.chat_id,u.batch_id""").fetchall():
+            jobs = db.execute("SELECT * FROM upload_jobs WHERE owner_user_id=? AND batch_id=? ORDER BY created_at,rowid", (batch["owner_user_id"], batch["batch_id"])).fetchall()
             if not jobs:
                 continue
             in_flight = True
-            state = "processing" if any(job["state"] in {"queued", "running"} for job in jobs) else "done"
-            if state == upload["notified_state"] or state == "processing" and all(job["state"] == "queued" for job in jobs):
-                continue
-            notices.append((upload, jobs, state))
+            settled = not any(job["state"] in {"queued", "running"} for job in jobs)
+            if batch["notified_state"] == "":
+                arriving = now - batch["last_received"] < BATCH_QUIET or db.execute("""SELECT 1 FROM telegram_updates
+                    WHERE (state='processing' OR state='pending' AND available_at<=?) AND json_extract(payload,'$.message.chat.id')=? LIMIT 1""", (now, batch["chat_id"])).fetchone()
+                if arriving:
+                    continue
+                notices.append((batch, jobs, "done" if settled else "processing"))
+            elif settled:
+                notices.append((batch, jobs, "done"))
         return notices, in_flight
-
-    @staticmethod
-    def _notice_key(state, jobs):
-        if state == "processing":
-            return "processing"
-        return "upload_failed" if any(job["state"] == "failed" for job in jobs) else "upload_done"
 
     def notify_uploads(self):
         with transaction(self.settings, immediate=True) as db:
-            for upload, jobs, state in self._upload_notices(db)[0]:
-                locale = upload["locale"]
-                key = self._notice_key(state, jobs)
-                ids = list(dict.fromkeys(job["document_id"] for job in jobs if job["document_id"]))
-                buttons = []
-                for document_id in ids[:6]:
-                    doc = db.execute("SELECT title FROM documents WHERE id=? AND owner_user_id=?", (document_id, upload["owner_user_id"])).fetchone()
-                    if doc:
-                        buttons.append([_button(doc[0], "d:" + document_id)])
-                url = self._url(db, "/upload")
-                if url:
-                    buttons.append([_button(message("queue", locale), url=url)])
-                self._queue(db, upload["update_id"], upload["owner_user_id"], upload["chat_id"], message(key, locale), buttons + self._nav(locale), suffix=state)
-                db.execute("UPDATE telegram_uploads SET notified_state=? WHERE update_id=?", (state, upload["update_id"]))
+            for batch, jobs, state in self._upload_notices(db)[0]:
+                context = activate_locale(batch["locale"])
+                try:
+                    text, buttons = self._batch_card(db, batch, jobs, state, batch["locale"])
+                finally:
+                    reset_locale(context)
+                self._queue(db, batch["first_update"], batch["owner_user_id"], batch["chat_id"], text, buttons, suffix=state)
+                db.execute("UPDATE telegram_uploads SET notified_state=? WHERE owner_user_id=? AND batch_id=?", (state, batch["owner_user_id"], batch["batch_id"]))
+
+    def _batch_card(self, db, batch, jobs, state, locale):
+        """The one acknowledgement, or the one summary, of an upload batch."""
+        if state == "processing":
+            return t_plural("telegram.batch_received", batch["files"]), [[_button(message("undo_cancel", locale), "u:" + batch["batch_id"])]] + self._nav(locale)
+        owner = batch["owner_user_id"]
+        # An unpacked archive is reported by the files that came out of it.
+        shown = [job for job in jobs if not (job["kind"] == "archive" and job["state"] == "done")]
+        counts, lines, documents = {"added": 0, "held": 0, "failed": 0, "pending": 0}, [], []
+        for number, job in enumerate(shown, 1):
+            line, outcome = self._job_line(db, owner, job, locale)
+            counts[outcome] += 1
+            if number <= SUMMARY_LINES:
+                lines.append(f"{number}. {line}")
+            if job["document_id"] and job["document_id"] not in documents:
+                documents.append(job["document_id"])
+        text = "<b>" + t_plural("telegram.batch_done", len(shown)) + "</b>\n" + message("batch_counts", locale, **counts) + "\n\n" + "\n".join(lines)
+        if len(shown) > SUMMARY_LINES:
+            text += "\n" + t_plural("telegram.batch_more", len(shown) - SUMMARY_LINES)
+        if counts["added"]:
+            text += "\n\n" + message("batch_review", locale)
+        buttons = self._document_buttons(db, owner, documents)
+        url = self._url(db, "/upload")
+        if url:
+            buttons.append([_button(message("queue", locale), url=url)])
+        if counts["added"]:
+            buttons.append([_button(message("undo", locale), "u:" + batch["batch_id"])])
+        return text, buttons + self._nav(locale)
+
+    @staticmethod
+    def _document_buttons(db, owner, document_ids):
+        buttons = []
+        for document_id in document_ids:
+            doc = db.execute("SELECT title FROM documents WHERE id=? AND owner_user_id=?", (document_id, owner)).fetchone()
+            if doc and len(buttons) < 6:
+                buttons.append([_button(doc[0], "d:" + document_id)])
+        return buttons
+
+    @staticmethod
+    def _job_line(db, owner, job, locale, review=False):
+        """One file of an upload as a person reads it, and its outcome:
+        ``added``, ``held`` (already in the record), ``failed`` or ``pending``.
+        The caller has activated ``locale``: intake reasons come from ``t``."""
+        name = escape(str(job["filename"])[:80])
+        state, detail = str(job["state"]), str(job["detail_key"] or "")
+        if state in {"queued", "running"}:
+            return message("file_waiting" if state == "queued" else "file_reading", locale, name=name), "pending"
+        if state == "failed":
+            return message("file_failed", locale, name=name, reason=escape(t(detail))), "failed"
+        doc = db.execute("SELECT id,title,duplicate_of_document_id FROM documents WHERE owner_user_id=? AND id=?", (owner, job["document_id"])).fetchone() if job["document_id"] else None
+        if doc and doc["duplicate_of_document_id"]:
+            # An exact copy the pipeline still filed: report the original.
+            doc = db.execute("SELECT id,title,duplicate_of_document_id FROM documents WHERE owner_user_id=? AND id=?", (owner, doc["duplicate_of_document_id"])).fetchone() or doc
+            detail = "intake.done_duplicate"
+        if not doc:
+            return message("file_status", locale, name=name, reason=escape(t(detail))), "held" if state == "skipped" else "added"
+        title = escape(str(doc["title"])[:100])
+        if detail in {"intake.done_duplicate", "intake.done_unchanged"}:
+            return message("file_duplicate", locale, name=name, title=title), "held"
+        if detail not in {"intake.done_imported", "intake.done_no_values"}:
+            return message("file_status", locale, name=name, reason=escape(t(detail))), "added"
+        count = int(job["observation_count"] or 0)
+        line = message("file_added", locale, name=name, title=title, values=t_plural("intake.count_values", count)) if count else message("file_added_empty", locale, name=name, title=title)
+        # Same report, different file: a suggested relation a person confirms.
+        copy = db.execute("""SELECT d.title FROM document_relations r JOIN documents d
+            ON d.id = CASE WHEN r.source_document_id=?1 THEN r.target_document_id ELSE r.source_document_id END
+            WHERE (r.source_document_id=?1 OR r.target_document_id=?1) AND r.relationship IN ('duplicate','reprint')
+            AND r.notes LIKE 'auto:%' AND d.owner_user_id=?2 LIMIT 1""", (doc["id"], owner)).fetchone()
+        if copy:
+            line += " " + message("file_copy", locale, title=escape(str(copy[0])[:100]))
+        if review:
+            pending = db.execute("SELECT 1 FROM review_tasks WHERE owner_user_id=? AND entity_type='document' AND entity_id=? AND state='open' LIMIT 1", (owner, doc["id"])).fetchone()
+            line += " " + message("needs_review" if pending else "reviewed", locale)
+        return line, "added"
+
+    def _recent(self, db, owner, locale):
+        """The newest files of the record, from any source, and where each stands."""
+        jobs = db.execute("""SELECT * FROM upload_jobs WHERE owner_user_id=? AND kind<>'rescan'
+            AND NOT (kind='archive' AND state='done') ORDER BY created_at DESC,rowid DESC LIMIT 10""", (owner,)).fetchall()
+        text = "<b>" + message("recent", locale) + "</b>"
+        if not jobs:
+            return text + "\n" + message("recent_empty", locale), self._nav(locale)
+        documents = []
+        for job in jobs:
+            text += "\n\n" + self._job_line(db, owner, job, locale, review=True)[0]
+            if job["document_id"] and job["document_id"] not in documents:
+                documents.append(job["document_id"])
+        buttons = self._document_buttons(db, owner, documents)
+        url = self._url(db, "/upload")
+        if url:
+            buttons.append([_button(message("queue", locale), url=url)])
+        return text, buttons + self._nav(locale)
+
+    def _account(self, db, owner, locale):
+        row = db.execute("""SELECT u.display_name,u.email,l.linked_at FROM telegram_links l JOIN users u ON u.id=l.owner_user_id
+            WHERE l.owner_user_id=?""", (owner,)).fetchone()
+        text = message("account_card", locale, name=escape(row["display_name"][:80]), email=escape(row["email"][:120]), date=escape(format_date_localized(row["linked_at"][:10])))
+        buttons = [[_button(message("unlink", locale), "unlink")]]
+        url = self._url(db, "/profile")
+        if url:
+            buttons.append([_button(message("open_record", locale), url=url)])
+        return text, buttons + self._nav(locale)
+
+    def _unlink_chat(self, db, update_id, owner, chat_id, locale):
+        """Disconnect from inside the chat.  Unlinking cancels everything queued
+        for this owner, the button's own acknowledgement included, so that and
+        the farewell are queued again without an owner: neither carries
+        anything from the record."""
+        ack = db.execute("SELECT payload FROM telegram_outbox WHERE id=?", (f"{update_id}:ack",)).fetchone()
+        self._unlink(db, owner)
+        if ack:
+            self._queue(db, update_id, None, chat_id, "", suffix="ack", method="answerCallbackQuery", extra=json.loads(ack[0]))
+        self._queue(db, update_id, None, chat_id, message("unlinked_chat", locale))
+        return None
+
+    def _undo_plan(self, db, owner, batch_id):
+        """What undoing one Telegram upload removes, as ``(documents, waiting
+        jobs, all jobs)``, or the catalog key of the reason it cannot.
+
+        Only what this upload itself created, only while it is fresh, and never
+        something the record has since built on: a value a person checked, an
+        exact copy filed under it, a later upload pointing at it, a re-read."""
+        first = db.execute("""SELECT MIN(t.received_at) FROM telegram_uploads u JOIN telegram_updates t ON t.update_id=u.update_id
+            WHERE u.owner_user_id=? AND u.batch_id=?""", (owner, batch_id)).fetchone()[0]
+        jobs = db.execute("SELECT * FROM upload_jobs WHERE owner_user_id=? AND batch_id=?", (owner, batch_id)).fetchall()
+        if first is None or not jobs or time.time() - first > UNDO_SECONDS:
+            return "undo_gone"
+        if any(job["state"] == "running" for job in jobs):
+            return "undo_busy"
+        documents = [job["document_id"] for job in jobs if job["state"] == "done" and job["document_id"] and job["detail_key"] in {"intake.done_imported", "intake.done_no_values"}]
+        if any(job["kind"] == "device_export" and job["state"] == "done" for job in jobs):
+            return "undo_kept"
+        for document_id in documents:
+            # ponytail: checks observations only; vaccination doses a person
+            # confirmed would need the same guard if the bot ever reads cards.
+            if db.execute("""SELECT 1 WHERE EXISTS(SELECT 1 FROM upload_jobs WHERE document_id=?1 AND kind='rescan' AND state='running')""", (document_id,)).fetchone():
+                return "undo_busy"
+            if db.execute("""SELECT 1 WHERE EXISTS(SELECT 1 FROM documents WHERE duplicate_of_document_id=?1)
+                OR EXISTS(SELECT 1 FROM observations WHERE document_id=?1 AND verification_status IN ('verified','corrected'))
+                OR EXISTS(SELECT 1 FROM upload_jobs WHERE document_id=?1 AND batch_id<>?2 AND kind<>'rescan')""", (document_id, batch_id)).fetchone():
+                return "undo_kept"
+        return list(dict.fromkeys(documents)), [job for job in jobs if job["state"] == "queued"], jobs
+
+    def _undo(self, db, owner, batch_id, locale, *, confirmed):
+        """Cancel or undo one Telegram upload: ask first, then remove."""
+        if not db.execute("SELECT 1 FROM telegram_uploads WHERE owner_user_id=? AND batch_id=?", (owner, batch_id)).fetchone():
+            return message("undo_gone", locale), self._nav(locale)
+        plan = self._undo_plan(db, owner, batch_id)
+        if isinstance(plan, str):
+            return message(plan, locale), self._nav(locale)
+        documents, waiting, jobs = plan
+        titles = [row[0] for row in (db.execute("SELECT title FROM documents WHERE id=? AND owner_user_id=?", (document_id, owner)).fetchone() for document_id in documents) if row]
+        if not confirmed:
+            text = message("undo_ask", locale, documents=len(documents), waiting=len(waiting))
+            text += "".join("\n" + escape(str(title)[:100]) for title in titles[:10])
+            return text, [[_button(message("undo_confirm", locale), "uy:" + batch_id)], [_button(message("undo_keep", locale), "home")]]
+        sources = [job["source_path"] for job in jobs if job["source_path"]]
+        for document_id in documents:
+            sources.append(db.execute("SELECT source_path FROM documents WHERE id=?", (document_id,)).fetchone()[0])
+            db.execute("DELETE FROM upload_jobs WHERE owner_user_id=? AND document_id=? AND kind='rescan' AND state='queued'", (owner, document_id))
+            db.execute("DELETE FROM review_tasks WHERE owner_user_id=? AND entity_type='document' AND entity_id=?", (owner, document_id))
+            db.execute("DELETE FROM documents WHERE owner_user_id=? AND id=?", (owner, document_id))
+        db.execute("DELETE FROM upload_jobs WHERE owner_user_id=? AND batch_id=?", (owner, batch_id))
+        db.execute("UPDATE telegram_uploads SET notified_state='done' WHERE owner_user_id=? AND batch_id=?", (owner, batch_id))
+        _audit(db, owner, "telegram_upload_undone", "upload_batch", batch_id)
+        # Bytes go only once the rows naming them are committed away.
+        self._after_commit.extend(Path(str(path)) for path in sources if path)
+        return message("undo_done", locale, documents=len(documents), waiting=len(waiting)), self._nav(locale)
 
     @staticmethod
     def _delivery_error(db):

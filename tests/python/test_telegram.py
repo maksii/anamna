@@ -54,6 +54,8 @@ def ledger(tmp_path, monkeypatch):
     api = FakeAPI()
     service = TelegramService(settings, api_factory=lambda token: api)
     monkeypatch.setattr("anamna.ingest.intake.start_worker", lambda settings: None)
+    # Batches are acknowledged once files stop arriving; the harness does not wait.
+    monkeypatch.setattr("anamna.telegram.BATCH_QUIET", 0)
     monkeypatch.setenv("ANAMNA_TELEGRAM_BOT_TOKEN", "123456:abcdefghijklmnopqrstuvxyz")
     return settings, owner, other, api, service
 
@@ -187,8 +189,10 @@ def test_upload_dedup_replay_and_final_notifications(ledger):
         assert row["source_path"] is None
         assert db.execute("SELECT COUNT(*) FROM audit_events WHERE action='telegram_upload_queued'").fetchone()[0] == 1
     service.notify_uploads()
-    assert "processing finished" in outputs(settings)[-1]["text"]
-    assert outputs(settings)[-1]["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == "d:doc-1"
+    summary = outputs(settings)[-1]
+    assert "Upload finished: 1 file" in summary["text"]
+    assert "scan.pdf: already in your record as Synthetic &lt;report&gt;. Nothing was added." in summary["text"]
+    assert summary["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == "d:doc-1"
     before = len(outputs(settings))
     service.notify_uploads()
     assert len(outputs(settings)) == before
@@ -201,9 +205,13 @@ def test_upload_limits_and_spoofed_file_type(ledger, filename, data, size, key):
     api.files["file"] = data
     service.receive(incoming(2, document={"file_id": "file", "file_name": filename, "file_size": size}))
     service.process_one()
-    assert key in outputs(settings)[-1]["text"]
     with connect(settings) as db:
-        assert db.execute("SELECT COUNT(*) FROM upload_jobs").fetchone()[0] == 0
+        job = db.execute("SELECT * FROM upload_jobs").fetchone()
+        assert job["state"] == "failed" and job["source_path"] is None and job["filename"] == filename
+    assert list(settings.source_dir.rglob("scan.*")) == []
+    service.notify_uploads()
+    summary = outputs(settings)[-1]["text"]
+    assert key in summary and f"1. {filename}: not added." in summary
 
 
 def test_upload_new_photo_enters_same_intake_queue(ledger):
@@ -423,10 +431,10 @@ def test_activation_installs_ukrainian_fallback_and_both_locales_for_private_cha
     assert "language_code" not in by_language[""]
     assert by_language[""]["commands"] == by_language["uk"]["commands"], "the audience is Ukrainian"
     assert by_language["uk"]["commands"] != by_language["en"]["commands"]
-    expected = {"start", "menu", "metrics", "documents", "search", "upload", "language", "help", "cancel"}
+    expected = {"start", "menu", "metrics", "documents", "search", "upload", "uploads", "account", "unlink", "language", "help", "cancel"}
     for payload in registrations:
         assert payload["scope"] == {"type": "all_private_chats"}
-        assert len(payload["commands"]) == 9
+        assert len(payload["commands"]) == 12
         assert {item["command"] for item in payload["commands"]} == expected
         assert all(item["description"] for item in payload["commands"])
     assert not any(method.startswith("send") for method, _, _ in api.calls)
@@ -803,3 +811,440 @@ def test_admin_page_shows_both_stamps_and_a_failing_bot_is_not_active(web_ledger
         assert state in page and success in page and error in page
         assert "19:45 UTC" in page and "10:05 UTC" in page
         assert "telegram.state" not in page and "telegram.last" not in page
+
+
+# --- several files at once: batches, duplicates, one acknowledgement --------
+
+
+def real_pdf(*lines):
+    import io
+    from reportlab.pdfgen.canvas import Canvas
+    buffer = io.BytesIO()
+    pdf = Canvas(buffer)
+    for row, text in enumerate(lines):
+        pdf.drawString(60, 740 - row * 24, text)
+    pdf.save()
+    return buffer.getvalue()
+
+
+def zipped(name, data):
+    import io
+    import zipfile
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as bundle:
+        bundle.writestr(name, data)
+    return buffer.getvalue()
+
+
+LAB = ("Synthetic laboratory report", "Date: 01.09.2026", "Glucose 5.1 mmol/L 3.9 - 6.1", "This document is a synthetic integration fixture.")
+OTHER = ("Synthetic laboratory report", "Date: 02.09.2026", "Glucose 5.4 mmol/L 3.9 - 6.1", "A second synthetic integration fixture.")
+
+
+def album_part(uid, media_group="album-1", **attachment):
+    return incoming(uid, media_group_id=media_group, **attachment)
+
+
+def file_part(uid, file_id, name, size=None, **extra):
+    return album_part(uid, document={"file_id": file_id, "file_name": name, "file_size": size if size is not None else 10}, **extra)
+
+
+def run_inbox(service):
+    while service.process_one():
+        pass
+
+
+def messages_after(settings, count):
+    return outputs(settings)[count:]
+
+
+def test_album_of_mixed_files_is_one_batch_one_acknowledgement_and_one_summary(ledger):
+    """PDF + duplicate PDF in the same album + a zip + a file already in the
+    record + Office + oversize: every file is accepted once, the chat gets one
+    acknowledgement and one summary naming each file's outcome."""
+    from anamna.ingest.intake import drain_now
+    settings, owner, _, api, service = ledger
+    link(service, owner)
+    while service.deliver_one():
+        pass
+    before = len(outputs(settings))
+    api.files["held"] = document(settings, owner)
+    api.files["lab"] = real_pdf(*LAB)
+    api.files["zip"] = zipped("inner-report.pdf", real_pdf(*OTHER))
+    parts = [
+        file_part(10, "lab", "lab-a.pdf", len(api.files["lab"])),
+        file_part(11, "lab", "lab-copy.pdf", len(api.files["lab"])),
+        file_part(12, "zip", "bundle.zip", len(api.files["zip"])),
+        file_part(13, "held", "again.pdf", len(api.files["held"])),
+        file_part(14, "nope", "letter.docx", 100),
+        file_part(15, "big", "huge.pdf", MAX_FILE_BYTES + 1),
+    ]
+    for part in parts:
+        assert service.receive(part)
+    run_inbox(service)
+    assert messages_after(settings, before) == [], "a file gets no reply of its own"
+    service.notify_uploads()
+    ack = messages_after(settings, before)
+    assert len(ack) == 1 and ack[0]["text"].startswith("Received 6 files.")
+    assert ack[0]["reply_markup"]["inline_keyboard"][0][0]["text"] == "Cancel this upload"
+    service.notify_uploads()
+    assert len(messages_after(settings, before)) == 1, "the acknowledgement is sent once"
+    drain_now(settings)
+    service.notify_uploads()
+    service.notify_uploads()
+    sent = messages_after(settings, before)
+    assert len(sent) == 2, [item.get("text") for item in sent]
+    summary = sent[1]["text"]
+    with connect(settings) as db:
+        batches = {row[0] for row in db.execute("SELECT batch_id FROM upload_jobs")}
+        assert len(batches) == 1
+        lab_title = db.execute("SELECT title FROM documents WHERE original_filename='lab-a.pdf'").fetchone()[0]
+        assert db.execute("SELECT COUNT(*) FROM documents WHERE sha256=?", (hashlib.sha256(api.files["lab"]).hexdigest(),)).fetchone()[0] == 1
+        copy = db.execute("SELECT * FROM upload_jobs WHERE filename='lab-copy.pdf'").fetchone()
+        assert copy["state"] == "skipped" and copy["detail_key"] == "intake.done_duplicate"
+        assert db.execute("PRAGMA foreign_key_check").fetchall() == []
+    assert "<b>Upload finished: 6 files</b>" in summary
+    assert "Added: 2. Already in your record: 2. Not added: 2." in summary
+    # This synthetic page names no laboratory, so no value is read from it.
+    assert f"lab-a.pdf: added as {lab_title}, but no values could be read automatically." in summary
+    assert f"lab-copy.pdf: already in your record as {lab_title}. Nothing was added." in summary
+    assert "inner-report.pdf: added as" in summary and "bundle.zip" not in summary
+    assert "again.pdf: already in your record as Synthetic &lt;report&gt;." in summary
+    assert "letter.docx: not added. Use PDF, JPEG, PNG, TIFF or ZIP." in summary
+    assert "huge.pdf: not added. The file is empty or exceeds 20 MB." in summary
+    assert "Values stay provisional" in summary
+    labels = [button["text"] for row in sent[1]["reply_markup"]["inline_keyboard"] for button in row]
+    assert "Undo this upload" in labels and lab_title in labels
+    # The copy in the album left no bytes behind: only the record's own files remain.
+    assert sorted(path.name for path in (settings.source_dir / "uploads").rglob("*.pdf")) == ["inner-report.pdf", "lab-a.pdf"]
+
+
+def test_summary_in_ukrainian_uses_its_plural_forms(ledger):
+    settings, owner, _, api, service = ledger
+    link(service, owner)
+    service.receive(callback(2, "lang:uk"))
+    run_inbox(service)
+    api.files["held"] = document(settings, owner)
+    for uid in (3, 4):
+        service.receive(file_part(uid, "held", f"copy-{uid}.pdf", len(api.files["held"])))
+    service.receive(file_part(5, "x", "note.docx"))
+    run_inbox(service)
+    service.notify_uploads()
+    summary = outputs(settings)[-1]["text"]
+    assert "<b>Завантаження завершено: 3 файли</b>" in summary
+    assert "Додано: 0. Уже були в картці: 2. Не додано: 1." in summary
+    assert "copy-3.pdf: уже є у вашій картці як Synthetic &lt;report&gt;. Нічого не додано." in summary
+    assert "note.docx: не додано. Підтримуються PDF, JPEG, PNG, TIFF і ZIP." in summary
+    with connect(settings) as db:
+        db.execute("UPDATE telegram_uploads SET notified_state='done'")
+    for uid in range(6, 11):
+        service.receive(file_part(uid, "x", f"note-{uid}.docx"))
+    run_inbox(service)
+    service.notify_uploads()
+    assert "<b>Завантаження завершено: 5 файлів</b>" in outputs(settings)[-1]["text"]
+
+
+def test_acknowledgement_waits_until_files_stop_arriving(ledger, monkeypatch):
+    settings, owner, _, api, service = ledger
+    link(service, owner)
+    while service.deliver_one():
+        pass
+    before = len(outputs(settings))
+    api.files["pdf"] = b"%PDF-1.4 still arriving"
+    monkeypatch.setattr("anamna.telegram.BATCH_QUIET", 3600)
+    service.receive(file_part(2, "pdf", "first.pdf"))
+    run_inbox(service)
+    service.notify_uploads()
+    assert messages_after(settings, before) == [], "inside the quiet window nothing is said"
+    monkeypatch.setattr("anamna.telegram.BATCH_QUIET", 0)
+    service.receive(file_part(3, "pdf", "second.pdf"))
+    service.notify_uploads()
+    assert messages_after(settings, before) == [], "a file of this chat still in the inbox holds the acknowledgement"
+    run_inbox(service)
+    service.notify_uploads()
+    assert [item["text"].split(".")[0] for item in messages_after(settings, before)] == ["Received 2 files"]
+    # A file after the acknowledgement starts a batch of its own.
+    service.receive(file_part(4, "pdf", "third.pdf"))
+    run_inbox(service)
+    service.notify_uploads()
+    with connect(settings) as db:
+        assert db.execute("SELECT COUNT(DISTINCT batch_id) FROM upload_jobs").fetchone()[0] == 2
+    assert messages_after(settings, before)[-1]["text"].startswith("Received 1 file.")
+
+
+def test_concurrent_out_of_order_and_retried_updates_accept_each_file_once(ledger):
+    import threading
+    settings, owner, _, api, service = ledger
+    link(service, owner)
+    api.files["photo"] = b"\xff\xd8\xffsynthetic photo"
+    parts = [album_part(uid, photo=[{"file_id": "photo", "file_size": 5}, {"file_id": "photo", "file_size": 20}]) for uid in (24, 21, 23, 22, 20)]
+    results, gate = [], threading.Barrier(10)
+
+    def deliver(update):
+        gate.wait()
+        results.append(service.receive(update))
+
+    # Every part twice, all at once: Telegram retrying while the first attempt is in flight.
+    threads = [threading.Thread(target=deliver, args=(part,)) for part in parts + parts]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert sorted(results) == [False] * 5 + [True] * 5
+    # A second worker (another process) shares the inbox; claims never overlap.
+    other = TelegramService(settings, api_factory=lambda token: api)
+    while service.process_one() | other.process_one():
+        pass
+    with connect(settings) as db:
+        jobs = db.execute("SELECT * FROM upload_jobs ORDER BY created_at").fetchall()
+        assert len(jobs) == 5 and len({job["batch_id"] for job in jobs}) == 1
+        assert {job["filename"] for job in jobs} == {"photo.jpg"}
+        assert len({job["source_path"] for job in jobs}) == 5, "same-named photos never overwrite each other"
+        assert db.execute("SELECT COUNT(*) FROM telegram_uploads").fetchone()[0] == 5
+    service.notify_uploads()
+    assert outputs(settings)[-1]["text"].startswith("Received 5 files.")
+
+
+def test_redelivery_after_a_restart_adds_nothing_and_says_nothing(ledger):
+    """Telegram re-sends updates it saw no answer to, for instance across a
+    container restart. The inbox key is persisted, so a fresh process treats
+    the replay as already handled."""
+    settings, owner, _, api, service = ledger
+    link(service, owner)
+    api.files["pdf"] = b"%PDF-1.4 delivered twice"
+    updates = [file_part(uid, "pdf", f"scan-{uid}.pdf") for uid in (2, 3)]
+    for update in updates:
+        service.receive(update)
+    run_inbox(service)
+    service.notify_uploads()
+    sent = len(outputs(settings))
+    restarted = TelegramService(settings, api_factory=lambda token: api)
+    for update in updates:
+        assert not restarted.receive(update)
+    run_inbox(restarted)
+    restarted.notify_uploads()
+    with connect(settings) as db:
+        assert db.execute("SELECT COUNT(*) FROM upload_jobs").fetchone()[0] == 2
+    assert len(outputs(settings)) == sent
+
+
+def test_a_resent_file_is_reported_as_already_there_not_filed_twice(ledger):
+    """The same scan sent again while its first copy still waits in the queue:
+    the door cannot see it in the record yet, the queue can."""
+    from anamna.ingest.intake import drain_now
+    settings, owner, _, api, service = ledger
+    link(service, owner)
+    api.files["lab"] = real_pdf(*LAB)
+    service.receive(file_part(2, "lab", "first.pdf", media_group="a"))
+    run_inbox(service)
+    service.notify_uploads()  # acknowledged: the next message is a new batch
+    service.receive(file_part(3, "lab", "resent.pdf", media_group="b"))
+    run_inbox(service)
+    drain_now(settings)
+    service.notify_uploads()
+    with connect(settings) as db:
+        assert db.execute("SELECT COUNT(*) FROM documents").fetchone()[0] == 1
+        resent = db.execute("SELECT * FROM upload_jobs WHERE filename='resent.pdf'").fetchone()
+        assert resent["state"] == "skipped" and resent["document_id"]
+    assert "resent.pdf: already in your record as" in outputs(settings)[-1]["text"]
+
+
+def test_same_report_in_a_different_file_is_reported_as_a_suggested_copy(ledger):
+    from anamna.ingest.intake import drain_now
+    settings, owner, _, api, service = ledger
+    link(service, owner)
+    api.files["a"] = real_pdf(*LAB)
+    service.receive(file_part(2, "a", "portal.pdf", media_group="a"))
+    run_inbox(service)
+    drain_now(settings)
+    service.notify_uploads()
+    with connect(settings) as db:
+        first = db.execute("SELECT id,title FROM documents").fetchone()
+    # A re-export: different bytes, identical text.
+    api.files["b"] = api.files["a"].replace(b"/Producer", b"/Creator (synthetic re-export) /Producer", 1)
+    assert api.files["b"] != api.files["a"]
+    service.receive(file_part(3, "b", "export.pdf", len(api.files["b"]), media_group="b"))
+    run_inbox(service)
+    drain_now(settings)
+    service.notify_uploads()
+    summary = outputs(settings)[-1]["text"]
+    assert "export.pdf: added as" in summary
+    assert f"It looks like a copy of {first['title']}; confirm that on its page in Anamna." in summary
+
+
+def test_undo_removes_only_what_the_upload_created_after_confirmation(ledger):
+    from anamna.ingest.intake import drain_now
+    settings, owner, _, api, service = ledger
+    link(service, owner)
+    api.files["held"] = document(settings, owner)
+    api.files["lab"] = real_pdf(*LAB)
+    service.receive(file_part(2, "lab", "new.pdf", len(api.files["lab"])))
+    service.receive(file_part(3, "held", "old.pdf", len(api.files["held"])))
+    run_inbox(service)
+    drain_now(settings)
+    service.notify_uploads()
+    with connect(settings) as db:
+        batch = db.execute("SELECT DISTINCT batch_id FROM upload_jobs").fetchone()[0]
+        created = db.execute("SELECT id,source_path FROM documents WHERE id<>'doc-1'").fetchone()
+    service.receive(callback(4, "u:" + batch))
+    run_inbox(service)
+    card = outputs(settings)[-1]
+    assert "Remove this upload?" in card["text"] and "Documents it added that will be deleted: 1." in card["text"]
+    assert card["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == "uy:" + batch
+    with connect(settings) as db:
+        assert db.execute("SELECT COUNT(*) FROM documents").fetchone()[0] == 2, "asking deletes nothing"
+    service.receive(callback(5, "uy:" + batch))
+    run_inbox(service)
+    assert "Upload removed. Documents deleted: 1. Waiting files cancelled: 0." in outputs(settings)[-1]["text"]
+    with connect(settings) as db:
+        assert [row[0] for row in db.execute("SELECT id FROM documents")] == ["doc-1"], "the document already in the record stays"
+        assert db.execute("SELECT COUNT(*) FROM upload_jobs").fetchone()[0] == 0
+        assert db.execute("SELECT COUNT(*) FROM review_tasks WHERE entity_id=?", (created["id"],)).fetchone()[0] == 0
+        assert db.execute("PRAGMA foreign_key_check").fetchall() == []
+        assert db.execute("SELECT COUNT(*) FROM audit_events WHERE action='telegram_upload_undone'").fetchone()[0] == 1
+    assert not list((settings.source_dir / "uploads").rglob("*.pdf"))
+    assert (settings.source_dir / "doc-1.pdf").is_file()
+    # Pressed again: nothing left to remove, and it says so.
+    service.receive(callback(6, "uy:" + batch))
+    run_inbox(service)
+    assert "can no longer be undone here" in outputs(settings)[-1]["text"]
+
+
+def test_cancel_while_waiting_and_undo_refusals(ledger):
+    from anamna.ingest.intake import drain_now
+    settings, owner, other, api, service = ledger
+    link(service, owner)
+    api.files["pdf"] = b"%PDF-1.4 waiting its turn"
+    service.receive(file_part(2, "pdf", "waiting.pdf"))
+    run_inbox(service)
+    service.notify_uploads()
+    with connect(settings) as db:
+        batch = db.execute("SELECT batch_id FROM upload_jobs").fetchone()[0]
+        db.execute("UPDATE upload_jobs SET state='running'")
+    service.receive(callback(3, "uy:" + batch))
+    run_inbox(service)
+    assert "being read right now" in outputs(settings)[-1]["text"]
+    with connect(settings) as db:
+        db.execute("UPDATE upload_jobs SET state='queued'")
+    service.receive(callback(4, "uy:" + batch))
+    run_inbox(service)
+    assert "Waiting files cancelled: 1." in outputs(settings)[-1]["text"]
+    assert not list((settings.source_dir / "uploads").rglob("*.pdf"))
+    # A batch of somebody else, or one that never existed, is not this chat's to touch.
+    service.receive(callback(5, "uy:telegram-0000"))
+    run_inbox(service)
+    assert "can no longer be undone here" in outputs(settings)[-1]["text"]
+    # A checked value means the record builds on the document: refused.
+    api.files["lab"] = real_pdf(*LAB)
+    service.receive(file_part(6, "lab", "checked.pdf", len(api.files["lab"])))
+    run_inbox(service)
+    drain_now(settings)
+    service.notify_uploads()
+    with connect(settings) as db:
+        batch, created = db.execute("SELECT batch_id,document_id FROM upload_jobs").fetchone()
+        db.execute("""INSERT INTO observations(id,owner_user_id,patient_id,document_id,page_number,raw_name,value_type,value_numeric,unit_raw,verification_status,extraction_method,evidence_text,parser_version,created_at)
+            VALUES('checked-1',?,?,?,1,'Glucose','numeric',5.1,'mmol/L','verified','native_text','Synthetic evidence','fixture',?)""", (owner, owner, created, utc_now()))
+    service.receive(callback(7, "uy:" + batch))
+    run_inbox(service)
+    assert "your record already builds on it" in outputs(settings)[-1]["text"]
+    with connect(settings) as db:
+        assert db.execute("SELECT COUNT(*) FROM documents").fetchone()[0] == 1
+        old = time.time() - 25 * 3600
+        db.execute("UPDATE observations SET verification_status='extracted'")
+        db.execute("UPDATE telegram_updates SET received_at=?", (old,))
+    service.receive(callback(8, "uy:" + batch))
+    run_inbox(service)
+    assert "older than 24 hours" in outputs(settings)[-1]["text"]
+
+
+def test_recent_uploads_account_help_and_unlink_from_the_chat(ledger):
+    from anamna.ingest.intake import drain_now
+    settings, owner, _, api, service = ledger
+    link(service, owner)
+    service.receive(incoming(2, "/uploads"))
+    run_inbox(service)
+    assert "Nothing uploaded yet." in outputs(settings)[-1]["text"]
+    api.files["lab"] = real_pdf(*LAB)
+    api.files["pdf"] = b"%PDF-1.4 still waiting"
+    service.receive(file_part(3, "lab", "read.pdf", len(api.files["lab"])))
+    run_inbox(service)
+    drain_now(settings)
+    service.receive(file_part(4, "pdf", "queued.pdf"))
+    service.receive(incoming(5, "/uploads"))
+    run_inbox(service)
+    recent = outputs(settings)[-1]["text"]
+    assert "<b>Recent uploads</b>" in recent
+    assert "queued.pdf: waiting in the queue" in recent
+    assert "read.pdf: added as" in recent and "Needs your review." in recent
+    service.receive(incoming(6, "/account"))
+    run_inbox(service)
+    account = outputs(settings)[-1]
+    assert "connected to the Anamna account owner (owner@example.com)" in account["text"]
+    assert account["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == "unlink"
+    for uid, locale, expected in ((7, "en", "/uploads shows recent uploads"), (8, "uk", "/uploads показує останні завантаження")):
+        with connect(settings) as db:
+            db.execute("UPDATE telegram_links SET locale=?", (locale,))
+        service.receive(incoming(uid, "/help"))
+        run_inbox(service)
+        assert expected in outputs(settings)[-1]["text"]
+    with connect(settings) as db:
+        db.execute("UPDATE telegram_links SET locale='en'")
+    service.receive(incoming(9, "/unlink"))
+    run_inbox(service)
+    assert "Disconnect this chat from Anamna?" in outputs(settings)[-1]["text"]
+    assert service.profile(owner)["linked"], "asking disconnects nothing"
+    service.receive(callback(10, "unlink:yes"))
+    run_inbox(service)
+    assert not service.profile(owner)["linked"]
+    with connect(settings) as db:
+        left = db.execute("SELECT id,owner_user_id,method,payload FROM telegram_outbox WHERE state='pending'").fetchall()
+        assert {row["id"] for row in left} == {"10:ack", "10:reply"}
+        assert all(row["owner_user_id"] is None for row in left)
+        assert "disconnected from Anamna" in json.loads([row for row in left if row["id"] == "10:reply"][0]["payload"])["text"]
+        assert db.execute("SELECT COUNT(*) FROM audit_events WHERE action='telegram_unlinked'").fetchone()[0] == 1
+    service.receive(incoming(11, "/menu"))
+    run_inbox(service)
+    assert "Connect this Telegram account" in outputs(settings)[-1]["text"]
+
+
+def test_unsupported_media_joins_the_batch_with_a_reason(ledger):
+    settings, owner, _, api, service = ledger
+    link(service, owner)
+    service.receive(album_part(2, video={"file_id": "v", "file_size": 100}))
+    service.receive(album_part(3, voice={"file_id": "w", "file_size": 100}))
+    run_inbox(service)
+    assert not any(method == "getFile" for method, _, _ in api.calls), "nothing refused is downloaded"
+    service.notify_uploads()
+    summary = outputs(settings)[-1]["text"]
+    assert "1. video.mp4: not added." in summary and "2. voice.ogg: not added." in summary
+
+
+def test_long_batches_list_twenty_files_and_count_the_rest(ledger):
+    settings, owner, _, _, service = ledger
+    link(service, owner)
+    for uid in range(2, 27):
+        service.receive(file_part(uid, "x", f"note-{uid}.docx"))
+    run_inbox(service)
+    service.notify_uploads()
+    summary = outputs(settings)[-1]["text"]
+    assert "20. note-21.docx" in summary and "21. note-22.docx" not in summary
+    assert "And 5 more files: the upload queue in Anamna lists them." in summary
+
+
+@pytest.mark.parametrize("locale,count,expected", [
+    ("en", 1, "scan.pdf: added as Synthetic &lt;report&gt;, 1 value."),
+    ("en", 12, "scan.pdf: added as Synthetic &lt;report&gt;, 12 values."),
+    ("uk", 3, "scan.pdf: додано як Synthetic &lt;report&gt;, 3 значення."),
+    ("uk", 12, "scan.pdf: додано як Synthetic &lt;report&gt;, 12 значень."),
+])
+def test_added_line_counts_values_in_both_languages(ledger, locale, count, expected):
+    settings, owner, _, api, service = ledger
+    link(service, owner)
+    with connect(settings) as db:
+        db.execute("UPDATE telegram_links SET locale=?", (locale,))
+    api.files["held"] = document(settings, owner)
+    service.receive(file_part(2, "held", "scan.pdf", len(api.files["held"])))
+    run_inbox(service)
+    with connect(settings) as db:
+        db.execute("UPDATE upload_jobs SET state='done',detail_key='intake.done_imported',observation_count=?", (count,))
+    service.notify_uploads()
+    assert expected in outputs(settings)[-1]["text"]

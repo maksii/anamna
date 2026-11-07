@@ -42,9 +42,24 @@ An HTTP delivery already in flight cannot be recalled by disconnecting.
 ## In the chat
 
 `/menu` and `/start` open buttons for results, documents, search, upload,
-language and help. Every card has back/home navigation, and lists paginate.
-`/cancel` clears conversational search/upload state. `/language` switches between
-English and Ukrainian independently of the website locale.
+recent uploads, the linked account, language and help. Every card has back/home
+navigation, and lists paginate. `/cancel` clears conversational search/upload
+state. `/language` switches between English and Ukrainian independently of the
+website locale. `/help` lists every command with what it does.
+
+- `/uploads` lists the ten newest files of the record (from the bot or the
+  website) and where each stands: waiting, being read, added with its value
+  count and whether it still needs review, already in the record, or not
+  added and why.
+- `/account` names the Anamna account (display name and email) this chat is
+  connected to and since when.
+- `/unlink` asks first, then disconnects the chat exactly as **Disconnect** in
+  Profile does. The confirmation reply is queued without an owner, since
+  disconnecting cancels everything queued for the owner.
+
+The command menu is installed on activation, so an existing installation shows
+the new commands after **Activate bot and apply settings** is applied again;
+typed commands work either way.
 
 Results show stored values, units, dates, source documents and whether a person
 verified the extraction. Laboratory intervals are labelled as laboratory text;
@@ -66,11 +81,66 @@ go through the existing bounded archive ingestion, including its traversal,
 nested archive, entry count and expanded-size protections.
 
 Uploads enter the same persistent `upload_jobs` pipeline as web uploads, retain
-the same human verification requirements, and write an audit event. Existing
-document hashes are deduplicated within the owner. The bot reports queued,
-processing and final states with resulting document buttons and an upload-queue
-link when a public address is configured. Multiple photos arrive as separate
-jobs, so each retains its own progress and provenance.
+the same human verification requirements, and write an audit event. Each file
+is one job with its own directory (every Telegram photo is called `photo.jpg`),
+so each retains its own progress and provenance.
+
+### Several files at once
+
+Telegram delivers an album, a multi-forward or a gallery selection as one
+update per file, possibly concurrently, out of order and, after a restart,
+again. The bot handles them as one upload:
+
+- **Exactly once.** The inbox is keyed by `update_id` in SQLite, so a retried
+  or redelivered update (including across a process restart) adds no job and
+  no reply. Two workers never claim the same update.
+- **One batch.** A file joins the batch its chat is still collecting: one that
+  has not been acknowledged yet (`telegram_uploads.notified_state` empty).
+  Every job of the batch shares one `upload_jobs.batch_id`, which is also what
+  the website's upload queue groups by.
+- **One acknowledgement.** Files get no reply of their own. Once files stop
+  arriving (`BATCH_QUIET`, 4 seconds since the last receipt, and no message of
+  that chat still in the inbox) the chat gets one message, for example
+  "Received 5 files. Reading them now; I will send one summary when all are
+  done.", with a **Cancel this upload** button. A file after that starts a new
+  batch.
+- **One summary** when the last file is read: a heading with the count, a line
+  of totals (added / already in your record / not added) and one line per file,
+  at most 20 with the rest counted. Document buttons, the upload-queue link and
+  **Undo this upload** follow. A batch that settled at once (only duplicates or
+  refusals) gets the summary without an acknowledgement.
+
+Per file, the summary says:
+
+| Outcome | Line |
+|---|---|
+| New document | `scan.pdf: added as <title>, 12 values.` (or "no values could be read automatically") |
+| Same bytes already in the record | `scan.pdf: already in your record as <title>. Nothing was added.` |
+| Same report in a different file | the added line plus "It looks like a copy of `<title>`; confirm that on its page in Anamna." |
+| Refused at the door | `letter.docx: not added. Use PDF, JPEG, PNG, TIFF or ZIP. ...` |
+| Over Telegram's 20 MB download limit | `huge.pdf: not added. The file is empty or exceeds 20 MB. ...` |
+| Failed while reading | `scan.pdf: not added.` with the intake queue's reason |
+
+A ZIP is reported by the files that came out of it. Videos, voice messages and
+other media are refused with the supported-format line and never downloaded.
+Refused files are recorded as failed rows of the batch (no bytes kept), so the
+website's upload queue shows them too.
+
+**Duplicates.** Same bytes never become a second document: the door checks the
+record by SHA-256, and the intake queue checks again before reading a file, so
+the same scan twice in one album, or sent again while its first copy waited in
+the queue, is filed once and reported as already there. A same-report copy in
+different bytes is imported and linked by the record's suggested `duplicate` /
+`reprint` relation, which a person confirms on the document page; the bot
+reports it as a likely copy and changes nothing about that rule.
+
+**Cancel and undo.** Both buttons ask first, then remove only what this upload
+created: files still waiting are cancelled and their bytes removed, documents it
+added are deleted with their source files. Files that were already in the
+record stay. Undo is refused while one of its files is being read, after 24
+hours, and when the record already builds on a document (a value a person
+checked, a device import, an exact copy filed under it, a later upload pointing
+at it); the refusal says to delete on the document page in Anamna instead.
 
 ## Reliability and privacy boundaries
 
@@ -115,7 +185,14 @@ The harness exercises activation, transport switching, private-only single-use
 linking, expiry/replay, ownership and tampered callbacks, metadata-before-original,
 revocation before delivery, multilingual menus/search/cancel, upload signatures
 and size limits, shared intake publication, deduplication, final notifications,
-retry/restart recovery and competing-worker leases. Live verification requires
+retry/restart recovery and competing-worker leases. Batches are covered too:
+a mixed album (PDF, an in-album duplicate, ZIP, a file already in the record,
+Office, oversize), concurrent and out-of-order delivery with every update sent
+twice, redelivery after a restart, a file resent while its first copy waited,
+a same-report copy in different bytes, unsupported media, the quiet window,
+long batches, summaries in English and Ukrainian with their plural forms,
+undo and cancel with each refusal, `/uploads`, `/account`, `/help` and
+`/unlink`. Live verification requires
 the operator's bot token, activation and a consenting user who has linked their
 own chat; use synthetic documents for that verification.
 
