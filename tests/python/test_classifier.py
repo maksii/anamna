@@ -184,8 +184,11 @@ def test_an_eskulab_order_is_titled_by_all_its_panels():
         "3. F0501 Пакет №2. Печінкові проби\n"
         "1. F5000 Коагулограма\n"
     )
-    assert extract_title(text, "x.pdf", "laboratory") == "Ліпідограма · Печінкові проби · Коагулограма"
-    single = "1. F6001 Загальний аналіз сечі автоматизований (ЗАС автоматизований)\n"
+    # The uncoded test is part of the order too; it follows the panels.
+    assert extract_title(text, "x.pdf", "laboratory") == (
+        "Ліпідограма · Печінкові проби · Коагулограма · Холестерин не-ЛПВЩ"
+    )
+    single ="1. F6001 Загальний аналіз сечі автоматизований (ЗАС автоматизований)\n"
     assert "Загальний аналіз сечі" in extract_title(single, "x.pdf", "laboratory")
 
 

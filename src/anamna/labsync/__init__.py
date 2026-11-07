@@ -48,6 +48,7 @@ from ..config import Settings, log_run, per_request, resolve_source_path
 from ..db import connect, transaction, utc_now
 from ..health import applicable_reference_bounds
 from ..ingest import intake
+from ..ingest.classifier import joined_title
 from ..ingest.extract import file_sha256
 from ..ingest.parsers import ParsedObservation, reference_bounds
 from ..derived import refresh_derived_observations
@@ -1535,6 +1536,37 @@ def _record_value(row: dict) -> ParsedObservation | None:
     )
 
 
+def _record_title(rows: list[dict]) -> str:
+    """Every packet the order holds («Аналіз сечі загальний (…) · Загальний аналіз
+    крові (…)»), or the first valued test when it names none.  The first packet
+    alone titled a urinalysis-and-blood-count order as a urinalysis."""
+    packets = list(dict.fromkeys(row["packet"].strip('"«» ') for row in rows if row["packet"].strip('"«» ')))
+    if packets:
+        return joined_title(packets)
+    return next((row["test"] for row in rows if _record_value(row) is not None), "")
+
+
+def _retitle_lab_records(settings: Settings, connection) -> int:
+    """Give stored lab records the title :func:`_record_title` reads today.  A
+    record has no file to re-read, so this is the only way a better title
+    reaches one; a title a person chose is left alone."""
+    changed = 0
+    for row in connection.execute(
+            "SELECT id, source_path, title FROM documents WHERE extraction_strategy=? "
+            "AND COALESCE(title_set_by, '') <> 'human'", (LAB_RECORD,)).fetchall():
+        try:
+            payload = json.loads(resolve_source_path(settings, str(row["source_path"])).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        rows = [item for item in payload.get("rows") or [] if isinstance(item, dict) and item.get("test")]
+        title = _record_title(rows)[:240]
+        if title and title != row["title"]:
+            connection.execute("UPDATE documents SET title=? WHERE id=?", (title, row["id"]))
+            connection.execute("UPDATE reports SET title=? WHERE document_id=?", (title, row["id"]))
+            changed += 1
+    return changed
+
+
 def _record_day(order: dict) -> str | None:
     days = sorted(order.get("dates") or [])
     day = days[0] if days else str(order.get("ordered_at") or "")[:10]
@@ -1549,8 +1581,7 @@ def _file_lab_record(settings, connection, user_id: str, key: str, patient_id: s
     if not values:
         return None
     lab, order_id, day, now = provider(key), str(order["order_id"]), _record_day(order), utc_now()
-    packet = next((row["packet"].strip('"«» ') for row in rows if row["packet"].strip('"«» ')), "")
-    title = packet or values[0][0]["test"]
+    title = _record_title(rows)
     payload = {
         "source": "lab_online_service", "provider": key, "lab": lab.NAME, "vendor": lab.VENDOR,
         "order_id": order_id, "remote_ref": order.get("remote_ref"), "ordered_at": order.get("ordered_at"),
@@ -2139,10 +2170,11 @@ def recheck(settings: Settings) -> dict[str, int]:
     document with no values at the one holding its results, then
     :func:`apply_check` per order."""
     summary = {"orders": 0, "relinked": 0, "units": 0, "units_undone": 0, "flags": 0, "flags_undone": 0, "tasks": 0,
-               "references": 0}
+               "references": 0, "titles": 0}
     with transaction(settings) as connection:
         summary["units_undone"] = undo_unfit_units(connection)
         summary["references"] = _clean_record_references(connection)
+        summary["titles"] = _retitle_lab_records(settings, connection)
         for row in connection.execute(
                 """SELECT * FROM lab_orders WHERE state IN ('imported', 'linked') AND document_id IS NOT NULL
                     ORDER BY owner_user_id, provider, ordered_at, order_id""").fetchall():
