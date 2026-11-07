@@ -196,9 +196,12 @@ e Основний діагноз:
 
 
 def test_colposcopy_and_ultrasound_conclusions_as_ocr_spells_them(ledger):
-    colposcopy = "Діагноз кол ьпоскопічний:\nНормальна кольпоскопічна картина\nІнші ознаки\nДіагноз клінічний\n"
+    colposcopy = ("Діагноз кол ьпоскопічний:\nНормальна кольпоскопічна картина\nІнші ознаки\nДіагноз клінічний\n"
+                  "рекомендовано Тестенко олена Я|\nпідпис\n")
     [row] = summary_of(ledger, "colpo", "diagnostic_image", "Diagnostic image", colposcopy)
     assert row["summary_uk"] == "Нормальна кольпоскопічна картина"
+    # The empty field's neighbour is the doctor's signature, not advice.
+    assert row["recommendations"] == ""
     no_colon = "Лівий яйник розміром 40 х 30 мм.\nЗаключення Кисти лівого яйника: ендометріоїдна та серозна?\nРекомендовано консультація гінеколога.\nДате: 03.04.2025\n"
     [row] = summary_of(ledger, "nocolon", "ultrasound", "УЗД органів малого тазу", no_colon)
     assert row["summary_uk"] == "Кисти лівого яйника: ендометріоїдна та серозна?"

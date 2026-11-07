@@ -2154,6 +2154,10 @@ def _extract_recommendations(text: str, after: int = 0, *, unlabelled: bool = Fa
     start = tables[-1] if tables else match.end() if match else after
     end_match = _RECOMMENDATION_END.search(text, start)
     block = text[start: end_match.start() if end_match else len(text)]
+    # A form whose «рекомендовано» field was left empty: the doctor's name
+    # above «підпис» («Тестенко Олена Я|») is the signature, not advice.
+    block = re.sub(r"\n?[ \t]*[А-ЯІЇЄҐ][а-яіїєґ'’]+(?:[ \t]+[^\W\d_]+){1,2}[ \t]+[А-ЯІЇЄҐ][.|]?[ \t]*$", "", block) \
+        if end_match and end_match.group(0).casefold().startswith("підпис") else block
     lines = []
     services = False  # inside an order sheet's «Назва послуги К-сть» table
     for line in block.splitlines():
