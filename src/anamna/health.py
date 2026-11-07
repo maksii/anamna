@@ -40,6 +40,7 @@ HEALTH_AREAS: list[dict[str, object]] = [
     {"id": "infection", "name": "Infection & microbiology", "short": "Infection", "categories": {"infection", "microbiology"}, "description": "Cultures, organisms and infection markers"},
     {"id": "ent", "name": "ENT & sinuses", "short": "ENT", "categories": set(), "description": "Ear, nose, throat and sinus imaging"},
     {"id": "skin", "name": "Skin", "short": "Skin", "categories": set(), "description": "Dermatology consultations and skin findings"},
+    {"id": "brain", "name": "Brain & nervous system", "short": "Brain", "categories": set(), "description": "Brain recordings such as the EEG (electroencephalogram, a recording of the brain's electrical activity) and their conclusions"},
     {"id": "body", "name": "Body composition", "short": "Body", "categories": {"device_body", "body"}, "description": "Weight, body mass index, body fat and lean mass"},
     {"id": "activity", "name": "Activity & fitness", "short": "Activity", "categories": {"device_activity", "device_fitness"}, "description": "Movement, exercise, energy and cardio fitness"},
     {"id": "mobility", "name": "Mobility & gait", "short": "Mobility", "categories": {"device_mobility"}, "description": "Walking speed, step length, steadiness and asymmetry"},
@@ -1488,6 +1489,7 @@ _STUDIES: tuple[tuple[str, str, tuple[str, ...], frozenset[str] | None, re.Patte
         ("salivary_us", "Salivary-gland and cervical-node ultrasound", ("ent",), None, r"слинн|salivary"),
         ("intestinal_biopsy", "Intestinal biopsy (histology)", ("digestive",), {"pathology"}, r"кишк|intestin|colon|поліпектом"),
         ("ecg", "ECG recording", ("heart",), None, r"kardia|\bekg\b|\becg\b|\bекг\b|електрокардіо"),
+        ("eeg", "Electroencephalogram (EEG)", ("brain",), None, r"\beeg\b|\bеег\b|електроенцефало|electroencephalo"),
         ("chest_xray", "Chest radiograph", ("lungs",), None, r"\bогк\b|органів\s+грудної|грудної\s+клітки|chest"),
         ("spine_tl_mri", "Thoracic and lumbar spine MRI", ("spine",), {"radiology_mri"}, r"грудного\s+та\s+поперекового|thoracic-and-lumbar"),
         ("spine_c_mri", "Cervical spine MRI", ("spine",), {"radiology_mri"}, r"шийного\s+відділу\s+хребта|cervical[- ]spine"),
@@ -1521,6 +1523,8 @@ _ORGAN_AREAS: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
         # By the specialty that wrote it: «шкіра» alone is a line of every
         # general examination («Шкіра: чиста»).
         ("skin", r"\bдерматол|\bdermatol"),
+        # «головного мозку», never the «спинного мозку» of a spine scan.
+        ("brain", r"\bголовн\w*\s+мозк|\bbrain\b|\bенцефал|\bеег\b|\beeg\b"),
     )
 )
 #: A visit that gave a vaccine («Необхідність імунізації», «Вакцинації»):
@@ -1553,7 +1557,7 @@ _CONCLUSION_END = re.compile(
     r"|\bрезультати\s+(?:ультразвукового\s+)?досліджен|\bлікар(?:[-‐]\w+)?\s*[:_]|\bлікар[-‐]патолог"
     r"|\bмедична\s+сестра|\bзображень\s*[:：]|\bед\s*[-–]\s*\d|\bnotes\b|\*\s*kardia|\bназва\s+послуги"
     r"|\bсторінка\s+\d|\bлабораторні\s+дослідження|\bпризначене\s+лікування|\bконсультації\s+спеціалістів"
-    r"|\bінші\s+дослідження|\bвисновок\s+не\s+є|\bскарги\b"
+    r"|\bінші\s+дослідження|\bвисновок\s+(?:\w+\s+)?не\s+(?:є|являєть)|\bскарги\b"
     # An eHealth visit note: the diagnosis is followed by the vaccines given
     # («Вакцинації», «Назва вакцини …») and the plan («Призначення»), which
     # are the record of the visit, not its conclusion.
@@ -1563,9 +1567,16 @@ _CONCLUSION_END = re.compile(
 
 _RECOMMENDATION_LABEL = re.compile(
     r"\bрекомендовано(?:\s+(?:обстеження|лікування))?\s*[:：]|^\s*(?:рекомендовано|рекомендації)\b|\bплан\s+обстеження\s*[:：]"
-    r"|\bпризначене\s+лікування(?:\s+та\s+рекомендації)?\s*[:：]|^\s*призначення\s*$",
+    r"|\bпризначене\s+лікування(?:\s+та\s+рекомендації)?\s*[:：]|^\s*призначення\s*$"
+    # Zero-width: the label says what the schedule under it is, so it stays.
+    r"|^(?=\s*рекомендована\s+вакцинація\b)",
     re.I | re.M,
 )
+#: The end of a dose's protocol table in an eHealth visit note (the rows
+#: `immunizations._visit_block` keeps).  The doctor's advice («Після
+#: вакцинації …», fever dosing, «Рекомендована вакцинація: …») follows the
+#: last one with no label of its own, above «Призначення».
+_VISIT_PROTOCOL_TABLE = re.compile(r"^№ дози.*(?:\n(?:доз\b|[1-9]\s|Здоров).*)*", re.M)
 _RECOMMENDATION_END = re.compile(
     r"\bдо\s+(?:відома|уваги)|\bпідпис|\bдата\s+(?:дослідження|обстеження)|\bдата\s*[:：]"
     r"|\bлікар(?:[-‐]\w+)?\s*[:_]|\bлікар\s+пояснив|\bсторінка\s+\d|\bзалиште\s+відгук"
@@ -1679,8 +1690,17 @@ def _extract_date(text: str, fallback: str | None) -> str | None:
 
 
 def _is_noise_line(line: str) -> bool:
+    # A labelled field («Опис: ВПЛ») is the form talking, not stamp debris,
+    # however short its value.
+    if re.match(r"[^\W\d_]{3,}\s*[:：]\s*\S", line):
+        return False
     words = re.findall(r"[^\W\d_]{4,}", line)
     return not re.search(r"[.;:!?)]\s*$", line) and len(words) < 2
+
+
+#: A line that ends on «або» («Нурофен 400 мг … або» / «Парацетамол …») has
+#: not finished its sentence, whatever the next line opens with.
+_OPEN_CONJUNCTION = re.compile(r"(?<![^\W\d_])(?:або|чи|та|і|й|or|and)$", re.I)
 
 
 def _clean_block(text: str) -> str:
@@ -1692,10 +1712,14 @@ def _clean_block(text: str) -> str:
     # A diagnosis list is one diagnosis per line («Сакроілеїт?» / «Паротит?»);
     # joined with bare spaces the question mark of one reads as belonging to
     # all.  A line that ends without punctuation before one that opens with a
-    # capital or an ICD code is a new item, not a wrapped sentence.
+    # capital or an ICD code is a new item, not a wrapped sentence; so is a
+    # line that is an abbreviation alone or with its bracket («Грипу» / «ВПЛ»,
+    # «ВПЛ (6, 11, …)»).  An abbreviation with words after it is a wrap
+    # («КВР помірний» / «СН 0», OCR's «тонкої» / «КИШКИ ЗІ …»).
     joined = [
         line + ("; " if index + 1 < len(lines) and not re.search(r"[.,;:!?(\-]$", line)
-                and re.match(r"[A-ZА-ЯІЇЄҐ][a-zа-яіїєґ'’\d]", lines[index + 1]) else " ")
+                and not _OPEN_CONJUNCTION.search(line)
+                and re.match(r"[A-ZА-ЯІЇЄҐ](?:[a-zа-яіїєґ'’\d]|[A-ZА-ЯІЇЄҐ]+\s*(?:\(|$))", lines[index + 1]) else " ")
         for index, line in enumerate(lines)
     ]
     return collapse_space("".join(joined)).strip(" .-–—:;,") + ("." if lines and lines[-1].rstrip().endswith(".") else "")
@@ -1735,26 +1759,35 @@ _BLANK_REVISIT_RE = re.compile(
 
 def _extract_recommendations(text: str, after: int = 0) -> str:
     match = _RECOMMENDATION_LABEL.search(text, after)
-    if not match:
+    tables = [table.end() for table in _VISIT_PROTOCOL_TABLE.finditer(text, after, match.start() if match else len(text))]
+    if not match and not tables:
         return ""
-    end_match = _RECOMMENDATION_END.search(text, match.end())
-    block = text[match.end(): end_match.start() if end_match else len(text)]
+    start = tables[-1] if tables else match.end()
+    end_match = _RECOMMENDATION_END.search(text, start)
+    block = text[start: end_match.start() if end_match else len(text)]
     lines = []
+    services = False  # inside an order sheet's «Назва послуги К-сть» table
     for line in block.splitlines():
         # A contact phone is not advice; strip it before the quantity column
         # rule below eats the number and leaves a bare «Тел.».
         line = _PHONE_RE.sub("", line.strip())
-        line = _QUANTITY_COLUMN_RE.sub("", line.strip())  # order-sheet quantity column
+        # The quantity column exists only on the rows under that header;
+        # elsewhere a trailing number is the advice («Нурофен 400 мг - 1»,
+        # «3 Гардасил 9»).
+        services = bool(re.match(r"назва\s+послуги", line, re.I)) or (services and bool(_QUANTITY_COLUMN_RE.search(line)))
+        if services:
+            line = _QUANTITY_COLUMN_RE.sub("", line.strip())
         if not line or re.match(
             r"назва\s+послуги|консультації\s+спеціалістів\s+та\s+реабілітація"
-            r"|спосіб\s+тривалість|назва\s+препарату\s*$|прийому\s+застосування",
+            r"|спосіб\s+тривалість|назва\s+препарату\s*$|прийому\s+застосування|призначення\s*$",
             line, re.I,
         ):
             continue
         lines.append(line)
     # One referral per line on an order sheet; keep them apart when joined.
     joined = [
-        line + (";" if index + 1 < len(lines) and lines[index + 1][:1].isupper() and not re.search(r"[.,;:]$", line) else "")
+        line + (";" if index + 1 < len(lines) and lines[index + 1][:1].isupper()
+                and not re.search(r"[.,;:]$", line) and not _OPEN_CONJUNCTION.search(line) else "")
         for index, line in enumerate(lines)
     ]
     text = _clean_block("\n".join(joined))
@@ -1791,12 +1824,27 @@ def _strip_letterhead(text: str, identity: tuple[str, ...] = ()) -> str:
     ]
     if head:
         lines = lines[head[-1] + 1:]
+    lines = [_without_letterhead(line) for line in lines]
     return "\n".join(
         line for line in lines
         if re.search(r"[^\W\d_]", line)
-        and not _LETTERHEAD_LINE.search(line)
         and not any(token in search_key(line) or token in line for token in identity)
     )
+
+
+#: The right-hand column of an eHealth visit note's dose rows.  Its left
+#: column names the vaccinating doctor («Лікар, який виконав вакцинацію …»,
+#: «… (Лікар-педіатр)»), which is a signature line; the quantity and site
+#: printed beside it are the record of the dose.
+_DOSE_COLUMN_RE = re.compile(r"(?:Кількість введеної вакцини|Одиниці вимірювання|Місце введення|Шлях введення)\b.*")
+
+
+def _without_letterhead(line: str) -> str:
+    """The line, its dose column when only the column beside it is letterhead, or ''."""
+    if not _LETTERHEAD_LINE.search(line):
+        return line
+    column = _DOSE_COLUMN_RE.search(line)
+    return column.group(0) if column and not _LETTERHEAD_LINE.search(column.group(0)) else ""
 
 
 def _identity_tokens(connection: sqlite3.Connection, patient_id: str) -> tuple[str, ...]:

@@ -56,6 +56,12 @@ PHRASES: dict[str, str] = {
     "Cardiology consultation": "Консультація кардіолога",
     "Dermatology consultation": "Консультація дерматолога",
     "Dermatology consultations and skin findings": "Консультації дерматолога й зміни на шкірі",
+    "Brain & nervous system": "Головний мозок і нервова система",
+    "Brain": "Мозок",
+    "Brain recordings such as the EEG (electroencephalogram, a recording of the brain's electrical activity) and their conclusions": (
+        "Записи роботи мозку, як-от ЕЕГ (електроенцефалограма, запис електричної активності головного мозку), та їхні висновки"
+    ),
+    "Electroencephalogram (EEG)": "Електроенцефалограма (ЕЕГ)",
     "Other results": "Інші результати",
 
     # Categories

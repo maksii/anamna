@@ -83,6 +83,7 @@ SYNONYMS: tuple[tuple[str, ...], ...] = (
     ("temperature", "температура", "body temperature", "температура тіла"),
     # Examinations and document kinds
     ("ECG", "EKG", "ЕКГ", "electrocardiogram", "електрокардіограма", "кардіограма"),
+    ("EEG", "ЕЕГ", "electroencephalogram", "електроенцефалограма"),
     ("ultrasound", "УЗД", "УЗ", "sonography", "сонографія", "ультразвукове дослідження"),
     ("echocardiography", "ЕхоКГ", "echo", "ехокардіографія", "УЗД серця"),
     ("MRI", "МРТ", "magnetic resonance", "магнітно-резонансна томографія"),
