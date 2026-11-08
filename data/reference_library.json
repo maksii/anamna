@@ -2097,6 +2097,18 @@
       "official": true
     },
     {
+      "id": "euratom-2013-59",
+      "region": "EU",
+      "publisher": "Council of the European Union",
+      "name": "Council Directive 2013/59/Euratom laying down basic safety standards for protection against the dangers arising from exposure to ionising radiation",
+      "url": "https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32013L0059",
+      "identifier": "CELEX 32013L0059, Articles 55, 56 and 58",
+      "reviewed_at": "2026-11-08",
+      "official": true,
+      "kind": "regulation",
+      "access_note": "Fetched and read 2026-11-08. Article 58(b): «information relating to patient exposure forms part of the report of the medical radiological procedure». Article 56(1): «all doses due to medical exposure» are «kept as low as reasonably achievable» consistent with obtaining the required medical information. The Directive sets no dose limit for a patient."
+    },
+    {
       "id": "eusobi-breast-us-2018",
       "region": "EU",
       "publisher": "European Society of Breast Imaging (EUSOBI)",
@@ -2153,6 +2165,18 @@
       "official": true,
       "kind": "regulation",
       "access_note": "Page read in full. Explicit text: \"The FDA recommends repeat testing following a negative COVID-19 antigen test result\" — with symptoms, again after 48 hours (at least two tests); without symptoms, twice more 48 hours apart (at least three tests). The 2022 FDA Safety Communication on false negatives now returns HTTP 404; this FAQ carries the same recommendation."
+    },
+    {
+      "id": "fda-ct-radiation-risks",
+      "region": "US",
+      "publisher": "U.S. Food and Drug Administration (FDA)",
+      "name": "What are the Radiation Risks from CT?",
+      "url": "https://www.fda.gov/radiation-emitting-products/medical-x-ray-imaging/what-are-radiation-risks-ct",
+      "identifier": "FDA Medical X-ray Imaging, patient information page, Table 1",
+      "reviewed_at": "2026-11-08",
+      "official": true,
+      "kind": "patient_information",
+      "access_note": "Fetched and read 2026-11-08. Table 1 (typical effective dose, mSv): «Chest x-ray (PA film)» 0.02; «CT chest» 7. «The effective doses from diagnostic CT procedures are typically estimated to be in the range of 1 to 10 mSv.»"
     },
     {
       "id": "fda-donor-assays",
@@ -2373,6 +2397,18 @@
       "official": false,
       "kind": "study",
       "access_note": "PubMed record fetched and read 2026-08-06. The study compared the thymol turbidity test and serum cholesterol against bilirubin, transaminases, alkaline phosphatase, protein electrophoresis and prothrombin time across 13 hepato-biliary diseases; verbatim, «the thymol test and cholesterol measurement had the lowest discriminatory powers», removing either caused «nil or negligible» information loss, and both «should be abandoned as routine tests of liver function». Cited as the documented point at which this assay was recommended for withdrawal, not as a source of any interval."
+    },
+    {
+      "id": "icrp-147",
+      "region": "INT",
+      "publisher": "International Commission on Radiological Protection (ICRP)",
+      "name": "Use of Dose Quantities in Radiological Protection",
+      "url": "https://www.icrp.org/publication.asp?id=ICRP%20Publication%20147",
+      "identifier": "ICRP Publication 147, Ann. ICRP 50(1), 2021",
+      "reviewed_at": "2026-11-08",
+      "official": true,
+      "kind": "guideline",
+      "access_note": "Publication page read 2026-11-08 (abstract, executive summary, key points). «Effective dose is accepted internationally as the central radiological protection quantity»; «effective dose may be considered as an approximate indicator of possible risk»; «use of effective dose in this way is not a substitute for specific risk analysis»."
     },
     {
       "id": "icsh-2015",
@@ -5254,6 +5290,30 @@
       "reviewed_at": "2026-08-03",
       "official": true,
       "kind": "law"
+    },
+    {
+      "id": "ua-moz-294-2007-xray-rooms",
+      "region": "UA",
+      "publisher": "Міністерство охорони здоров'я України",
+      "name": "ДСанПіН «Гігієнічні вимоги до влаштування та експлуатації рентгенівських кабінетів і проведення рентгенологічних процедур»",
+      "url": "https://zakon.rada.gov.ua/laws/show/z1256-07",
+      "identifier": "Наказ МОЗ № 294 від 04.06.2007, зареєстровано в Мін'юсті 07.11.2007 за № 1256/14523, розділ 6 і додаток 9",
+      "reviewed_at": "2026-11-08",
+      "official": true,
+      "kind": "regulation",
+      "access_note": "Full text read on zakon.rada.gov.ua 2026-11-08. П. 6.2: «Пацієнту надається повна інформація про очікувану чи отриману ним дозу опромінення і про можливі наслідки.» П. 6.6: the radiologist or radiographer «зобов'язаний зареєструвати значення індивідуальної ефективної дози пацієнта в картку обліку дозових навантажень» (додаток 9); «Інформація щодо дози опромінення пацієнтів зберігається в архівах медичних закладів протягом 50 років.» П. 6.9: recommended limiting levels (effective dose) by patient category: АД 100 мЗв/рік, БД 20 мЗв/рік, ВД 2 мЗв/рік, ГД (preventive examinations) 1 мЗв/рік. П. 6.10: at an accumulated diagnostic dose above 100 мЗв further exposure is to be limited and the patient referred for examination. П. 6.11: for preventive X-ray examinations the annual effective dose «не повинна перевищувати 1 мЗв»."
+    },
+    {
+      "id": "ua-nrbu-97",
+      "region": "UA",
+      "publisher": "Головний державний санітарний лікар України",
+      "name": "Норми радіаційної безпеки України (НРБУ-97), ДГН 6.6.1.-6.5.001-98",
+      "url": "https://zakon.rada.gov.ua/laws/show/v0062282-97",
+      "identifier": "Постанова № 62 від 01.12.1997, розділ 6 «Медичне опромінення населення»",
+      "reviewed_at": "2026-11-08",
+      "official": true,
+      "kind": "regulation",
+      "access_note": "Full text read on zakon.rada.gov.ua 2026-11-08. П. 6.4: «Ліміти доз для обмеження медичного опромінення не встановлюються», the need for a procedure is justified by the doctor on medical grounds. П. 6.8: «При проведенні профілактичного обстеження населення річна ефективна доза не повинна перевищувати 1 мЗв.» (its second paragraph repealed by розпорядження КМУ № 317-р від 08.04.2025)."
     },
     {
       "id": "ueg-esnm-espghan-breath-test-2022",
@@ -33031,6 +33091,42 @@
         "no_target_reason": "Жодна офіційна настанова не публікує норми індексу резистентності хребцевої артерії, тому межу не застосовано. Практичний стандарт ACR-AIUM-SPR-SRU вимагає реєструвати пікову систолічну й кінцеву діастолічну швидкість, форму кривої та напрямок кровотоку в кожній хребцевій артерії й описувати у висновку змінені криві, але значення RI не наводить; ESC 2024 вимагає перевіряти хребцеві артерії й теж чисел не дає; український стандарт вторинної профілактики інсульту доплерівських значень не наводить. Будь-який діапазон у висновку є власним діапазоном лабораторії.",
         "retest_rationale": "Окремо не контролюють; повторне УЗД призначають через симптоми порушення кровопостачання задніх відділів мозку або через знахідку на кшталт зворотного кровотоку.",
         "jurisdiction_note": "Україна: стандарти медичної допомоги «Вторинна профілактика інсульту» (наказ МОЗ № 1967 від 02.11.2022) оцінюють стеноз сонної артерії за методикою NASCET і не наводять доплерівських швидкостей чи індексів для жодної артерії шиї."
+      }
+    },
+    {
+      "concept_id": "effective-radiation-dose",
+      "unit": "mSv",
+      "kind": "no_universal_target",
+      "source_ids": [
+        "fda-ct-radiation-risks",
+        "euratom-2013-59",
+        "icrp-147",
+        "ua-nrbu-97",
+        "ua-moz-294-2007-xray-rooms"
+      ],
+      "regions_covered": [
+        "US",
+        "EU",
+        "INT",
+        "UA"
+      ],
+      "agreement": "concordant",
+      "divergence_note": null,
+      "bands": [],
+      "short_description": "The effective dose of one X-ray or CT examination, in millisieverts (mSv), as the radiology department printed it under the report (for example «ЕД = 0.02 мЗв»; ЕД is «ефективна доза», effective dose). It is a calculated estimate of the whole-body radiation burden of that exposure: the dose to each exposed organ, weighted by how sensitive that organ is, added up. For scale, the US FDA lists a typical 0.02 mSv for a chest X-ray and 7 mSv for a chest CT.",
+      "why_it_matters": "Each examination adds a small amount; what is worth knowing is the total over time, so a doctor deciding on the next scan can see what came before and avoid repeating a study without need. Ukrainian rules require the department to record this dose in your dose card and to tell you the dose you received. The number is an approximate indicator for radiation protection, not a measure of your personal risk.",
+      "no_target_reason": "A dose is not a test result with a normal range, so no band is applied. No official body sets a dose limit for a patient's diagnostic exposure: the EU Directive 2013/59/Euratom requires every exposure to be justified and kept as low as reasonably achievable and the dose to be part of the report, and Ukraine's НРБУ-97 states that dose limits for medical exposure are not set. ICRP 147 calls effective dose an approximate indicator of possible risk, not a substitute for a risk analysis. The figures that do exist are planning levels, not verdicts on one reading: for preventive (screening) examinations НРБУ-97 and МОЗ order 294 say the annual effective dose should not exceed 1 mSv, and order 294 asks that further exposure be limited once a patient's accumulated diagnostic dose passes 100 mSv.",
+      "retest_interval_months": null,
+      "retest_rationale": "Not a test to repeat. Each new examination is decided by the clinical question it answers.",
+      "jurisdiction_note": "Ukraine: ДСанПіН, наказ МОЗ № 294 від 04.06.2007 (п. 6.2, 6.6, 6.9-6.11), and НРБУ-97 (п. 6.4, 6.8). / Україна: ДСанПіН, наказ МОЗ № 294 від 04.06.2007 (п. 6.2, 6.6, 6.9-6.11), і НРБУ-97 (п. 6.4, 6.8).",
+      "uk": {
+        "name": "Ефективна доза опромінення",
+        "short_description": "Ефективна доза одного рентгенологічного дослідження чи КТ у мілізівертах (мЗв), як її вказало рентгенівське відділення під висновком (наприклад, «ЕД = 0.02 мЗв»; ЕД означає ефективна доза). Це розрахункова оцінка радіаційного навантаження на все тіло від цього опромінення: доза на кожен опромінений орган, зважена за його чутливістю, і все це підсумовано. Для порівняння: FDA (США) наводить типові 0,02 мЗв для рентгенографії органів грудної клітки і 7 мЗв для КТ грудної клітки.",
+        "why_it_matters": "Кожне дослідження додає небагато; важливо знати загальну суму за роки, щоб лікар, який вирішує про наступне обстеження, бачив попередні й не повторював дослідження без потреби. Українські правила зобов'язують відділення записати цю дозу до картки обліку дозових навантажень і повідомити вам отриману дозу. Це число є наближеним показником для радіаційного захисту, а не мірою вашого особистого ризику.",
+        "band_labels": {},
+        "no_target_reason": "Доза не є результатом аналізу з нормою, тому межу не застосовано. Жодна офіційна установа не встановлює ліміту дози для діагностичного опромінення пацієнта: Директива ЄС 2013/59/Euratom вимагає, щоб кожне опромінення було обґрунтованим і якомога нижчим, а доза входила до висновку дослідження, а НРБУ-97 прямо зазначають, що ліміти доз для медичного опромінення не встановлюються. ICRP 147 називає ефективну дозу наближеним показником можливого ризику, а не заміною аналізу ризику. Наявні числа є орієнтирами планування, а не оцінкою одного значення: для профілактичних обстежень НРБУ-97 і наказ МОЗ № 294 визначають, що річна ефективна доза не повинна перевищувати 1 мЗв, а наказ № 294 вимагає обмежити подальше опромінення, коли накопичена діагностична доза пацієнта перевищує 100 мЗв.",
+        "retest_rationale": "Це не аналіз, який повторюють. Кожне нове дослідження призначають з огляду на клінічне питання, на яке воно відповідає.",
+        "jurisdiction_note": "Україна: ДСанПіН, наказ МОЗ № 294 від 04.06.2007 (п. 6.2, 6.6, 6.9-6.11), і НРБУ-97 (п. 6.4, 6.8)."
       }
     }
   ]

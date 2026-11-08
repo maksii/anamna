@@ -6134,6 +6134,10 @@ _SILAB_NOTE = re.compile(
 _SILAB_SITE = re.compile(r"^(?:ТОЧКА|TOUKA)\s*[\dЗ]?\s+(?P<site>URETRA|VAGINA|CERVIX)\b\s*[;:]?\s*(?P<rest>.*)$")
 #: The fourteen high-risk genotypes the panel prints, in its order.
 SILAB_HPV_GENOTYPES = frozenset({16, 18, 31, 33, 35, 39, 45, 51, 52, 56, 58, 59, 66, 68})
+#: The test those genotypes belong to, as the heading prints it with its
+#: bracket left off.  Spelled here rather than read: OCR turns «ВКР» into
+#: anything three letters long, and the section is only ever this test.
+SILAB_HPV_TEST = "ПЛР. ВПЛ ВКР"
 
 
 @dataclass(frozen=True)
@@ -6482,8 +6486,11 @@ def parse_silab_page(
         if section == "hpv":
             found = _SILAB_GENOTYPE.match(line)
             if found and int(found.group("type")) in SILAB_HPV_GENOTYPES:
+                # The lab's own record names the row «ПЛР. ВПЛ ВКР, 16 генотип»
+                # (`labsync._record_name`); a bare «16 генотип» filed the
+                # clinic's print of the same order as a second series.
                 observations.append(_silab_observation(
-                    f"{found.group('type')} генотип", _silab_case(found.group("value"), section), None,
+                    f"{SILAB_HPV_TEST}, {found.group('type')} генотип", _silab_case(found.group("value"), section), None,
                     _silab_case(found.group("ref"), section), line, page_number,
                 ))
             continue
@@ -6632,6 +6639,44 @@ def parse_breath_test(pages: list[dict[str, object]]) -> list[ParsedObservation]
     return rows
 
 
+#: The effective dose an X-ray or CT report prints under its conclusion:
+#: «ЕД = 0.02 мЗв», «ЕД - 0.02 мЗв», «ЕД- 0.06 мЗв» (Expert Hospital), «ЕЕД =
+#: 0,02 мЗв» (the older «ефективна еквівалентна доза»), «Ефективна доза: 0.02
+#: мЗв».  The label is a word of its own: «ЕД» inside a word is not it.
+_EFFECTIVE_DOSE = re.compile(
+    r"(?<![^\W\d_])(?P<label>Е?ЕД(?![^\W\d_])|Ефективна(?:\s+еквівалентна)?\s+доза(?:\s+опромінення)?)"
+    r"\s*[:=\-–]?\s*(?P<v>\d+(?:[.,]\d+)?)\s*(?:мЗв|mSv)(?!\w)",
+    re.I,
+)
+
+
+def parse_effective_dose(
+    pages: list[dict[str, object]], issues: list[ParseIssue] | None = None
+) -> list[ParsedObservation]:
+    """The effective dose of the exposure an X-ray or CT report states, in mSv.
+
+    One row per page that prints one (a page's native text and its OCR say
+    the same line once).  A number with a leading zero and no separator
+    («ЕД-006мЗв») is OCR that lost the decimal point: 0.06 and 0.006 are both
+    a reading of it, so it is not stored but reported for a person to read.
+    """
+    rows: list[ParsedObservation] = []
+    for page in pages:
+        page_number = int(page["page_number"])
+        for found in _EFFECTIVE_DOSE.finditer(_page_text(page)):
+            value = found.group("v")
+            evidence = collapse_space(found.group(0))
+            if re.fullmatch(r"0\d+", value):
+                if issues is not None:
+                    issues.append(ParseIssue(page_number, "unparsed_known_analyte", found.group("label"), evidence))
+                break
+            item = _us_row("Effective radiation dose", value, "мЗв", evidence, page_number)
+            if item:
+                rows.append(item)
+                break
+    return rows
+
+
 def _breath_chart(words: list) -> list[tuple[str, str, str]]:
     """(minute, value, evidence) for each chart data label above a time label.
 
@@ -6675,7 +6720,9 @@ def _breath_chart(words: list) -> list[tuple[str, str, str]]:
     return readings
 
 
-def _special_layout_rows(clinical_type: str, pages: list[dict[str, object]]) -> list[ParsedObservation] | None:
+def _special_layout_rows(
+    clinical_type: str, pages: list[dict[str, object]], issues: list[ParseIssue] | None = None
+) -> list[ParsedObservation] | None:
     """The rows of a report read whole rather than page by page, or None."""
     if clinical_type == "diagnostic_image":
         # A photo of a printed protocol is often typed as an image; the
@@ -6684,8 +6731,12 @@ def _special_layout_rows(clinical_type: str, pages: list[dict[str, object]]) -> 
             *(item for index, page in enumerate(pages)
               for item in parse_ultrasound(_page_text(page), int(page["page_number"]),
                                            _page_text(pages[index - 1]) if index else "")),
-            *parse_eeg(pages), *parse_breath_test(pages),
+            *parse_eeg(pages), *parse_breath_test(pages), *parse_effective_dose(pages, issues),
         ]
+    if clinical_type == "radiology_xray":
+        # The written conclusion stays a finding; the dose under it is the
+        # one number an X-ray report prints.
+        return parse_effective_dose(pages, issues)
     if clinical_type in ULTRASOUND_TYPES:
         texts = ["\n".join(str(page.get(field) or "") for field in ("native_text", "ocr_text")) for page in pages]
         # The previous page goes along so a measurement whose organ heading
@@ -6804,7 +6855,7 @@ def parse_document(
     Passing consecutive pages of one report together lets a reference block
     that runs over a page break be read whole.
     """
-    special = _special_layout_rows(clinical_type, pages)
+    special = _special_layout_rows(clinical_type, pages, issues)
     if special is not None:
         return [finalise(item, age_years, sex) for item in special]
     if clinical_type not in PARSED_CLINICAL_TYPES:

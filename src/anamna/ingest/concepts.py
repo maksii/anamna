@@ -592,6 +592,12 @@ CONCEPT_DEFINITIONS: list[dict[str, object]] = [
     # the specimen («глюкоза, 15 хв»), so two protocols never share a series.
     {"name": "Breath hydrogen", "category": "breath_test", "unit": "ppm", "aliases": ["breath hydrogen", "водень у видихуваному повітрі"]},
     {"name": "H. pylori urea breath test", "category": "infection", "unit": None, "aliases": ["h. pylori urea breath test", "дихальний тест на helicobacter pylori"]},
+    # The effective dose of one X-ray or CT exposure, which Ukrainian
+    # radiology departments must record per patient (ДСанПіН, наказ МОЗ
+    # № 294 від 04.06.2007, п. 6.6) and print under the conclusion
+    # («ЕД = 0.02 мЗв»).  One series across every study: what a person tracks
+    # is the cumulative exposure, not a chest dose apart from a spine dose.
+    {"name": "Effective radiation dose", "category": "radiation_exposure", "unit": "mSv", "aliases": ["effective radiation dose", "effective dose", "ефективна доза опромінення", "ефективна доза"]},
     # Measured by a clinician at a visit and printed in the note's objective
     # status («Температура: 36,6 ° C», «SpO2: 97 %», «Частота дихання: 18 /хв»).
     # Spot readings taken awake, so deliberately not the device metrics of

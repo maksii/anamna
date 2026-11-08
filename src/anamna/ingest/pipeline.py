@@ -2051,8 +2051,16 @@ def parse_pages(
         ):
             found.append((parsed, per_page[parsed.page_number - 1]))
         return found
-    for run in _report_runs(per_page):
-        head = per_page[run[0]]
+    # The pages of one order are one report, read as one: a SILAB print's
+    # first page holds every result but, its table header and footer lost to
+    # OCR, classifies as a clinical report on its own, and the next page may
+    # print no order number.  Split into runs by page identity, the results
+    # page went to a reader that knows no laboratory, and the reader's state
+    # (section, smear site) did not cross the page break.
+    one_order = _one_report(per_page)
+    runs = [list(range(len(per_page)))] if one_order else _report_runs(per_page)
+    for run in runs:
+        head = classification if one_order else per_page[run[0]]
         rows = parse_document(
             head.vendor, head.clinical_type, [pages[index] for index in run], issues=issues,
             age_years=age_at(date_of_birth, head.report_date), sex=sex,
@@ -2074,7 +2082,8 @@ def parse_pages(
                 has_result_header(combined_page_text(page)),
                 len(on_page),
             )
-            found.extend((parsed, per_page[index]) for parsed in on_page)
+            page_class = replace(per_page[index], clinical_type=head.clinical_type) if one_order else per_page[index]
+            found.extend((parsed, page_class) for parsed in on_page)
     return found
 
 
@@ -3858,10 +3867,12 @@ def _keep_checked_concept(connection: sqlite3.Connection, old: dict[str, object]
     value_type = "numeric" if parsed.value_numeric is not None else "text"
     if concept_for_alias(parsed.raw_name, value_type) is not None:
         return concept_id
-    known = connection.execute(
-        "SELECT category FROM concepts WHERE id=?", (previous,)
-    ).fetchone()
-    if known is None or str(known["category"]) == "unmapped":
+    # Only a catalogue concept is worth keeping over the new label's own: an
+    # auto concept is a label too, and an inferred category does not make it
+    # known.  Kept, a verified «16 генотип» held its bare concept and the
+    # renamed «ПЛР. ВПЛ ВКР, 16 генотип» was learned onto it, so the clinic's
+    # print never joined the lab record's series.
+    if previous not in _DEFINED_CONCEPT_IDS:
         return concept_id
     vendor_id = connection.execute(
         "SELECT vendor_id FROM reports WHERE id=?", (new["report_id"],)

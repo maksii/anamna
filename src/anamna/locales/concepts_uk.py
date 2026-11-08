@@ -417,6 +417,7 @@ CONCEPT_NAMES_UK: dict[str, str] = {
     'EEG theta rhythm frequency': 'ЕЕГ: частота тета-ритму',
     'EEG theta rhythm amplitude': 'ЕЕГ: амплітуда тета-ритму',
     'Breath hydrogen': 'Водень у видихуваному повітрі',
+    'Effective radiation dose': 'Ефективна доза опромінення',
     'H. pylori urea breath test': 'Дихальний уреазний тест на H. pylori',
 
     # Allergen components (ImmunoCAP/ALEX molecular allergology). WHO/IUIS

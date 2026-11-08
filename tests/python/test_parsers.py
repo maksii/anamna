@@ -610,6 +610,9 @@ UNITS_NOT_PRINTED_ON_A_RESULT_LINE |= {"°C", "breaths/min", "kg", "cm", "kg/m²
 #: hydrogen, read by their own protocol readers (``parse_eeg``,
 #: ``parse_breath_test``); «Гц» on a result line is a photostimulation setting.
 UNITS_NOT_PRINTED_ON_A_RESULT_LINE |= {"Hz", "µV", "ppm"}
+#: The effective dose under an X-ray conclusion («ЕД = 0.02 мЗв»), read by
+#: ``parse_effective_dose`` behind its own label only.
+UNITS_NOT_PRINTED_ON_A_RESULT_LINE |= {"mSv"}
 
 
 def test_every_concept_unit_has_a_spelling_the_parser_accepts():
