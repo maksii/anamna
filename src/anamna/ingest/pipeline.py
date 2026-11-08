@@ -1110,7 +1110,14 @@ def _store_unmapped_concept(
            VALUES (?, ?, ?, ?, ?, ?)""",
         (concept_id, collapse_space(raw_name), category, value_type, preferred_unit, utc_now()),
     )
-    if connection.execute("SELECT 1 FROM concepts WHERE id=?", (concept_id,)).fetchone():
+    same = connection.execute("SELECT category FROM concepts WHERE id=?", (concept_id,)).fetchone()
+    if same:
+        # The id is the inferred category's own, so a row found here was
+        # stored before under a wrong one (39 serum amino acids kept
+        # «urinalysis» from a title's «Сечовина» through every re-read).
+        resolved_category = _auto_category(concept_id, same["category"], category)
+        if resolved_category != same["category"]:
+            connection.execute("UPDATE concepts SET category=? WHERE id=?", (resolved_category, concept_id))
         return concept_id, preferred_unit
     existing = connection.execute(
         "SELECT id, category, value_type, preferred_unit FROM concepts WHERE canonical_name=? COLLATE NOCASE",

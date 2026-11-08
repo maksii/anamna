@@ -363,3 +363,18 @@ def test_the_cytology_passport_is_named_typed_and_numbered():
                         "Обробка матеріалу та видача результатів аналізів виконується за допомогою лабораторної "
                         "інформаційної системи SILAB.\n", LOGO)
     assert classify_document("file.pdf", "application/pdf", [results], {}).clinical_type == "laboratory"
+
+
+def test_an_auto_concept_found_by_its_own_id_loses_a_stale_urinalysis_category(connection):
+    """Round 4: a serum row resolves to the unmapped concept's own id, which an
+    older reader had stored under «urinalysis»; the early exit kept it."""
+    from anamna.ingest.pipeline import stable_id
+    from anamna.ingest.text import normalized_key
+    stale = stable_id("unmapped-concept", f"{normalized_key('Аланін')}:numeric:unmapped")
+    connection.execute(
+        "INSERT INTO concepts(id, canonical_name, category, value_type, preferred_unit, created_at) VALUES (?,?,?,?,?,?)",
+        (stale, "Аланін", "urinalysis", "numeric", "мкмоль/л", "2026-01-01T00:00:00+00:00"),
+    )
+    again = filed(connection, "Аланін", unit_raw="мкмоль/л", specimen="сироватка крові",
+                  context="Амінокислоти (скринінг в сироватці)")
+    assert again == stale and category(connection, stale) != "urinalysis"
