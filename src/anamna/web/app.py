@@ -10640,6 +10640,8 @@ def correct_document_finding(
             raise HTTPException(404)
         if action == "correct":
             after = _finding_fields(text, recommended)
+            # The date the photo prints, when the reading lost it.
+            corrected_date = _validated_date(finding_date, _DOC_DATE_INVALID_KEY) if finding_date else None
         elif action == "revert":
             history = _finding_corrections(connection, user["id"], [str(row["id"]) for row in rows])
         columns = ("summary_uk", "summary_en", "recommendations", "status", "attention_reasons", "verification_status")
@@ -10661,9 +10663,12 @@ def correct_document_finding(
                 f"UPDATE clinical_findings SET {', '.join(f'{name}=?' for name in columns)} WHERE id=?",
                 (*(after[name] for name in columns), row["id"]),
             )
+            if action == "correct" and corrected_date:
+                connection.execute("UPDATE clinical_findings SET finding_date=? WHERE id=?", (corrected_date, row["id"]))
             _audit_finding(
                 connection, user, "finding_corrected" if action == "correct" else "finding_correction_reverted",
-                str(row["id"]), {"document_id": document_id, "source": "image", "before": before, "after": after},
+                str(row["id"]), {"document_id": document_id, "source": "image", "before": before, "after": after,
+                                 **({"finding_date": corrected_date} if action == "correct" and corrected_date else {})},
             )
         if action in {"revert", "remove"}:
             sync_clinical_findings(connection)  # an extracted row is refreshed from its page now

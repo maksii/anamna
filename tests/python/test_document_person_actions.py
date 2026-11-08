@@ -181,7 +181,7 @@ def test_a_person_corrects_a_conclusion_and_no_rebuild_overwrites_it(tmp_path: P
         response = api.post(
             "/documents/us-1/findings",
             data={"finding_id": [row["id"] for row in rows], "summary": fixed,
-                  "recommendations": "консультація терапевта"},
+                  "recommendations": "консультація терапевта", "finding_date": "2026-03-13"},
             headers=agent,
         )
         assert response.status_code == 200 and response.json()["ok"]
@@ -197,6 +197,7 @@ def test_a_person_corrects_a_conclusion_and_no_rebuild_overwrites_it(tmp_path: P
     assert [row["id"] for row in stored] == [row["id"] for row in rows]
     assert {(row["summary_uk"], row["summary_en"], row["recommendations"], row["verification_status"])
             for row in stored} == {(fixed, "", "консультація терапевта", "corrected")}
+    assert {row["finding_date"] for row in stored} == {"2026-03-13"}
     details = json.loads(scalar(settings, "SELECT details_json FROM audit_events WHERE action='finding_corrected' LIMIT 1"))
     assert details["source"] == "image" and details["before"]["summary_uk"] == read
     assert details["token_kind"] == "agent"
