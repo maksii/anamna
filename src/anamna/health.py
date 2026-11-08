@@ -167,6 +167,7 @@ CATEGORY_LABELS = {
     "inflammation": "Inflammation",
     "stool": "Stool analysis",
     "breath_test": "Breath tests",
+    "radiation_exposure": "Radiation from imaging",
     "gynecology": "Gynaecological ultrasound",
     "breast": "Breast ultrasound",
     "neurophysiology": "EEG (brain electrical activity)",
@@ -322,6 +323,8 @@ UNIT_TRANSLATIONS = {
     "мм": "mm",
     "г/м²": "g/m²",
     "см/с": "cm/s",
+    # The effective dose an X-ray report prints under its conclusion.
+    "мзв": "mSv",
     # EEG rhythm frequency and amplitude («11 Гц», «до 230 мкВ»).
     "гц": "Hz",
     "мкв": "µV",
@@ -366,6 +369,7 @@ _UNIT_REVERSE["μu/ml"] = "мкОд/мл"
 # unit had no Ukrainian form at all.
 _UNIT_REVERSE["dba"] = "дБА"
 _UNIT_REVERSE["hz"] = "Гц"
+_UNIT_REVERSE["msv"] = "мЗв"
 _UNIT_REVERSE["μv"] = "мкВ"
 _UNIT_REVERSE["count"] = "шт."
 _UNIT_REVERSE["met-like effort"] = "MET-еквівалент"

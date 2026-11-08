@@ -193,6 +193,9 @@ PANEL_LESS_CONCEPTS = (
     # Tumour markers: read against a known cancer or a pelvic mass, not a body
     # system, so no area panel claims them; their metric pages explain that.
     "cancer-antigen-125-ca-125", "cancer-antigen-15-3-ca-15-3", "human-epididymis-protein-4-he4",
+    # Review 4: the effective dose an X-ray report prints is an exposure, not a
+    # body system's reading; it shows on its metric page and on the report.
+    "effective-radiation-dose",
 )
 
 

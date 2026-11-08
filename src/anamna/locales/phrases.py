@@ -460,6 +460,7 @@ PHRASES: dict[str, str] = {
     "Reproductive": "Репродуктивне",
     "Pelvic and breast ultrasound, colposcopy and gynaecological findings": "УЗД органів малого таза і молочних залоз, кольпоскопія та гінекологічні висновки",
     "Breath tests": "Дихальні тести",
+    "Radiation from imaging": "Опромінення під час обстежень",
     "Gynaecological ultrasound": "Гінекологічне УЗД",
     "EEG (brain electrical activity)": "ЕЕГ (електрична активність мозку)",
     "Salivary-gland and cervical-node ultrasound": "УЗД слинних залоз і шийних лімфовузлів",

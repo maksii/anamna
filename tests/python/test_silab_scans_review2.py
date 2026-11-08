@@ -256,8 +256,8 @@ HPV = HEADER + """ПЛР Київ
 def test_a_genotype_outside_the_panel_or_read_twice_is_not_a_result():
     second = HEADER + "ПЛР. ВПЛ ВКР (генотипування, якісне.\n58 генотип не виявлено не виявлено\n"
     found = rows(HPV, second)
-    assert found == {(1, "16 генотип", None): ("не виявлено", None, "не виявлено"),
-                     (1, "56 генотип", None): ("не виявлено", None, "не виявлено")}
+    assert found == {(1, "ПЛР. ВПЛ ВКР, 16 генотип", None): ("не виявлено", None, "не виявлено"),
+                     (1, "ПЛР. ВПЛ ВКР, 56 генотип", None): ("не виявлено", None, "не виявлено")}
 
 
 CYTOLOGY = HEADER + """Цитологічні дослідження Київ
