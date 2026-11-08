@@ -14,7 +14,7 @@ from .text import collapse_space, parse_decimal
 # the files it names.  Two changes reached `main` without a bump -- 196 lines of
 # new rules in 4472233, and the Latin unit spellings below -- so every row those
 # produced is indistinguishable from a row the previous parser produced.
-PARSER_VERSION = "2026.11.08-3"
+PARSER_VERSION = "2026.11.08-4"
 
 #: The kinds of report this module reads values out of.  Everything else --
 #: ultrasound, MRI, consultation, pathology, radiology -- it returns nothing
@@ -6670,7 +6670,8 @@ def parse_effective_dose(
                 if issues is not None:
                     issues.append(ParseIssue(page_number, "unparsed_known_analyte", found.group("label"), evidence))
                 break
-            item = _us_row("Effective radiation dose", value, "мЗв", evidence, page_number)
+            # The printed label («ЕД», «ЕЕД», «Ефективна доза»), as the paper names it.
+            item = _us_row(collapse_space(found.group("label")), value, "мЗв", evidence, page_number)
             if item:
                 rows.append(item)
                 break

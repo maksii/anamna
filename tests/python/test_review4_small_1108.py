@@ -58,9 +58,11 @@ XRAY = """ТзОВ «Лікарня Приклад»
 ])
 def test_an_xray_report_gives_its_effective_dose(line, value):
     rows = parse_document("Expert Hospital", "radiology_xray", [text_page(1, XRAY.format(dose=line))])
-    assert [(row.raw_name, row.value_numeric, row.unit_raw) for row in rows] == [
-        ("Effective radiation dose", value, "мЗв")]
+    label = line.strip("| ").split("=")[0].split(":")[0].split("-")[0].strip()
+    assert [(row.raw_name, row.value_numeric, row.unit_raw) for row in rows] == [(label, value, "мЗв")]
     assert rows[0].evidence_text == line.strip("| ")
+    # The printed label is the row's name, and it files under the dose concept.
+    assert (concept_for_alias(label, "numeric") or {}).get("name") == "Effective radiation dose"
 
 
 def test_the_dose_files_under_one_defined_concept_in_its_own_unit():
