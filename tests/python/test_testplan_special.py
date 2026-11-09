@@ -239,3 +239,23 @@ def test_the_search_finds_a_test_in_either_language(special_page):
     assert 'value="gen-lactose"' in live["found"] and "Tests for that" in live["found"]
     # The lab's own item is found below, to include as it is.
     assert 'name="include" value="esculab:3002"' in live["sets"]
+
+
+ALEX = {**RICH, "id": 3003, "name": "ALEX3-тест (молекулярний аналіз на 300 алергенів, антитіла IgE)", "code": "O3",
+        "price": 6100.0, "discount": 0.0, "parameters": [{"id": 9003, "name": "ALEX3"}]}
+
+
+def test_every_allergen_an_entry_asks_for_has_a_name_in_both_languages():
+    asked = {k.removeprefix("x:sige:") for e in testplan_special.ENTRIES for k in e.keys if k.startswith("x:sige:")}
+    assert asked <= set(testplan_special.ALLERGENS)
+    for code in testplan_special.ALLERGENS:
+        names = MESSAGES[f"special.allergen_{code}"]
+        assert set(names) == {"en", "uk"} and all(f"({code})" in name for name in names.values()), code
+
+
+def test_an_allergen_sold_only_inside_alex_is_named_not_shown_as_a_key(special_page, monkeypatch):
+    goods = [esculab_shop.item(ALEX)]
+    monkeypatch.setattr(esculab_shop, "catalog", lambda settings, region, base_url=None: goods)
+    html = special_page.get("/plan-tests?special=1&touched=1&topic=allergy&sx=allergy-ga2len&plan=1").text
+    assert "Covers 18 of 18" in html and "Olive tree pollen (t9)" in html
+    assert "x:sige:" not in re.sub(r'(value|data-[\w-]+)="[^"]*"', "", html)

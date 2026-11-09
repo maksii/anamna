@@ -103,6 +103,9 @@ _GENE = ("genetic", "set", "single")
 #: sources as specific IgE.
 GA2LEN = ("t4", "t2", "t3", "t11", "t23", "g6", "t9", "w6", "w1", "w21", "m6", "m2", "m3", "d1", "d2", "e1", "e5",
           "i6")
+#: Every allergen an entry asks for by code, each named in the catalogue
+#: (``special.allergen_<code>``).
+ALLERGENS = (*GA2LEN, "i1", "i3")
 #: A panel for inherited cancer risk, by its name or description.
 _INHERITED_CANCER = r"спадков\w* (форм\w* )?рак|\bOnco|hereditary cancer"
 
