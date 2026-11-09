@@ -192,17 +192,6 @@ def test_clinical_diagnosis_split_is_identical():
     assert split > 1000, split
 
 
-def test_area_clause_split_is_identical():
-    old = re.compile(r"(?<=[.;])\s+|\n|\s+[-–]\s*")
-    alphabet = [" ", "\n", "\t", "-", "–", ".", ";", "x"]
-    split = 0
-    for text in [*_strings(alphabet, 6), *_FIXTURES, *_LONG_RUNS, "x" + " " * 300 + "- y", "a\n  - b"]:
-        expected = old.split(text)
-        assert health._AREA_CLAUSE_SPLIT_RE.split(text) == expected, repr(text)
-        split += len(expected) > 1
-    assert split > 10000, split
-
-
 def _old_single_interval(clean):
     """The four whole-string reference forms `display_reference` used to try inline."""
     between = re.fullmatch(r"(?:від\s*)?(-?\d+(?:[.,]\d+)?)\s*(?:до|[-–—])\s*(-?\d+(?:[.,]\d+)?)", clean, re.I)
@@ -257,7 +246,8 @@ def test_rewritten_health_regexes_stay_linear_on_long_blank_runs():
     health._LISTED_PHONE_RE.sub("", "x" + run + "y")
     health._BLANK_REVISIT_RE.sub("", "x" + run + "y")
     health._CLINICAL_DIAGNOSIS_RE.split("x" + run + "y")
-    health._AREA_CLAUSE_SPLIT_RE.split("x" + run + "y")
+    health._AREA_SENTENCE_SPLIT_RE.split("x" + run + "y")
+    health._AREA_DASH_RE.split("x" + run + "y")
     list(health._CONCLUSION_LABELS[4].finditer("огляд" + run + "y"))
     assert time.perf_counter() - started < 2.0
 
