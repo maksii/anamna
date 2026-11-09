@@ -215,6 +215,24 @@ def test_the_people_on_the_account_and_token_renewal(monkeypatch):
     assert caught.value.key == "labsync.error_auth"
 
 
+@pytest.mark.parametrize("renewal", [
+    # Veselka's server, live 2026-11-09: the procedure does not exist there.
+    "Could not find stored procedure 'spiAnonymousTokenRefresh'.",
+    # St. Paraskeva, a renewal token it no longer knows: a status row, no token.
+    {"value": [{"statusCode": 401, "statusMessage": "!!"}]},
+])
+def test_a_clinic_that_cannot_renew_asks_for_a_new_sign_in(monkeypatch, renewal):
+    stale = json.dumps({"refresh": REFRESH, "login": "u100", "expires": "2000-01-01T00:00:00+00:00"})
+    seen = install(monkeypatch, {"spiAnonymousTokenRefresh": renewal, "spiUserPatientDetails": DETAILS})
+    client = doctoreleks.CLINICS["veselka"].Client(URL, ACCESS, "", stale)
+    with pytest.raises(LabSyncError) as caught:
+        client.check()
+    # "Sign in again", not "the clinic sent something unreadable" on every sync.
+    assert caught.value.key == "labsync.error_auth"
+    assert [entry[1]["name"] for entry in seen] == ["spiAnonymousTokenRefresh"]
+    assert client.secret == ACCESS and json.loads(client.refresh_secret)["refresh"] == REFRESH
+
+
 MENU = {"menu": [
     {"name": "Profile", "caption": "Профіль", "action": [{"name": "spzIBWPatientProfile", "params": {}}]},
     {"name": "Document", "caption": "Документи", "action": [{"name": "spzIBWDocumentList", "params": {}}]},

@@ -36,7 +36,9 @@ Sign-in, as the app's phone mode (both clinics' login screens are set to it,
    and never stored.
 4. Renewal: ``spiAnonymousTokenRefresh {RefreshToken}`` → ``value[0] =
    {expires, login, accessToken, refreshToken}``; the app renews once
-   ``expires`` has passed.
+   ``expires`` has passed (it posts to ``/api/runanonymous``, which answers as
+   ``/api/va`` does).  Veselka's server has no such procedure (2026-11-09), so
+   there a lapsed access token means signing in again.
 
 Signed in, every call also carries ``Login``.  ``spiUserPatientDetails {Login,
 DeviceInfoJson, DeviceIdentifier}`` → ``value = {user, patientList: [{patientID,
@@ -320,12 +322,23 @@ class Client:
         state = self._state()
         if not state.get("refresh"):
             raise LabSyncError("labsync.error_auth", 401)
-        row = _first_row(_call(self.base_url, self.installation, "spiAnonymousTokenRefresh",
-                               {"RefreshToken": state["refresh"]}, refused="labsync.error_auth"))
-        fresh = _credentials(str(row.get("accessToken") or ""), row.get("expires"),
-                             str(row.get("refreshToken") or state["refresh"]),
-                             str(row.get("login") or state.get("login") or ""),
-                             {"device_id": state.get("device_id")}, self.phone)
+        try:
+            row = _first_row(_call(self.base_url, self.installation, "spiAnonymousTokenRefresh",
+                                   {"RefreshToken": state["refresh"]}, refused="labsync.error_auth"))
+            fresh = _credentials(str(row.get("accessToken") or ""), row.get("expires"),
+                                 str(row.get("refreshToken") or state["refresh"]),
+                                 str(row.get("login") or state.get("login") or ""),
+                                 {"device_id": state.get("device_id")}, self.phone)
+        except LabSyncError as exc:
+            # Veselka's server has no renewal procedure at all ("Could not find
+            # stored procedure 'spiAnonymousTokenRefresh'", live 2026-11-09, on
+            # the app's own /api/runanonymous too), and a spent renewal token
+            # answers a status row with no token in it.  Either way the session
+            # is over: the person signs in again, as in the app -- not an
+            # unreadable reply on every sync from then on.
+            if exc.key != ERROR_REPLY or exc.status:
+                raise
+            raise LabSyncError("labsync.error_auth", 401) from None
         self.secret, self.refresh_secret = fresh["secret"], fresh["refresh_secret"]
 
     def _run(self, name: str, values: dict | None = None, *, again: bool = True) -> object:

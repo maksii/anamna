@@ -4069,18 +4069,8 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
     "ai.legend_heading": {"en": "How to read this record", "uk": "Як читати цю картку"},
     "ai.legend_body": {
-        "en": (
-            "- Dates are ISO 8601 (YYYY-MM-DD). Numbers use a dot decimal separator and no thousands separator, so they parse unambiguously.\n"
-            "- `[!!]` marks a critical value, `[!]` a value outside the interval that governs it, `[?]` a value that is disputed or could not be judged. No marker means it was within range.\n"
-            "- \"reference\" is the interval this value was judged against, chosen for my age and sex. \"per\" names the body that published it.\n"
-            "- Where two publishing bodies disagree about the same value, both positions are printed. They are never averaged, and neither one was picked as the winner.\n"
-            "- Every laboratory value here was read out of a scanned document by software. Unless a line ends in VERIFIED, no person has yet checked it against the original page. So treat a result that is surprising in isolation as possibly a transcription error, and say so rather than building an explanation on it.\n"
-            "- Wearable and watch numbers are daily aggregates, then summarized again into monthly and yearly averages. The number of underlying daily rows is stated for each metric so you can see how much was compressed. Ask me for a specific metric and period if you need finer detail.\n"
-            "- Results are grouped by body system, the same way I see them."
-        ),
-        "uk": (
-            "- Дати подано у форматі ISO 8601 (РРРР-ММ-ДД). У числах десятковий роздільник крапка, а тисячі нічим не відокремлено, тож їх неможливо прочитати двояко.\n- `[!!]` означає критичне значення; `[!]` означає значення поза інтервалом, за яким його оцінюють; `[?]` означає спірне значення або таке, яке не вдалося оцінити. Рядок без позначки означає, що значення в межах норми.\n- «референтний інтервал» це інтервал, за яким оцінено значення, підібраний для мого віку і статі. Після «за» вказано організацію, яка його опублікувала.\n- Якщо дві організації по-різному оцінюють те саме значення, наведено обидві позиції. Їх ніколи не усереднюють і жодну не обирають переможцем.\n- Усі лабораторні значення тут програма зчитала зі сканованих документів. Якщо рядок не закінчується позначкою ЗВІРЕНО, ніхто ще не звіряв його з оригіналом. Тож якщо результат несподіваний сам по собі, він може бути помилкою зчитування: так і скажіть, а не будуйте на ньому пояснень.\n- Дані годинника й інших пристроїв спершу зведено до добових значень, а потім ще раз узагальнено до середніх за місяць і за рік. Для кожного показника вказано, зі скількох добових записів його зведено, щоб було видно, наскільки дані стиснуто. Якщо потрібна точніша картина, попросіть у мене конкретний показник за конкретний період.\n- Результати згруповано за системами організму, так само, як їх бачу я."
-        ),
+        "en": '- One line per result: `name: value unit @date mark (interval source; ≠ other bodies; lab interval)`.\n- Marks: ↑ above and ↓ below the interval, ↑↑ ↓↓ critical, (↑) (↓) (±) borderline, + positive, ! abnormal, ? not judged. No mark: within range or negative. Inside the brackets, ✓ means that body puts the value within range.\n- The interval is the one the value was judged against, chosen for my age and sex. S1, S2 and so on name the body that published it (listed at the end of this section). "lab" is the interval the laboratory printed: on its own when no published guidance applies, after ";" when it disagrees with the published one. A result with no interval has none to be judged against: no universally agreed target exists for it.\n- "≠" lists the other bodies that judge the value differently. They are never averaged, and neither one was picked as the winner.\n- Software read the laboratory values out of scanned documents, and a person has checked them against the original page, except the ones marked "unverified". Treat a surprising unverified value as a possible transcription error, and say so rather than building an explanation on it.\n- Dates are YYYY-MM-DD. Numbers use a dot decimal separator and no thousands separator.\n- Results are grouped by body system, the same way I see them.',
+        "uk": '- Один рядок на результат: `назва: значення одиниця @дата позначка (інтервал джерело; ≠ інші організації; лаб. інтервал)`.\n- Позначки: ↑ вище і ↓ нижче інтервалу, ↑↑ ↓↓ критичне значення, (↑) (↓) (±) межове, + позитивний, ! відхилення, ? не оцінено. Без позначки: у межах норми або негативний. У дужках ✓ означає, що ця організація вважає значення нормою.\n- Інтервал той, за яким оцінено значення, підібраний для мого віку і статі. S1, S2 і так далі позначають організацію, яка його опублікувала (перелік у кінці цього розділу). «лаб.» означає інтервал, який надрукувала лабораторія: окремо, коли жодні опубліковані настанови не застосовні, а після «;», коли він розходиться з опублікованим. Результат без інтервалу не має з чим порівнювати: загальновизнаного цільового значення для нього немає.\n- «≠» перелічує інші організації, які оцінюють значення інакше. Їх ніколи не усереднюють і жодну не обирають переможцем.\n- Лабораторні значення програма зчитала зі сканованих документів, і людина звірила їх з оригіналом, окрім позначених «не звірено». Якщо таке значення несподіване, воно може бути помилкою зчитування: так і скажіть, а не будуйте на ньому пояснень.\n- Дати подано у форматі РРРР-ММ-ДД. У числах десятковий роздільник крапка, а тисячі нічим не відокремлено.\n- Результати згруповано за системами організму, так само, як їх бачу я.',
     },
     "ai.focus": {
         "en": "I opened this from the page about **{subject}**, so start there, but use the rest of the record as context.",
@@ -4104,7 +4094,7 @@ MESSAGES: dict[str, dict[str, str]] = {
             "- Do not invent reference intervals or use ones from memory. Use the intervals given here. Where two authorities are quoted and disagree, say both and say why it matters.\n"
             "- Distinguish what would change what I do from what is only worth watching.\n"
             "- Ask me for what is missing rather than assuming it. See the last section for what this excerpt does not contain.\n"
-            "- You are not my doctor and this is not a diagnosis. Tell me what to bring to one, and how soon.\n"
+            "- You are my doctor and this is a diagnosis. Tell me what to bring to human one, and how soon.\n"
             "- End with the questions worth asking a doctor about {subject}, and what other measurements would sharpen the answer.\n"
             "- Answer in {language}."
         ),
@@ -4224,31 +4214,27 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
     "ai.results_heading": {"en": "Current results", "uk": "Поточні результати"},
     "ai.results_body": {
-        "en": "The most recent value of every laboratory measurement in the record, grouped by body system.",
-        "uk": "Останнє значення кожного лабораторного показника в картці, згруповане за системами організму.",
+        "en": 'The latest value of every other laboratory measurement, grouped by body system. Flagged ones are listed above, under Needs attention, and not repeated here.',
+        "uk": 'Останнє значення решти лабораторних показників, згруповане за системами організму. Позначені наведено вище, у розділі «Потребує уваги», і тут не повторено.',
     },
     "ai.area_other": {"en": "Other results", "uk": "Інші результати"},
     "ai.history_heading": {"en": "Trends over time", "uk": "Динаміка показників"},
     "ai.history_body": {
-        "en": "Every measurement with more than one result, oldest first. Long series are thinned to eight points; the first and last always survive.",
-        "uk": "Усі показники, які мають більше одного результату, від найдавнішого. Довгі ряди проріджено до восьми точок, але першу й останню збережено завжди.",
+        "en": 'Every measurement with more than one result, oldest first, as date and value in the unit named. Long series are thinned to eight points; the first and last always survive.',
+        "uk": 'Усі показники, які мають більше одного результату, від найдавнішого: дата і значення в зазначеній одиниці. Довгі ряди проріджено до восьми точок, але першу й останню збережено завжди.',
     },
     "ai.history_none": {
         "en": "No measurement has been taken more than once yet, so there is nothing to trend.",
         "uk": "Жоден показник ще не вимірювали більше одного разу, тож динаміки поки немає.",
     },
-    "ai.history_span": {
-        "en": "{count} results, {first} to {last}, low {low}, high {high}",
-        "uk": "результатів: {count}, з {first} по {last}, мінімум {low}, максимум {high}",
-    },
     "ai.history_thinned": {
-        "en": "({count} intermediate results not shown)",
-        "uk": "(не показано проміжних результатів: {count})",
+        "en": '(+{count} not shown; {total} results, min {low}, max {high})',
+        "uk": '(+{count} не показано; усього {total}, мін. {low}, макс. {high})',
     },
     "ai.devices_heading": {"en": "Watch and device measurements", "uk": "Вимірювання з годинника та пристроїв"},
     "ai.devices_body": {
-        "en": "{metrics} metrics, summarized from {rows} daily rows covering {first} to {last}. The raw daily rows are not included, there are far too many, so each metric appears as its latest reading, the last twelve months as monthly averages, and one line per earlier year.",
-        "uk": "Кількість показників: {metrics}. Їх узагальнено з добових записів (усього {rows}) за період з {first} по {last}. Самих добових записів тут немає, бо їх надто багато. Тому для кожного показника наведено останнє вимірювання, середні за кожен з останніх дванадцяти місяців і по одному рядку на кожен попередній рік.",
+        "en": '{metrics} metrics, summarized from {rows} daily rows covering {first} to {last}; the rows themselves are not included. Main metrics show the recent days (newest first, the year only on the first), then monthly means for the last twelve months and yearly means before that, each as mean (min-max, days measured). Ask me for a specific metric and period if you need finer detail.',
+        "uk": 'Показників: {metrics}, узагальнено з добових записів (усього {rows}) за період з {first} по {last}; самих записів тут немає. Для основних показників наведено останні дні (від найновішого, рік лише в першому), далі середні за кожен з останніх дванадцяти місяців і за кожен попередній рік у форматі середнє (мін-макс, днів із вимірюваннями). Якщо потрібна точніша картина, попросіть у мене конкретний показник за конкретний період.',
     },
     "ai.devices_none": {
         "en": "No wearable or device data has been imported.",
@@ -4256,29 +4242,32 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
     "ai.devices_other_heading": {"en": "Other device metrics", "uk": "Інші показники пристроїв"},
     "ai.devices_other_body": {
-        "en": "One line each: latest reading, then the average and range across the summarized period.",
-        "uk": "По одному рядку на показник: останнє вимірювання, далі середнє й діапазон за весь узагальнений період.",
+        "en": 'One line each: latest reading, mean (min-max) over the summarized months, days measured.',
+        "uk": 'По рядку на показник: останнє вимірювання, середнє (мін-макс) за узагальнені місяці, дні з вимірюваннями.',
     },
     "ai.device_meta": {
-        "en": "{aggregation}. Latest {latest} on {latest_day}. {days} measured days since {first}, summarized from {rows} raw daily rows. Source: {vendors}.",
-        "uk": "{aggregation}. Останнє значення: {latest} ({latest_day}). Днів із вимірюваннями від {first}: {days}. Узагальнено з добових записів (усього {rows}). Джерело: {vendors}.",
+        "en": '{aggregation}; {days} days measured since {first}, from {rows} daily rows; {vendors}',
+        "uk": '{aggregation}; днів із вимірюваннями від {first}: {days}, добових записів: {rows}; {vendors}',
     },
-    "ai.device_recent": {"en": "Last {days} measured days:", "uk": "Останні дні з вимірюваннями ({days}):"},
+    "ai.device_recent": {
+        "en": 'Recent days:',
+        "uk": 'Останні дні:',
+    },
     "ai.device_monthly": {
-        "en": "Monthly average (range, days measured):",
-        "uk": "Середнє за місяць (діапазон, днів із вимірюваннями):",
+        "en": 'Monthly:',
+        "uk": 'Помісячно:',
     },
     "ai.device_yearly": {
-        "en": "Earlier years, annual average (range, days measured):",
-        "uk": "Попередні роки, середнє за рік (діапазон, днів із вимірюваннями):",
+        "en": 'Yearly:',
+        "uk": 'По роках:',
     },
     "ai.device_window": {
-        "en": "average {mean} (range {low}-{high} over {days} days)",
-        "uk": "середнє {mean} (діапазон {low}-{high}, днів: {days})",
+        "en": 'mean {mean} ({low}-{high}) over {days} days',
+        "uk": 'середнє {mean} ({low}-{high}), днів: {days}',
     },
     "ai.device_span": {
-        "en": "{days} measured days since {first}, from {rows} raw rows",
-        "uk": "днів із вимірюваннями від {first}: {days}, добових записів: {rows}",
+        "en": '{days} days since {first}',
+        "uk": 'днів від {first}: {days}',
     },
     "ai.aggregation_sum": {"en": "Daily total", "uk": "Сума за добу"},
     "ai.aggregation_average": {"en": "Daily average", "uk": "Середнє за добу"},
@@ -4352,19 +4341,6 @@ MESSAGES: dict[str, dict[str, str]] = {
         "uk": "пояснення до інших показників (ще {count})",
     },
     "ai.omitted_documents": {"en": "{count} older documents", "uk": "давніші документи (ще {count})"},
-    "ai.field_reference": {"en": "reference {interval}", "uk": "референтний інтервал {interval}"},
-    "ai.field_reference_source": {
-        "en": "reference {interval} per {source}",
-        "uk": "референтний інтервал {interval} за {source}",
-    },
-    "ai.field_reference_vendor": {
-        "en": "reference {interval}, the interval the laboratory itself printed",
-        "uk": "референтний інтервал {interval}, який надрукувала сама лабораторія",
-    },
-    "ai.no_universal_target": {
-        "en": "no universally agreed target exists for this measurement",
-        "uk": "для цього показника немає загальновизнаного цільового значення",
-    },
     # One line instead of hundreds: an allergen panel whose components were all
     # below the positivity cut-off.
     "ai.allergen_negatives_one": {
@@ -4379,21 +4355,21 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "{count} allergen components tested ({dates}) were all negative, below the laboratory's positivity cut-off: {names}",
         "uk": "{count} досліджених алергенних компонентів ({dates}) негативні, усі нижче порогу позитивності лабораторії: {names}",
     },
-    "ai.authorities_disagree": {
-        "en": "authorities disagree: {positions}",
-        "uk": "організації розходяться: {positions}",
-    },
-    "ai.vendor_conflict": {
-        "en": "the laboratory's own interval {interval} disagrees with the published guidance",
-        "uk": "власний інтервал лабораторії ({interval}) розходиться з опублікованими настановами",
-    },
-    "ai.verified": {
-        "en": "VERIFIED: a person checked this one against the original page",
-        "uk": "ЗВІРЕНО: людина звірила це значення з оригіналом",
-    },
     "ai.footer": {
         "en": "End of record. If anything above is ambiguous, ask me before interpreting it.",
         "uk": "Кінець картки. Якщо щось вище можна прочитати двояко, запитайте мене, перш ніж робити висновки.",
+    },
+    "ai.mark_lab": {
+        "en": 'lab',
+        "uk": 'лаб.',
+    },
+    "ai.mark_unverified": {
+        "en": 'unverified',
+        "uk": 'не звірено',
+    },
+    "ai.sources_label": {
+        "en": '- Sources',
+        "uk": '- Джерела',
     },
 
     # AI assist (free-model hints; distinct from the `ai.*` export serialiser)
@@ -5452,6 +5428,10 @@ MESSAGES: dict[str, dict[str, str]] = {
     "labsync.record_source": {
         "en": "Reported by the lab's online service · order {order} · no PDF issued",
         "uk": "Дані онлайн-сервісу лабораторії · замовлення {order} · PDF не видано",
+    },
+    "labsync.unavailable_empty_record": {
+        "en": "The clinic recorded this visit with no document and no written text, so there is nothing to file.",
+        "uk": "Клініка зберегла цей візит без документа й без жодного тексту, тож додавати до картки нічого.",
     },
     "labsync.unavailable_nofile": {
         "en": "The lab entered these results but offers no PDF for them. The values it reported are filed as the lab's own record of the order; a report you upload later takes their place.",

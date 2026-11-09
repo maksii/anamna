@@ -14,7 +14,7 @@ from .text import collapse_space, parse_decimal
 # the files it names.  Two changes reached `main` without a bump -- 196 lines of
 # new rules in 4472233, and the Latin unit spellings below -- so every row those
 # produced is indistinguishable from a row the previous parser produced.
-PARSER_VERSION = "2026.11.08-4"
+PARSER_VERSION = "2026.11.09-1"
 
 #: The kinds of report this module reads values out of.  Everything else --
 #: ultrasound, MRI, consultation, pathology, radiology -- it returns nothing
@@ -3282,10 +3282,19 @@ VISIT_MEASUREMENT_TYPES = frozenset({"consultation", "clinical_report"})
 #     «АТ: права рука 120/80 мм.рт.ст.‐ ліва рука 120/80 мм.рт.ст.»
 #     «ЧСС PQ QRS QT QTc ﴾Bazett﴿ QTc ﴾Sagie/Framingham﴿»   ECG report
 #     «66 уд/хв 140 мсек 80 мсек 380 мсек 399 мсек 394 мсек»
-_VISIT_TEMPERATURE = r"[°˚º]\s*[CС]"
+# Expert Hospital's in-app records (2023-2025), typed freehand:
+#     «АТ-135\80мм.рт.ст,ЧСС-75\хв.»                   cardiology, backslash
+#     «ЕКГ:ритм синусовий,правильний,ЧСС-85\хв,лівограма,PQ-0.20с,QRS-0.08с.»
+#     «Зріст _185___. Вага ___109__ кг. ... ЧДД18 за хвилину. ... ЧСС 70 за хв.»
+#     «Зріст 185 см, вага 109 кг.»                      anaesthesiology
+#     «Температура тіла 37*С»                          «*» typed for the degree
+_VISIT_TEMPERATURE = r"[°˚º*]\s*[CС]"
 _VISIT_BPM = r"уд\s*/\s*(?:хв|в)"
+_VISIT_PER_MINUTE = r"[/\\]\s*хв|за\s+хв(?:илину)?"
 _VISIT_MMHG = r"мм\.?\s*рт\.?\s*ст\.?"
 _VISIT_MS = r"мсек"
+#: An ECG interval in seconds, «PQ-0.20с», which the catalogue keeps in ms.
+_VISIT_ECG_VALUE, _VISIT_ECG_UNIT = r"\d{1,3}(?:[.,]\d{1,3})?", rf"{_VISIT_MS}|с"
 
 #: Plausible physiological limits.  A number outside them is a misread (a
 #: date, a dose, a phone number), not a measurement, and is dropped.
@@ -3296,19 +3305,23 @@ _VISIT_LIMITS = {
     "pq": (40, 500), "qrs": (30, 300), "qt": (150, 800), "qtc": (150, 800),
 }
 
-#: (kind, label, value, unit) for a labelled value inside a sentence.  The
-#: colon is required there: «Синусовий ритм з ЧСС 66 уд/хв» in an ECG's
-#: conclusion restates the table above it, and «температури тіла понад 38,5»
-#: is advice, not a reading.  Without a colon only a line holding nothing but
-#: the label and its value is read (``_VISIT_LINE``).
+#: (kind, label, value, unit) for a labelled value inside a sentence.  A colon
+#: or a spaced dash after the label is enough.  Without one, the label must
+#: open a sentence or a clause and the unit must be printed: «Синусовий ритм з
+#: ЧСС 66 уд/хв» in an ECG's conclusion restates the table above it, and
+#: «температури тіла понад 38,5» is advice, not a reading, while «Шия
+#: звичайна. Зріст 185 см, вага 109 кг.» is the examination itself.
 _VISIT_FIELDS = (
     ("temperature", r"Температура(?:\s+тіла)?", r"\d{2}(?:[.,]\d)?", _VISIT_TEMPERATURE),
-    ("respiratory_rate", r"Частота\s+дихання|ЧД", r"\d{1,2}", r"/\s*хв"),
+    ("respiratory_rate", r"Частота\s+дихання|ЧДД|ЧД", r"\d{1,2}", _VISIT_PER_MINUTE),
     ("spo2", r"SpO2|SpO₂|Сатурація", r"\d{2,3}", r"%"),
     # Expert's form 028/о: «ЧСС - 78/хв.»; per minute behind ЧСС is beats.
-    ("heart_rate", r"ЧСС", r"\d{2,3}", rf"{_VISIT_BPM}|/\s*хв"),
-    ("weight", r"Вага(?:\s+тіла)?|Маса\s+тіла", r"\d{1,3}(?:[.,]\d{1,2})?", r"кг"),
-    ("height", r"Зріст(?:\s+тіла)?", r"\d{2,3}(?:[.,]\d)?", r"см"),
+    ("heart_rate", r"ЧСС", r"\d{2,3}", rf"{_VISIT_BPM}|{_VISIT_PER_MINUTE}"),
+    ("weight", r"[Вв]ага(?:\s+тіла)?|Маса\s+тіла", r"\d{1,3}(?:[.,]\d{1,2})?", r"кг"),
+    ("height", r"[Зз]ріст(?:\s+тіла)?", r"\d{2,3}(?:[.,]\d)?", r"см"),
+    ("pq", r"PQ", _VISIT_ECG_VALUE, _VISIT_ECG_UNIT),
+    ("qrs", r"QRS", _VISIT_ECG_VALUE, _VISIT_ECG_UNIT),
+    ("qt", r"QT", _VISIT_ECG_VALUE, _VISIT_ECG_UNIT),
     # Printed without a unit: «Індекс маси тіла ﴾ІМТ﴿ [Співвідношення] 31,8».
     (
         "bmi",
@@ -3324,8 +3337,9 @@ def _visit_pattern(label: str, value: str, unit: str | None, *, whole_line: bool
     if whole_line:
         return re.compile(rf"^(?P<label>{label})\s+(?P<value>{value}){tail}\.?$")
     # Expert's form 028/о writes «ЧД - 16/хв, SpO2 - 98%»: a spaced dash
-    # stands for the colon (an unspaced one would be a range).
-    return re.compile(rf"(?<!\w)(?P<label>{label})(?:\s*:|\s+[-–])\s*(?P<value>{value}){tail}")
+    # stands for the colon.  Any other separator, «ЧСС-75\хв» or «ЧДД18», is
+    # held to ``_visit_separated``.
+    return re.compile(rf"(?<!\w)(?P<label>{label})(?P<sep>\s*:\s*|\s+[-–]\s*|[-–]|\s*)(?P<value>{value}){tail}")
 
 
 _VISIT_INLINE = tuple(
@@ -3345,20 +3359,31 @@ _VISIT_FEVER = re.compile(
 #: OCR of a photo reads «АТ» in Latin letters and may drop the colon:
 #: «AT 90/55 мм р» -- then the reading itself, with its millimetres, must
 #: follow the label directly.
+#: Expert's in-app records write «АТ-135\80мм.рт.ст»: an unspaced dash before
+#: the reading, and a backslash between its two numbers.
 _VISIT_BP_LABEL = re.compile(
-    r"(?<!\w)(?:[АA][ТT]|А\.\s*Т\.|Артеріальний\s+тиск)(?:\s*:|\s+[-–]\s|\s+(?=\d{2,3}\s*/\s*\d{2,3}\s*мм))"
+    r"(?<!\w)(?:[АA][ТT]|А\.\s*Т\.|Артеріальний\s+тиск)"
+    r"(?:\s*:|\s+[-–]\s|[-–](?=\d)|\s+(?=\d{2,3}\s*[/\\]\s*\d{2,3}\s*мм))"
 )
 #: One reading after «АТ:», with the arm when the note names one.  A photo's
 #: OCR cuts «мм рт.ст.» short («мм р»); it is still millimetres of mercury.
 _VISIT_BP_READING = re.compile(
-    rf"(?:(?P<site>(?:прав|лів)\w*\s+рук\w*)\s*:?\s*)?(?P<systolic>\d{{2,3}})\s*/\s*(?P<diastolic>\d{{2,3}})\s*"
+    rf"(?:(?P<site>(?:прав|лів)\w*\s+рук\w*)\s*:?\s*)?(?P<systolic>\d{{2,3}})\s*[/\\]\s*(?P<diastolic>\d{{2,3}})\s*"
     rf"(?P<unit>{_VISIT_MMHG}|мм\.?\s*р(?:т\.?)?(?!\w))"
 )
-#: A weight or a height on a line of its own with no unit printed: «Вага - 54»,
-#: «Зріст 1.64».  A body weight in a Ukrainian note is kilograms; a height
-#: written as 1.40-2.20 is metres and is stored in the catalogue's
-#: centimetres (164, the same measurement).
-_VISIT_BARE = re.compile(r"^(?P<label>Вага|Зріст)(?:\s*[:\-–]\s*|\s+)(?P<value>\d{1,3}(?:[.,]\d{1,2})?)\.?$")
+#: A weight or a height with no unit printed, as a line of its own or a whole
+#: clause: «Вага - 54», «Зріст 1.64», «Зріст _185___. Вага …» (a form's
+#: blank).  A body weight in a Ukrainian note is kilograms; a height written
+#: as 1.40-2.20 is metres and is stored in the catalogue's centimetres (164,
+#: the same measurement).  The number must end the clause: «Вага - 61 при
+#: нормі 50» is not a reading.
+_VISIT_BARE = re.compile(
+    r"(?:^|(?<=[.,;])\s?)(?P<label>Вага|Зріст)(?:\s*[:\-–]\s*|\s+)(?P<value>\d{1,3}(?:[.,]\d{1,2})?)"
+    r"(?=\s*(?:[.,;]\s|[.,;]?$))"
+)
+#: What a label without a colon must follow: the start of the line or the end
+#: of a sentence or clause.
+_VISIT_CLAUSE_START = re.compile(r"(?:^|[.,;]\s?)$")
 
 #: Header-row tables: a line of column names, then a line of values under
 #: them.  Each column says which unit its cell may carry; a row that does not
@@ -3409,6 +3434,11 @@ def _visit_value(
     observed_at: str | None, specimen: str | None = None,
 ) -> ParsedObservation | None:
     value = parse_decimal(printed)
+    if unit and re.match(r"\\|за\s", unit):
+        unit = "/хв"  # «75\хв», «за хв», «за хвилину»: per minute
+    if value is not None and kind in _ECG_COLUMNS and unit == "с":
+        # «PQ-0.20с»: seconds, stored in the catalogue's milliseconds.
+        value, unit, printed = round(value * 1000, 1), "мсек", None
     low, high = _VISIT_LIMITS[kind]
     if value is None or not low <= value <= high:
         return None
@@ -3513,45 +3543,83 @@ def _visit_bare(match: re.Match, page_number: int, evidence: str, observed_at: s
     return [replace(item, value_printed=None)] if item else []
 
 
-def _visit_line_rows(line: str, page_number: int, observed_at: str | None) -> list[ParsedObservation]:
-    """The labelled values, the quoted fever and the pressures on one line."""
+def _visit_separated(line: str, match: re.Match) -> bool:
+    """Whether an inline label reads as a field rather than as prose."""
+    if re.fullmatch(r"\s*:\s*|\s+[-–]\s*", match.group("sep")):
+        return True
+    return bool(match.groupdict().get("unit")) and bool(_VISIT_CLAUSE_START.search(line, 0, match.start()))
+
+
+def _visit_name(kind: str, line: str, match: re.Match) -> str:
+    name = _visit_label(match.group("label"))
+    if kind == "heart_rate" and re.search(r"(?<!\w)ЕКГ\s*:", line[: match.start()]):
+        return "ЧСС (ЕКГ)"  # «ЕКГ:ритм синусовий,…,ЧСС-85\хв»: the tracing's rate
+    return "ЧД" if name == "ЧДД" else name
+
+
+def _visit_line_rows(
+    line: str, page_number: int, observed_at: str | None, split: int | None = None
+) -> list[ParsedObservation]:
+    """The labelled values, the quoted fever and the pressures on one line.
+
+    With ``split``, ``line`` is two lines joined at that index, and only what
+    runs across the join is read: «ЧСС -» / «78/хв.», «АТ 120/80» / «мм рт
+    ст.».  Everything else on either line was read from that line alone.
+    """
+    def spans(start: int, end: int) -> bool:
+        return split is None or start < split < end
+
+    evidence = line if split is None else f"{line[:split]}\n{line[split + 1:]}"
     found: list[ParsedObservation] = []
     whole = next(((kind, match) for kind, pattern in _VISIT_LINE if (match := pattern.match(line))), None)
     matches = [whole] if whole else [
         (kind, match) for kind, pattern in _VISIT_INLINE for match in pattern.finditer(line)
+        if _visit_separated(line, match)
     ]
-    bare = None if matches else _VISIT_BARE.match(line)
-    if bare:
-        found.extend(_visit_bare(bare, page_number, line, observed_at))
+    for bare in _VISIT_BARE.finditer(line):
+        if spans(bare.start(), bare.end()):
+            found.extend(_visit_bare(bare, page_number, evidence, observed_at))
     for kind, match in matches:
+        if not spans(match.start(), match.end()):
+            continue
         item = _visit_value(
-            kind, _visit_label(match.group("label")), match.group("value"),
-            match.groupdict().get("unit"), page_number, line, observed_at,
+            kind, _visit_name(kind, line, match), match.group("value"),
+            match.groupdict().get("unit"), page_number, evidence, observed_at,
         )
         if item:
             found.append(item)
     for match in _VISIT_FEVER.finditer(line):
         item = _visit_value(
-            "temperature", "Температура тіла", match.group("value"), "°C", page_number, line, observed_at,
+            "temperature", "Температура тіла", match.group("value"), "°C", page_number, evidence, observed_at,
         )
-        if item:
+        if item and spans(match.start(), match.end()):
             found.append(item)
     label = _VISIT_BP_LABEL.search(line)
     if label:
         for reading in _VISIT_BP_READING.finditer(line, label.end()):
-            found.extend(_visit_pressure(reading, page_number, line, observed_at))
+            if spans(label.start(), reading.end()):
+                found.extend(_visit_pressure(reading, page_number, evidence, observed_at))
     return found
 
 
 def _visit_text(text: str, page_number: int, observed_at: str | None) -> list[ParsedObservation]:
     found: list[ParsedObservation] = []
-    lines = [line for line in (collapse_space(raw) for raw in text.splitlines()) if line]
+    # A form's blanks are not part of the value: «Вага ___109__ кг».
+    lines = [line for line in (collapse_space(raw.replace("_", " ")) for raw in text.splitlines()) if line]
+    tabled: set[int] = set()
     for index, line in enumerate(lines):
         table = _visit_table(line, lines[index + 1]) if index + 1 < len(lines) else None
         if table:
+            tabled |= {index, index + 1}
             found.extend(_visit_table_rows(table, f"{line}\n{lines[index + 1]}", page_number, observed_at))
         else:
             found.extend(_visit_line_rows(line, page_number, observed_at))
+    # A composed PDF wraps a long sentence wherever the width runs out, so a
+    # label and its value, or a value and its unit, can land on two lines.
+    for index in range(len(lines) - 1):
+        if not {index, index + 1} & tabled:
+            joined = f"{lines[index]} {lines[index + 1]}"
+            found.extend(_visit_line_rows(joined, page_number, observed_at, split=len(lines[index])))
     return found
 
 
@@ -4592,8 +4660,8 @@ def _us_echo(lines: list[str], page_number: int) -> list[ParsedObservation]:
     the page prints beside it.
     """
     rows: list[ParsedObservation | None] = []
-    for line in lines:
-        rows.extend(_us_echo_table_rows(line, page_number))
+    for index, line in enumerate(lines):
+        rows.extend(_us_echo_table_rows(line, page_number, lines[index + 1] if index + 1 < len(lines) else ""))
         found = _US_EJECTION_FRACTION.fullmatch(line)
         if found:
             rows.append(_us_ejection_fraction(found, line, page_number))
@@ -4601,16 +4669,24 @@ def _us_echo(lines: list[str], page_number: int) -> list[ParsedObservation]:
     return [row for row in rows if row is not None]
 
 
-def _us_echo_table_rows(line: str, page_number: int) -> list[ParsedObservation | None]:
-    rows: list[ParsedObservation | None] = []
+def _us_echo_table_rows(line: str, page_number: int, tail: str = "") -> list[ParsedObservation | None]:
+    """One row of the table.  A label too long for its column wraps around
+    the value, and ``tail`` (the next line) holds the rest of it:
+    «Міжшлуночкова перетинк 1.1 0,6 – 1,1 см» / «а, діастола», «Діаметр аорти
+    на рівні 3.2 2,4-3,9 см» / «синусів Вальсальви».  Only a tail that
+    completes a known label exactly is taken."""
+    found = re.fullmatch(rf"(?P<label>.+?)\s+(?P<v>\d+(?:[.,]\d+)?)\s+{_US_RANGE.format(unit='см')}", line)
+    if not found:
+        return []
+    head = found.group("label")
     for label, name in _US_ECHO_ROWS:
-        found = re.fullmatch(rf"{label}\s+(?P<v>\d+(?:[.,]\d+)?)\s+{_US_RANGE.format(unit='см')}", line)
-        if found:
-            rows.append(_us_row(
-                name, found.group("v"), "см", line, page_number, reference=found.group("ref"),
+        if label == head or label in (head + tail, f"{head} {tail}"):
+            evidence = line if label == head else f"{line}\n{tail}"
+            return [_us_row(
+                name, found.group("v"), "см", evidence, page_number, reference=found.group("ref"),
                 low=parse_decimal(found.group("low")), high=parse_decimal(found.group("high")),
-            ))
-    return rows
+            )]
+    return []
 
 
 def _us_ejection_fraction(found: re.Match, line: str, page_number: int) -> ParsedObservation | None:
@@ -4638,9 +4714,16 @@ def _us_valve_doppler(lines: list[str], page_number: int) -> list[ParsedObservat
     # Add their concepts when one prints a value.
     if len(cells) != 4:
         return rows
-    gradient = re.match(r"Δ\s*[РP]\s*ма[хx]\s*(?P<v>\d+(?:[.,]\d+)?)\s*(?P<unit>мм\.?\s*рт\.?\s*ст\.?)", cells[2].strip())
+    # The column is the third cell of four under «Мітральний Аортальний
+    # Тристулковий Легеневий», each cell opening with its own «ΔР мах».  Its
+    # unit can be cut by the wrap, «ΔР мах 3 мм.рт.с» over a lone «т»: still
+    # millimetres of mercury, stored under the spelling that folds.
+    gradient = re.match(
+        r"Δ\s*[РP]\s*ма[хx]\s*(?P<v>\d+(?:[.,]\d+)?)\s*(?P<unit>мм\.?\s*рт\.?\s*с(?:т\.?)?)(?!\w)", cells[2].strip()
+    )
     if gradient:
-        rows.append(_us_row("Tricuspid valve peak pressure gradient", gradient.group("v"), gradient.group("unit"),
+        unit = gradient.group("unit") if re.search(r"ст\.?$", gradient.group("unit")) else "мм.рт.ст."
+        rows.append(_us_row("Tricuspid valve peak pressure gradient", gradient.group("v"), unit,
                             f"Тристулковий: {cells[2].strip()}", page_number))
     acceleration = re.match(r"[TТ]асс\s*(?P<v>\d+(?:[.,]\d+)?)\s*мсек", cells[3].strip())
     if acceleration:
@@ -4765,18 +4848,26 @@ def _us_duplex_unbanded(flat: str, page_number: int) -> list[ParsedObservation]:
     if not re.search(r"\b(?:псш|пшк)\b", flat, re.I):
         return []
     rows: list[ParsedObservation | None] = []
+    starts = [match.start() for match in _US_VESSEL_START.finditer(flat)] + [len(flat)]
     for found in re.finditer(
         r"(?P<vessel>Загальна|Внутрішня|Зовнішня) сонна\s+артерія,?\s*(?P<side>права|ліва)?[^\d]{0,45}?"
         r"(?<![\d.,=])(?P<v>\d{2,3})(?![\d.,])(?!\s*N=)\s*(?P<side2>права|ліва)?",
         flat,
     ):
         side = found.group("side") or found.group("side2")
+        evidence = found.group(0)
         if not side:
-            continue
+            # «Загальна сонна артерія, 108 Кровоплин магістральний, хід» /
+            # «права правильний»: the side wraps under the flow text, still
+            # inside this vessel's row, which ends where the next vessel starts.
+            end = next(start for start in starts if start > found.start())
+            later = re.search(r"\b(права|ліва)\b", flat[found.end() : end])
+            if not later:
+                continue
+            side, evidence = later.group(1), flat[found.start() : end].strip()
         vessel = {"Загальна": "common", "Внутрішня": "internal", "Зовнішня": "external"}[found.group("vessel")]
         rows.append(_us_row(f"Peak systolic velocity, {vessel} carotid artery", found.group("v"), _CM_PER_S,
-                            found.group(0), page_number, specimen=side))
-    starts = [match.start() for match in _US_VESSEL_START.finditer(flat)] + [len(flat)]
+                            evidence, page_number, specimen=side))
     for start, end in zip(starts, starts[1:]):
         chunk = flat[start:end]
         if not chunk.startswith("Хребцева") or "N=" in chunk:

@@ -411,7 +411,7 @@ def test_conclusions_and_examinations_are_listed_beside_analyses_for_every_perso
     # Named by what was examined; findings typed in, no file: still filed.
     assert xray["filename_hint"] == "2025-10-03 Рентгенографія ОГК (одна проекція)" and xray["unavailable"] is None
     # Neither a file nor a word written: nothing to file, and it says so.
-    assert orders["r902"]["unavailable"] == orders["c902"]["unavailable"] == "labsync.error_pdf"
+    assert orders["r902"]["unavailable"] == orders["c902"]["unavailable"] == "labsync.unavailable_empty_record"
     assert orders["c901"]["unavailable"] is None
     assert (xray["hint_every_file"], visit["hint_every_file"]) == (True, False)
     assert client.rows(visit, kid) == []
@@ -531,3 +531,11 @@ def test_an_expert_visit_document_takes_its_name_day_and_clinic_from_the_file_na
     scan = classify_document("expert-r900 2025-10-01 УЗД органів черевної порожнини.pdf", "application/pdf",
                              [pdf_page("Печінка не збільшена, контури рівні\nЖовчний міхур без змін")])
     assert (scan.vendor, scan.clinical_type, scan.report_date) == ("Expert Hospital", "ultrasound", "2025-10-01")
+
+
+def test_a_record_the_clinic_stored_html_escaped_reads_as_typed():
+    from anamna.labsync import visit_pdf
+
+    assert visit_pdf.field_text("Ліки на ніч 30 днів--&gt; далі контроль") == "Ліки на ніч 30 днів--> далі контроль"
+    assert visit_pdf.field_text([{"name": "Урсофальк", "recommendation": "2 міс --&gt; далі 1 капс"}]) == (
+        "Урсофальк: 2 міс --> далі 1 капс")

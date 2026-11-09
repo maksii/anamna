@@ -146,6 +146,7 @@ ERROR_KEYS = frozenset(
         ERROR_NO_PROFILE,
         "labsync.unavailable_offline",
         "labsync.unavailable_nofile",
+        "labsync.unavailable_empty_record",
         "labsync.unavailable_esoz",
         "labsync.partial_imported",
         "labsync.partial_no_pdf",

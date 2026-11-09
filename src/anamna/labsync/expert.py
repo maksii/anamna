@@ -465,7 +465,7 @@ def _document_entry(kind: str, item: dict) -> dict:
         "complete": True,
         # Neither a file nor a word written (a 2022 cardiology visit holds
         # only its doctor and day): nothing to file, and the order says so.
-        "unavailable": None if item.get("has_file") or typed else "labsync.error_pdf",
+        "unavailable": None if item.get("has_file") or typed else "labsync.unavailable_empty_record",
         "rows": [],
         "packet": title,
         "filename_hint": f"{day} {title}" if day and title else "",
