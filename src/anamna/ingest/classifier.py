@@ -306,9 +306,18 @@ LONE_DATE_UNDER_PATIENT_RE = re.compile(
 WRITTEN_DATE_RE = re.compile(rf"^[ \t]*(\d{{1,2}})[ \t]+({'|'.join(GENITIVE_MONTHS)})[ \t]+(\d{{4}})[ \t]*(?:року|р\.)", re.I | re.M)
 
 
+#: Form 027/о's heading, «ВИПИСКА / із медичної карти амбулаторного
+#: (стаціонарного) хворого», wrapped or not.
+DISCHARGE_027_RE = re.compile(r"виписка\s+із\s+медичної\s+карти\s+амбулаторного\s*\(\s*стаціонарного\s*\)\s+хворого")
+DISCHARGE_027_TITLE = "Виписка із медичної карти хворого (форма 027/о)"
+
+
 def extract_date(text: str, filename: str) -> str | None:
     prioritized = first_match(
         [
+            # Form 027/о: the day the stay ended, printed under «виписки або
+            # смерті (підкреслити)»; the admission day stands above it.
+            r"виписки\s+або\s+смерті[^\n]*\n[^\d\n]{0,3}(\d{2})[./](\d{2})[./](\d{4})",
             r"Дата візиту:\s*(\d{2})[./](\d{2})[./](\d{4})",
             # Form 028/о, beside the patient's name; a photo's OCR splits the
             # word («консульт ації: ії: 08.04. 08.04.2023»).
@@ -1294,6 +1303,8 @@ def _typed_title(text: str, lines: list[str], clinical_type: str) -> str | None:
         consent = CONSENT_TITLE_RE.search(text)
         return consent.group(0) if consent else None
     if clinical_type == "clinical_report":
+        if DISCHARGE_027_RE.search(text.casefold()):
+            return DISCHARGE_027_TITLE
         return _breath_test_title(text, lines) or _service_report_title(lines)
     if clinical_type == "ultrasound":
         return _ultrasound_title(lines)
@@ -1584,6 +1595,11 @@ def _clinical_type(filename: str, mime_type: str, text: str, folded: str) -> str
         clinical_type = "electrocardiogram"
     elif "alex2-order-cover" in filename.casefold():
         clinical_type = "administrative"
+    elif DISCHARGE_027_RE.search(folded):
+        # Form 027/о, the discharge summary a hospital stay ends with: a
+        # report, however the clinic named the Word file it came in
+        # («Консультація 1748171.docx»).
+        clinical_type = "clinical_report"
     elif _is_consultation(filename, folded):
         clinical_type = "consultation"
     elif "звіт про кров’яний тиск" in folded and "garmin connect" in folded:

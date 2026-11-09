@@ -1717,7 +1717,8 @@ _ORGAN_AREAS: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
         ("heart", r"\bсерц|\bcardi|\bheart"),
         # «органів черевної порожнини» is the abdominal study's own phrase,
         # read through OCR debris («черевної З ої порожнини»).
-        ("liver", r"\bпечін|\bliver|\bгепат|\bпідшлунков|\bпанкреат|\bpancrea|\bчеревн\w*\s+(?:\S+\s+){0,3}?порожнин"),
+        # «печіння» (burning) is not the liver: no form of «печінка» doubles the н.
+        ("liver", r"\bпечін(?!н)|\bliver|\bгепат|\bпідшлунков|\bпанкреат|\bpancrea|\bчеревн\w*\s+(?:\S+\s+){0,3}?порожнин"),
         ("kidneys", r"\bнир(?:[кц]|ок\b)|\bkidney|\brenal|\bсечов"),
         # A working diagnosis is often an abbreviation alone: «СПК? СНБР?»
         # (irritable bowel syndrome, small intestinal bacterial overgrowth),
@@ -1851,6 +1852,9 @@ _CONCLUSION_END = re.compile(
     r"|\bдії\s*[:：]|\n[ \t]*(?:інші\s+ознаки|діагноз\s+клінічн\w*)[ \t]*(?=\n|$)"
     # Form 028/о: the field under the diagnosis.
     r"|\bдані\s+лабораторних\s+та\b"
+    # Form 027/о (discharge): the history follows the diagnosis («7. Короткий
+    # анамнез, діагностичні дослідження, перебіг хвороби …»).
+    r"|\n\s*(?:\d{1,2}\.\s*)?короткий\s+анамнез\b"
     # An eHealth diagnostic report's sign-off.
     r"|\bрезультати\s+інтерпретовано|\bдата\s+та\s+час\s+формування"
     # Expert's breath test: «Коментар: рекомендовано консультація …» is advice.
