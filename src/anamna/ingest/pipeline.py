@@ -29,7 +29,8 @@ from ..i18n import (
 from ..immunizations import is_visit_vaccination, parse_immunizations, parse_visit_vaccinations, store_document_doses
 from ..reference import canonical_unit
 from .classifier import (
-    KNOWN_CLINICAL_TYPES, RESULT_TYPES, UNKNOWN_VENDOR, Classification, classify_document, misread_order,
+    DISCHARGE_027_TITLE, KNOWN_CLINICAL_TYPES, RESULT_TYPES, UNKNOWN_VENDOR, Classification, classify_document,
+    misread_order,
 )
 from .concepts import (
     CONCEPT_DEFINITIONS,
@@ -1754,6 +1755,12 @@ def page_classifications(
     metadata: dict[str, str],
 ) -> list[Classification]:
     results = [classify_document(filename, mime_type, [page], metadata) for page in pages]
+    if len(results) > 1 and any(item.title == DISCHARGE_027_TITLE for item in results):
+        # A discharge summary (form 027/о) is one report however many pages
+        # it runs to: its heading is on page 1 and the stay's end date may be
+        # on page 2, and a page read alone became an undated "consultation".
+        whole = classify_document(filename, mime_type, pages, metadata)
+        return [whole] * len(results)
     _inherit_neighbour_vendors(results)
     _continue_previous_reports(results)
     if _one_report(results) and len({item.vendor for item in results if item.vendor != UNKNOWN_VENDOR}) > 1:

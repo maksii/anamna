@@ -60,3 +60,13 @@ def test_the_discharge_diagnosis_ends_where_the_history_begins():
         "лікування: Пацієнт госпіталізований для оперативного втручання.\n8. Лікувальні")
     assessment = _extract_clinical_assessment(text, "clinical_report")
     assert assessment.startswith("Викривлена носова перегородка") and "анамнез" not in assessment
+
+
+def test_a_two_page_discharge_is_one_report_dated_from_either_page():
+    from anamna.ingest.pipeline import page_classifications
+
+    first, second = FORM_027.split("виписки або смерті")
+    pages = [pdf_page(first), pdf_page("виписки або смерті" + second + "\nОгляд: стан задовільний")]
+    found = page_classifications("expert-c5777099-1.pdf", "application/pdf", pages, {})
+    assert {(item.clinical_type, item.title, item.report_date) for item in found} == {
+        ("clinical_report", "Виписка із медичної карти хворого (форма 027/о)", "2025-09-19")}
