@@ -15,7 +15,7 @@
   {% for plan in plans %}
   {% set shown = plan.options[plan.option_index] if plan.options else none %}
   <li id="plan-{{ plan.lab }}" class="an-plan-card{{ ' an-plan-card--best' if loop.first else '' }}">
-    <details class="an-plan-tile"{{ ' open' if plans|length == 1 or request.query_params.get('alt_' ~ plan.lab) else '' }}>
+    <details class="an-plan-tile"{{ ' open' if plans|length == 1 or request.query_params.get('alt_' ~ plan.lab) or plan.edited or order_lab == plan.lab else '' }}>
       <summary><span class="an-plan-tile__sum">
         <span class="an-plan-tile__top">
           <span class="an-plan-tile__name">
@@ -30,6 +30,7 @@
           {% if plan.saving > 0 %}<span>{{ t('plan.tile_saving', saving=plan.saving|uah) }}</span>{% endif %}
         </span>
         {% if plan.lab == 'mixed' %}<span class="an-plan-tile__note">{{ t('plan.mixed_saving', saving=plan.split_saving|uah) }}</span>{% endif %}
+        {% if plan.edited %}<span class="an-plan-tile__note">{{ t('plan.tile_edited') }}</span>{% endif %}
         {% if prefs.mode == 'complete' and not plan.option_index and plan.delta_cost and plan.delta_cost > 0 and plan.more_results and plan.more_results > 0 %}<span class="an-plan-tile__note">{{ t('plan.tile_complete', delta=plan.delta_cost|uah) }}, {{ plural_t('plan.alt_gain', plan.more_results) }}</span>{% endif %}
         {% if plan.option_index and shown %}<span class="an-plan-tile__note">{{ t('plan.tile_switched_cheaper', total=shown.cost|uah) if prefs.mode == 'complete' else t('plan.tile_switched', delta=shown.delta|uah) }}</span>
         {% elif plan.options and plan.options|length > 1 %}<span class="an-plan-tile__note">{{ plural_t('plan.tile_options_cheaper' if prefs.mode == 'complete' else 'plan.tile_options', plan.options|length - 1) }}</span>{% endif %}
@@ -58,7 +59,7 @@
               </details>
               {% endif %}
               {% if option.chosen %}<p class="an-plan-alt__now">{{ t('plan.option_current') }}</p>
-              {% else %}<a class="button secondary" href="{{ page_url(request.query_params, 'alt_' ~ plan.lab, option.index + 1, 'plan-' ~ plan.lab) }}">{{ t('plan.option_use') }}<span class="visually-hidden">, {{ option.cost|uah }}</span></a>{% endif %}
+              {% else %}<a class="button secondary" href="{{ edit_url(request.query_params, plan.lab, alt=option.index + 1) }}">{{ t('plan.option_use') }}<span class="visually-hidden">, {{ option.cost|uah }}</span></a>{% endif %}
             </li>
             {% endif %}
             {% endfor %}
@@ -66,11 +67,12 @@
         </section>
         {% endif %}
         {% if plan.not_here %}<p class="tiny muted">{{ t('plan.not_here', lab=plan.name, names=plan.not_here|join(', ')) }}</p>{% endif %}
-        {% if plan.missing_names %}<p class="alert warning">{{ t('plan.missing', names=plan.missing_names|join(', ')) }}</p>{% endif %}
+        {% if plan.missing_names %}<p class="alert warning">{{ t('plan.order_missing' if plan.edited else 'plan.missing', names=plan.missing_names|join(', ')) }}</p>{% endif %}
         {% if plan.missing_included %}<p class="tiny muted">{{ plural_t('plan.missing_included', plan.missing_included) }}</p>{% endif %}
         <ul class="an-plan-items">
+          {% set editable = plan.lab != 'mixed' %}
           {% for item in plan['items'] %}
-          <li class="an-plan-item">
+          <li class="an-plan-item" data-item="{{ item.id }}"{% if order and order.lab == plan.lab and item.id not in order.match %} hidden{% endif %}>
             <details class="an-plan-item__more">
               <summary><span class="an-plan-item__sum">
                 <span class="an-plan-item__head">
@@ -78,7 +80,7 @@
                   <span class="an-plan-item__price">{% if item.final_price < item.price %}<s aria-label="{{ t('plan.list_price') }}">{{ item.price|uah }}</s> {% endif %}{{ item.final_price|uah }}</span>
                 </span>
                 <span class="an-plan-item__line tiny muted">
-                  {% if item.forced %}<span class="pill">{{ t('plan.item_chosen') }}</span> {% endif %}{% if plan.lab == 'mixed' %}{{ lab_names[item.lab] }} · {% endif %}{{ t('plan.item_covers', names=item.covers_names|join(', ')) }}
+                  {% if item.forced or item.added %}<span class="pill">{{ t('plan.item_chosen') }}</span> {% endif %}{% if plan.lab == 'mixed' %}{{ lab_names[item.lab] }} · {% endif %}{% if item.covers_names %}{{ t('plan.item_covers', names=item.covers_names|join(', ')) }}{% else %}{{ plural_t('plan.analytes', item.parameters|length) }}{% endif %}
                 </span>
               </span></summary>
               <p class="tiny muted">
@@ -97,6 +99,7 @@
               {% endif %}
               {% if item.url %}<a class="an-plan-need__link tiny" href="{{ item.url }}" target="_blank" rel="noopener noreferrer">{{ t('plan.lab_page', lab=lab_names[item.lab]) }}<span class="visually-hidden">: {{ item.label }}</span></a>{% endif %}
             </details>
+            {% if editable %}<a class="an-plan-item__cut" href="{{ edit_url(request.query_params, plan.lab, cut=plan.lab ~ ':' ~ item.id) }}" title="{{ t('plan.order_cut') }}"><span class="visually-hidden">{{ t('plan.order_cut') }}: {{ item.label }}</span></a>{% endif %}
           </li>
           {% endfor %}
           {% for fee in plan.fees %}
@@ -106,6 +109,39 @@
           </li>
           {% endfor %}
         </ul>
+        {% if editable %}
+        {#- The order as the person wants it: what was taken out (each can
+            come back), every change undone at once, and one box that filters
+            the order and finds this lab's tests to add. -#}
+        {% if plan.cut_items %}
+        <div class="an-plan-cut">
+          <p class="tiny"><strong>{{ t('plan.order_cut_heading') }}</strong></p>
+          <ul>
+            {% for item in plan.cut_items %}
+            <li><span class="an-plan-cut__name" lang="{{ item.label_lang }}">{{ item.label }}</span>
+              <span class="tiny muted">{{ item.final_price|uah }}</span>
+              <a class="button secondary" href="{{ edit_url(request.query_params, plan.lab, put=item.value) }}">{{ t('plan.order_put_back') }}<span class="visually-hidden">: {{ item.label }}</span></a></li>
+            {% endfor %}
+          </ul>
+        </div>
+        {% endif %}
+        {% if plan.edited %}<p><a class="button secondary" href="{{ edit_url(request.query_params, plan.lab, reset=True) }}">{{ t('plan.order_reset') }}</a></p>{% endif %}
+        <div class="an-plan-order-edit" data-order-edit data-lab="{{ plan.lab }}" data-failed="{{ t('plan.search_failed') }}">
+          <form class="an-plan-search" action="/plan-tests#plan-{{ plan.lab }}" method="get" role="search">
+            {% for name, value in request.query_params.multi_items() if name not in ('olab', 'oq', 'have', 'notice') %}<input type="hidden" name="{{ name }}" value="{{ value }}">{% endfor %}
+            <input type="hidden" name="olab" value="{{ plan.lab }}">
+            <label for="plan-oq-{{ plan.lab }}">{{ t('plan.order_search_label') }}</label>
+            <div class="an-plan-search__row">
+              <input id="plan-oq-{{ plan.lab }}" name="oq" type="search" value="{{ order_query if order_lab == plan.lab else '' }}" autocomplete="off" enterkeyhint="search"
+                     aria-describedby="plan-oq-{{ plan.lab }}-hint" data-order-q>
+              <button class="secondary" type="submit" data-order-go>{{ t('plan.search_submit') }}</button>
+            </div>
+            <p class="tiny muted" id="plan-oq-{{ plan.lab }}-hint">{{ t('plan.order_search_hint', lab=plan.name) }}</p>
+          </form>
+          <p class="tiny muted" role="status" data-order-none{% if not (order and order.lab == plan.lab and not order.match) %} hidden{% endif %}>{{ t('plan.order_list_none') }}</p>
+          <div data-order-found>{% set lab = plan.lab %}{% include "_plan_order_add.html" %}</div>
+        </div>
+        {% endif %}
         <dl class="an-plan-sums">
           <div><dt>{{ t('plan.sum_tests') }}</dt><dd>{{ plan.items_cost|uah }}</dd></div>
           {% if plan.fees_cost %}<div><dt>{{ t('plan.sum_fees') }}</dt><dd>{{ plan.fees_cost|uah }}</dd></div>{% endif %}
@@ -140,7 +176,8 @@
         {% if plan.fetched_at %}<p class="tiny muted">{{ t('plan.prices_read', date=plan.fetched_at|stamp|datefmt) }}</p>{% endif %}
 
         {% set form = order_forms.get(plan.lab) %}
-        {% if plan.lab == 'esculab' and can_order %}
+        {% if not plan['items'] %}
+        {% elif plan.lab == 'esculab' and can_order %}
         {% if form and form.connected and form.person %}
         <form class="stack-form an-plan-order" action="/plan-tests/order/esculab" method="post">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -194,4 +231,45 @@
   </ul>
   {% endif %}
 </section>
+<script>
+(function () {
+  // A tile's box answers as the person types: it hides the order's items it
+  // does not match and lists that lab's tests to add (/plan-tests/order-search).
+  document.querySelectorAll('[data-order-edit]').forEach(function (box) {
+    var field = box.querySelector('[data-order-q]');
+    var found = box.querySelector('[data-order-found]');
+    var none = box.querySelector('[data-order-none]');
+    var rows = box.closest('.an-plan-tile__body').querySelectorAll('.an-plan-items > [data-item]');
+    box.querySelector('[data-order-go]').remove();
+    var controller = null, timer = null;
+    function show(match) {
+      rows.forEach(function (row) { row.hidden = !!match && match.indexOf(row.dataset.item) < 0; });
+      none.hidden = !match || match.length > 0;
+    }
+    function search() {
+      clearTimeout(timer);
+      if (controller) { controller.abort(); }
+      var text = field.value.trim();
+      if (!text) { found.innerHTML = ''; show(null); return; }
+      var mine = controller = new AbortController();
+      var params = new URLSearchParams(location.search);
+      ['olab', 'oq', 'have', 'notice'].forEach(function (name) { params.delete(name); });
+      params.set('olab', box.dataset.lab);
+      params.set('oq', text);
+      rows.forEach(function (row) { params.append('have', row.dataset.item); });
+      found.setAttribute('aria-busy', 'true');
+      fetch('/plan-tests/order-search?' + params.toString(), { signal: mine.signal, headers: { Accept: 'application/json' } })
+        .then(function (response) { if (!response.ok) { throw new Error(String(response.status)); } return response.json(); })
+        .then(function (parts) { found.innerHTML = parts.html; found.setAttribute('aria-busy', 'false'); show(parts.match); })
+        .catch(function (error) {
+          if (error.name === 'AbortError') { return; }
+          found.setAttribute('aria-busy', 'false');
+          found.textContent = box.dataset.failed;
+        });
+    }
+    field.addEventListener('input', function () { clearTimeout(timer); timer = setTimeout(search, 250); });
+    field.form.addEventListener('submit', function (event) { event.preventDefault(); search(); });
+  });
+})();
+</script>
 {% endif %}

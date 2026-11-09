@@ -52,6 +52,11 @@ PHRASES: dict[str, str] = {
     "ENT & sinuses": "ЛОР-органи й пазухи",
     "ENT": "ЛОР",
     "Ear, nose, throat and sinus imaging": "Обстеження вуха, носа, горла й пазух",
+    "Teeth & mouth": "Зуби й ротова порожнина",
+    "Teeth": "Зуби",
+    "Teeth, gums and jaw: dental visits, and visits for tooth or jaw pain that end in a referral to a dentist":
+        "Зуби, ясна й щелепа: візити до стоматолога, а також звернення з болем у зубі чи щелепі, після яких "
+        "направляють до стоматолога",
     "Skin": "Шкіра",
     "Cardiology consultation": "Консультація кардіолога",
     "Dermatology consultation": "Консультація дерматолога",
@@ -480,6 +485,7 @@ PHRASES: dict[str, str] = {
     "Gastroenterology consultation": "Консультація гастроентеролога",
     "Endocrinology consultation": "Консультація ендокринолога",
     "General practitioner consultation": "Консультація терапевта",
+    "Dental consultation": "Консультація стоматолога",
     "Gastrointestinal tract ultrasound": "УЗД шлунково-кишкового тракту",
     "Upper GI endoscopy (EGD)": "Езофагогастродуоденоскопія (ЕФГДС)",
     "Breath test for small-intestinal bacterial overgrowth": "Дихальний тест на надмірний бактерійний ріст у тонкій кишці",

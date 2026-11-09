@@ -42,6 +42,7 @@ HEALTH_AREAS: list[dict[str, object]] = [
     {"id": "allergy", "name": "Allergy", "short": "Allergy", "categories": {"allergy"}, "description": "Allergen-specific and total IgE testing"},
     {"id": "infection", "name": "Infection & microbiology", "short": "Infection", "categories": {"infection", "microbiology"}, "description": "Cultures, organisms and infection markers"},
     {"id": "ent", "name": "ENT & sinuses", "short": "ENT", "categories": set(), "description": "Ear, nose, throat and sinus imaging"},
+    {"id": "dental", "name": "Teeth & mouth", "short": "Teeth", "categories": set(), "description": "Teeth, gums and jaw: dental visits, and visits for tooth or jaw pain that end in a referral to a dentist"},
     {"id": "skin", "name": "Skin", "short": "Skin", "categories": set(), "description": "Dermatology consultations and skin findings"},
     {"id": "brain", "name": "Brain & nervous system", "short": "Brain", "categories": {"neurophysiology"}, "description": "Brain recordings such as the EEG (electroencephalogram, a recording of the brain's electrical activity), and visits for headaches and other nervous-system complaints"},
     {"id": "reproductive", "name": "Reproductive & breast health", "short": "Reproductive", "categories": {"gynecology", "breast"}, "description": "Pelvic and breast ultrasound, colposcopy and gynaecological findings"},
@@ -1653,6 +1654,7 @@ _STUDIES: tuple[tuple[str, str, tuple[str, ...], frozenset[str] | None, re.Patte
         ("consult_endocrine", "Endocrinology consultation", ("thyroid",), {"consultation"}, r"ендокринолог|endocrinolog"),
         # A general physician's note has no organ of its own: its diagnosis
         # (or, with none entered, its complaints) decides.
+        ("consult_dental", "Dental consultation", ("dental",), {"consultation"}, r"стоматолог|dentist|\bdental\b"),
         ("consult_gp", "General practitioner consultation", (), {"consultation"}, r"терапевт|therapist|internist"),
         ("consult_gynecology", "Gynaecology consultation", ("reproductive",), {"consultation"}, r"гінеколог|gyn(?:a)?ecolog"),
         ("consult_psychiatry", "Psychiatry consultation", ("mental",), {"consultation"}, r"психіатр|psychiatr"),
@@ -1715,6 +1717,10 @@ _ORGAN_AREAS: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
         ("thyroid", r"\bщитопод|\bщитовид|\bthyroid"),
         ("lungs", r"\bлеген|\blung|\bchest|\bгрудної кліт"),
         ("ent", r"\bпазух|\bsinus|\bслинн|\bлор\b|\bсіалоаден|\bsialaden"),
+        # The jaw itself («біль в ділянці нижньої щелепи»), never the
+        # «підщелепні лімфовузли» of a neck ultrasound or a general exam.
+        ("dental", r"\bзуб|\bщелеп|\bпародонт|\bгінгівіт|\bстоматит|\bкаріє|\bпульпіт"
+         r"|\btooth|\bteeth\b|\bjaw\b|\bgingiv|\bperiodont|\bcaries\b"),
         # By the specialty that wrote it: «шкіра» alone is a line of every
         # general examination («Шкіра: чиста»).
         ("skin", r"\bдерматол|\bdermatol"),
@@ -1733,7 +1739,10 @@ _ICD_CODE_RE = re.compile(r"(?<![\w.])([A-ZКМЕІ])(\d{2})(?:\.\d{1,2})?(?![\w
 _ICD_LETTERS = str.maketrans("КМЕІ", "KMEI")
 _ICD_CHAPTERS: tuple[tuple[str, int, int, str], ...] = (
     ("E", 0, 7, "thyroid"), ("E", 10, 16, "metabolism"), ("G", 0, 99, "brain"), ("I", 0, 99, "heart"),
-    ("J", 0, 99, "lungs"), ("K", 70, 87, "liver"), ("K", 0, 99, "digestive"), ("L", 0, 99, "skin"),
+    # K00-K14, the oral cavity, salivary glands and jaws: the teeth and mouth,
+    # the salivary glands (K11) with the ENT area that files their scans.
+    ("J", 0, 99, "lungs"), ("K", 70, 87, "liver"), ("K", 11, 11, "ent"), ("K", 0, 14, "dental"),
+    ("K", 0, 99, "digestive"), ("L", 0, 99, "skin"),
     ("M", 40, 54, "spine"), ("M", 0, 25, "joints"), ("N", 0, 39, "kidneys"),
     # Breast disorders and the female pelvic organs; benign tumours of the
     # uterus and ovary (leiomyoma D25, ovary D27); mental and behavioural
@@ -1887,7 +1896,9 @@ _ATTENTION_TERMS: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
         ("spine_disc", r"\bкил[аиі]|гриж|екструз|секвестр|конфлікт|спондиліт|сакроіле|спондилоартрит|сколіоз|торакалг|люмб\w*алг|радикулопат|hernia|extrusion"),
         ("lv_mass", r"гіпертрофі|(?:підвищ|збільш)\w*\s+індекс\w*\s+маси\s+міокарда|hypertroph"),
         ("lipoma", r"ліпом(?!атоз)|lipoma"),
-        ("lymph_inflammation", r"лімфаденопат|лімфаденіт|запальн\w*\s+змін|сіалоаден|lymphadenopathy"),
+        # «підщелепний лімфовузол злегка збільшений», never «лімфовузли не збільшені».
+        ("lymph_inflammation", r"лімфаденопат|лімфаденіт|запальн\w*\s+змін|сіалоаден|lymphadenopathy"
+         r"|лімфо\s*вуз\w*\s+(?:(?!не\b)\w+\s+){0,2}збільш"),
         ("joint_tendon", r"тендинопат|тендиніт|лігаментопат|синовіт|хондромаляц|кіст\w*\s+бейкера|розтяг|фасциїт|(?<!спондило)артрит|бурсит|tendinopathy|synovitis|fasciitis|arthritis"),
     )
 )
@@ -1906,6 +1917,8 @@ _NOT_BOWEL = re.compile(
     r"|endometri|cervi|uter|breast|gastric|stomach|gallbladder|nasal|sinus|thyroid|pituitar",
     re.I,
 )
+
+_THYROID_CLAUSE = re.compile(r"щитопод|щитовид|thyroid", re.I)
 
 #: The cited sources behind each explanation (ids in data/reference_library.json).
 FINDING_EXPLANATION_SOURCES: dict[str, tuple[str, ...]] = {
@@ -2277,11 +2290,17 @@ def finding_attention(summary: str | None, areas: tuple[str, ...] = ()) -> list[
     """
     families: list[str] = []
     bowel = not areas or "digestive" in areas
+    # Likewise a nodule is the thyroid's only in a thyroid report or a
+    # clause naming the gland: «підщелепний лімфовузол» (a neck node) and
+    # «гемороїдальні вузли» put TI-RADS under a jaw-pain visit.
+    thyroid = not areas or "thyroid" in areas
     for clause in re.split(r"[.;\n]|\s[-–—]\s", summary or ""):
         if not clause.strip() or any(pattern.search(clause) for pattern in _NEGATED_CLAUSES):
             continue
         for family, pattern in _ATTENTION_TERMS:
             if family == "colorectal_polyp" and (not bowel or _NOT_BOWEL.search(clause)):
+                continue
+            if family == "thyroid_nodule" and not (thyroid or _THYROID_CLAUSE.search(clause)):
                 continue
             for match in pattern.finditer(clause):
                 if not _NEGATED_WORD.search(clause[: match.start()]) and family not in families:
@@ -2414,6 +2433,13 @@ def _report_filing(
         body = _EMPTY_FIELD_RE.sub("", text[: span[0]] if span else text[:2000])
     study = _study_for(f"{names} {body}", clinical_type)
     diagnosed = _diagnosis_areas(summary)
+    if not diagnosed and study and study[0] == "consult_gp":
+        # A general physician's note with no diagnosis is filed by what the
+        # person came with: its examination («Зів рожевий, підщелепний
+        # лімфовузол злегка збільшений») names no organ, its complaints do
+        # («біль в ділянці нижньої щелепи справа»).
+        complaints = _complaints_span(text)
+        diagnosed = _diagnosis_areas(text[complaints[1]:complaints[2]]) if complaints else ()
     # «Гепатиту А+В» in a vaccination visit names the vaccine, not the liver.
     vaccination = clinical_type == "consultation" and _VACCINATION_VISIT.search(f"{summary} {text}")
     if study:

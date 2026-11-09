@@ -1443,6 +1443,14 @@ def _upload_target(settings: Settings, name: str) -> Path:
     return target
 
 
+#: What a lab may hand over besides a PDF: a clinic's scanned report.
+_IMAGE_SUFFIXES = ((b"\xff\xd8\xff", ".jpg"), (b"\x89PNG\r\n\x1a\n", ".png"), (b"II*\x00", ".tif"), (b"MM\x00*", ".tif"))
+
+
+def _file_suffix(data: bytes) -> str:
+    return next((suffix for magic, suffix in _IMAGE_SUFFIXES if data.startswith(magic)), ".pdf")
+
+
 def _wait_for_job(settings: Settings, job_id: str, inline: bool):
     if inline:
         intake.drain_now(settings)
@@ -1974,11 +1982,17 @@ class _OrderSync:
         """One report: ``("failed", None)``, ``("same", id)`` for a document
         already in the record, or ``("fresh", id)`` for a newly read one."""
         # A clinic that names its documents (Doctor Eleks) passes the
-        # day and the name on in the file name, for the classifier.
-        hint = " ".join(re.sub(r'[\\/:*?"<>|]+', " ", str(self.order.get("filename_hint") or "")).split())[:120]
+        # day and the name on in the file name, for the classifier.  The
+        # name is the first file's: what else a visit attached (Expert
+        # Hospital's breath test under a gastroenterology consultation) is
+        # named by its own text -- unless every file is that one document
+        # (an examination's report and its radiographs).
+        hint = "" if index and not self.order.get("hint_every_file") else " ".join(
+            re.sub(r'[\\/:*?"<>|]+', " ", str(self.order.get("filename_hint") or "")).split())[:120]
         target = _upload_target(
             self.settings,
-            f"{self.key}-{self.order_id}{'-' + str(index) if index else ''}{' ' + hint if hint else ''}.pdf")
+            f"{self.key}-{self.order_id}{'-' + str(index) if index else ''}{' ' + hint if hint else ''}"
+            f"{_file_suffix(pdf)}")
         target.write_bytes(pdf)
         with connect(self.settings) as connection:
             same = connection.execute(

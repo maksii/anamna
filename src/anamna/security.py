@@ -155,7 +155,8 @@ def session_user(settings: Settings, token: str | None):
         # `k.kind IS NULL` for an ordinary password sign-in.
         return connection.execute(
             """SELECT u.*, s.csrf_token, s.expires_at,
-                      k.kind AS token_kind, k.expires_at AS token_expires_at
+                      k.kind AS token_kind, k.expires_at AS token_expires_at,
+                      k.id AS token_id, k.label AS token_label
                FROM sessions s
                JOIN users u ON u.id = s.user_id
                LEFT JOIN access_tokens k ON k.id = s.token_id

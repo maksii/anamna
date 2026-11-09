@@ -1531,13 +1531,13 @@ img.viewer-media { object-fit: contain; padding: 16px; background: var(--surface
 
   .account-toggle { padding: 4px; }
 
-  /* No room left in a phone's header row: the AI hand-off moves into the
-     account sheet, with its full label. */
-  .topbar .ai-header { display: none; }
+  /* A phone's header keeps the AI hand-off in sight, with its full label:
+     the logo stands for the wordmark (the link keeps its spoken name), which
+     frees the room "Копіювати для ШІ" needs at 375px.  Hidden in the account
+     sheet, it went unfound until the phone was turned sideways. */
+  .topbar:has(.ai-header) .brand > span:last-child { display: none; }
 
-  .ai-header + .account-menu { margin-left: auto; }
-
-  .account-panel .account-panel__ai { display: flex; width: 100%; }
+  .topbar .ai-header { padding-inline: 12px; }
 
   .hero-row, .page-head, .detail-head { align-items: flex-start; flex-direction: column; }
 
@@ -2287,17 +2287,20 @@ img.viewer-media { object-fit: contain; padding: 16px; background: var(--surface
 
 .logout-form { margin: 0; }
 
-.lang-switch { display: inline-flex; gap: 2px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface-veil); padding: 3px; }
+.lang-switch { display: inline-flex; align-items: center; gap: 2px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface-veil); padding: 3px; }
 
 /* Inside the account menu there is room to size these as real controls; in
    the header strip they were 10px glyphs on a 5px target. */
 .account-panel .lang-switch button { min-height: 32px; padding: 6px 11px; font-size: var(--text-xs); }
 
-.lang-switch button { border: 0; background: transparent; color: var(--muted); font-size: 10px; font-weight: 800; letter-spacing: .04em; padding: 5px 8px; border-radius: 999px; }
+.lang-switch button { display: inline-flex; align-items: center; justify-content: center; min-height: 32px; border: 0; background: transparent; color: var(--muted); font-size: 10px; font-weight: 800; letter-spacing: .04em; padding: 5px 8px; border-radius: 999px; }
 
 .lang-switch button.active { background: var(--mint); color: var(--teal-dark); }
 
-.login-lang { position: fixed; z-index: 40; top: 18px; right: 20px; }
+/* Flex, not two inline boxes: inline ones sat on their text baselines, and
+   the icon row's baseline is not the letters', so one pill hung lower. */
+.login-lang { position: fixed; z-index: 40; top: 18px; right: 20px; left: 20px; display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 8px; pointer-events: none; }
+.login-lang > * { pointer-events: auto; }
 
 /* Signed-out shell pages (privacy, terms) share the switcher strip with the
    login screen; without a header bar the content must start below it. */
@@ -6067,6 +6070,17 @@ details.panel.an-page-disclosure { padding: 0; }
 }
 .ai-card h3 { margin: 0; overflow-wrap: anywhere; }
 .ai-card h3 small { font-weight: 400; font-size: var(--text-xs); }
+/* /admin/ai: the record chat's models, a dropdown of checkboxes. */
+.ai-multi-field__label { display: block; font-weight: 700; margin-bottom: var(--space-1); }
+.ai-multi { border: 1px solid var(--edge-strong); border-radius: 10px; background: var(--surface); }
+.ai-multi > summary { display: flex; align-items: center; min-height: 44px; padding: 0 var(--space-3); cursor: pointer; }
+.ai-multi[open] > summary { border-bottom: 1px solid var(--line); }
+.ai-multi__panel { max-height: 22rem; overflow-y: auto; padding: var(--space-2) var(--space-3); }
+.ai-multi__group { border: 0; margin: 0 0 var(--space-2); padding: 0; min-width: 0; }
+.ai-multi__group legend { font-size: var(--text-sm); font-weight: 700; padding: var(--space-1) 0; }
+.ai-multi__group legend small { font-weight: 400; color: var(--muted); }
+.ai-multi__option { display: flex; align-items: center; gap: var(--space-2); min-height: 44px; font-weight: 400; overflow-wrap: anywhere; }
+.ai-multi__option input { flex: none; width: 20px; height: 20px; }
 .ai-card p { margin: 0; }
 .ai-card select:disabled { opacity: .7; }
 /* .table-wrap bleeds into the panel's bottom padding, which is right only
@@ -7039,7 +7053,7 @@ svg.an-trend { display: block; width: 100%; max-width: 24rem; height: auto; over
 
 /* Test planner (/plan-tests): one column on a phone, the same blocks wider
    on a tablet; nothing here needs its own breakpoint. */
-.an-plan-form, .an-plan-result { display: grid; gap: 16px; min-width: 0; }
+.an-plan-form, .an-plan-result { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; min-width: 0; }
 .an-plan-needs { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
 .an-plan-need { display: flex; align-items: center; justify-content: space-between; gap: 4px 12px; padding: 6px 12px; border: 1px solid var(--line); border-radius: 12px; min-width: 0; }
 .an-plan-need--unsold { background: var(--surface-sunken); }
@@ -7204,6 +7218,46 @@ svg.an-trend { display: block; width: 100%; max-width: 24rem; height: auto; over
 .an-plan-item__price { white-space: nowrap; }
 .an-plan-item__price s { color: var(--muted); font-weight: 400; }
 .an-plan-item--fee { color: var(--muted); }
+/* An order the person edits: each item has a remove control beside its
+   disclosure (a drawn cross with a spoken name and a title), what was
+   removed can come back, and one box filters the order and finds more. */
+.an-plan-item[data-item] { display: flex; align-items: flex-start; gap: 4px; }
+.an-plan-item[data-item] > .an-plan-item__more { flex: 1 1 auto; min-width: 0; }
+.an-plan-item[hidden] { display: none; }
+.an-plan-item__cut { position: relative; flex: none; width: 44px; height: 44px; margin-top: 6px; border-radius: 10px; color: var(--muted); }
+.an-plan-item__cut::before, .an-plan-item__cut::after { content: ""; position: absolute; left: 50%; top: 50%; width: 16px; height: 2px; margin: -1px 0 0 -8px; border-radius: 2px; background: currentColor; transform: rotate(45deg); }
+.an-plan-item__cut::after { transform: rotate(-45deg); }
+.an-plan-item__cut:hover { color: var(--ink); background: var(--surface-veil); }
+.an-plan-cut { margin: 0 0 12px; }
+.an-plan-cut p { margin: 0 0 4px; }
+.an-plan-cut ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.an-plan-cut li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; min-width: 0; }
+.an-plan-cut__name { flex: 1 1 12rem; min-width: 0; overflow-wrap: anywhere; text-decoration: line-through; color: var(--muted); }
+.an-plan-order-edit { margin: 0 0 16px; min-width: 0; }
+.an-plan-order-edit .an-plan-search label { font-weight: 600; }
+.an-plan-order-edit [data-order-found][aria-busy="true"] { opacity: .55; }
+.an-plan-add__lead { margin: 12px 0 4px; }
+.an-plan-add { list-style: none; margin: 0; padding: 0; display: grid; }
+.an-plan-add__row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 4px 12px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.an-plan-add__body { grid-row: span 2; display: grid; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.an-plan-add__name { font-weight: 600; }
+.an-plan-add__price { white-space: nowrap; font-weight: 600; text-align: right; }
+.an-plan-add__go { min-height: 44px; justify-self: end; }
+/* A doctor's saved selection, waiting for the person at the top of the planner. */
+.an-plan-suggestion h2 { margin: 0 0 4px; font-size: var(--text-lg); }
+.an-plan-suggestion p { margin: 0 0 6px; }
+.an-plan-suggestion__do { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.an-plan-suggestion__do form { margin: 0; }
+/* Samples left out: a two-column grid of checkboxes on a phone, wider rows above. */
+.an-plan-samples { border: 0; padding: 0; margin: 16px 0 0; min-width: 0; }
+.an-plan-samples legend { font-weight: 600; margin-bottom: 4px; padding: 0; }
+.an-plan-samples > p { margin: 0 0 8px; }
+.an-plan-samples__grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 13rem), 1fr)); gap: 4px 16px; }
+.an-plan-sample { display: flex; align-items: flex-start; gap: 12px; min-height: 44px; cursor: pointer; font-weight: 400; min-width: 0; }
+.an-plan-sample input { width: 22px; min-height: 22px; margin-top: 10px; flex: none; }
+.an-plan-sample > span { display: grid; gap: 2px; padding: 8px 0; min-width: 0; }
+.an-plan-sample strong { font-weight: 650; }
+.an-plan-samples__out { margin: 8px 0 0; color: var(--warn-ink); overflow-wrap: anywhere; }
 .an-plan-sums { display: grid; gap: 4px; margin: 0 0 12px; }
 .an-plan-sums > div { display: flex; justify-content: space-between; gap: 12px; }
 .an-plan-sums dd { margin: 0; white-space: nowrap; }

@@ -85,6 +85,7 @@
           {{ nav_link('vaccinations', '/vaccinations', t('nav.vaccinations')) }}
           {{ nav_link('plan_tests', '/plan-tests', t('nav.plan_tests')) }}
           {{ nav_link('documents', '/documents', t('nav.documents')) }}
+          {% if not guest %}{{ nav_link('chat', '/chat', t('nav.chat')) }}{% endif %}
         </span>
         {# Actions that change the record, kept visually apart from the pages
            that only read it. Hidden entirely while viewing someone else's, and

@@ -18,7 +18,7 @@ from anamna.ingest.pipeline import RereadRefused, reingest_document
 from anamna.labsync import common
 
 from test_labsync import make, router, seed_doc, stub_intake
-from test_labsync_expert import FAMILY, PASSWORD, PROFILE, TOKENS
+from test_labsync_expert import FAMILY, NO_DOCUMENTS, PASSWORD, PROFILE, TOKENS
 
 ANTIGEN = "sars-cov-2-antigen"
 NOFILE = {"id": 100169, "name": '"Тест на визначення антигену SARS-CoV-2"', "category": "lab",
@@ -30,6 +30,7 @@ INDICATORS = [{"id": 1, "name": "Антиген SARS-CoV-2", "value": "не ви
 
 def routes(analysis: dict, indicators=INDICATORS) -> dict:
     return {
+        **NO_DOCUMENTS,
         ("GET", "/api/v1/medical/analyses"): {"items": [analysis], "total": 1, "has_more": False},
         ("GET", f"/api/v1/medical/analyses/{analysis['id']}"): {**analysis, "indicators": indicators},
         ("GET", f"/api/v1/medical/analyses/{analysis['id']}/file"): b"%PDF-1.4 synthetic",

@@ -65,13 +65,17 @@ def test_ai_opener_has_a_place_at_every_width_and_keeps_its_verb(tmp_path: Path)
     assert header.count("data-ai-open") == 2
     main = html[html.index('<main id="main"'): html.index("</main>")]
     assert "data-ai-open" not in main and "ai-dock" not in main
-    # Exactly one shows per width: the header row above 720px, the sheet below.
+    # The header row shows it at every width, a phone included (in the sheet
+    # alone it went unfound until the phone was turned sideways); the sheet's
+    # copy stays hidden, and on a phone the logo stands for the wordmark.
     css = (WEB_DIR / "static" / "app.css").read_text(encoding="utf-8")
     assert ".topbar .ai-header { display: inline-flex; }" in css
+    assert ".account-panel .account-panel__ai { display: none; }" in css
     phone = css[css.index("@media (max-width: 720px) {\n\n  .shell"):]
     phone = phone[: phone.index("\n}\n")]
-    assert ".topbar .ai-header { display: none; }" in phone
-    assert ".account-panel .account-panel__ai { display: flex;" in phone
+    assert ".topbar .ai-header { display: none; }" not in phone
+    assert ".account-panel__ai { display: flex" not in phone
+    assert ".topbar:has(.ai-header) .brand > span:last-child { display: none; }" in phone
     assert ".ai-dock" not in css
 
 

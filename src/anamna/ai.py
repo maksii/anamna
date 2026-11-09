@@ -122,7 +122,9 @@ EFFORTS: dict[str, tuple[str, ...]] = {
 # cost predictable if the model default ever moves.
 DEFAULT_EFFORT = {"anthropic": "medium"}
 
-TASKS = ("document_review", "summary", "default")
+#: "chat" is the record chat (/chat, `chat.py`); until an admin saves a route
+#: for it, it answers on the default task's route (see `_route`).
+TASKS = ("document_review", "summary", "chat", "default")
 # Reasoning models spend output tokens thinking before they write the answer.
 # A 7-page, 53-value lab document stopped at finish_reason=length on two free
 # models with the old 3000/5000 caps; 16k leaves room for both.
@@ -131,12 +133,13 @@ TASKS = ("document_review", "summary", "default")
 # The /changes explanation (one finding per abnormal result, reasons, next
 # steps, questions) ran past 4000 tokens in Ukrainian on 2026-11-05; Haiku is
 # cheap enough that 32k everywhere costs only what is actually written.
-TASK_DEFAULT_MAX_TOKENS = {"document_review": 32000, "summary": 32000, "default": 32000}
+TASK_DEFAULT_MAX_TOKENS = {"document_review": 32000, "summary": 32000, "chat": 16000, "default": 32000}
 MAX_TOKENS_LIMIT = 64000
 MIN_MAX_TOKENS = 256
 # Paid models reading a whole document at higher effort take minutes, not
 # seconds.  OpenRouter keeps REQUEST_TIMEOUT.
-TASK_TIMEOUTS = {"document_review": 300, "summary": 120, "default": 60}
+# A chat round streams, so this bounds a stalled read, not a long answer.
+TASK_TIMEOUTS = {"document_review": 300, "summary": 120, "chat": 120, "default": 60}
 
 
 class AIUnavailable(Exception):
@@ -177,6 +180,8 @@ def task_for(feature: str) -> str:
         return feature
     if feature.startswith("admin_test_") and feature[len("admin_test_"):] in TASKS:
         return feature[len("admin_test_"):]
+    if feature.startswith("chat_"):
+        return "chat"  # compaction runs on the chat's own route
     if feature.startswith("document_hints"):
         return "document_review"
     if "summary" in feature:
@@ -211,8 +216,13 @@ def _route(stored: dict[str, str], task: str) -> dict:
     legacy_provider = stored.get("ai_provider") or DEFAULT_PROVIDER
     if legacy_provider not in PROVIDER_NAMES:
         legacy_provider = DEFAULT_PROVIDER
+    saved = stored.get(f"ai_task_{task}")
+    if task == "chat" and not saved:
+        # A new task must not fall back to the legacy free route while the
+        # admin has already chosen a model for everything else.
+        saved = stored.get("ai_task_default")
     try:
-        raw = json.loads(stored.get(f"ai_task_{task}") or "{}")
+        raw = json.loads(saved or "{}")
     except ValueError:
         raw = {}
     if not isinstance(raw, dict):
@@ -275,7 +285,46 @@ def ai_settings(settings: Settings) -> dict:
         "api_key": keys[default["provider"]],
         "model": default["model"],
         "provider": default["provider"],
+        "chat_models": _chat_models(stored.get(CHAT_MODELS_SETTING)),
     }
+
+
+#: Models the admin lets people pick in the record chat, besides the chat
+#: route's own model (which is always offered first and is the default).
+CHAT_MODELS_SETTING = "ai_chat_models"
+MAX_CHAT_MODELS = 12
+
+
+def _chat_models(raw: object) -> list[dict]:
+    try:
+        items = json.loads(str(raw or "[]"))
+    except ValueError:
+        return []
+    return [
+        {"provider": str(item["provider"]), "model": str(item["model"])}
+        for item in items if isinstance(item, dict)
+        and item.get("provider") in PROVIDER_NAMES and str(item.get("model") or "").strip()
+    ][:MAX_CHAT_MODELS] if isinstance(items, list) else []
+
+
+def parse_chat_models(text: str) -> list[dict] | None:
+    """``provider:model`` per line (the first colon separates them, so
+    ``openrouter:google/gemma-4-26b-a4b-it:free`` works); None when a line
+    names no known provider, a model id is not one, or there are too many."""
+    models: list[dict] = []
+    for line in str(text or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        provider, _, model = line.partition(":")
+        provider, model = provider.strip(), model.strip()
+        if provider not in PROVIDER_NAMES or not model or len(model) > 200 or any(
+            ord(character) < 32 or character.isspace() for character in model
+        ):
+            return None
+        if {"provider": provider, "model": model} not in models:
+            models.append({"provider": provider, "model": model})
+    return models if len(models) <= MAX_CHAT_MODELS else None
 
 
 def save_ai_settings(settings: Settings, values: dict[str, str]) -> None:
@@ -327,6 +376,14 @@ def parse_admin_form(form) -> tuple[dict[str, str], dict[str, object]] | str:
             return route
         values[f"ai_task_{task}"] = json.dumps(route)
         audit["tasks"][task] = route  # type: ignore[index]
+    if "chat_models_present" in form:
+        # One checkbox per model, each `provider:model`; none ticked submits none.
+        ticked = form.getlist("chat_model") if hasattr(form, "getlist") else form.get("chat_model") or []
+        chat_models = parse_chat_models("\n".join([ticked] if isinstance(ticked, str) else ticked))
+        if chat_models is None:
+            return "aiassist.error_chat_models"
+        values[CHAT_MODELS_SETTING] = json.dumps(chat_models)
+        audit["chat_models"] = chat_models
     return values, audit
 
 

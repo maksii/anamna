@@ -14,7 +14,8 @@ import difflib
 import logging
 import re
 from datetime import date, datetime
-from urllib.parse import quote, unquote, urlencode
+from urllib.parse import parse_qsl, quote, unquote, urlencode
+from uuid import uuid4
 
 from fastapi import HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -22,7 +23,7 @@ from starlette.datastructures import QueryParams
 from starlette.concurrency import run_in_threadpool
 
 from .. import labsync, testplan, testplan_prep, testplan_special, testplan_value
-from ..db import connect, transaction
+from ..db import connect, transaction, utc_now
 from ..health import concept_display_name
 from ..i18n import format_number_localized, get_locale, t
 from ..labsync import esculab_shop
@@ -262,13 +263,34 @@ def stored_lab_items(settings, connection, owner_id: str, key: str) -> tuple[lis
     return items, fetched if items is not None else None
 
 
-def _owner_person(settings, user_id: str, key: str) -> str | None:
-    """The person on the lab account who is this record's owner."""
+def _order_account(settings, user_id: str, owner_id: str, key: str) -> tuple[str, str | None]:
+    """Whose lab account an order for ``owner_id``'s record goes through, and
+    the owner's person on it.  One's own record: one's own account.  A record
+    shared with ``user_id``: their own account when it holds the owner as a
+    person (a family link the owner accepted), else the owner's.  The person
+    is None when no account here holds the owner."""
     with connect(settings) as connection:
-        row = connection.execute(
-            """SELECT remote_person_id FROM lab_person_links WHERE account_user_id=? AND provider=?
-                   AND target_user_id=? AND consent='owner'""", (user_id, key, user_id)).fetchone()
-    return str(row["remote_person_id"]) if row else None
+        for account_id in dict.fromkeys([user_id, owner_id]):
+            row = connection.execute(
+                """SELECT remote_person_id FROM lab_person_links WHERE account_user_id=? AND provider=?
+                       AND target_user_id=? AND consent IN ('owner', 'accepted')""",
+                (account_id, key, owner_id)).fetchone()
+            if row:
+                return account_id, str(row["remote_person_id"])
+    return user_id, None
+
+
+#: Query parameters a saved selection keeps: what is ticked, how and where to
+#: plan, and the order edits.  Searches, filters and one-off presses are not.
+SUGGESTION_KEEP = frozenset({"touched", "need", "add", "include", "sx", "topic", "special", "recent", "city", "pref",
+                             "mode", "ex", "cut", "put"})
+
+
+def suggestion_query(raw: str) -> str:
+    """The query string a doctor's selection is saved as (:data:`SUGGESTION_KEEP`
+    and each lab's chosen option), from the planner's own query string."""
+    return urlencode([(name, value) for name, value in parse_qsl(raw, keep_blank_values=False)
+                      if name in SUGGESTION_KEEP or re.fullmatch(r"alt_[a-z]+", name)])
 
 
 # --- search: one matcher for both boxes ------------------------------------------
@@ -496,7 +518,7 @@ SPECIAL_PAGES = {"allergy": "/allergy", "genetics": "/genetics"}
 
 
 def _special(params, sex: str | None, ready: dict[str, list[dict]], cards: list[dict], *,
-             skip_recent: bool, recent, query: str, sparkline) -> dict:
+             skip_recent: bool, recent, query: str, sparkline, left_out=frozenset()) -> dict:
     """The planner's second mode (:mod:`.testplan_special`): entries picked
     (``sx``), topics open (``topic``; ``preset`` opens one and ticks its core
     entries, ``drop`` closes it with its entries), what each entry looks like
@@ -505,8 +527,10 @@ def _special(params, sex: str | None, ready: dict[str, list[dict]], cards: list[
     An entry is "measured" when the record holds every key it stands for, or
     every result of a lab item that is one (the 7-infection PCR panel's
     seven), or, for an allergy panel, any allergen result at all (said on
-    the row).  Topics tick and untick like routine presets."""
-    entries = testplan_special.for_sex(sex)
+    the row).  Topics tick and untick like routine presets.  An entry that
+    needs a sample the person leaves out (``left_out``: keys no lab here
+    sells any more) is neither listed nor picked."""
+    entries = [entry for entry in testplan_special.for_sex(sex) if not set(entry.keys) & set(left_out)]
     by_id = {entry.id: entry for entry in entries}
     card_by = {str(card["id"]): card for card in cards if not card.get("is_device")}
     sold_at = {lab: {k for item in items for k in item["keys"]} for lab, items in ready.items()}
@@ -740,6 +764,8 @@ SPLIT_MARGIN = 0.10
 SPLIT_MIN_SAVING = 150.0
 #: The city and the lab last chosen, remembered for the next visit (a year).
 REMEMBER = {"city": "plan_city", "pref": "plan_lab"}
+#: The kinds of sample left out (``ex``), comma-joined, remembered the same way.
+SAMPLES_COOKIE = "plan_samples"
 REMEMBER_DAYS = 365
 
 
@@ -802,6 +828,65 @@ def _option_view(index: int, option: dict, cheapest: dict, names: dict[str, str]
             "lost": sorted((_result_name(k, names, cheapest["items"]) for k in lost), key=testplan.alphabetical)}
 
 
+#: Tests the order box lists at once; past this the query is too vague.
+ORDER_CAP = 20
+
+
+def _edited(plan: dict, lab: str, items: list[dict], need: set[str], tracked, cuts: set[str],
+            puts: list[str]) -> tuple[dict, list[dict]]:
+    """``plan`` as the person edited it (:func:`testplan_value.fixed`): its
+    items without the ones cut, then the ones put in from ``items`` (this
+    lab's shelf), and the cut items.  ``plan`` itself when nothing of this
+    lab's is edited."""
+    def ref(item):
+        return f"{lab}:{item['id']}"
+
+    shelf = {ref(item): item for item in items}
+    kept = [item for item in plan["items"] if ref(item) not in cuts]
+    have = {ref(item) for item in kept}
+    added = [{**shelf[value], "added": True} for value in puts if value in shelf and value not in have]
+    if len(kept) == len(plan["items"]) and not added:
+        return plan, []
+    return (testplan_value.fixed([*kept, *added], need, tracked),
+            [item for item in plan["items"] if ref(item) in cuts])
+
+
+def _order_search(text: str, items: list[dict], concepts: dict[str, str]) -> list[dict]:
+    """A lab's items for the order box, best first: by their own names,
+    codes and synonyms, and by our names for what they measure, every kind
+    of test (single, panel, genetic)."""
+    rows = [(_item_terms(item) + tuple((term, weight | 1) for term, weight in
+                                       _terms([], [n for k in item["keys"][:40] for n in (concepts.get(k),) if n])),
+             item) for item in items]
+    hits, _fuzzy = _rank(text, rows, infix=True)
+    hits.sort(key=lambda hit: (hit[0], len(hit[1]["parameters"]), hit[1]["final_price"]))
+    return [item for _, item in hits]
+
+
+def edit_url(params, lab: str, *, cut: str = "", put: str = "", reset: bool = False, alt: int | None = None) -> str:
+    """This plan's address with one lab's order edited, back at its tile:
+    ``cut`` an item (an added one simply goes), ``put`` one in (a cut one
+    simply comes back), ``reset`` every edit of the lab, ``alt`` one of its
+    plans (which starts the edits over).  The tile's search is dropped."""
+    pairs = list(params.multi_items())
+    mine = f"{lab}:"
+    reset = reset or alt is not None
+    keep = []
+    for name, value in pairs:
+        if name in {"notice", "olab", "oq", "have"} or (alt is not None and name == f"alt_{lab}"):
+            continue
+        if name in {"cut", "put"} and value.startswith(mine) and (reset or value in {cut, put}):
+            continue
+        keep.append((name, value))
+    if cut and ("put", cut) not in pairs:
+        keep.append(("cut", cut))
+    if put and ("cut", put) not in pairs:
+        keep.append(("put", put))
+    if alt and alt > 1:
+        keep.append((f"alt_{lab}", str(alt)))
+    return "/plan-tests?" + urlencode(keep) + f"#plan-{lab}"
+
+
 def _plan_view(plan: dict, required: set[str], names: dict[str, str], selected: set[str] | None = None) -> dict:
     selected = required if selected is None else selected
     locale = get_locale()
@@ -831,6 +916,8 @@ def register_routes(app, settings, *, templates, template_context, require_user,
     templates.env.filters["stamp"] = stamp
     templates.env.globals["plan_query"] = plan_query
     templates.env.globals["page_url"] = page_url
+    templates.env.globals["edit_url"] = edit_url
+    templates.env.filters["sample_name"] = lambda group: t(f"plan.sample_{group}_short")
 
     def build(request: Request, user, owner, params=None) -> dict:
         from .app import _metric_catalog, _sparkline
@@ -878,7 +965,24 @@ def register_routes(app, settings, *, templates, template_context, require_user,
         ready = {key: [item for item in items if not (sex and item.get("sex") and item["sex"] != sex)
                        and not (adult and testplan.for_children(item))]
                  for key, items in labs.items() if items is not None}
+        # Samples the person will not give ("blood tests only"): every item
+        # that needs one leaves the labs' shelves, so a result only such an
+        # item measures is neither suggested, ticked nor planned (``left_out``).
+        # Remembered like the city; an untouched page starts from the cookie.
+        if params.get("touched") or "ex" in params:
+            excluded = list(dict.fromkeys(params.getlist("ex")))
+        else:
+            excluded = unquote(request.cookies.get(SAMPLES_COOKIE, "")).split(",")
+        excluded = [group for group in testplan.SAMPLE_GROUPS if group in excluded]
+        sold_anywhere = {k for items in ready.values() for item in items for k in item["keys"]}
+        if excluded:
+            ready = {key: [item for item in items if not testplan.samples(item) & set(excluded)]
+                     for key, items in ready.items()}
         sold = {k for items in ready.values() for item in items for k in item["keys"]}
+        left_out = sold_anywhere - sold
+        # Which kinds of sample the labs here take at all: the choices offered.
+        sample_groups = [group for group in testplan.SAMPLE_GROUPS if group in excluded or any(
+            group in testplan.samples(item) for items in labs.values() if items for item in items)]
         names = {}
         for items in ready.values():
             for item in items:
@@ -903,6 +1007,7 @@ def register_routes(app, settings, *, templates, template_context, require_user,
         names.update({str(card["id"]): str(card["name"]) for card in cards})
         for need in needs:
             need["sold"] = need["key"] in sold
+            need["left_out"] = need["key"] in left_out
         # What can be planned first; what no lab sells last, still listed.
         needs.sort(key=lambda need: not need["sold"])
         # Days since each lab result was last measured; with the switch on
@@ -927,6 +1032,7 @@ def register_routes(app, settings, *, templates, template_context, require_user,
                         and not (skip_recent and recent(need["key"]))]
         for value in params.getlist("add"):
             selected += [k for k in value.split("|") if k and k not in selected]
+        selected = [k for k in selected if k not in left_out]
         offered = presets_for(sex)
         # Rows past the pre-selected list (optional ones ticked, searched,
         # from a preset) are listed together under "Added by you".
@@ -962,7 +1068,7 @@ def register_routes(app, settings, *, templates, template_context, require_user,
         # or by the search, and the plan covers their keys alone.
         special = params.get("special") == "1"
         spec = _special(params, sex, ready, cards, skip_recent=skip_recent, recent=recent, query=query,
-                        sparkline=_sparkline) if special else None
+                        sparkline=_sparkline, left_out=left_out) if special else None
         if spec is not None:
             selected = spec["keys"]
             names.update(spec["names"])
@@ -970,6 +1076,8 @@ def register_routes(app, settings, *, templates, template_context, require_user,
                 names.setdefault(key, name)
         hits, fuzzy = _search(query, cards, ready, names, set(selected), from_labs, concepts) \
             if query and not special else ([], False)
+        # A result only a left-out sample measures is not offered to add.
+        hits = [hit for hit in hits if not set(hit["keys"]) <= left_out]
         # One box filters the list and finds what is not on it yet: a hit
         # already on the list (ticked or not) shows there, the rest below it.
         on_list = listed | set(selected)
@@ -982,7 +1090,10 @@ def register_routes(app, settings, *, templates, template_context, require_user,
         include = list(dict.fromkeys(value for value in params.getlist("include") if value))
         included = [by_id[value] for value in include if value in by_id]
         include_rows = [_set_row(item["lab"], item, names, set(include)) for item in included]
-        include_gone = [value for value in include if value not in by_id and value.partition(":")[0] in ready]
+        # A panel that needs a left-out sample is dropped with it, not "gone".
+        held = {f"{key}:{item['id']}" for key, items in labs.items() if items for item in items}
+        include_gone = [value for value in include if value not in by_id and value.partition(":")[0] in ready
+                        and not (excluded and value in held)]
         # In special mode the one search box also finds the labs' own packages.
         set_query = query if special else (params.get("sq") or "").strip()[:80]
         shelves = _shelves(ready, _section_titles(settings))
@@ -1022,6 +1133,10 @@ def register_routes(app, settings, *, templates, template_context, require_user,
         pref = params.get("pref") if "pref" in params else remembered["pref"]
         prefs = {"lab": pref if pref in ready else "",
                  "mode": "complete" if params.get("mode") == "complete" else "cheapest"}
+        # The person's own edits of a lab's order: ``cut=<lab>:<id>`` takes an
+        # item out, ``put=<lab>:<id>`` adds one from that lab's shelf.
+        cuts = set(params.getlist("cut"))
+        puts = [value for value in dict.fromkeys(params.getlist("put")) if value not in cuts]
         if params.get("plan") and everything:
             shown = {prefs["lab"]: ready[prefs["lab"]]} if prefs["lab"] else ready
             for key, items in shown.items():
@@ -1036,8 +1151,15 @@ def register_routes(app, settings, *, templates, template_context, require_user,
                 options = (testplan_value.complete_options if prefs["mode"] == "complete"
                            else testplan_value.alternatives)(items, need, forced=forced, tracked=from_labs)
                 chosen = min(max(_int(params.get(f"alt_{key}")) - 1, 0), len(options) - 1)
-                plan = _plan_view(options[chosen], need, names, required)
+                shown_plan, cut_items = _edited(options[chosen], key, items, need, from_labs, cuts, puts)
+                plan = _plan_view(shown_plan, need, names, required)
                 plan.update(lab=key, name=VENDORS[key], region=regions[key],
+                            edited=shown_plan is not options[chosen], cut_items=[
+                                {**_label(item), "value": f"{key}:{item['id']}", "final_price": item["final_price"]}
+                                for item in cut_items],
+                            # Ranked and compared as planned, so an edit never
+                            # moves the tile under the reader.
+                            rank_missing=len(options[chosen]["missing"]), base_cost=options[chosen]["cost"],
                             separately=testplan.separately(items, required) if not forced else None,
                             fetched_at=testplan.fetched_at(settings, key, regions[key]),
                             not_here=[_label(item)["label"] for item in included if item["lab"] != key],
@@ -1048,7 +1170,7 @@ def register_routes(app, settings, *, templates, template_context, require_user,
                             options=[_option_view(index, option, options[0 if prefs["mode"] == "cheapest" else -1],
                                                   names, chosen) for index, option in enumerate(options)])
                 plans.append(plan)
-            single = [plan["cost"] for plan in plans if not plan["missing"]]
+            single = [plan["base_cost"] for plan in plans if not plan["rank_missing"]]
             if len(ready) > 1 and not prefs["lab"] and prefs["mode"] == "cheapest" and single:
                 # A split between labs means two visits and two blood draws: it is
                 # offered only when it beats the best single lab by SPLIT_MARGIN.
@@ -1067,10 +1189,12 @@ def register_routes(app, settings, *, templates, template_context, require_user,
             # Ranked by each lab's first plan, not the option shown: switching
             # a lab to a fuller option never reorders the tiles under the reader.
             if prefs["mode"] == "complete":
-                plans.sort(key=lambda plan: (len(plan["missing"]), -plan.get("first_value", plan.get("value", 0)),
+                plans.sort(key=lambda plan: (plan.get("rank_missing", len(plan["missing"])),
+                                             -plan.get("first_value", plan.get("value", 0)),
                                              plan.get("cheapest_cost", plan["cost"])))
             else:
-                plans.sort(key=lambda plan: (len(plan["missing"]), plan.get("cheapest_cost", plan["cost"])))
+                plans.sort(key=lambda plan: (plan.get("rank_missing", len(plan["missing"])),
+                                             plan.get("cheapest_cost", plan["cost"])))
             best = plans[0] if plans else None
             ids = [item["id"] for plan in plans for item in plan["items"] if item["lab"] == "esculab"]
             try:
@@ -1081,7 +1205,24 @@ def register_routes(app, settings, *, templates, template_context, require_user,
                 esculab_prep = {}
             for plan in plans:
                 plan["prep"] = _prep(plan["items"], esculab_prep, sex, adult)
+        # The box in a lab's tile: one field that filters the order and finds
+        # that lab's tests to add (``olab``, ``oq``; ``have`` names the order's
+        # items when no plan is built, as for /plan-tests/order-search).
+        order = None
+        order_lab = params.get("olab") if params.get("olab") in ready else ""
+        order_query = " ".join((params.get("oq") or "").split())[:80] if order_lab else ""
+        if order_query:
+            in_order = next(({item["id"] for item in plan["items"]} for plan in plans if plan["lab"] == order_lab),
+                            set(params.getlist("have")))
+            ranked = _order_search(order_query, ready[order_lab], concepts)
+            found = [item for item in ranked if item["id"] not in in_order]
+            order = {"lab": order_lab, "query": order_query,
+                     "match": [item["id"] for item in ranked if item["id"] in in_order],
+                     "total": len(found), "rows": [{**_set_row(order_lab, item, names, set()),
+                                                    "materials": _materials(item, get_locale())}
+                                                   for item in found[:ORDER_CAP]]}
         return {"needs": needs, "selected": selected, "extra": extra, "query": query, "results": results,
+                "order": order, "order_lab": order_lab, "order_query": order_query,
                 "match": match, "presets": presets, "special": special, "spec": spec,
                 "presets_open": bool(params.getlist("preset") or params.getlist("drop")),
                 "days": days, "skip_recent": skip_recent, "recent_days": RECENT_DAYS,
@@ -1093,7 +1234,13 @@ def register_routes(app, settings, *, templates, template_context, require_user,
                 "plans": plans, "best": best, "regions": regions, "labs_on": active,
                 "crawling": [key for key in active if key in labs and labs[key] is None],
                 "region_lists": region_lists, "lab_names": VENDORS,
-                "city": city, "city_names": city_names, "no_city": no_city}
+                "city": city, "city_names": city_names, "no_city": no_city,
+                "excluded": excluded, "sample_groups": sample_groups,
+                # What the left-out samples took off this list: the record's
+                # suggestions and what the person had ticked or added.
+                "left_out_names": sorted({names.get(k, k) for k in left_out & {
+                    *(n["key"] for n in needs if n["preselected"]), *params.getlist("need"),
+                    *(k2 for value in params.getlist("add") for k2 in value.split("|"))}}, key=testplan.alphabetical)}
 
     def _regions(key: str) -> list[dict]:
         try:
@@ -1106,23 +1253,43 @@ def register_routes(app, settings, *, templates, template_context, require_user,
         user = require_user(request)
         owner = record_user(request, user)
         view = build(request, user, owner)
-        can_order = owner["id"] == user["id"] and user.get("token_kind") != "guest"
+        # A doctor (a guest credential) plans and saves the selection for the
+        # patient; ordering is the patient's, or anyone they share the record
+        # with, through a lab account that holds them (_order_account).
+        doctor = user.get("token_kind") == "guest"
+        can_order = not doctor
         order_forms = {}
         if can_order and view["best"] is not None:
             for plan in view["plans"]:
                 if plan["lab"] == "esculab":
-                    order_forms["esculab"] = _esculab_form(user, plan)
+                    order_forms["esculab"] = _esculab_form(user, owner, plan)
                 elif plan["lab"] == "synevo":
-                    row = labsync.account(settings, user["id"], "synevo")
+                    account_id, _person = _order_account(settings, user["id"], owner["id"], "synevo")
+                    row = labsync.account(settings, account_id, "synevo")
                     order_forms["synevo"] = {"connected": bool(row and row["secret"])}
+        # What a doctor saved for this person: shown to the person alone.
+        suggestions = []
+        if not doctor and owner["id"] == user["id"]:
+            with connect(settings) as connection:
+                rows = connection.execute(
+                    """SELECT id, query, test_count, author, created_at FROM plan_suggestions
+                       WHERE owner_user_id=? AND dismissed_at IS NULL ORDER BY created_at DESC LIMIT 3""",
+                    (owner["id"],)).fetchall()
+            suggestions = [{"id": row["id"], "count": row["test_count"], "author": row["author"],
+                            "special": "special=1" in row["query"].split("&"), "date": row["created_at"][:10],
+                            "url": f"/plan-tests?{row['query']}&plan=1#plan-result"} for row in rows]
         response = templates.TemplateResponse(request, "plan_tests.html", template_context(
-            request, active="plan_tests", can_order=can_order, order_forms=order_forms,
+            request, active="plan_tests", can_order=can_order, order_forms=order_forms, doctor=doctor,
+            suggestions=suggestions, suggestion_source=suggestion_query(str(request.url.query)),
             notice=request.query_params.get("notice", ""), today=date.today().isoformat(), **view))
-        # The city and the lab chosen here are where the next visit starts.
-        for name, cookie in REMEMBER.items():
-            if name in request.query_params:
-                response.set_cookie(cookie, quote(request.query_params[name][:80]), max_age=REMEMBER_DAYS * 86400,
-                                    httponly=True, samesite="lax", secure=request.url.scheme == "https")
+        # The city, the lab and the samples chosen here are where the next visit starts.
+        remember = {cookie: request.query_params[name][:80] for name, cookie in REMEMBER.items()
+                    if name in request.query_params}
+        if request.query_params.get("touched") or "ex" in request.query_params:
+            remember[SAMPLES_COOKIE] = ",".join(view["excluded"])
+        for cookie, value in remember.items():
+            response.set_cookie(cookie, quote(value), max_age=REMEMBER_DAYS * 86400,
+                                httponly=True, samesite="lax", secure=request.url.scheme == "https")
         return response
 
     @app.get("/plan-tests/live")
@@ -1138,11 +1305,25 @@ def register_routes(app, settings, *, templates, template_context, require_user,
         parts = {name: templates.get_template(f"_plan_{name}.html").render(context) for name in ("found", "sets")}
         return {**parts, "match": view["match"] if view["query"] else None}
 
-    def _esculab_form(user, plan) -> dict:
-        row = labsync.account(settings, user["id"], "esculab")
+    @app.get("/plan-tests/order-search")
+    def plan_order_search(request: Request):
+        """A tile's box as the person types: that lab's tests to add, and
+        which of the order's items (``have``) it matches.  Never builds a
+        plan; the page's own query rides along for the "Add" links."""
+        user = require_user(request)
+        owner = record_user(request, user)
+        params = QueryParams([(k, v) for k, v in request.query_params.multi_items() if k != "plan"])
+        view = build(request, user, owner, params)
+        page = QueryParams([(k, v) for k, v in request.query_params.multi_items() if k not in {"olab", "oq", "have"}])
+        context = template_context(request, **view, lab=view["order_lab"], page_params=page)
+        html = templates.get_template("_plan_order_add.html").render(context)
+        return {"html": html, "match": view["order"]["match"] if view["order"] else None}
+
+    def _esculab_form(user, owner, plan) -> dict:
+        account_id, person = _order_account(settings, user["id"], owner["id"], "esculab")
+        row = labsync.account(settings, account_id, "esculab")
         if not (row and row["secret"]):
             return {"connected": False}
-        person = _owner_person(settings, user["id"], "esculab")
         try:
             points = esculab_shop.points(settings, plan["region"])
         except LabSyncError:
@@ -1157,6 +1338,44 @@ def register_routes(app, settings, *, templates, template_context, require_user,
     def back(request_query: str, notice: str) -> RedirectResponse:
         return RedirectResponse(f"/plan-tests?{request_query}&notice={notice}#plan-result", status_code=303)
 
+    @app.post("/plan-tests/suggest")
+    async def plan_suggest(request: Request):
+        """A doctor's selection, saved for the patient (a guest credential's
+        one write).  ``query`` is the planner's query string as it stands."""
+        user = await run_in_threadpool(require_user, request)
+        form = await request.form()
+        await run_in_threadpool(require_csrf, user, str(form.get("csrf_token") or ""))
+        if user.get("token_kind") != "guest":
+            raise HTTPException(403)
+        query = suggestion_query(str(form.get("query") or ""))
+        params = QueryParams(query)
+        view = await run_in_threadpool(build, request, user, user, params)
+        count = (len(view["spec"]["picked"]) if view["special"] else len(view["selected"])) + len(view["include_rows"])
+        if not count:
+            return RedirectResponse(f"/plan-tests?{query}&notice=suggestion_empty#plan-needs", status_code=303)
+        suggestion_id = str(uuid4())
+        with transaction(settings) as connection:
+            connection.execute(
+                """INSERT INTO plan_suggestions(id, owner_user_id, query, test_count, token_id, author, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (suggestion_id, user["id"], query, count, user.get("token_id"), user.get("token_label") or "",
+                 utc_now()))
+        audit(user["id"], user["id"], "plan_suggestion_saved", "plan_suggestion", suggestion_id, {"tests": count})
+        return RedirectResponse(f"/plan-tests?{query}&notice=suggestion_saved#plan-needs", status_code=303)
+
+    @app.post("/plan-tests/suggestion/{suggestion_id}/dismiss")
+    async def plan_suggestion_dismiss(request: Request, suggestion_id: str):
+        """The person puts a doctor's selection away (it stays in the audit trail)."""
+        user = await run_in_threadpool(require_user, request)
+        form = await request.form()
+        await run_in_threadpool(require_csrf, user, str(form.get("csrf_token") or ""))
+        if user.get("token_kind") == "guest":
+            raise HTTPException(403)
+        with transaction(settings) as connection:
+            connection.execute("UPDATE plan_suggestions SET dismissed_at=? WHERE id=? AND owner_user_id=?",
+                               (utc_now(), suggestion_id, user["id"]))
+        return RedirectResponse("/plan-tests", status_code=303)
+
     @app.post("/plan-tests/order/esculab", response_class=HTMLResponse)
     async def esculab_order(request: Request):
         user = await run_in_threadpool(require_user, request)
@@ -1167,8 +1386,10 @@ def register_routes(app, settings, *, templates, template_context, require_user,
         region, plan_query = str(form.get("region") or ""), str(form.get("plan_query") or "")
         ids = [str(value) for value in form.getlist("item")]
         expected = float(str(form.get("expected") or "0").replace(",", "."))
-        row = labsync.account(settings, user["id"], "esculab")
-        person = _owner_person(settings, user["id"], "esculab")
+        # For the record on screen: one's own, or one shared with this person.
+        owner = await run_in_threadpool(record_user, request, user)
+        account_id, person = _order_account(settings, user["id"], owner["id"], "esculab")
+        row = labsync.account(settings, account_id, "esculab")
         if not (row and row["secret"] and person):
             return back(plan_query, "esculab_not_connected")
         catalogue = {item["id"]: item for item in esculab_shop.catalog(settings, region)}
@@ -1197,8 +1418,8 @@ def register_routes(app, settings, *, templates, template_context, require_user,
         except LabSyncError as exc:
             logger.warning("esculab order refused: %s", exc.key)
             return back(plan_query, "order_failed")
-        audit(user["id"], user["id"], "lab_order_created", "lab_order", f"esculab:{created['number']}",
-              {"items": len(fresh), "total": total})
+        audit(owner["id"], user["id"], "lab_order_created", "lab_order", f"esculab:{created['number']}",
+              {"items": len(fresh), "total": total, "account": account_id})
         return templates.TemplateResponse(request, "plan_tests_done.html", template_context(
             request, active="plan_tests", lab="Esculab", number=created["number"], payment_url=created["payment_url"],
             items=fresh, fees=esculab_shop.fees(fresh), total=total, plan_query=plan_query, site=esculab_shop.SITE))
@@ -1211,16 +1432,18 @@ def register_routes(app, settings, *, templates, template_context, require_user,
         if synevo_shop is None or user.get("token_kind") == "guest" or not labsync.active(settings, "synevo"):
             raise HTTPException(403)
         region, plan_query = str(form.get("region") or ""), str(form.get("plan_query") or "")
+        owner = await run_in_threadpool(record_user, request, user)
+        account_id, _person = _order_account(settings, user["id"], owner["id"], "synevo")
         catalogue = {item["id"]: item for item in synevo_shop.catalog(settings, region) or []}
         chosen = [catalogue[i] for i in form.getlist("item") if i in catalogue]
         if not chosen:
             return back(plan_query, "items_gone")
         try:
-            result = await run_in_threadpool(lambda: synevo_shop.add_to_cart(settings, user["id"], chosen, region=region))
+            result = await run_in_threadpool(lambda: synevo_shop.add_to_cart(settings, account_id, chosen, region=region))
         except LabSyncError as exc:
             logger.warning("synevo cart refused: %s", exc.key)
             return back(plan_query, "cart_failed")
-        audit(user["id"], user["id"], "lab_cart_filled", "lab_cart", "synevo",
+        audit(owner["id"], user["id"], "lab_cart_filled", "lab_cart", "synevo",
               {"added": len(result.get("added") or []), "failed": len(result.get("failed") or [])})
         added_ids = {str(row.get("id")) for row in result.get("added") or []}
         added = [item for item in chosen if item["id"] in added_ids]
@@ -1234,7 +1457,7 @@ def register_routes(app, settings, *, templates, template_context, require_user,
 
 def plan_query(params) -> str:
     """The query string that reopens the same plan."""
-    keep = [(name, value) for name, value in params.multi_items() if name not in {"notice", "add", "preset", "drop", "q", "sq", "sg", "sp", "slab", "skind", "smax", "ssort"}]
+    keep = [(name, value) for name, value in params.multi_items() if name not in {"notice", "add", "preset", "drop", "q", "sq", "sg", "sp", "slab", "skind", "smax", "ssort", "olab", "oq", "have"}]
     return urlencode(keep)
 
 

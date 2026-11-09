@@ -37,6 +37,7 @@ from starlette.concurrency import run_in_threadpool
 from ..ai import (
     DEFAULT_MODELS as AI_DEFAULT_MODELS,
     EFFORTS as AI_EFFORTS,
+    FALLBACK_MODELS as AI_FALLBACK_MODELS,
     PAID_PROVIDERS as AI_PAID_PROVIDERS,
     PROVIDER_HOSTS as AI_PROVIDER_HOSTS,
     PROVIDER_NAMES as AI_PROVIDER_NAMES,
@@ -63,6 +64,7 @@ from .labsync_routes import register_routes as register_labsync_routes
 from .testplan_routes import register_routes as register_testplan_routes
 from .allergy_routes import register_routes as register_allergy_routes
 from .genetics_routes import register_routes as register_genetics_routes
+from .chat_routes import register_routes as register_chat_routes
 from .openwearables_routes import register_routes as register_openwearables_routes
 from ..config import Settings, env, get_settings, resolve_source_path, load_integration_environment, configure_logging, _request_memo
 from ..correlation import (
@@ -388,12 +390,19 @@ GUEST_ALLOWED_PREFIXES = (
     # link because the first one is still open would make the fix "sign out,
     # then click the link again", which nobody is going to guess.
     "/t/",
+    # A doctor plans the patient's next tests and saves the selection for them
+    # (POST /plan-tests/suggest below); ordering stays the patient's.  The
+    # planner links the allergy and DNA pages, and the menu vaccinations.
+    "/plan-tests", "/allergy", "/genetics", _VACCINATIONS_URL,
 )
 #: The POSTs a guest may still make.  None of them touch the record: they end
 #: the visit, change how it is displayed, or sign the visitor in as themselves,
 #: and refusing them would leave a guest unable to read the page in their own
 #: language or to stop being a guest.
-GUEST_ALLOWED_POSTS = ("/logout", "/theme", "/locale", _LOGIN_URL, "/register", _DOCTOR_URL)
+GUEST_ALLOWED_POSTS = ("/logout", "/theme", "/locale", _LOGIN_URL, "/register", _DOCTOR_URL,
+                       # The one write a guest makes: a doctor's test selection,
+                       # kept apart for the patient to accept, never the record.
+                       "/plan-tests/suggest")
 #: Pages a guest may open by exact path.  /doctor is here rather than among the
 #: prefixes so that a later "/doctor-…" route is not let in by accident; a
 #: doctor already reading one patient's record enters the next patient's code.
@@ -7002,6 +7011,8 @@ def admin_ai(
             # two live list calls of up to 8 s each held the whole page,
             # so the page asks /admin/ai/models after it has loaded.
             model_lists={name: cached_ai_models(settings, name) for name in AI_PAID_PROVIDERS},
+            # OpenRouter has no model list call here: its router and fallbacks.
+            openrouter_models=[AI_DEFAULT_MODELS["openrouter"], *AI_FALLBACK_MODELS],
             usage=usage,
             tested_task=tested_task,
             # The answering model came back in the redirect; it is shown
@@ -14256,6 +14267,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     register_testplan_routes(
         app, settings, templates=templates, template_context=template_context, require_user=require_user,
         record_user=record_user, require_csrf=require_csrf, audit=partial(_audit, settings),
+    )
+    register_chat_routes(
+        app, settings, templates=templates, template_context=template_context, require_user=require_user,
+        record_user=record_user, require_csrf=require_csrf, viewing_row=viewing_row,
     )
     for register in (register_allergy_routes, register_genetics_routes):
         register(app, settings, templates=templates, template_context=template_context,

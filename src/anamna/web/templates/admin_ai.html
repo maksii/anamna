@@ -134,6 +134,40 @@
           <input name="task_{{ task }}_max_tokens" type="number" min="256" max="64000" step="1" inputmode="numeric"
                  value="{{ route.max_tokens }}">
         </label>
+        {% if task == 'chat' %}
+        {#- A dropdown of checkboxes, one per model, grouped by provider: the
+            live lists the page loads for the model fields above, plus
+            anything already chosen, so saving never drops a choice silently.
+            Only a provider with a key is offered (the chat checks again). -#}
+        <input type="hidden" name="chat_models_present" value="1">
+        <div class="ai-multi-field">
+          <span class="ai-multi-field__label" id="ai-chat-models-label">{{ t('aiassist.chat_models_label') }}</span>
+          <details class="ai-multi" data-ai-multi
+                   data-plural='{{ {"one": t("aiassist.chat_models_count_one"), "few": t("aiassist.chat_models_count_few"), "many": t("aiassist.chat_models_count_many")} | tojson }}'>
+            <summary aria-describedby="ai-chat-models-label ai-chat-models-hint">
+              <span data-ai-multi-count>{{ t_plural('aiassist.chat_models_count', ai.chat_models|length) }}</span>
+            </summary>
+            <div class="ai-multi__panel">
+              {% for provider in providers %}
+              {% set saved = ai.chat_models | selectattr('provider', 'equalto', provider) | map(attribute='model') | list %}
+              {% if ai['keys'][provider] or saved %}
+              {% if provider == 'openrouter' %}{% set listed = openrouter_models %}{% else %}{% set listed = model_lists.get(provider) or [default_models[provider]] %}{% endif %}
+              <fieldset class="ai-multi__group" data-ai-multi-group="{{ provider }}">
+                <legend>{{ t('aiassist.provider_' + provider) }}{% if not ai['keys'][provider] %} <small>{{ t('aiassist.chat_models_no_key') }}</small>{% endif %}</legend>
+                {% for name in (saved + listed) | unique %}
+                <label class="ai-multi__option">
+                  <input type="checkbox" name="chat_model" value="{{ provider }}:{{ name }}" {{ 'checked' if name in saved else '' }}>
+                  <span>{{ name }}</span>
+                </label>
+                {% endfor %}
+              </fieldset>
+              {% endif %}
+              {% endfor %}
+            </div>
+          </details>
+        </div>
+        <p class="tiny muted" id="ai-chat-models-hint">{{ t('aiassist.chat_models_hint') }}</p>
+        {% endif %}
       </div>
       {% endfor %}
     </fieldset>
@@ -290,8 +324,36 @@
       .then((data) => {
         if (!data || !Array.isArray(data.models) || !data.models.length) return;
         list.replaceChildren(...data.models.map((name) => new Option('', name)));
+        // The chat's model checkboxes for the same provider gain the rest
+        // of its list; ticked boxes stay where they are.
+        const group = document.querySelector(`[data-ai-multi-group="${data.provider}"]`);
+        if (!group) return;
+        const have = new Set([...group.querySelectorAll('input')].map((box) => box.value));
+        data.models.forEach((name) => {
+          const value = `${data.provider}:${name}`;
+          if (have.has(value)) return;
+          const option = document.createElement('label');
+          option.className = 'ai-multi__option';
+          const box = Object.assign(document.createElement('input'), { type: 'checkbox', name: 'chat_model', value });
+          const text = document.createElement('span');
+          text.textContent = name;
+          option.append(box, text);
+          group.append(option);
+        });
       })
       .catch(() => {});
+  });
+  // "3 models chosen", in the page's plural forms (sent by the server).
+  document.querySelectorAll('[data-ai-multi]').forEach((multi) => {
+    const count = multi.querySelector('[data-ai-multi-count]');
+    const forms = JSON.parse(multi.dataset.plural || '{}');
+    multi.addEventListener('change', () => {
+      const n = multi.querySelectorAll('input:checked').length;
+      const form = document.documentElement.lang === 'uk'
+        ? (n % 10 === 1 && n % 100 !== 11 ? 'one' : (n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? 'few' : 'many'))
+        : (n === 1 ? 'one' : 'many');
+      count.textContent = (forms[form] || forms.many || '{count}').replace('{count}', n);
+    });
   });
 })();
 </script>

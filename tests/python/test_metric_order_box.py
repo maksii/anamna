@@ -95,7 +95,7 @@ def test_hidden_while_the_catalogue_was_never_read(page):
     assert 'id="measure-again"' not in client.get("/metrics/ldl-cholesterol").text
 
 
-def test_a_guest_sees_prices_but_no_planner_link(page, monkeypatch):
+def test_a_guest_sees_prices_and_plans_but_never_orders(page, monkeypatch):
     settings, user_id, _ = page
     read_now(monkeypatch)
     _, secret = create_access_token(settings, user_id, "guest", "Doctor", expires_at="2100-01-01T00:00:00+00:00")
@@ -104,5 +104,8 @@ def test_a_guest_sees_prices_but_no_planner_link(page, monkeypatch):
         guest.get(f"/t/{secret}")
         text = guest.get("/metrics/ldl-cholesterol").text
         assert 'id="measure-again"' in text and "ЛПНЩ" in text
-        assert "/plan-tests?" not in text
-        assert guest.get("/plan-tests").status_code == 403
+        # A doctor plans the test and saves it for the patient; ordering is refused.
+        assert "/plan-tests?" in text
+        assert guest.get("/plan-tests").status_code == 200
+        assert guest.post("/plan-tests/order/esculab").status_code == 403
+        assert guest.post("/plan-tests/cart/synevo").status_code == 403

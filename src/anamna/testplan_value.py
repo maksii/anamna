@@ -174,6 +174,24 @@ def annotate(plan: dict, required: set[str], tracked=frozenset(), cheapest: dict
     return plan
 
 
+def fixed(items: list[dict], required: set[str], tracked=frozenset()) -> dict:
+    """A plan of exactly ``items``, in the order given (the person's own
+    edit of one), in :func:`testplan.optimise`'s shape and annotated: each
+    draw fee once, ``missing`` what none of them covers."""
+    fees: dict[str, dict] = {}
+    for item in items:
+        for fee in item["fees"]:
+            fees.setdefault(fee["id"], fee)
+    items_cost = sum(float(item["final_price"]) for item in items)
+    fee_total = sum(float(fee["price"]) for fee in fees.values())
+    have = {key for item in items for key in item["keys"]}
+    plan = {"items": [dict(item) for item in items], "fees": list(fees.values()), "items_cost": round(items_cost, 2),
+            "fees_cost": round(fee_total, 2), "cost": round(items_cost + fee_total, 2),
+            "list_cost": round(sum(float(item["price"]) for item in items) + fee_total, 2),
+            "covered": sorted(set(required) & have), "missing": sorted(set(required) - have), "exact": True}
+    return annotate(plan, required, tracked)
+
+
 def _shape(forced: list[dict], chosen: list[dict], required: set[str], covered, missing, exact: bool) -> dict:
     """``chosen`` plus ``forced`` in :func:`testplan.optimise`'s plan shape."""
     fees: dict[str, dict] = {}
