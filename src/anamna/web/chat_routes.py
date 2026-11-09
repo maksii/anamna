@@ -44,6 +44,7 @@ from ..db import connect
 from ..i18n import activate_locale, format_number_localized, get_locale, reset_locale, t, t_plural
 from ..reference import RULE_CACHE
 from . import ai_export as fx
+from .ai_export import Sources, _code, judged
 
 MAX_LIST = 30
 NO_ARGUMENTS = {"type": "object", "properties": {}, "additionalProperties": False}
@@ -75,7 +76,6 @@ VISIT_KINDS = (
 # * History rows leave out whatever the row above already said.
 
 DOC_ID_CHARS = 8
-_SOURCE = re.compile("\x01(.*?)\x02")
 
 
 def _doc(document_id: object) -> str:
@@ -120,79 +120,6 @@ def _english(function: Callable[..., str], *args) -> str:
         return function(*args)
     finally:
         reset_locale(token)
-
-
-class Sources:
-    """Publishers as short aliases, stable across every output of a request.
-
-    The alias is the publisher's place in the sorted list of all publishers,
-    so S4 means the same body in the profile and in the fourth tool result.
-    ``render`` swaps the placeholders and appends a legend of those used.
-    """
-
-    def __init__(self, connection):
-        self.by_source = fx._publishers(connection)
-        names = sorted({name for name in self.by_source.values() if name})
-        self.alias = {name: f"S{index}" for index, name in enumerate(names, 1)}
-        self.used: set[str] = set()
-
-    def ref(self, source_id: object, fallback: object = "") -> str:
-        name = self.by_source.get(str(source_id or "")) or str(fallback or "")
-        return f"\x01{name}\x02" if name else ""
-
-    def render(self, text: str) -> str:
-        used: dict[str, str] = {}
-
-        def swap(match: re.Match) -> str:
-            name = match.group(1)
-            alias = self.alias.get(name)
-            if alias is None:
-                return name
-            used[alias] = name
-            return alias
-
-        text = _SOURCE.sub(swap, text)
-        if used:
-            ordered = sorted(used.items(), key=lambda item: int(item[0][1:]))
-            text += "\nSources: " + "; ".join(f"{alias} {name}" for alias, name in ordered)
-        return text
-
-
-def _band(verdict: dict, prefix: str = "") -> str:
-    text = fx._interval(
-        verdict.get(f"{prefix}low"), verdict.get(f"{prefix}high"), None,
-        verdict.get(f"{prefix}low_inclusive", True), verdict.get(f"{prefix}high_inclusive", True),
-    )
-    return re.sub(r"^([<>≤≥]) ", r"\1", text)
-
-
-def _code(interpretation: object) -> str:
-    return {"no_universal_target": "no-target", "": "unjudged"}.get(str(interpretation or ""), str(interpretation))
-
-
-def judged(verdict: dict, sources: Sources) -> str:
-    """``(<1.8 S3; ≠ S1 <3 normal; lab 30-400)``: the interval the verdict was
-    judged against and who published it, then every disagreement."""
-    parts = []
-    has_target = verdict.get("target_low") is not None or verdict.get("target_high") is not None
-    interval = _band(verdict, "target_" if has_target else "")
-    source = verdict.get("target_source_id") if has_target else verdict.get("source_id")
-    who = "lab" if verdict.get("authority") == "vendor" else sources.ref(source or verdict.get("source_id"))
-    if interval:
-        parts.append(f"{interval} {who}".strip())
-    if verdict.get("no_universal_target"):
-        parts.append("no-target")
-    if verdict.get("authorities_disagree"):
-        others = [
-            f"{sources.ref(item.get('source_id'), item.get('publisher'))} {_band(item)} {_code(item.get('interpretation'))}"
-            for item in verdict.get("authority_positions") or []
-            if item.get("source_id") != verdict.get("source_id")
-        ]
-        if others:
-            parts.append("≠ " + ", ".join(" ".join(other.split()) for other in others))
-    if verdict.get("conflicts_with_vendor"):
-        parts.append("lab " + (fx._interval(verdict.get("vendor_low"), verdict.get("vendor_high")) or "-"))
-    return f" ({'; '.join(parts)})" if parts else ""
 
 
 def result_row(card: dict, sources: Sources | None, dated: str = "") -> str:

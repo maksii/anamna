@@ -127,11 +127,15 @@ def test_the_prompt_leads_with_instructions_a_legend_and_the_flagged_results(tmp
     attention = text.index("Needs attention")
     results = text.index("Current results")
     assert task < legend < attention < results
-    assert "[!] LDL cholesterol: 4.42 mmol/L (2025-02-13)" in text
+    assert "- LDL cholesterol: 4.42 mmol/L @2025-02-13 ↑ (" in text
     # The flagged value carries its interval and the body that published it,
-    # because "high" without either is not something to act on.
-    ldl = next(line for line in text.splitlines() if "LDL cholesterol" in line)
-    assert "reference" in ldl and "per " in ldl
+    # because "high" without either is not something to act on.  The body is
+    # an alias, named once in the legend.
+    ldl = next(line for line in text.splitlines() if line.startswith("- LDL cholesterol:"))
+    alias = re.search(r"\(<3 (S\d+)", ldl).group(1)
+    legend = next(line for line in text.splitlines() if line.startswith("- Sources: "))
+    assert f"{alias} " in legend
+    assert text.index(legend) < text.index("Needs attention")
     # And the gaps are declared rather than left for the assistant to assume.
     assert "does NOT contain" in text
     assert "Medication I take" in text
@@ -179,14 +183,14 @@ def test_the_prompt_is_written_in_the_readers_language(tmp_path: Path):
     # says so. "4,42" inside a data table is two numbers to a parser.
     assert "ммоль/л" in text
     assert "десятковий роздільник крапка" in text
-    ldl = next(line for line in text.splitlines() if line.startswith("- [!] Холестерин ЛПНЩ:"))
+    ldl = next(line for line in text.splitlines() if line.startswith("- Холестерин ЛПНЩ:"))
     assert "4.42" in ldl and "4,42" not in ldl
     # Critically, the value and the interval printed beside it must use the
     # same convention: one line carrying "4.42" and "≤ 1,4" is how a reader
     # gets told the threshold is fourteen. (The interval is the EAS/EFLM
     # population cut-point: this record holds no risk category, so no
     # risk-stratified goal such as 1.4 may be printed as "the" reference.)
-    assert "< 3 " in ldl and not re.search(r"\d,\d", ldl)
+    assert "<3 " in ldl and not re.search(r"\d,\d", ldl)
     assert "1.4" not in ldl
 
 
@@ -223,7 +227,7 @@ def test_a_metric_page_scope_is_an_excerpt_about_that_metric(tmp_path: Path):
     assert "An excerpt from my personal health record" in text
     assert "LDL cholesterol: my results in full" in text
     # The value still carries its verdict, interval and publisher.
-    assert "[!] LDL cholesterol: 4.42 mmol/L (2025-02-13)" in text
+    assert "- LDL cholesterol: 4.42 mmol/L @2025-02-13 ↑ (<3 S1" in text
     # The rest of the lipid panel travels as context...
     assert "HDL cholesterol" in text
     # ...but an unrelated normal analyte does not.
@@ -309,7 +313,7 @@ def test_the_excerpt_is_written_in_the_readers_language(tmp_path: Path):
     assert "усі мої результати" in text
     assert "What I would like from you" not in text
     # Data-table numbers keep the dot convention even in Ukrainian prose.
-    ldl = next(line for line in text.splitlines() if line.startswith("- [!] Холестерин ЛПНЩ:"))
+    ldl = next(line for line in text.splitlines() if line.startswith("- Холестерин ЛПНЩ:"))
     assert "4.42" in ldl and "4,42" not in ldl
 
 
@@ -361,6 +365,71 @@ def test_the_printed_target_is_cited_to_the_body_that_published_it():
         "target_low": None, "target_high": 3.8, "target_high_inclusive": False,
         "target_source_id": "eas-eflm-2016",
     })
-    card["unit"] = "mmol/L"
-    text = ai_export._reference_text(card, {"esc-eas-2019": "ESC/EAS", "eas-eflm-2016": "EAS/EFLM"})
-    assert "< 3.8 mmol/L" in text and "EAS/EFLM" in text and "ESC/EAS" not in text
+    names = {"esc-eas-2019": "ESC/EAS", "eas-eflm-2016": "EAS/EFLM"}
+
+    class Named:
+        def ref(self, source_id, fallback=""):
+            return names.get(source_id, fallback)
+
+    text = ai_export.judged(card["verdict"], Named())
+    assert text == " (<3.8 EAS/EFLM)"
+
+
+# --- compact notation (2026-11-09) ---------------------------------------------
+
+
+def test_a_flagged_result_is_printed_once(tmp_path: Path):
+    """"Needs attention" carries the full line; the results section does not
+    print it a second time (every flagged row used to appear twice)."""
+    _settings, _user_id, client = build(tmp_path)
+    text = _prompt(client)
+    assert sum(line.startswith("- LDL cholesterol:") for line in text.splitlines()) == 1
+    assert "HDL cholesterol" in text.split("## Current results", 1)[1]
+
+
+def test_only_unchecked_values_are_marked():
+    """Most of the record is checked against its page; saying so on every line
+    was the largest single phrase in the export.  The exceptions are marked."""
+    checked = _card("Bet v 1", 0.32, "positive")
+    unchecked = {**checked, "verification_status": "extracted"}
+    device = {**checked, "verification_status": "device_measurement"}
+
+    class Nobody:
+        def ref(self, source_id, fallback=""):
+            return ""
+
+    assert "unverified" not in ai_export._result_line(checked, Nobody())
+    assert ai_export._result_line(unchecked, Nobody()).endswith(" unverified")
+    assert "unverified" not in ai_export._result_line(device, Nobody())
+    assert ai_export._result_line(checked, Nobody()) == "- Bet v 1: 0.32 kUA/L @2025-08-31 +"
+
+
+def test_a_conclusion_without_an_english_summary_still_travels():
+    """42 of 43 conclusions had no English summary and went out as a bare title,
+    taking the diagnoses a cardiologist wrote with them."""
+    item = {"finding_date": "2026-08-09", "title": "Cardiology consultation", "vendor": "Clinic",
+            "summary_en": None, "summary_text": "E78.2 Змішана\nгіперліпідемія"}
+    line = ai_export._finding_line(item)
+    assert line == "- 2026-08-09 Cardiology consultation (Clinic): E78.2 Змішана гіперліпідемія"
+    # The same conclusion extracted three times is one line.
+    kept, over = ai_export._finding_lines([item, item, {**item, "summary_text": "I11.9"}])
+    assert len(kept) == 2 and over == 0
+
+
+def test_publishers_are_numbered_in_order_of_use():
+    class Fake(ai_export.Sources):
+        def __init__(self):
+            self.by_source = {"a": "Zeta Society", "b": "Alpha Board"}
+            self.alias, self.by_use = {}, True
+
+    sources = Fake()
+    text = f"x {sources.ref('a')} y {sources.ref('b')} z {sources.ref('a')}\nSLOT"
+    assert sources.render(text, label="- Sources", at="SLOT") == (
+        "x S1 y S2 z S1\n- Sources: S1 Zeta Society; S2 Alpha Board"
+    )
+    # One body spelled with two apostrophes is still one body.
+    sources = Fake()
+    sources.by_source = {"a": "Міністерство охорони здоров'я", "b": "Міністерство охорони здоров’я"}
+    assert sources.render(f"{sources.ref('a')} {sources.ref('b')}") == (
+        "S1 S1\nSources: S1 Міністерство охорони здоров’я"
+    )

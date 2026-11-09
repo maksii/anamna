@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import math
 import re
-from collections.abc import Collection, Sequence
+from collections.abc import Callable, Collection, Sequence
 
 from ..devices.catalog import CORE_METRIC_KEYS
 from ..devices.queries import device_history_summary
@@ -174,7 +174,10 @@ def _value_text(card: dict[str, object]) -> str:
         comparator = str(card.get("comparator") or "").strip() or _COMPARATOR.match(
             str(card.get("value_text") or "")
         ).group(1)
-        return f"{comparator}{_num(card['value_numeric'])} {unit}".strip()
+        # A lab value keeps six figures (1.035 against 1.010-1.030); a
+        # device's daily mean is not that precise ("6.81667 hours").
+        figures = 4 if card.get("is_device") else 6
+        return f"{comparator}{_num(card['value_numeric'], figures)} {unit}".strip()
     return str(card.get("latest_text") or card.get("value_text") or "-")
 
 
@@ -204,109 +207,162 @@ def _interval(
     return ""
 
 
-def _publisher(
-    verdict: dict[str, object], publishers: dict[str, str], *, source_key: str = "source_id"
-) -> str:
-    """The body that published the governing interval, not the paper's title.
+# --- the compact notation, shared with the chat's tools ------------------------
+#
+# A row is ``- name: value unit @date mark (interval S3; ≠ S1 <3 ✓; lab 30-400)``
+# and the legend explains it once.  The long form ("reference ≤ 33 U/L per
+# American College of Gastroenterology ... VERIFIED: a person checked this one
+# against the original page") repeated the same five phrases on six hundred
+# rows: 56k tokens for the default English export, 38k after (measured 2026-11-09).
 
-    A verdict's ``source_name`` is the full citation -- publisher, then "Fasting
-    is not routinely required for determination of a lipid profile: clinical
-    and laboratory implications including flagging at desirable concentration
-    cut-points -- joint EAS/EFLM consensus statement" -- which is right on a
-    page showing one result and is three hundred wasted characters on one line
-    of five hundred.  The publisher identifies the authority just as well, and
-    the full citation stays one click away in the application itself.
+_SOURCE = re.compile("\x01(.*?)\x02")
+
+
+def _fold(name: str) -> str:
+    """One body, one alias: the library spells МОЗ's «здоров’я» with both
+    apostrophes, which listed the ministry twice."""
+    return name.replace("'", "’")
+
+
+class Sources:
+    """Publishers as short aliases, stable across every output of a request.
+
+    The alias is the publisher's place in the sorted list of all publishers,
+    so S4 means the same body in the chat's profile and in its fourth tool
+    result.  Text carries placeholders until ``render`` swaps them and writes
+    a legend of the aliases actually used.
     """
-    source_id = str(verdict.get(source_key) or verdict.get("source_id") or "")
-    if source_id in publishers:
-        return publishers[source_id]
-    for item in verdict.get("authority_positions") or []:
-        if item.get("source_id") == source_id and item.get("publisher"):
-            return str(item["publisher"])
-    return str(verdict.get("source_name") or "")
+
+    def __init__(self, connection, *, by_use: bool = False):
+        self.by_source = _publishers(connection)
+        names = sorted({_fold(name) for name in self.by_source.values() if name})
+        self.alias = {name: f"S{index}" for index, name in enumerate(names, 1)}
+        # A one-shot text (the export) numbers them in order of first use
+        # instead, so its legend reads S1..S12 rather than S4..S211.
+        if by_use:
+            self.alias = {}
+        self.by_use = by_use
+
+    def ref(self, source_id: object, fallback: object = "") -> str:
+        name = self.by_source.get(str(source_id or "")) or str(fallback or "")
+        return f"\x01{_fold(name)}\x02" if name else ""
+
+    def render(self, text: str, *, label: str = "Sources", at: str | None = None) -> str:
+        """Aliases in, legend written: appended, or in place of ``at``."""
+        used: dict[str, str] = {}
+
+        def swap(match: re.Match) -> str:
+            name = match.group(1)
+            if self.by_use and name not in self.alias:
+                self.alias[name] = f"S{len(self.alias) + 1}"
+            alias = self.alias.get(name)
+            if alias is None:
+                return name
+            used[alias] = name
+            return alias
+
+        text = _SOURCE.sub(swap, text)
+        ordered = sorted(used.items(), key=lambda item: int(item[0][1:]))
+        legend = f"{label}: " + "; ".join(f"{alias} {name}" for alias, name in ordered) if used else ""
+        if at is not None:
+            return text.replace(at, legend, 1)
+        return f"{text}\n{legend}" if legend else text
 
 
-def _disagreeing_positions(verdict: dict[str, object], unit: object) -> str:
-    """The other authorities' positions, only when the verdict records a disagreement."""
-    if not verdict.get("authorities_disagree"):
-        return ""
-    return "; ".join(
-        f"{item.get('publisher') or item.get('source_name')}: "
-        f"{item.get('label')} "
-        f"{_interval(item.get('low'), item.get('high'), unit, item.get('low_inclusive', True), item.get('high_inclusive', True))}".strip()
-        for item in verdict.get("authority_positions") or []
-        if item.get("source_id") != verdict.get("source_id")
-    )
-
-
-def _reference_text(card: dict[str, object], publishers: dict[str, str]) -> str:
-    """Where the interval came from, and who disagrees about it.
-
-    A verdict that averaged two disagreeing authorities is the one thing this
-    record must never produce, so a disagreement is spelled out rather than
-    resolved -- but only the positions that differ from the one already stated.
-    """
-    verdict = card.get("verdict") or {}
-    parts: list[str] = []
-    unit = card.get("unit")
-    has_target = verdict.get("target_low") is not None or verdict.get("target_high") is not None
-    prefix = "target_" if has_target else ""
-    interval = _interval(
-        verdict.get(f"{prefix}low"), verdict.get(f"{prefix}high"), unit,
+def _band(verdict: dict, prefix: str = "") -> str:
+    text = _interval(
+        verdict.get(f"{prefix}low"), verdict.get(f"{prefix}high"), None,
         verdict.get(f"{prefix}low_inclusive", True), verdict.get(f"{prefix}high_inclusive", True),
     )
-    # The printed number is cited to the body that published it: the non-HDL
-    # 3.8 cut-point is EAS/EFLM's even when an ESC goal matched the value.
-    publisher = _publisher(
-        verdict, publishers, source_key="target_source_id" if has_target else "source_id"
-    )
-    if interval and publisher:
-        parts.append(t("ai.field_reference_source", interval=interval, source=publisher))
-    elif interval:
-        parts.append(
-            t("ai.field_reference_vendor", interval=interval)
-            if verdict.get("authority") == "vendor"
-            else t("ai.field_reference", interval=interval)
-        )
-    if verdict.get("no_universal_target"):
-        parts.append(t("ai.no_universal_target"))
-    others = _disagreeing_positions(verdict, unit)
-    if others:
-        parts.append(t("ai.authorities_disagree", positions=others))
-    if verdict.get("conflicts_with_vendor"):
-        parts.append(
-            t(
-                "ai.vendor_conflict",
-                interval=_interval(verdict.get("vendor_low"), verdict.get("vendor_high"), unit)
-                or "-",
-            )
-        )
-    return "; ".join(part for part in parts if part)
+    return re.sub(r"^([<>≤≥]) ", r"\1", text)
 
 
-def _result_line(
-    card: dict[str, object], publishers: dict[str, str], *, with_area: bool = False
+def _code(interpretation: object) -> str:
+    return {"no_universal_target": "no-target", "": "unjudged"}.get(str(interpretation or ""), str(interpretation))
+
+
+#: The verdict as a symbol.  Within range and negative print nothing, which is
+#: most rows; the legend explains the rest.
+_MARKS = {
+    "critical_high": "↑↑", "critical_low": "↓↓", "critical": "!!",
+    "high": "↑", "elevated": "↑", "low": "↓", "deficient": "↓",
+    "borderline_high": "(↑)", "borderline_low": "(↓)", "borderline": "(±)",
+    "positive": "+", "abnormal": "!", "unjudged": "?", "indeterminate": "?",
+    "no_universal_target": "?",
+}
+
+
+def _mark(interpretation: object) -> str:
+    return _MARKS.get(str(interpretation or "unjudged"), "")
+
+
+def _position(interpretation: object) -> str:
+    """Another body's verdict, where "within range" has to be said out loud."""
+    return _mark(interpretation) or "✓"
+
+
+def judged(
+    verdict: dict, sources: Sources, *, code: Callable[[object], str] = _code,
+    lab: str = "lab", no_target: str = "no-target",
 ) -> str:
+    """``(<1.8 S3; ≠ S1 <3 normal; lab 30-400)``: the interval the verdict was
+    judged against and who published it, then every disagreement.
+
+    The printed number is cited to the body that published it: the non-HDL 3.8
+    cut-point is EAS/EFLM's even when an ESC goal matched the value.  A
+    disagreement is spelled out, never resolved: averaging two authorities is
+    the one thing this record must not do.
+    """
+    parts = []
+    has_target = verdict.get("target_low") is not None or verdict.get("target_high") is not None
+    interval = _band(verdict, "target_" if has_target else "")
+    source = verdict.get("target_source_id") if has_target else verdict.get("source_id")
+    who = lab if verdict.get("authority") == "vendor" else sources.ref(source or verdict.get("source_id"))
+    if interval:
+        parts.append(f"{interval} {who}".strip())
+    elif verdict.get("no_universal_target") and no_target:
+        # With an interval printed, "lab" already says whose it is; the export
+        # says once, in its legend, what a row with no interval means.
+        parts.append(no_target)
+    if verdict.get("authorities_disagree"):
+        others = [
+            f"{sources.ref(item.get('source_id'), item.get('publisher'))} {_band(item)} {code(item.get('interpretation'))}"
+            for item in verdict.get("authority_positions") or []
+            if item.get("source_id") != verdict.get("source_id")
+        ]
+        if others:
+            parts.append("≠ " + ", ".join(" ".join(other.split()) for other in others))
+    if verdict.get("conflicts_with_vendor"):
+        parts.append(f"{lab} " + (_band({"low": verdict.get("vendor_low"), "high": verdict.get("vendor_high")}) or "-"))
+    return f" ({'; '.join(parts)})" if parts else ""
+
+
+#: Statuses that need no mark: a person checked it, or a device measured it.
+_CHECKED = {"verified", "corrected", "device_measurement"}
+
+
+def _result_line(card: dict[str, object], sources: Sources, *, dated: str = "") -> str:
+    """``- LDL cholesterol: 2.7 mmol/L @2026-11-05 ↑ (<1.8 S3; ≠ S1 <3 ✓)``
+
+    ``dated`` is the date every row shares (a document's), left out of each.
+    Only the unchecked rows are marked: most of this record has been checked
+    against its source page, and saying so on every line cost more than any
+    other phrase in the export.
+    """
     verdict = card.get("verdict") or {}
-    bits = [f"{_marker(card)}{card['name']}: {_value_text(card)} ({card['latest_date'] or '-'})"]
-    label = str(verdict.get("label") or "").strip()
-    if label:
-        bits.append(label)
-    reference = _reference_text(card, publishers)
-    if reference:
-        bits.append(reference)
-    if with_area and card.get("area_name"):
-        bits.append(str(card["area_name"]))
+    day = str(card.get("latest_date") or "-")[:10]
+    mark = _mark(verdict.get("interpretation"))
+    text = (
+        f"- {card['name']}: {_value_text(card)}{'' if day == dated else ' @' + day}"
+        f"{' ' + mark if mark else ''}"
+        + judged(verdict, sources, code=_position, lab=t("ai.mark_lab"), no_target="")
+    )
+    if str(card.get("verification_status") or "") not in _CHECKED:
+        text += " " + t("ai.mark_unverified")
     # A same-measurement twin is one line read from documents and devices.
     if card.get("sources_text"):
-        bits.append(str(card["sources_text"]))
-    # Almost every value in a record like this is provisional, so the legend
-    # declares that once and only the exceptions are marked.  Repeating
-    # "provisional, not yet checked against the source page" on five hundred
-    # lines spends twenty-six thousand characters saying nothing new.
-    if str(card.get("verification_status")) in {"verified", "corrected"}:
-        bits.append(t("ai.verified"))
-    return "- " + " - ".join(bits)
+        text += f"; {card['sources_text']}"
+    return text
 
 
 def _history_line(card: dict[str, object], limit: int = MAX_HISTORY_POINTS) -> str | None:
@@ -326,19 +382,18 @@ def _history_line(card: dict[str, object], limit: int = MAX_HISTORY_POINTS) -> s
         indexes = sorted(set(indexes) | {0, len(series) - 1})
         kept = [series[index] for index in indexes]
         dropped = len(series) - len(kept)
-    values = [float(point["value"]) for point in series]
     path = ", ".join(f"{point['date']} {_num(point['value'])}" for point in kept)
     unit = str(card.get("unit") or "").strip()
-    span = t(
-        "ai.history_span",
-        count=len(series),
-        first=series[0]["date"],
-        last=series[-1]["date"],
-        low=_num(min(values)),
-        high=_num(max(values)),
-    )
-    thinned = f" {t('ai.history_thinned', count=dropped)}" if dropped else ""
-    return f"- {card['name']}{f' ({unit})' if unit else ''}: {path} [{span}]{thinned}"
+    # The span is only news when points were dropped: otherwise every date
+    # and the extremes are already on the line.
+    thinned = ""
+    if dropped:
+        values = [float(point["value"]) for point in series]
+        thinned = " " + t(
+            "ai.history_thinned", count=dropped, total=len(series),
+            low=_num(min(values)), high=_num(max(values)),
+        )
+    return f"- {card['name']}{f' ({unit})' if unit else ''}: {path}{thinned}"
 
 
 def _device_block(summary: dict[str, object]) -> list[str]:
@@ -353,8 +408,6 @@ def _device_block(summary: dict[str, object]) -> list[str]:
             aggregation=t(f"ai.aggregation_{aggregation}")
             if f"ai.aggregation_{aggregation}" in _KNOWN_AGGREGATIONS
             else aggregation,
-            latest=_num(summary["latest_value"]),
-            latest_day=summary["latest_day"],
             days=summary["day_count"],
             first=summary["first_day"],
             rows=summary["row_count"],
@@ -363,33 +416,30 @@ def _device_block(summary: dict[str, object]) -> list[str]:
     ]
     recent, _ = _capped(summary["recent_days"], MAX_DEVICE_RECENT_DAYS)
     if recent:
+        # Newest first, so the first entry is the latest reading; only it
+        # carries the year (a watch value six figures deep is noise).
         lines.append(
-            t("ai.device_recent", days=len(recent))
+            t("ai.device_recent")
             + " "
-            + ", ".join(f"{day['day']} {_num(day['value'])}" for day in recent)
+            + ", ".join(
+                f"{day['day'] if index == 0 else str(day['day'])[5:]} {_num(day['value'], 4)}"
+                for index, day in enumerate(recent)
+            )
         )
     months, _ = _capped(summary["months"], MAX_DEVICE_MONTHS)
     if months:
-        lines.append(
-            t("ai.device_monthly")
-            + " "
-            + "; ".join(
-                f"{bucket['period']} {_num(bucket['mean'], 4)} "
-                f"({_num(bucket['min'], 4)}-{_num(bucket['max'], 4)}, {bucket['days']}d)"
-                for bucket in months
-            )
-        )
+        lines.append(f"{t('ai.device_monthly')} {_buckets(months)}")
     if summary["years"]:
-        lines.append(
-            t("ai.device_yearly")
-            + " "
-            + "; ".join(
-                f"{bucket['period']} {_num(bucket['mean'], 4)} "
-                f"({_num(bucket['min'], 4)}-{_num(bucket['max'], 4)}, {bucket['days']}d)"
-                for bucket in summary["years"]
-            )
-        )
+        lines.append(f"{t('ai.device_yearly')} {_buckets(summary['years'])}")
     return lines
+
+
+def _buckets(rows: Sequence[dict[str, object]]) -> str:
+    return "; ".join(
+        f"{bucket['period']} {_num(bucket['mean'], 4)} "
+        f"({_num(bucket['min'], 4)}-{_num(bucket['max'], 4)}, {bucket['days']}d)"
+        for bucket in rows
+    )
 
 
 _KNOWN_AGGREGATIONS = {"ai.aggregation_sum", "ai.aggregation_average", "ai.aggregation_latest"}
@@ -409,14 +459,13 @@ def _device_one_liner(summary: dict[str, object]) -> str:
         )
     else:
         recent = ""
-    return "- " + " - ".join(
+    return "; ".join(
         part
         for part in (
-            f"{summary['name']}: {_num(summary['latest_value'])} {unit}".strip()
-            + f" ({summary['latest_day']})",
+            f"- {summary['name']}: {_num(summary['latest_value'], 4)} {unit}".rstrip()
+            + f" @{summary['latest_day']}",
             recent,
-            t("ai.device_span", days=summary["day_count"], first=summary["first_day"],
-              rows=summary["row_count"]),
+            t("ai.device_span", days=summary["day_count"], first=summary["first_day"]),
         )
         if part
     )
@@ -465,36 +514,45 @@ def _about_lines(
 
 
 def _finding_line(item: dict[str, object]) -> str:
-    summary = str(item.get("summary_en") or "").strip().replace("\n", " ")
+    """``- 2026-08-09 Cardiology consultation (Veselka): E78.2 Mixed hyperlipidaemia; ...``
+
+    The conclusion in the language it was written in.  Reading only the English
+    summary sent 42 of 43 conclusions as a bare title: the diagnoses a
+    cardiologist wrote never reached the assistant.
+    """
+    summary = " ".join(str(item.get("summary_text") or item.get("summary_en") or "").split())
     return (
-        f"- {item.get('finding_date') or '-'} - {item.get('title')}"
-        + (f" - {summary}" if summary else "")
-        + f" ({item.get('vendor')})"
+        f"- {item.get('finding_date') or '-'} {item.get('title')} ({item.get('vendor')})"
+        + (f": {summary}" if summary else "")
     )
 
 
-def _add_attention(out, omissions, attention, publishers) -> None:
-    """Attention first: everything flagged, most alarming first."""
+def _add_attention(out, omissions, attention, sources) -> set[str]:
+    """Attention first: everything flagged, most alarming first.  Returns the
+    ids listed, which the results section then leaves out."""
     flagged, flagged_over = _capped(attention, MAX_ATTENTION)
     out += [f"## {t('ai.attention_heading')}", ""]
     if flagged:
         out.append(t("ai.attention_body", count=len(attention)))
         out.append("")
-        out += [_result_line(card, publishers, with_area=True) for card in flagged]
+        out += [_result_line(card, sources) for card in flagged]
         if flagged_over:
             omissions.append(t("ai.omitted_attention", count=flagged_over))
     else:
         out.append(t("ai.attention_none"))
     out.append("")
+    return {str(card["id"]) for card in flagged}
 
 
-def _add_results(out, catalog, publishers) -> None:
-    """Every current value, grouped the way the pages group them."""
+def _add_results(out, catalog, sources, listed: Collection[str] = ()) -> None:
+    """Every other current value, grouped the way the pages group them."""
     out += [f"## {t('ai.results_heading')}", "", t("ai.results_body"), ""]
     by_area: dict[str, list[dict[str, object]]] = {}
     for card in catalog:
-        if card.get("is_device"):
-            continue  # devices have their own section, with their own history
+        if card.get("is_device") or str(card["id"]) in listed:
+            # Devices have their own section; a flagged result was printed
+            # in full under "Needs attention" and is not printed twice.
+            continue
         by_area.setdefault(str(card.get("area_name") or t("ai.area_other")), []).append(card)
     # Body systems with something flagged come first, the most alarming first,
     # so a reader -- or a model with a short attention span -- meets them
@@ -503,7 +561,7 @@ def _add_results(out, catalog, publishers) -> None:
         out += ["", f"### {area_name}", ""]
         rows = sorted(by_area[area_name], key=lambda card: (_severity(card), str(card["name"])))
         rows, collapsed = _collapse_negative_allergens(rows)
-        out += [_result_line(card, publishers) for card in rows]
+        out += [_result_line(card, sources) for card in rows]
         if collapsed:
             out.append(collapsed)
     out.append("")
@@ -552,15 +610,19 @@ def _add_devices(out, connection, owner_user_id) -> None:
     out.append("")
 
 
+def _finding_lines(findings: Sequence[dict[str, object]]) -> tuple[list[object], int]:
+    """Distinct lines only: one consultation is often extracted three times."""
+    return _capped(list(dict.fromkeys(_finding_line(item) for item in findings)), MAX_FINDINGS)
+
+
 def _add_findings(out, omissions, findings) -> None:
     """Narrative findings."""
-    kept, over = _capped(findings, MAX_FINDINGS)
+    kept, over = _finding_lines(findings)
     out += [f"## {t('ai.findings_heading')}", ""]
     if not kept:
         out += [t("ai.findings_none"), ""]
         return
-    out += [t("ai.findings_body"), ""]
-    out += [_finding_line(item) for item in kept]
+    out += [t("ai.findings_body"), "", *kept]
     out.append("")
     if over:
         omissions.append(t("ai.omitted_findings", count=over))
@@ -624,29 +686,17 @@ def build_prompt(
     include = set(include) & SECTION_KEYS
     counts = counts or {}
     guidance = guidance or {}
-    publishers = _publishers(connection)
+    sources = Sources(connection, by_use=True)
     omissions: list[str] = []
-    out: list[str] = [f"# {t('ai.doc_title')}", ""]
-
-    # --- what the assistant is being asked to do ---------------------------
-    out += [
-        f"## {t('ai.task_heading')}",
-        "",
-        t("ai.task_body", language=t(f"lang.name_{get_locale()}")),
-        "",
-        f"## {t('ai.legend_heading')}",
-        "",
-        t("ai.legend_body"),
-        "",
-    ]
+    out = _head(t("ai.doc_title"), t("ai.task_body", language=t(f"lang.name_{get_locale()}")))
     if focus:
         out += [t("ai.focus", subject=focus), ""]
 
     # --- who ----------------------------------------------------------------
     out += _about_lines(patient, counts, include, catalog)
 
-    _add_attention(out, omissions, attention, publishers)
-    _add_results(out, catalog, publishers)
+    listed = _add_attention(out, omissions, attention, sources)
+    _add_results(out, catalog, sources, listed)
     if "history" in include:
         _add_history(out, omissions, catalog)
     if "devices" in include:
@@ -663,10 +713,27 @@ def build_prompt(
     for key, _default in SECTIONS:
         if key not in include:
             out.append(f"- {t(f'ai.section_{key}')} - {t('ai.gaps_excluded')}")
-    for note in omissions:
-        out.append(f"- {note}")
+    return _finish(out, omissions, sources)
+
+
+#: Where the publisher legend goes once the body knows which ones it cited.
+_LEGEND_SLOT = "\x00sources\x00"
+
+
+def _head(title: str, task: str) -> list[str]:
+    """Title, the request, and how to read what follows."""
+    return [
+        f"# {title}", "",
+        f"## {t('ai.task_heading')}", "", task, "",
+        f"## {t('ai.legend_heading')}", "", t("ai.legend_body"), _LEGEND_SLOT, "",
+    ]
+
+
+def _finish(out: list[str], omissions: list[str], sources: Sources) -> str:
+    out += [f"- {note}" for note in omissions]
     out += ["", t("ai.footer")]
-    return "\n".join(out).replace("\n\n\n", "\n\n") + "\n"
+    text = sources.render("\n".join(out), label=t("ai.sources_label"), at=_LEGEND_SLOT)
+    return re.sub(r"\n{3,}", "\n\n", text) + "\n"
 
 
 # --- the page-scoped excerpt -------------------------------------------------
@@ -702,7 +769,7 @@ def _rank_related(cards: Sequence[dict[str, object]]) -> list[dict[str, object]]
 
 def _subject_card_block(
     card: dict[str, object],
-    publishers: dict[str, str],
+    sources: Sources,
     entry: dict[str, object] | None,
     *,
     with_guidance: bool,
@@ -714,7 +781,7 @@ def _subject_card_block(
     explanation of what the test is for costs five hundred characters, so it
     travels only where there is one subject to explain.
     """
-    lines = [_result_line(card, publishers)]
+    lines = [_result_line(card, sources)]
     if with_guidance and entry:
         detail = " ".join(
             str(entry.get(field) or "").strip()
@@ -731,7 +798,7 @@ def _subject_card_block(
     return lines
 
 
-def _add_subject(out, omissions, subject, publishers, guidance, include) -> None:
+def _add_subject(out, omissions, subject, sources, guidance, include) -> None:
     document = subject.get("document")
     if document:
         out += [
@@ -745,7 +812,9 @@ def _add_subject(out, omissions, subject, publishers, guidance, include) -> None
             "",
         ]
         kept, over = _capped(list(subject.get("observations") or ()), MAX_SUBJECT_OBSERVATIONS)
-        out += [_result_line(_observation_card(row), publishers) for row in kept]
+        # The document's date is in the line above; a row repeats only a different one.
+        dated = str(document.get("report_date") or "")[:10]
+        out += [_result_line(_observation_card(row), sources, dated=dated) for row in kept]
         if over:
             omissions.append(t_plural("ai.omitted_observations", over))
     # One measurement gets its explanation; sixty do not.  A panel that
@@ -757,7 +826,7 @@ def _add_subject(out, omissions, subject, publishers, guidance, include) -> None
     for card in cards:
         key = str(card["id"]).removeprefix("device:")
         out += _subject_card_block(
-            card, publishers, guidance.get(key), with_guidance=detailed and "guidance" in include
+            card, sources, guidance.get(key), with_guidance=detailed and "guidance" in include
         )
     if cards_over:
         omissions.append(t_plural("ai.omitted_subject", cards_over))
@@ -775,14 +844,13 @@ def _add_subject_findings(out, omissions, subject, include) -> None:
     # identity three screens down, so the inconsistency is the defect.
     findings = list(subject.get("findings") or ()) if "findings" in include else []
     if findings:
-        kept, over = _capped(findings, MAX_FINDINGS)
-        out.extend(["", f"### {t('ai.findings_heading')}", "", t("ai.findings_body"), ""])
-        out.extend(_finding_line(item) for item in kept)
+        kept, over = _finding_lines(findings)
+        out.extend(["", f"### {t('ai.findings_heading')}", "", t("ai.findings_body"), "", *kept])
         if over:
             omissions.append(t("ai.omitted_findings", count=over))
 
 
-def _add_related(out, omissions, subject, related, publishers, label) -> None:
+def _add_related(out, omissions, subject, related, sources, label) -> None:
     """The rest of its panel, for context."""
     if related:
         kept, over = _capped(_rank_related(related), MAX_RELATED)
@@ -792,13 +860,13 @@ def _add_related(out, omissions, subject, related, publishers, label) -> None:
             t("ai.related_body"),
             "",
         ]
-        out += [_result_line(card, publishers) for card in kept]
+        out += [_result_line(card, sources) for card in kept]
         if over:
             omissions.append(t_plural("ai.omitted_related", over))
         out.append("")
 
 
-def _add_elsewhere(out, omissions, subject, related, attention, publishers) -> None:
+def _add_elsewhere(out, omissions, subject, related, attention, sources) -> None:
     """Flagged elsewhere, one line each."""
     scoped_ids = {
         str(card["id"])
@@ -811,7 +879,7 @@ def _add_elsewhere(out, omissions, subject, related, attention, publishers) -> N
     if elsewhere:
         kept, over = _capped(elsewhere, MAX_ELSEWHERE)
         out += [t_plural("ai.elsewhere_body", len(elsewhere)), ""]
-        out += [_result_line(card, publishers, with_area=True) for card in kept]
+        out += [_result_line(card, sources) for card in kept]
         if over:
             omissions.append(t("ai.omitted_attention", count=over))
     else:
@@ -845,30 +913,22 @@ def build_subject_prompt(
     include = set(include) & SECTION_KEYS
     counts = counts or {}
     guidance = guidance or {}
-    publishers = _publishers(connection)
+    sources = Sources(connection, by_use=True)
     label = str(subject["label"])
     omissions: list[str] = []
-    out: list[str] = [f"# {t('ai.excerpt_title')}", ""]
-
-    out += [
-        f"## {t('ai.task_heading')}",
-        "",
+    out = _head(
+        t("ai.excerpt_title"),
         t("ai.task_body_scoped", subject=label, language=t(f"lang.name_{get_locale()}")),
-        "",
-        f"## {t('ai.legend_heading')}",
-        "",
-        t("ai.legend_body"),
-        "",
-    ]
+    )
     out += _about_lines(patient, counts, include, catalog)
 
     # --- the subject, complete ---------------------------------------------
     out += [f"## {t('ai.subject_heading', subject=label)}", ""]
-    _add_subject(out, omissions, subject, publishers, guidance, include)
+    _add_subject(out, omissions, subject, sources, guidance, include)
 
     related = list(subject.get("related_cards") or ())
-    _add_related(out, omissions, subject, related, publishers, label)
-    _add_elsewhere(out, omissions, subject, related, attention, publishers)
+    _add_related(out, omissions, subject, related, sources, label)
+    _add_elsewhere(out, omissions, subject, related, attention, sources)
 
     # --- what an excerpt is not --------------------------------------------
     lab_cards = [card for card in catalog if not card.get("is_device")]
@@ -890,7 +950,4 @@ def build_subject_prompt(
     for key in ("findings", "guidance", "identity"):
         if key not in include:
             out.append(f"- {t('ai.section_' + key)} - {t('ai.gaps_excluded')}")
-    for note in omissions:
-        out.append(f"- {note}")
-    out += ["", t("ai.footer")]
-    return "\n".join(out).replace("\n\n\n", "\n\n") + "\n"
+    return _finish(out, omissions, sources)

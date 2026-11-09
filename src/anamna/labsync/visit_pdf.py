@@ -14,6 +14,7 @@ deterministic (``invariant``), so the same record gives the same bytes.
 
 from __future__ import annotations
 
+import html
 import io
 import logging
 import re
@@ -65,11 +66,13 @@ def _medication(item: dict) -> str:
 
 
 def field_text(value: object) -> str:
-    """A field as lines: a list (diagnosis codes, medications) one item a line."""
+    """A field as lines: a list (diagnosis codes, medications) one item a line.
+    The clinic's app stores some text HTML-escaped («30 днів--&gt; далі»):
+    it is read as the doctor typed it, so the page says «-->», not «&gt;»."""
     if isinstance(value, list):
-        return "\n".join(filter(None, (_medication(item) if isinstance(item, dict) else field_text(item)
-                                       for item in value)))
-    return str(value or "").replace("\r\n", "\n").strip()
+        return "\n".join(filter(None, (html.unescape(_medication(item)) if isinstance(item, dict)
+                                       else field_text(item) for item in value)))
+    return html.unescape(str(value or "")).replace("\r\n", "\n").strip()
 
 
 def _render(blocks: list[tuple[str, str]], title: str, images: list[bytes] = ()) -> bytes:
