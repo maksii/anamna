@@ -302,3 +302,62 @@ def test_a_wrapped_doctor_line_leaves_no_orphan_and_the_ehealth_title_stays():
     )
     # An order sheet's column header is still form furniture.
     assert _strip_letterhead("Назва послуги К-сть Дата Ehealth\nКонсультація кардіолога 1") == "Консультація кардіолога 1"
+
+
+# --- 9. An area is given whole sentences ------------------------------------------
+
+def test_each_area_gets_whole_sentences_and_a_dash_never_parts_them(ledger):  # noqa: F811
+    settings, owner, patient = ledger
+    text = note("Консультація гастроентеролога", "Гастроентеролог", (
+        "Діагноз:\nХронічний панкреатит . Синдром надмірного бактеріального росту у\n"
+        "кишківнику.Дисбіоз кишківника ( виявлено Staphylococcus epidermidis/, елементи\n"
+        "гриба , подібного до дріжджевого - у великій кількості).\nРекомендації:\n1. Копрограма .\n"
+    ))
+    add_report(settings, owner, patient, "pancreatitis", "consultation", "Консультація гастроентеролога", [text])
+    by_area = {row["health_area"]: row["summary_uk"] for row in findings(settings) if row["document_id"] == "pancreatitis"}
+    assert by_area == {
+        "liver": "Хронічний панкреатит.",
+        "digestive": "Синдром надмірного бактеріального росту у кишківнику. Дисбіоз кишківника ( виявлено "
+                     "Staphylococcus epidermidis/, елементи гриба , подібного до дріжджевого - у великій кількості).",
+    }
+
+
+def test_a_pancreas_result_inside_an_examination_stays_with_its_value(ledger):  # noqa: F811
+    settings, owner, patient = ledger
+    text = note("Консультація гастроентеролога", "Гастроентеролог", (
+        "Скарги:\nна періодичне відчуття дискомфорту в ділянці живота, здуття.\n"
+        "Анамнез:\nпогіршення стану відмічає близько 1 міс.\n"
+        "Огляд:\nОб-но: Живіт при пальпації мякий, здутий.\n"
+        "Копрограма від 25.09.24р: кал оформлений, клітковина. йодофільна флора, крохмаль.слиз.\n"
+        "Панкреатична еластаза в калі - 45,83 ( норма від 200 ) .\nРекомендації:\n1. Дотримання режиму харчування.\n"
+    ))
+    add_report(settings, owner, patient, "elastase", "consultation", "Консультація гастроентеролога", [text])
+    by_area = {row["health_area"]: row["summary_uk"] for row in findings(settings) if row["document_id"] == "elastase"}
+    assert by_area["liver"] == "Панкреатична еластаза в калі - 45,83 ( норма від 200 )."
+    assert by_area["digestive"].endswith("крохмаль.слиз.") and "45,83" not in by_area["digestive"]
+
+
+def test_one_sentence_listing_two_organs_is_still_parted_between_them():
+    from anamna.health import _area_finding
+
+    summary = ("На момент огляду УЗ ознаки- дифузних змін печінки і підшлункової залози "
+               "-незначні сольові нашарування в нирках без порушення уродинаміки")
+    item = {"areas": ("liver", "kidneys"), "summary": summary, "summary_en": "", "summary_uk": summary}
+    assert _area_finding(item, "liver")["summary_uk"] == (
+        "На момент огляду УЗ ознаки- дифузних змін печінки і підшлункової залози")
+    kidneys = _area_finding(item, "kidneys")
+    assert kidneys["summary_uk"] == "незначні сольові нашарування в нирках без порушення уродинаміки"
+    # The liver's diffuse changes put no kidney under attention.
+    assert kidneys["status"] == "information"
+
+
+def test_a_coded_diagnosis_goes_to_the_area_its_code_names():
+    from anamna.health import _area_finding, _diagnosis_areas
+
+    summary = "E78.2 - Змішана гіперліпідемія. E04.1 Нетоксичний одновузловий зоб."
+    item = {"areas": ("heart", "thyroid"), "summary": summary, "summary_en": "", "summary_uk": summary}
+    assert _area_finding(item, "thyroid")["summary_uk"] == "E04.1 Нетоксичний одновузловий зоб."
+    assert "зоб" not in _area_finding(item, "heart")["summary_uk"]
+    # «зоб» is the goitre as a word, never the start of «зобов'язання».
+    assert _diagnosis_areas("Дифузний зоб I ст.") == ("thyroid",)
+    assert "thyroid" not in _diagnosis_areas("Зобов'язання пацієнта виконано")

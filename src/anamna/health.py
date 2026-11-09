@@ -1730,7 +1730,8 @@ _ORGAN_AREAS: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
         # верхньої кінцівки»); «кінцівк» itself is in every consultation's
         # «набряків нижніх кінцівок немає».
         ("joints", r"\bсуглоб|\bjoint|\bколін|\bknee|\bлікт|\belbow|\bліпом|\blipom"),
-        ("thyroid", r"\bщитопод|\bщитовид|\bthyroid"),
+        # «зоб» (goitre) as a word: «зобов'язання» is not one.
+        ("thyroid", r"\bщитопод|\bщитовид|\bthyroid|\bзоб(?:а|у|ом|і)?\b|\bgoit[re]"),
         ("lungs", r"\bлеген|\blung|\bchest|\bгрудної кліт"),
         # Inside the nose (its septum, «переділка» in Expert's notes, and
         # turbinates), the tonsils, pharynx, larynx and middle ear.  Never the
@@ -2821,13 +2822,45 @@ def _deduplicate_findings(candidates: list[dict[str, object]]) -> list[dict[str,
     return kept
 
 
-#: Sentence ends, line breaks and spaced dashes.  The dash branch opens with a
-#: blank run, so it is guarded like `_RUN_START` -- except that a split
-#: resuming right after a matched line break may start a dash there.  Each
-#: blank run's first blank is written out, so a split enters a run only by
-#: consuming one, and the rest of the run is taken whole: nothing a branch
-#: needs after it is a blank.
-_AREA_CLAUSE_SPLIT_RE = re.compile(r"(?<=[.;])\s\s*+|\n|(?:(?<!\s)|(?<=\n))\s\s*+[-–]\s*")
+#: Whole sentences, which is what an area is given: a dash inside one
+#: («Панкреатична еластаза в калі - 45,83», «дріжджевого - у великій
+#: кількості») never parts a name from its value.  A full stop the record
+#: glued to the next sentence («кишківнику.Дисбіоз») ends one too; an
+#: initial («О.Петренко») or «Н.pylori» does not.
+_AREA_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.;])\s+|(?<=[a-zа-яіїєґ)]\.)(?=[A-ZА-ЯІЇЄҐ])")
+#: A dash after a blank, kept as its own piece of the split (guarded like `_RUN_START`).
+_AREA_DASH_RE = re.compile(r"((?<!\s)\s\s*+[-–]\s*)")
+
+
+def _area_clauses(summary: str, patterns: list[re.Pattern[str] | None]) -> list[str]:
+    """The summary's sentences; one that names two of the report's organs
+    («… змін печінки і підшлункової залози -незначні сольові нашарування в
+    нирках …») is parted at its dashes, and a piece that names no organ
+    («45,83 ( норма від 200 )») stays with the one beside it."""
+    def names(part: str) -> bool:
+        return any(other and other.search(part) for other in patterns)
+
+    clauses = []
+    for sentence in _AREA_SENTENCE_SPLIT_RE.split(collapse_space(summary)):
+        # «Хронічний панкреатит .» as the record typed it reads as one sentence.
+        sentence = re.sub(r"\s+\.$", ".", sentence.strip())
+        if sum(bool(other and other.search(sentence)) for other in patterns) < 2:
+            clauses.append(sentence)
+            continue
+        pieces = _AREA_DASH_RE.split(sentence)
+        groups: list[str] = []
+        pending = ""
+        for index in range(0, len(pieces), 2):
+            separator, part = (pieces[index - 1] if index else ""), pieces[index]
+            if groups and not names(part):
+                groups[-1] += separator + part
+            elif not groups and not names(part):
+                pending += separator + part
+            else:
+                groups.append(f"{pending}{separator}{part}" if pending else part)
+                pending = ""
+        clauses.extend([*groups, pending] if pending else groups)
+    return [clause.strip() for clause in clauses]
 
 
 def _area_finding(item: dict[str, object], area: str) -> dict[str, object]:
@@ -2845,12 +2878,15 @@ def _area_finding(item: dict[str, object], area: str) -> dict[str, object]:
     if len(areas) < 2 or not summary or pattern is None:
         return item
     patterns = [dict(_ORGAN_AREAS).get(other) for other in areas]
-    # A sentence naming none of the study's organs («Холестазу в помірній
-    # кількості») belongs to the study's first area, the organ it is about.
+    # A sentence goes to the areas its organ words or its own ICD-10 code
+    # name («E04.1 Нетоксичний одновузловий зоб» is the thyroid's however
+    # the visit was filed); one naming none of the study's organs («Холестазу
+    # в помірній кількості») belongs to the study's first area, the organ it
+    # is about.
     own = [
-        clause.strip() for clause in _AREA_CLAUSE_SPLIT_RE.split(summary)
-        if clause.strip() and (pattern.search(clause) or (
-            area == areas[0] and not any(other and other.search(clause) for other in patterns)))
+        clause for clause in _area_clauses(summary, patterns)
+        if clause and (area in _diagnosis_areas(clause) or (
+            area == areas[0] and not set(_diagnosis_areas(clause)) & set(areas)))
     ]
     reasons = finding_attention(" ".join(own), (area,))
     text = " ".join(own) or summary
