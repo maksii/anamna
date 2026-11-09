@@ -333,6 +333,32 @@ def _daily_urine(item: dict) -> bool:
         _URINE.search(m) and not _DAILY_URINE.search(m) for m in materials)
 
 
+#: The kinds of sample a person can leave out of a plan ("blood tests only"),
+#: matched in each item's ``material``, the lab's own words for it (both
+#: catalogues, November 2026).  A material matching none is ``other``
+#: (biopsy, CSF, a tick, hair); an item with no material is never left out.
+SAMPLES = {
+    "blood": re.compile(r"кров|сироват|плазм", re.IGNORECASE),
+    "urine": _URINE,
+    "stool": re.compile(r"\bкал\b", re.IGNORECASE),
+    "swab": re.compile(r"зішкріб|мазо?к|мазки|виділен|епітелі", re.IGNORECASE),
+    "saliva": re.compile(r"слин", re.IGNORECASE),
+    "semen": re.compile(r"сперм|простат", re.IGNORECASE),
+}
+SAMPLE_GROUPS = (*SAMPLES, "other")
+
+
+def samples(item: dict) -> set[str]:
+    """The kinds of sample (:data:`SAMPLES`) an item needs.  «Сироватка
+    крові + ліквор» is two samples."""
+    out = set()
+    for material in item.get("material") or ():
+        for part in str(material).casefold().split("+"):
+            found = {group for group, pattern in SAMPLES.items() if pattern.search(part)}
+            out |= found or {"other"}
+    return out
+
+
 def _folded(aliases: dict) -> dict:
     """``aliases`` with every key also under its homoglyph-folded spelling."""
     from .ingest.concepts import label_key

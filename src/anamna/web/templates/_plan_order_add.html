@@ -1,0 +1,27 @@
+{#- What the box in a lab's tile found on that lab's shelf and the order does
+    not hold yet: each with what it measures, the sample and an "Add" link
+    that puts it in (``edit_url``).  ``lab`` is the tile's lab; ``page_params``
+    the plan page's own query (the /plan-tests/order-search reply has none of
+    its own to read). -#}
+{% from "_components.html" import plural_t with context %}
+{% set params = page_params if page_params is defined and page_params else request.query_params %}
+{% if order and order.lab == lab %}
+{% if order.rows %}
+<p class="tiny muted an-plan-add__lead">{{ t('plan.order_found', lab=lab_names[lab]) }}</p>
+<ul class="an-plan-add">
+  {% for row in order.rows %}
+  <li class="an-plan-add__row">
+    <span class="an-plan-add__body">
+      <span class="an-plan-add__name" lang="{{ row.label_lang }}">{{ row.label }}</span>
+      <span class="tiny muted">{% if row.code %}{{ t('plan.code', code=row.code) }} · {% endif %}{{ plural_t('plan.analytes', row.analytes|length) }}{% if row.materials %} · {{ t('plan.sample') }} {% for m in row.materials %}<span lang="{{ m.lang }}">{{ m.text }}</span>{{ ', ' if not loop.last else '' }}{% endfor %}{% endif %}</span>
+    </span>
+    <span class="an-plan-add__price">{{ row.final_price|uah }}</span>
+    <a class="button secondary an-plan-add__go" href="{{ edit_url(params, lab, put=row.value) }}">{{ t('plan.order_add') }}<span class="visually-hidden">: {{ row.label }}</span></a>
+  </li>
+  {% endfor %}
+</ul>
+{% if order.total > order.rows|length %}<p class="tiny muted">{{ t('plan.order_more', shown=order.rows|length|countfmt, total=order.total|countfmt) }}</p>{% endif %}
+{% elif not order.match %}
+<p class="tiny muted">{{ t('plan.order_none', lab=lab_names[lab]) }}</p>
+{% endif %}
+{% endif %}

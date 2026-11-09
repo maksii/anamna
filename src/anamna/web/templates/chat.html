@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% from "_components.html" import plural_t with context %}
+{% block title %}{{ (current.title ~ ' · ') if current else '' }}{{ t('chat.title') }}{% endblock %}
+{% block page_styles %}<link rel="stylesheet" href="{{ asset('chat.css') }}">{% endblock %}
+
+{#- One message.  The assistant's text arrives rendered (escaped Markdown, see
+    chat_routes.render_markdown); the person's own text is printed as typed. -#}
+{% macro bubble(message) -%}
+<li class="an-chat-msg an-chat-msg--{{ message.role }}{{ ' an-chat-msg--error' if message.error_text else '' }}" data-message-id="{{ message.id }}">
+  <span class="visually-hidden">{{ t('chat.you') if message.role == 'user' else t('chat.assistant') }}:</span>
+  {% if message.role == 'assistant' %}
+  {% if message.content %}<div class="an-chat-msg__body">{{ message.html }}</div>{% endif %}
+  {% else %}
+  <div class="an-chat-msg__body an-chat-msg__body--plain">{{ message.content }}</div>
+  {% endif %}
+  {% if message.tool_labels %}
+  <details class="an-chat-msg__tools">
+    <summary>{{ plural_t('chat.looked_at', message.tool_labels|length) }}</summary>
+    <ul>{% for label in message.tool_labels %}<li>{{ label }}</li>{% endfor %}</ul>
+  </details>
+  {% endif %}
+  {% if message.error_text %}<p class="an-chat-msg__error">{{ message.error_text }}</p>{% endif %}
+</li>
+{%- endmacro %}
+
+{% block content %}
+{% set deleted = request.query_params.get('deleted') %}
+<div class="an-chat">
+  {#- The list.  Beside the conversation from 980px; below that a full-screen
+      drawer opened by the list button, through :target, so it needs no script. -#}
+  <aside class="an-chat-side" id="chat-list" aria-labelledby="chat-list-title">
+    <div class="an-chat-side__head">
+      <h2 id="chat-list-title">{{ t('chat.list_title') }}</h2>
+      <a class="an-chat-side__close" href="#chat-main" aria-label="{{ t('chat.close_list') }}"><span aria-hidden="true">×</span></a>
+    </div>
+    <a class="secondary an-chat-side__new" href="/chat">{{ t('chat.new') }}</a>
+    {% if deleted %}<p class="an-chat-side__note" role="status">{{ t('chat.deleted_all') if deleted == 'all' else t('chat.deleted') }}</p>{% endif %}
+    {% if conversations %}
+    <ul class="an-chat-side__items" data-chat-list>
+      {% for item in conversations %}
+      <li>
+        <a href="/chat/{{ item.id }}"{% if current and current.id == item.id %} aria-current="page"{% endif %}>
+          <span>{{ item.title }}</span>
+          <small>{{ item.updated_at|datefmt }}</small>
+        </a>
+        <form method="post" action="/chat/{{ item.id }}/delete"
+              data-confirm="{{ t('chat.delete_confirm') }}" onsubmit="return confirm(this.dataset.confirm)">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="back" value="{{ current.id if current else '' }}">
+          <button class="an-chat-side__delete" type="submit" title="{{ t('chat.delete') }}"
+                  aria-label="{{ t('chat.delete_named', title=item.title) }}"><span aria-hidden="true">×</span></button>
+        </form>
+      </li>
+      {% endfor %}
+    </ul>
+    <form method="post" action="/chat/delete-all"
+          data-confirm="{{ t('chat.delete_all_confirm') }}" onsubmit="return confirm(this.dataset.confirm)">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button class="link-button an-chat-side__clear" type="submit">{{ t('chat.delete_all') }}</button>
+    </form>
+    {% else %}
+    <p class="an-chat-side__note">{{ t('chat.list_empty') }}</p>
+    {% endif %}
+  </aside>
+
+  <section class="an-chat-main" id="chat-main" aria-labelledby="chat-current">
+    <header class="an-chat-bar">
+      <a class="an-chat-bar__list" href="#chat-list" aria-label="{{ t('chat.open_list') }}">
+        <span class="an-chat-bar__bars" aria-hidden="true"></span>
+      </a>
+      <h1 id="chat-current">{{ current.title if current else t('chat.new_title') }}</h1>
+      <details class="an-chat-info">
+        <summary aria-label="{{ t('chat.info_label') }}" title="{{ t('chat.info_label') }}"><span aria-hidden="true">i</span></summary>
+        <div class="an-chat-info__panel">
+          {% if not is_owner %}<p>{{ t('chat.lead_shared', name=record_name) }}</p>{% endif %}
+          {% if ai_ready %}<p>{{ t('chat.privacy', host=route.host, model=route.model) }}</p>{% endif %}
+          <p>{{ t('chat.context_help') }}</p>
+          <p>{{ t('chat.disclaimer') }}</p>
+          <p>{{ t('chat.storage_note') }}</p>
+          {% if ai_ready %}<p>{{ t('chat.keys_hint') }}</p>{% endif %}
+        </div>
+      </details>
+    </header>
+
+    <ol class="an-chat-log" data-chat-log aria-label="{{ t('chat.log_label') }}">
+      {% for message in messages %}
+      {{ bubble(message) }}
+      {% if current and current.summary_through == message.id %}
+      <li class="an-chat-mark" data-chat-mark>{{ t('chat.compacted') }}</li>
+      {% endif %}
+      {% endfor %}
+    </ol>
+
+    {% if ai_ready %}
+    <form class="an-chat-composer" method="post" action="/chat/send" data-chat-form data-chat-composer>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="conversation_id" value="{{ current.id if current else '' }}" data-chat-conversation>
+      <label class="visually-hidden" for="chat-message">{{ t('chat.message_label') }}</label>
+      <textarea id="chat-message" name="message" rows="1" maxlength="{{ message_limit }}" required
+                placeholder="{{ t('chat.message_placeholder') }}"></textarea>
+      <button class="primary" type="submit" data-chat-submit>{{ t('chat.send') }}</button>
+      <div class="an-chat-composer__meta">
+        {% if choices|length > 1 %}
+        {#- Each option names the host it sends to: picking a model is also
+            picking where the conversation goes. -#}
+        <select name="model" class="an-chat-model" aria-label="{{ t('chat.model_label') }}" title="{{ t('chat.model_label') }}">
+          {% for item in choices %}
+          <option value="{{ item.key }}" {{ 'selected' if item.key == chosen else '' }}>{{ item.model }} · {{ item.host }}</option>
+          {% endfor %}
+        </select>
+        {% elif choices %}
+        <input type="hidden" name="model" value="{{ choices[0].key }}">
+        {% endif %}
+        <p class="an-chat-context" data-chat-context title="{{ context.label }}"{% if not context.tokens %} hidden{% endif %}>
+          <span class="visually-hidden" data-chat-context-label>{{ context.label }}</span>
+          <span aria-hidden="true" data-chat-context-text>{{ context.text }}</span>
+          <span class="an-chat-context__meter" aria-hidden="true"><span data-chat-context-meter style="width: {{ context.percent }}%"></span></span>
+        </p>
+      </div>
+      <p class="an-chat-status" data-chat-status role="status" aria-live="polite"></p>
+    </form>
+    {% else %}
+    <div class="an-chat-off" role="status">
+      <p><strong>{{ t('chat.off_title') }}.</strong> {{ disabled_text }}</p>
+      {% if user.role == 'admin' and not viewing %}<a class="secondary" href="/admin/ai">{{ t('chat.open_admin') }}</a>{% endif %}
+    </div>
+    {% endif %}
+  </section>
+</div>
+
+<template data-chat-bubble>
+  <li class="an-chat-msg">
+    <span class="visually-hidden"></span>
+    <div class="an-chat-msg__body"></div>
+  </li>
+</template>
+<script src="{{ asset('chat.js') }}" defer></script>
+{% endblock %}

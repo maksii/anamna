@@ -1214,15 +1214,19 @@ def _keyword_title(lines: list[str]) -> str | None:
 
 #: A clinic document fetched by lab sync is saved as «<clinic>-<document id>
 #: <YYYY-MM-DD> <the clinic's own name for it>.pdf» (labsync.doctoreleks).
+#: Expert Hospital's visit documents carry a letter before the id
+#: («expert-c812 …» a conclusion, «expert-r77 …» an examination).
 #: «Висновок ЕЕГ»: a study's conclusion as a heading, named by its abbreviation.
 STUDY_CONCLUSION_RE = re.compile(r"^Висновок\s+[А-ЯІЇЄҐA-Z][А-ЯІЇЄҐA-Zа-яіїєґa-z]*[А-ЯІЇЄҐA-Z]$")
-CLINIC_FILENAME_RE = re.compile(r"^(?P<clinic>[a-z]+)-\d+(?:-\d+)?\s+(?P<day>\d{4}-\d{2}-\d{2})\s+(?P<title>\S.*)$")
+CLINIC_FILENAME_RE = re.compile(
+    r"^(?P<clinic>[a-z]+)-[a-z]?\d+(?:-\d+)?\s+(?P<day>\d{4}-\d{2}-\d{2})\s+(?P<title>\S.*)$")
 
 
 #: The lab-sync key of a clinic → the vendor its own documents are filed under.
 CLINIC_VENDORS = {
     "veselka": ("Veselka", "https://veselka.clinic"),
     "paraskeva": ("St. Paraskeva Medical Center", None),
+    "expert": ("Expert Hospital", "https://experthospital.com.ua"),
 }
 
 

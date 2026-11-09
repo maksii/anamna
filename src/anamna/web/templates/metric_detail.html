@@ -231,9 +231,8 @@
     </section>
     {% endfor %}
   </div>
-  {% if not guest %}
+  {#- A doctor (guest) plans too, and saves the selection for the patient. -#}
   <p class="an-plan-go"><a class="button primary" href="{{ measure.plan_url }}">{{ t('metric.order_plan') }}</a> <span class="tiny muted">{{ t('metric.order_plan_hint') }}</span></p>
-  {% endif %}
 </section>
 {% endif %}
 

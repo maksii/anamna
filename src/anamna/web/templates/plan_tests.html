@@ -51,8 +51,29 @@
 </section>
 
 {% if notice %}
-<div class="alert {{ 'warning' if notice in ('prices_changed', 'items_gone') else 'error' }}" role="alert">{{ t('plan.notice_' ~ notice) }}</div>
+<div class="alert {{ 'warning' if notice in ('prices_changed', 'items_gone', 'suggestion_empty') else ('neutral' if notice == 'suggestion_saved' else 'error') }}" role="alert">{{ t('plan.notice_' ~ notice) }}</div>
 {% endif %}
+
+{#- A doctor reads the record through an access code: they plan, and save
+    the selection for the patient; the order is the patient's to place. -#}
+{% if doctor and labs_on %}<p class="alert neutral an-plan-doctor">{{ t('plan.doctor_lead') }}</p>{% endif %}
+
+{#- What a doctor saved for this person: open it (the planner as the doctor
+    left it, plan built) to review, change and order, or put it away. -#}
+{% for suggestion in suggestions %}
+<section class="alert neutral an-plan-suggestion" aria-labelledby="plan-suggestion-{{ loop.index }}">
+  <h2 id="plan-suggestion-{{ loop.index }}">{{ t('plan.suggestion_heading') }}</h2>
+  <p>{{ t('plan.suggestion_saved', date=suggestion.date|datefmt) }}{% if suggestion.author %} · {{ suggestion.author }}{% endif %} · {{ plural_t('special.tests' if suggestion.special else 'plan.analytes', suggestion.count) }}</p>
+  <p class="tiny">{{ t('plan.suggestion_lead') }}</p>
+  <div class="an-plan-suggestion__do">
+    <a class="button primary" href="{{ suggestion.url }}">{{ t('plan.suggestion_open') }}</a>
+    <form action="/plan-tests/suggestion/{{ suggestion.id }}/dismiss" method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button class="secondary" type="submit">{{ t('plan.suggestion_dismiss') }}</button>
+    </form>
+  </div>
+</section>
+{% endfor %}
 
 {% if not labs_on %}
 {{ empty_state(t('plan.no_labs_title'), t('plan.no_labs_body'), level=2,
@@ -213,8 +234,7 @@
   {% else %}
   <section class="panel an-plan-needs-panel" aria-labelledby="plan-needs-heading" id="plan-needs" data-return>
     <h2 class="visually-hidden" id="plan-needs-heading">{{ t('plan.needs_heading') }}</h2>
-    {% set main = needs|selectattr('preselected')|list %}
-    {% set optional = needs|rejectattr('preselected')|rejectattr('key', 'in', selected)|list %}
+    {% set optional = needs|rejectattr('preselected')|rejectattr('left_out')|rejectattr('key', 'in', selected)|list %}
     {#- Ready-made sets for the usual reasons to come (a doctor's request,
         feeling unwell), the "skip recent" switch (on by default: a result
         measured days ago is not repeated yet, however it read), "untick all"
@@ -266,7 +286,7 @@
         preset, the search, a panel).  The chips split it by why a row is
         there; the box filters it and, below it, finds what is not on it yet.
         The first few rows show, the rest behind "Show all N". -#}
-    {% set main_rows = needs|selectattr('preselected')|list %}
+    {% set main_rows = needs|selectattr('preselected')|rejectattr('left_out')|list %}
     {% set n_added = extra|length + include_rows|length + include_gone|length %}
     <div class="an-plan-why" role="group" aria-label="{{ t('plan.why_label') }}" data-why-filter hidden>
       <button type="button" aria-pressed="true" data-why="">{{ t('plan.why_all') }} <span class="an-plan-why__n">{{ (main_rows|length + n_added)|countfmt }}</span></button>
@@ -325,6 +345,7 @@
         <span class="an-plan-where__sum" data-where-sum data-no-city="{{ t('plan.sum_no_city') }}">
           {{- city or t('plan.sum_no_city') }} · {{ t('plan.sum_' ~ prefs.mode) -}}
           {%- if labs_on|length > 1 %} · {{ t('plan.sum_only', lab=lab_names[prefs.lab]) if prefs.lab else t('plan.sum_all_labs') }}{% endif -%}
+          {%- if excluded %} · {{ t('plan.sum_without', samples=excluded|map('sample_name')|join(', ')) }}{% endif -%}
         </span>
       </summary>
       {% for key in no_city %}<p class="alert warning" role="status">{{ t('plan.no_city', lab=lab_names[key], city=city) }}</p>{% endfor %}
@@ -350,15 +371,44 @@
         <label class="an-plan-check"><input type="radio" name="mode" value="complete" data-sum="{{ t('plan.sum_complete') }}" {{ 'checked' if prefs.mode == 'complete' else '' }}>
           <span><strong>{{ t('plan.mode_complete') }}</strong><span class="tiny muted">{{ t('plan.mode_complete_hint') }}</span></span></label>
       </fieldset>
+      {#- Samples the person will not give: a test that needs one is taken
+          off the list and out of the plan, whatever it measures.  A change
+          re-reads the list at once (script) or with the button below. -#}
+      {% if sample_groups %}
+      <fieldset class="an-plan-samples" data-samples data-sum-label="{{ t('plan.sum_without', samples='{samples}') }}">
+        <legend>{{ t('plan.samples_legend') }}</legend>
+        <p class="tiny muted" id="plan-samples-hint">{{ t('plan.samples_hint') }}</p>
+        <div class="an-plan-samples__grid">
+          {% for group in sample_groups %}
+          <label class="an-plan-sample"><input type="checkbox" name="ex" value="{{ group }}" data-sum="{{ group|sample_name }}"
+                 aria-describedby="plan-samples-hint" {{ 'checked' if group in excluded else '' }}>
+            <span><strong>{{ t('plan.sample_' ~ group) }}</strong><span class="tiny muted">{{ t('plan.sample_' ~ group ~ '_hint') }}</span></span></label>
+          {% endfor %}
+        </div>
+        {% if left_out_names %}
+        <p class="tiny an-plan-samples__out">{{ plural_t('plan.samples_out', left_out_names|length) }} {{ left_out_names|join(', ') }}</p>
+        {% endif %}
+        <button class="secondary" type="submit" data-js-hide>{{ t('plan.filter_apply') }}</button>
+      </fieldset>
+      {% endif %}
     </details>
   </section>
 
   {% if request.query_params.get('plan') %}<input type="hidden" name="plan" value="1">{% endif %}
   <div class="an-plan-go">
     <button class="primary" type="submit" name="plan" value="1" formaction="/plan-tests#plan-result" data-busy="{{ t('plan.building') }}">{{ t('plan.submit') }}</button>
+    {% if doctor %}<button class="secondary" type="submit" form="plan-suggest" data-busy="{{ t('plan.suggest_saving') }}">{{ t('plan.suggest_submit') }}</button>{% endif %}
     <p class="tiny muted" aria-live="polite">{{ t('plan.selected_label') }} <span data-selected-count>{{ (spec.picked|length if special else selected|length)|countfmt }}</span></p>
   </div>
 </form>
+{% if doctor %}
+{#- Its own form, so the CSRF token never rides in the planner's address:
+    the list as last loaded, refreshed from the ticks on submit by script. -#}
+<form id="plan-suggest" action="/plan-tests/suggest" method="post" hidden>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="query" value="{{ suggestion_source }}">
+</form>
+{% endif %}
 
 {% include "_plan_result.html" %}
 {% endif %}
@@ -372,6 +422,18 @@
   }
   var form = document.querySelector('[data-plan-form]');
   if (!form) { return; }
+  // A doctor's save takes the list as ticked now, and the order edits and
+  // chosen options from the address (they live in the plan tiles).
+  var suggest = document.getElementById('plan-suggest');
+  if (suggest) {
+    suggest.addEventListener('submit', function () {
+      var query = new URLSearchParams(new FormData(form));
+      new URLSearchParams(location.search).forEach(function (value, name) {
+        if (name === 'cut' || name === 'put' || /^alt_[a-z]+$/.test(name)) { query.append(name, value); }
+      });
+      suggest.elements.query.value = query.toString();
+    });
+  }
   var lang = document.documentElement.lang || undefined;
   // The search and filter buttons are for script-off pages; here every field answers on its own.
   form.querySelectorAll('[data-js-hide]').forEach(function (el) { el.remove(); });
@@ -573,6 +635,8 @@
     if (box.checked && box.closest('[data-live]') && ['add', 'include', 'sx'].indexOf(box.name) >= 0) { adopt(box); }
     // Lists and the section picker answer on change; typed fields on input.
     if (box.matches('[data-live-field]') && (box.tagName === 'SELECT' || box.name === 'sg')) { refresh(); }
+    // A sample left out (or back) changes the list itself: the page re-reads it.
+    if (box.name === 'ex') { form.requestSubmit(); return; }
     recount();
   });
   form.querySelectorAll('[data-live-field]').forEach(function (field) {
@@ -649,8 +713,14 @@
     if (mode) { parts.push(mode.dataset.sum); }
     var pref = form.elements.pref;
     if (pref) { parts.push(pref.options[pref.selectedIndex].dataset.sum); }
+    var samples = form.querySelector('[data-samples]');
+    var left = samples ? Array.prototype.map.call(samples.querySelectorAll('input:checked'), function (box) { return box.dataset.sum; }) : [];
+    if (left.length) { parts.push(samples.dataset.sumLabel.replace('{samples}', left.join(', '))); }
     sum.textContent = parts.join(' · ');
   }
+  // Back from a change made in the settings (a sample left out): open, so the
+  // person sees what it took off the list.
+  if (location.hash === '#plan-where') { form.querySelector('#plan-where details').open = true; }
   if (sum) {
     form.querySelector('#plan-where').addEventListener('input', summarise);
     form.querySelector('#plan-where').addEventListener('change', summarise);

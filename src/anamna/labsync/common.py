@@ -73,19 +73,21 @@ def _encode_body(payload: object | None, form: dict[str, str] | None) -> tuple[b
 def call(method: str, url: str, *, headers: dict[str, str], payload: object | None = None,
          want: str = "json", form: dict[str, str] | None = None,
          limit: int | None = None, timeout: int | None = None) -> tuple[object, list[str]]:
-    """JSON (or PDF bytes) back, with the Set-Cookie headers; 401/403 become
-    ``labsync.error_auth``, anything else unexpected ``labsync.error_reply``.
+    """JSON (or PDF bytes; ``want="file"``: any file's bytes) back, with the
+    Set-Cookie headers; 401/403 become ``labsync.error_auth``, anything else
+    unexpected ``labsync.error_reply``.
     ``form`` sends an urlencoded body instead of JSON (an OAuth token call).
     ``limit`` and ``timeout`` widen the defaults for a slow call or a lab's whole price list."""
     data, kind = _encode_body(payload, form)
     headers = {
-        "Accept": "application/pdf" if want == "pdf" else "application/json",
+        "Accept": {"pdf": "application/pdf", "file": "*/*"}.get(want, "application/json"),
         **({"Content-Type": kind} if data is not None else {}),
         **headers,
     }
-    limit = limit or (MAX_PDF_BYTES if want == "pdf" else MAX_JSON_BYTES)
+    raw = want in ("pdf", "file")
+    limit = limit or (MAX_PDF_BYTES if raw else MAX_JSON_BYTES)
     status, cookies, body = _http(method, url, headers=headers, body=data,
-                                  timeout=timeout or (PDF_TIMEOUT if want == "pdf" else REQUEST_TIMEOUT),
+                                  timeout=timeout or (PDF_TIMEOUT if raw else REQUEST_TIMEOUT),
                                   limit=limit)
     if status in (401, 403):
         raise LabSyncError("labsync.error_auth", status)
@@ -95,6 +97,8 @@ def call(method: str, url: str, *, headers: dict[str, str], payload: object | No
     if want == "pdf":
         if not body.startswith(b"%PDF"):
             raise LabSyncError("labsync.error_pdf")
+        return body, cookies
+    if want == "file":
         return body, cookies
     try:
         return (json.loads(body.decode("utf-8")) if body else None), cookies

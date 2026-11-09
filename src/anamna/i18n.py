@@ -309,6 +309,13 @@ JS_KEYS = (
     "ai.copied",
     "ai.copy_failed",
     "ai.size",
+    # The record chat (chat.js): states only the streaming page knows about.
+    "chat.you",
+    "chat.assistant",
+    "chat.thinking",
+    "chat.writing",
+    "chat.reading",
+    "chat.error_network",
 )
 
 

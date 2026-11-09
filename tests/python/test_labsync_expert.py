@@ -5,7 +5,9 @@ stubbed at ``labsync.common._http``, as for the other labs."""
 
 from __future__ import annotations
 
+import io
 import json
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -60,9 +62,14 @@ def body(raw: bytes | None) -> dict:
     return json.loads(raw.decode()) if raw else {}
 
 
+#: A person with no visit documents: the two lists beside analyses, empty.
+NO_DOCUMENTS = {("GET", f"/api/v1/medical/{kind}"): {"items": [], "total": 0, "has_more": False}
+                for kind in ("conclusions", "research")}
+
+
 def install(monkeypatch, routes: dict, seen: list | None = None) -> list:
     seen = [] if seen is None else seen
-    monkeypatch.setattr(common, "_http", router(routes, seen))
+    monkeypatch.setattr(common, "_http", router({**NO_DOCUMENTS, **routes}, seen))
     return seen
 
 
@@ -211,7 +218,8 @@ def test_analyses_become_orders_and_indicators_become_lab_rows(monkeypatch):
     # ``is_linked_to_medeir: false`` is no gate: a live account said so and
     # still listed its analyses, so every person is asked.
     client.orders({"id": "f13", "family_member_id": 13})
-    assert seen[-1][1] == "/api/v1/medical/analyses?family_member_id=13"
+    assert [path for _, path, _ in seen[-3:]] == [
+        f"/api/v1/medical/{kind}?family_member_id=13" for kind in ("analyses", "conclusions", "research")]
 
 
 def test_sync_imports_a_finished_analysis_and_waits_for_the_rest(tmp_path: Path, monkeypatch):
@@ -305,3 +313,221 @@ def test_a_finished_analysis_without_a_pdf_is_unavailable_not_pending(monkeypatc
     finished, new = expert.Client(URL, ACCESS, "", "").orders({"id": "p41", "family_member_id": None})
     assert finished["complete"] and finished["unavailable"] == "labsync.unavailable_nofile"
     assert not new["complete"]
+
+
+# --- a visit's own documents: conclusions and examinations ----------------------
+
+# Shapes as the live service answered (2026-11-09): a conclusion's list entry
+# names it, the doctor and the day; its text is on the conclusion itself, and
+# its file, when there is one, is a Word document.  An examination's report is
+# a scan or a PDF; ``/files`` may list the app's own inline HTML view.
+CONCLUSIONS = {"items": [
+    {"id": 900, "name": "Консультація гастроентеролога", "date": "2025-10-01T00:00:00", "doctor_name": "Лікар Г.",
+     "speciality": "Гастроентеролог", "has_file": True,
+     "files": [{"file_id": 1, "source": "remote", "name": "Консультація 1.docx", "size": 10, "mime_type": None},
+               {"file_id": 2, "source": "remote", "name": "знімок.jpg", "size": 10, "mime_type": "image/jpeg"}]},
+    {"id": 901, "name": "Консультація терапевта", "date": "2025-10-02T00:00:00", "has_file": False},
+    {"id": 902, "name": "Консультація кардіолога", "date": "2022-10-01T00:00:00", "has_file": False},
+], "total": 3, "skip": 0, "limit": 20, "has_more": False}
+CONCLUSION_900 = {**CONCLUSIONS["items"][0], "complaints": "на здуття", "diagnosis": "Функціональна диспепсія",
+                  "recommendations": "Дієта\nКонтроль через 3 міс"}
+CONCLUSION_901 = {**CONCLUSIONS["items"][1], "examination": "Стан задовільний", "diagnosis_codes": ["K30"],
+                  "medications": [{"id": 901, "name": "Дексалгін саше", "quantity_in_recipe": "21 саше",
+                                   "take_from": "01.01.2024", "take_to": "07.01.2024",
+                                   "reception_quantity": "1.0000 саше", "reception_frequency": "3 раз в 1 День (дні)",
+                                   "recommendation": None}]}
+RESEARCH = {"items": [
+    {"id": 900, "research_type": "УЗД гілок дуги аорти", "date": "2025-10-01", "has_file": True, "status": "Новий"},
+    {"id": 901, "research_type": "Комп'ютерна рентгенографія", "body_part": "Рентгенографія ОГК (одна проекція)",
+     "date": "2025-10-03", "has_file": False, "status": "Додано висновок",
+     "conclusion": "Легеневі поля прозорі.\r\nЕД = 0.02 мЗв"},
+    {"id": 902, "research_type": "Комп'ютерна рентгенографія", "date": "2025-10-04", "has_file": False},
+    {"id": 903, "research_type": "Комп'ютерна рентгенографія", "body_part": "Рентгенографія ОГК (дві проекції)",
+     "date": "2025-10-05", "has_file": True, "conclusion": "Синуси вільні."},
+], "total": 4, "skip": 0, "limit": 20, "has_more": False}
+JPEG = b"\xff\xd8\xff\xe0 synthetic scan"
+W = ('xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+     'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"')
+
+
+def word(*paragraphs: str) -> bytes:
+    """A minimal .docx; its first paragraph sits in a text box stored twice."""
+    boxed = (f"<w:p><mc:AlternateContent><mc:Choice><w:r><w:t>{paragraphs[0]}</w:t></w:r></mc:Choice>"
+             f"<mc:Fallback><w:r><w:t>{paragraphs[0]}</w:t></w:r></mc:Fallback></mc:AlternateContent></w:p>")
+    body = boxed + "".join(f"<w:p><w:r><w:t>{text}</w:t></w:r></w:p>" for text in paragraphs[1:])
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w") as archive:
+        archive.writestr("[Content_Types].xml", "<Types/>")
+        archive.writestr("word/document.xml", f"<w:document {W}><w:body>{body}</w:body></w:document>")
+    return out.getvalue()
+
+
+BREATH_TEST = word("Пацієнт: Тест", "Дихальний тест на визначення надмірного бактерійного росту у кишківнику.",
+                   "Висновок: Надмірного бактерійного росту не виявлено.")
+VISIT_FILES = {
+    ("GET", "/api/v1/medical/conclusions"): CONCLUSIONS,
+    ("GET", "/api/v1/medical/research"): RESEARCH,
+    ("GET", "/api/v1/medical/conclusions/900"): CONCLUSION_900,
+    ("GET", "/api/v1/medical/conclusions/901"): CONCLUSION_901,
+    ("GET", "/api/v1/medical/conclusions/902"): {**CONCLUSIONS["items"][2], "diagnosis": None, "files": []},
+    ("GET", "/api/v1/medical/research/903/file"): JPEG,
+    ("GET", "/api/v1/medical/conclusions/900/files/1"): BREATH_TEST,
+    ("GET", "/api/v1/medical/conclusions/900/files/2"): JPEG,
+    ("GET", "/api/v1/medical/research/900/file"): b"%PDF-1.4 ultrasound",
+}
+
+
+def text_of(pdf: bytes, tmp_path: Path) -> str:
+    from anamna.ingest.extract import extract_document
+
+    path = tmp_path / "rendered.pdf"
+    path.write_bytes(pdf)
+    return "\n".join(str(page["native_text"]) for page in extract_document(path, run_ocr=False)["pages"])
+
+
+def test_conclusions_and_examinations_are_listed_beside_analyses_for_every_person(monkeypatch, tmp_path: Path):
+    """The first sync read ``/medical/analyses`` only: a visit's conclusion
+    and its ultrasound never arrived.  All three lists are read, for the
+    holder and each family member, and a conclusion and an examination that
+    share an id with an analysis stay three different orders."""
+    seen = install(monkeypatch, {
+        ("GET", "/api/v1/medical/analyses"): {"items": [{**ANALYSES["items"][0], "id": 900}], "has_more": False},
+        **VISIT_FILES,
+    })
+    client = expert.Client(URL, ACCESS, "", "")
+    kid = {"id": "f12", "family_member_id": 12}
+    orders = {order["order_id"]: order for order in client.orders(kid)}
+    # A conclusion's text, and whether there is anything to file, is on the
+    # conclusion itself: each is read while listing.
+    assert [path for _, path, _ in seen] == [
+        f"/api/v1/medical/{kind}?family_member_id=12" for kind in (
+            "analyses", "conclusions", "conclusions/900", "conclusions/901", "conclusions/902", "research")]
+    assert sorted(orders) == ["900", "c900", "c901", "c902", "r900", "r901", "r902", "r903"]
+    visit, scan, xray = orders["c900"], orders["r900"], orders["r901"]
+    assert (visit["dates"], visit["complete"], visit["unavailable"], visit["rows"]) == (
+        ["2025-10-01"], True, None, [])
+    assert visit["filename_hint"] == "2025-10-01 Консультація гастроентеролога"
+    assert scan["filename_hint"] == "2025-10-01 УЗД гілок дуги аорти" and scan["lab_status"] == "Новий"
+    # Named by what was examined; findings typed in, no file: still filed.
+    assert xray["filename_hint"] == "2025-10-03 Рентгенографія ОГК (одна проекція)" and xray["unavailable"] is None
+    # Neither a file nor a word written: nothing to file, and it says so.
+    assert orders["r902"]["unavailable"] == orders["c902"]["unavailable"] == "labsync.error_pdf"
+    assert orders["c901"]["unavailable"] is None
+    assert (xray["hint_every_file"], visit["hint_every_file"]) == (True, False)
+    assert client.rows(visit, kid) == []
+
+    # The visit's own text, then each attachment: the Word file as a PDF of
+    # its text (the text box once), the scan as it is.
+    record, breath, photo = client.pdfs(visit, kid)
+    assert [path for _, path, _ in seen[-2:]] == [
+        "/api/v1/medical/conclusions/900/files/1?family_member_id=12",
+        "/api/v1/medical/conclusions/900/files/2?family_member_id=12"]
+    said = text_of(record, tmp_path)
+    for line in ("Консультація гастроентеролога", "Лікарня «Експерт»", "Дата: 01.10.2025",
+                 "Лікар: Лікар Г. (Гастроентеролог)", "Скарги:", "на здуття", "Діагноз:", "Функціональна диспепсія",
+                 "Рекомендації:", "Контроль через 3 міс"):
+        assert line in said
+    # Where the text came from is said above the record: under the last
+    # section it was read as one more recommendation.
+    assert said.index("Складено Anamna") < said.index("Скарги:")
+    converted = text_of(breath, tmp_path)
+    assert converted.count("Пацієнт: Тест") == 1 and "Надмірного бактерійного росту не виявлено" in converted
+    assert photo == JPEG
+    # No file: the conclusion is its text alone.
+    [only] = client.pdfs(orders["c901"], kid)
+    said = text_of(only, tmp_path)
+    # «Огляд:» is the heading a consultation's finding is read under when no
+    # diagnosis is written; a prescription reads as one, without its record id.
+    assert "Огляд:\nСтан задовільний" in said and "Код діагнозу:\nK30" in said
+    # Where a long line wraps depends on the font the machine has, so the
+    # prescription is compared with its soft line breaks folded away.
+    assert ("Дексалгін саше: по 1 саше, 3 раз в 1 День (дні), 01.01.2024–07.01.2024, на курс 21 саше"
+            in " ".join(said.split()) and "901 ·" not in said)
+    assert client.pdfs(scan, {"id": "p41", "family_member_id": None}) == [b"%PDF-1.4 ultrasound"]
+    assert seen[-1][1] == "/api/v1/medical/research/900/file"
+    assert "Легеневі поля прозорі." in text_of(client.pdfs(xray, kid)[0], tmp_path)
+    # A radiograph is no report: the findings come first, the image beside them.
+    report, radiograph = client.pdfs(orders["r903"], kid)
+    assert "Синуси вільні." in text_of(report, tmp_path) and radiograph == JPEG
+    # The record is the same bytes every time: a re-sync finds it already filed.
+    assert client.pdfs(orders["c901"], kid) == [only]
+
+
+def test_an_inline_view_and_an_unreadable_file_are_not_filed(monkeypatch):
+    install(monkeypatch, {("GET", "/api/v1/medical/research/7/file"): b"<html>record</html>"})
+    client = expert.Client(URL, ACCESS, "", "")
+    order = {"order_id": "r7", "packet": "УЗД", "dates": ["2025-01-01"], "has_file": True,
+             "files": [{"file_id": 0, "source": "inline", "name": "UZD.html", "mime_type": "text/html"}]}
+    with pytest.raises(LabSyncError) as refused:
+        client.pdfs(order, {"id": "p41", "family_member_id": None})
+    assert refused.value.key == "labsync.error_pdf"
+
+
+def test_a_long_list_is_paged_and_a_backend_that_ignores_skip_is_not_looped(monkeypatch):
+    seen: list = []
+
+    def paged(_raw, _headers):
+        skip = int(seen[-1][1].partition("skip=")[2] or 0)
+        return {"items": [{"id": 700 + skip, "name": "Огляд", "date": "2025-01-01", "has_file": True}],
+                "has_more": skip < 2}
+
+    def stuck(_raw, _headers):  # answers the first page whatever skip asks for
+        return {"items": [{"id": 1, "name": "УЗД", "date": "2025-01-01", "has_file": True}], "has_more": True}
+
+    install(monkeypatch, {("GET", "/api/v1/medical/analyses"): {"items": [], "has_more": False},
+                          ("GET", "/api/v1/medical/conclusions"): paged,
+                          **{("GET", f"/api/v1/medical/conclusions/{n}"): {"id": n} for n in (700, 701, 702)},
+                          ("GET", "/api/v1/medical/research"): stuck}, seen)
+    orders = expert.Client(URL, ACCESS, "", "").orders({"id": "p41", "family_member_id": None})
+    assert [order["order_id"] for order in orders] == ["c700", "c701", "c702", "r1"]
+    assert [path for _, path, _ in seen if "research" in path] == [
+        "/api/v1/medical/research", "/api/v1/medical/research?skip=1"]
+
+
+def test_sync_imports_a_visits_conclusion_and_examination_as_documents(tmp_path: Path, monkeypatch):
+    settings, user_id, _ = make(tmp_path, enable=("expert",))
+    install(monkeypatch, {("POST", "/api/v1/auth/login"): TOKENS,
+                          ("GET", "/api/v1/profile"): PROFILE, ("GET", "/api/v1/profile/family"): FAMILY})
+    labsync.save_credentials(settings, user_id, "expert", {"phone": "0670000001", "password": PASSWORD})
+    labsync.check_account(settings, user_id, "expert")
+    labsync.link_person(settings, user_id, "expert", "p41", "self", confirmed=False)
+    # The clinic's name and day go with the visit's own record only; an
+    # attachment is named by its own text.
+    names = ["expert-c900 2025-10-01 Консультація гастроентеролога.pdf", "expert-c900-1.pdf", "expert-c900-2.jpg",
+             "expert-c901 2025-10-02 Консультація терапевта.pdf",
+             "expert-r900 2025-10-01 УЗД гілок дуги аорти.pdf",
+             "expert-r901 2025-10-03 Рентгенографія ОГК (одна проекція).pdf",
+             "expert-r903 2025-10-05 Рентгенографія ОГК (дві проекції).pdf",
+             "expert-r903-1 2025-10-05 Рентгенографія ОГК (дві проекції).jpg"]
+    calls = stub_intake(monkeypatch, settings, user_id, {
+        name: {"vendor": "Expert Hospital", "order": None, "day": "2025-10-01",
+               "values": [("Гемоглобін", 140.0 + index, "г/л", "within_vendor_range")]}
+        for index, name in enumerate(names)})
+    install(monkeypatch, {("GET", "/api/v1/medical/analyses"): {"items": [], "has_more": False}, **VISIT_FILES})
+    summary = labsync.sync(settings, user_id, "expert", inline=True)
+    assert sorted(calls) == sorted(names)
+    assert (summary["imported"], summary["unavailable"], summary["failed"]) == (5, 2, 0)
+    with connect(settings) as connection:
+        states = dict(connection.execute("SELECT order_id, state FROM lab_orders WHERE provider='expert'"))
+        verified = connection.execute(
+            "SELECT COUNT(*) FROM observations WHERE owner_user_id=? AND verification_status='verified'",
+            (user_id,)).fetchone()[0]
+    assert states == {"c900": "imported", "c901": "imported", "c902": "unavailable", "r900": "imported",
+                      "r901": "imported", "r902": "unavailable", "r903": "imported"}
+    assert verified == 0  # read and queued for review, never verified by the sync
+    again = labsync.sync(settings, user_id, "expert", inline=True)
+    assert len(calls) == len(names) and again["imported"] == 0
+
+
+def test_an_expert_visit_document_takes_its_name_day_and_clinic_from_the_file_name():
+    from test_classifier import pdf_page
+
+    from anamna.ingest.classifier import classify_document
+
+    note = classify_document("expert-c900 2025-10-01 Консультація лікаря-гастроентеролога.pdf", "application/pdf",
+                             [pdf_page("Скарги на біль в епігастрії\nРекомендовано контроль")])
+    assert (note.vendor, note.clinical_type, note.title, note.report_date) == (
+        "Expert Hospital", "consultation", "Консультація лікаря-гастроентеролога", "2025-10-01")
+    scan = classify_document("expert-r900 2025-10-01 УЗД органів черевної порожнини.pdf", "application/pdf",
+                             [pdf_page("Печінка не збільшена, контури рівні\nЖовчний міхур без змін")])
+    assert (scan.vendor, scan.clinical_type, scan.report_date) == ("Expert Hospital", "ultrasound", "2025-10-01")
