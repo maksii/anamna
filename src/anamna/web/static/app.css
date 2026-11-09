@@ -637,6 +637,25 @@ button, input, select { font: inherit; }
 
 button, .button { cursor: pointer; }
 
+/* Waiting on the server (busy.js): the pressed control spins and takes no
+   second press, and a thin bar runs along the top of the page. */
+:is(button, .button, a)[aria-busy="true"] { cursor: progress; }
+:is(button, .button)[aria-busy="true"] { pointer-events: none; }
+:is(button, .button)[aria-busy="true"]::after { content: ""; display: inline-block; flex: none; width: .9em; height: .9em; margin-left: .5em; vertical-align: -.12em; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: an-spin .7s linear infinite; }
+a[aria-busy="true"]:not(.button) { opacity: .65; }
+/* While a form's submit is on its way, nothing else in it takes a press. */
+form[data-submitting] { cursor: progress; }
+form[data-submitting] :is(button, .button, input, select, textarea, label) { pointer-events: none; }
+.an-progress { position: fixed; inset: 0 0 auto; z-index: 1000; height: 3px; overflow: hidden; background: color-mix(in srgb, var(--teal) 22%, transparent); pointer-events: none; }
+.an-progress[hidden] { display: none; }
+.an-progress::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 40%; background: var(--teal); animation: an-progress 1.1s ease-in-out infinite; }
+@keyframes an-spin { to { transform: rotate(360deg); } }
+@keyframes an-progress { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
+@media (prefers-reduced-motion: reduce) {
+  :is(button, .button)[aria-busy="true"]::after { animation-duration: 2.4s; }
+  .an-progress::before { animation: none; width: 100%; opacity: .7; }
+}
+
 
 
 /* Flex, not a 1fr/auto/1fr grid: the old centre track sized to the nav's
@@ -1054,6 +1073,7 @@ td.result { font-weight: 750; white-space: nowrap; }
 
 .status.extracted { background: var(--st-borderline-bg); color: var(--st-borderline-fg); }
 
+.alert[hidden] { display: none; }
 .alert { border: 1px solid var(--warn-line); background: var(--warn-bg); color: var(--warn-ink); padding: 14px 16px; border-radius: 12px; margin-bottom: 18px; line-height: 1.5; }
 
 .alert.error { border-color: var(--error-line); background: var(--error-bg); color: var(--error-ink); }
@@ -3562,6 +3582,8 @@ img.viewer-media.rendered-page { height:auto; min-height:0; margin:16px; padding
 
 }
 
+.an-upload__bar { width: 100%; height: .6rem; accent-color: var(--teal); }
+.an-upload__bar[hidden] { display: none; }
 .an-upload--error { border-color: var(--error-line); background: var(--error-bg); }
 
 .an-upload__error {
@@ -4839,7 +4861,11 @@ body { overflow-x: clip; }
 
 .an-search-pending { color: var(--muted); font-size: var(--text-xs); }
 
-.search-results-section.is-pending .result-card-grid { opacity: .45; transition: opacity .15s ease; }
+.search-results-section.is-pending #search-results { opacity: .45; transition: opacity .15s ease; }
+.an-search-error { margin: 0 0 var(--space-3); padding: var(--space-2) var(--space-3); border: 1px solid var(--error-line); border-radius: 10px; background: var(--error-bg); color: var(--error-ink); font-weight: 600; }
+.live-search[aria-busy="true"]::after { content: ""; position: absolute; right: 16px; bottom: 15px; width: 18px; height: 18px; border: 2px solid var(--muted); border-right-color: transparent; border-radius: 50%; animation: an-spin .7s linear infinite; }
+.live-search[aria-busy="true"] kbd { visibility: hidden; }
+.dynamic-chart[aria-busy="true"] { opacity: .55; transition: opacity .15s ease; }
 
 /* --- Compact page structure -------------------------------------------------
    Landing, panel index, priorities, upload and record-handling pages use the
@@ -4965,7 +4991,7 @@ details.panel.an-page-disclosure { padding: 0; }
 
 @media (prefers-reduced-motion: reduce) {
 
-  .search-results-section.is-pending .result-card-grid { transition: none; }
+  .search-results-section.is-pending #search-results, .dynamic-chart[aria-busy="true"] { transition: none; }
 
 }
 
@@ -5954,6 +5980,9 @@ details.panel.an-page-disclosure { padding: 0; }
 .an-lab-crosscheck-wrap { margin-top: var(--space-5); padding: var(--space-2) var(--space-4); }
 .an-lab-crosscheck-wrap > .an-lab-crosscheck { margin: var(--space-2) 0 0; padding: 0; border: 0; box-shadow: none; background: none; }
 .an-row-error { margin-top: var(--space-2); }
+[data-rows-target][aria-busy="true"] { min-height: 3rem; opacity: .55; }
+#document-results[aria-busy="true"] { opacity: .55; transition: opacity .15s ease; }
+@media (prefers-reduced-motion: reduce) { #document-results[aria-busy="true"] { transition: none; } }
 .an-queue__totals { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
 .an-pill--bad { background: var(--error-bg); color: var(--error-ink); border: 1px solid var(--error-line); }
 .an-ai-title-form { display: grid; gap: var(--space-3); margin-bottom: var(--space-4); }
@@ -6917,7 +6946,7 @@ svg.an-trend { display: block; width: 100%; max-width: 24rem; height: auto; over
   .export-table-wrap th, .export-table-wrap td { padding:5px 6px; }
 }
 
-/* -- lab connections (EskuLab, Synevo): admin, profile card, cross-check --
+/* -- lab connections (Esculab, Synevo): admin, profile card, cross-check --
    Mobile-first: everything stacks; the one wider-screen rule is below. */
 .an-lab-facts { display: grid; gap: 8px; margin: 0 0 16px; }
 .an-lab-facts div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 16px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
@@ -7007,6 +7036,222 @@ svg.an-trend { display: block; width: 100%; max-width: 24rem; height: auto; over
 .an-lab-cell { display: grid; gap: 2px; justify-items: start; min-width: 0; }
 .an-lab-orders td a { display: inline-flex; align-items: center; min-height: 44px; }
 .an-lab-legend dl { display: grid; gap: 8px; margin: 8px 0 0; }
+
+/* Test planner (/plan-tests): one column on a phone, the same blocks wider
+   on a tablet; nothing here needs its own breakpoint. */
+.an-plan-form, .an-plan-result { display: grid; gap: 16px; min-width: 0; }
+.an-plan-needs { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.an-plan-need { display: flex; align-items: center; justify-content: space-between; gap: 4px 12px; padding: 6px 12px; border: 1px solid var(--line); border-radius: 12px; min-width: 0; }
+.an-plan-need--unsold { background: var(--surface-sunken); }
+.an-plan-check { display: flex; align-items: flex-start; gap: 12px; min-height: 44px; flex: 1 1 0; min-width: 0; cursor: pointer; font-size: var(--text-md); font-weight: 400; color: var(--ink); }
+.an-plan-check input { width: 22px; min-height: 22px; margin-top: 10px; flex: none; }
+.an-plan-need__body { display: grid; gap: 2px; padding: 8px 0; min-width: 0; }
+.an-plan-need__name { font-weight: 600; overflow-wrap: anywhere; }
+.an-plan-need__meta { color: var(--muted); font-size: var(--text-sm); overflow-wrap: anywhere; }
+.an-plan-need__why { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.an-plan-need__link { display: inline-flex; align-items: center; min-height: 44px; min-width: 44px; flex: none; }
+.an-plan-optional summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; font-weight: 600; }
+.an-plan-optional, .an-plan-search { margin-top: 12px; }
+.an-plan-subhead { margin: 16px 0 8px; font-size: var(--text-md, 1rem); }
+.an-plan-search > label { font-weight: 600; }
+.an-plan-search__row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.an-plan-search__row input { flex: 1 1 12rem; min-width: 0; min-height: 44px; border: 1px solid var(--edge-strong); border-radius: 10px; background: var(--surface); color: var(--ink); padding: 8px 12px; font: inherit; }
+.an-plan-results { border: 0; padding: 0; margin: 12px 0 0; display: grid; gap: 8px; min-width: 0; }
+.an-plan-results legend { font-weight: 600; margin-bottom: 8px; }
+.an-plan-cities { display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: 12px; }
+.an-plan-cities label { display: grid; gap: 6px; font-weight: 600; }
+.an-plan-cities select, .an-plan-order select, .an-plan-order input[type="date"] { min-height: 44px; width: 100%; max-width: 100%; }
+.an-plan-go { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-bottom: 24px; }
+.an-plan-prefs { border: 0; padding: 0; margin: 16px 0 0; display: grid; gap: 4px; min-width: 0; }
+.an-plan-prefs legend { font-weight: 600; margin-bottom: 4px; }
+.an-plan-prefs .an-plan-check > span { display: grid; gap: 2px; padding: 8px 0; }
+.an-plan-cities input { min-height: 44px; width: 100%; max-width: 100%; }
+.an-plan-filters__count { margin: 4px 0 0; font-weight: 600; }
+/* plan page: inputs (needs, panels, where) -- new rules go below this line */
+.an-plan-head h1 { font-size: clamp(28px, 4.4vw, 48px); margin-bottom: 12px; }
+/* The mode switch under the title: routine checks or special tests. */
+.an-plan-mode { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 6px; }
+.an-plan-mode .an-plan-switch { min-height: 44px; padding-inline: 14px; font-weight: 650; }
+.an-plan-mode__lead { margin: 0 0 12px; max-width: 62ch; }
+.an-plan-pages { margin: 14px 0 0; }
+.an-plan-pages a { display: inline-flex; align-items: center; min-height: 44px; }
+.an-plan-form [id] { scroll-margin-top: 84px; }
+.an-plan-form > .panel { margin-bottom: 0; }
+.an-plan-prefs .an-plan-check strong { font-weight: 650; }
+.an-plan-need[hidden], .an-plan-why[hidden], .an-plan-more[hidden] { display: none; }
+.an-plan-why { display: flex; gap: 6px; margin: -3px -3px 9px; padding: 3px; overflow-x: auto; scrollbar-width: none; }
+.an-plan-why button { flex: none; display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 6px 12px; border: 1px solid var(--line-strong); border-radius: var(--radius-pill); background: var(--surface); color: var(--ink); font: inherit; font-size: var(--text-sm); font-weight: 650; }
+.an-plan-why button[aria-pressed="true"] { background: var(--teal-dark); border-color: var(--teal-dark); color: var(--surface); }
+.an-plan-why__n { font-variant-numeric: tabular-nums; opacity: .8; }
+.an-plan-more { width: 100%; min-height: 44px; margin-top: 8px; gap: 10px; }
+.an-plan-more[aria-expanded="true"] .an-chevron { transform: translateY(.1em) rotate(-135deg); }
+.an-plan-empty { margin: 0; }
+/* Presets, "skip recent", "untick all" and "reset" share one row above the list; the presets open under it. */
+.an-plan-tools { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.an-plan-tools > :is(button, a, label) { min-height: 44px; padding-inline: 12px; font-size: var(--text-sm); }
+/* "Skip recent" is a switch dressed as the buttons beside it: a track that slides on. */
+.an-plan-switch { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+.an-plan-switch input { appearance: none; flex: none; position: relative; width: 34px; height: 20px; margin: 0; border-radius: 999px; background: var(--line-strong); cursor: pointer; transition: background-color .15s ease; }
+.an-plan-switch input::before { content: ""; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: var(--surface); transition: transform .15s ease; }
+.an-plan-switch input:checked { background: var(--teal-dark); }
+.an-plan-switch input:checked::before { transform: translateX(14px); }
+.an-plan-switch input:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+.an-plan-switch:not(:has(input:checked)) .an-plan-tools__n { background: var(--line-strong); color: var(--ink); }
+@media (prefers-reduced-motion: reduce) {
+  .an-plan-switch input, .an-plan-switch input::before { transition: none; }
+}
+.an-plan-tools > [data-presets-toggle] { margin-right: auto; gap: 10px; }
+.an-plan-tools > [aria-expanded="true"] .an-chevron { transform: translateY(.1em) rotate(-135deg); }
+.an-plan-presets { border: 0; padding: 0; margin: 0 0 12px; min-width: 0; }
+.an-plan-presets[hidden] { display: none; }
+/* Published standards (ACMG carrier tiers, GA2LEN) follow the topics under their own label. */
+.an-plan-presets__label { grid-column: 1 / -1; margin: 6px 0 0; font-size: var(--text-sm); font-weight: 650; color: var(--muted); }
+.an-plan-presets > p { margin: 0 0 8px; }
+.an-plan-presets__grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); gap: 8px; }
+.an-plan-preset { display: grid; gap: 4px; align-content: start; justify-items: start; min-height: 44px; padding: 12px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--surface); color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
+.an-plan-preset:hover { border-color: var(--teal-dark); }
+.an-plan-preset__n { color: var(--teal-dark); font-weight: 650; }
+/* Pressed and waiting: the tile's own mark spins instead of a spinner row. */
+.an-plan-preset[aria-busy="true"]::after { content: none; }
+.an-plan-preset[aria-busy="true"] .an-plan-preset__mark { border-color: var(--teal); border-right-color: transparent; background: none; animation: an-spin .7s linear infinite; }
+.an-plan-preset[aria-busy="true"] .an-plan-preset__mark::after { content: none; }
+.an-plan-result[data-stale] > :not(h2, .an-plan-stale) { opacity: .55; }
+/* A preset is a toggle: pressed, it is outlined and checked; pressing again takes its results away. */
+.an-plan-preset__head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; width: 100%; }
+.an-plan-preset__mark { flex: none; width: 22px; height: 22px; border: 2px solid var(--line-strong); border-radius: 50%; }
+.an-plan-preset[aria-pressed="true"] { border-color: var(--teal); background: color-mix(in srgb, var(--teal) 14%, var(--surface)); box-shadow: inset 0 0 0 1px var(--teal); }
+.an-plan-preset[aria-pressed="true"] .an-plan-preset__mark { border-color: var(--teal-dark); background: var(--teal-dark); position: relative; }
+.an-plan-preset[aria-pressed="true"] .an-plan-preset__mark::after { content: ""; position: absolute; left: 6px; top: 2px; width: 5px; height: 10px; border: solid var(--surface); border-width: 0 2px 2px 0; transform: rotate(45deg); }
+.an-plan-tools__n { display: inline-grid; place-items: center; min-width: 22px; height: 22px; padding: 0 6px; border-radius: var(--radius-pill); background: var(--teal-dark); color: var(--surface); font-size: var(--text-xs); font-weight: 700; }
+.an-plan-tools__n[hidden] { display: none; }
+/* A row measured recently says how long ago. */
+.an-pill--recent { background: color-mix(in srgb, var(--teal) 16%, var(--surface)); color: var(--teal-dark); }
+.an-plan-need__spark { display: block; width: min(100%, 180px); margin-top: 2px; }
+.an-plan-need__spark .an-sparkline { height: 26px; }
+.an-plan-form [data-live][aria-busy="true"] { opacity: .55; transition: opacity .15s ease; }
+@media (prefers-reduced-motion: reduce) {
+  .an-plan-form [data-live][aria-busy="true"] { transition: none; }
+}
+/* Every disclosure on the plan page (inputs and result) shows a chevron that turns when open. */
+:is(.an-plan-form, .an-plan-result) details > summary { position: relative; padding-right: 36px; list-style: none; cursor: pointer; }
+:is(.an-plan-form, .an-plan-result) details > summary::-webkit-details-marker { display: none; }
+:is(.an-plan-form, .an-plan-result) details > summary::after { content: ""; position: absolute; right: 12px; top: 50%; width: .5em; height: .5em; margin-top: -.4em; border: solid var(--muted); border-width: 0 .15em .15em 0; transform: rotate(45deg); transition: transform .16s ease; }
+:is(.an-plan-form, .an-plan-result) details[open] > summary::after { transform: translateY(.25em) rotate(-135deg); }
+@media (prefers-reduced-motion: reduce) {
+  :is(.an-plan-form, .an-plan-result) details > summary::after { transition: none; }
+}
+.an-plan-filter--section { margin-top: 12px; }
+.an-plan-narrow { margin-top: 4px; }
+.an-plan-narrow > summary { display: flex; align-items: center; min-height: 44px; font-weight: 600; }
+.an-plan-narrow .an-plan-filters { margin-top: 0; }
+.an-plan-where__sum { color: var(--muted); font-size: var(--text-sm); overflow-wrap: anywhere; }
+.an-plan-search { margin-bottom: 12px; }
+.an-plan-needs + [data-list-none] { margin: 0 0 8px; }
+/* "Build the plan" stays in reach while the list scrolls, and settles at the form's end. */
+.an-plan-form > .an-plan-go { position: sticky; bottom: 8px; z-index: 5; flex-wrap: nowrap; margin: 0 0 24px; padding: 8px 8px 8px 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); box-shadow: 0 8px 24px -12px rgba(25, 48, 42, .45); }
+.an-plan-form > .an-plan-go p { margin: 0; order: -1; flex: 1 1 auto; }
+:root:has(.an-plan-form > .an-plan-go) { scroll-padding-bottom: 88px; }
+@media (max-width: 620px) {
+  .an-plan-form > .panel { padding: 16px 12px; }
+  .an-plan-form > .panel:is(.an-plan-sets, .an-plan-where) { --pad: 16px; }
+  /* The rows are cards already; on a phone the list needs no card around it. */
+  .an-plan-form > .an-plan-needs-panel { padding: 0; border: 0; border-radius: 0; background: none; box-shadow: none; overflow: visible; }
+  .an-plan-need { padding: 4px 10px; }
+}
+/* plan page: result (plan cards, options) -- new rules go below this line */
+/* Focused on arrival (#plan-result) so a screen reader starts there; the
+   section itself is not a control, so no ring around the whole result. */
+.an-plan-result:focus { outline: none; }
+.an-plan-go .primary { min-height: 48px; }
+/* One tile per plan, one column at every width: opening a tile only grows
+   it downward, so nothing the reader is looking at moves sideways. */
+.an-plan-tiles { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; min-width: 0; }
+.an-plan-card { min-width: 0; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); scroll-margin-top: 84px; }
+.an-plan-card--best { border-color: var(--teal); box-shadow: 0 0 0 1px var(--teal); }
+.an-plan-tile > summary { cursor: pointer; display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 12px 16px; border-radius: 16px; }
+.an-plan-tile__sum { display: grid; gap: 4px; flex: 1 1 auto; min-width: 0; }
+.an-plan-tile__top { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 2px 12px; }
+.an-plan-tile__name { display: grid; gap: 2px; min-width: 0; }
+.an-plan-tile__lab { font-size: 1.15rem; font-weight: 800; overflow-wrap: anywhere; }
+.an-plan-tile__badge { color: var(--teal); font-size: var(--text-2xs); font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+.an-plan-total { margin: 0; font-size: 1.4rem; font-weight: 800; white-space: nowrap; }
+.an-plan-tile__facts { display: flex; flex-wrap: wrap; gap: 2px 12px; color: var(--muted); font-size: var(--text-xs); }
+.an-plan-tile__short { color: var(--warn-ink); font-weight: 700; }
+.an-plan-tile__note { font-size: var(--text-xs); overflow-wrap: anywhere; }
+.an-plan-tile__body { padding: 4px 16px 16px; border-top: 1px solid var(--line); min-width: 0; }
+.an-plan-tile__body h3 { margin: 12px 0 8px; font-size: var(--text-md, 1rem); }
+.an-plan-alts__list { list-style: none; margin: 0 0 8px; padding: 0; display: grid; gap: 8px; }
+.an-plan-alt { display: grid; gap: 4px; justify-items: start; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; min-width: 0; }
+.an-plan-alt--chosen { border-color: var(--teal); }
+.an-plan-alt p { margin: 0; overflow-wrap: anywhere; }
+.an-plan-alt__which { justify-self: stretch; font-size: var(--text-xs); }
+.an-plan-alt__which > summary { min-height: 44px; display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 600; }
+.an-plan-alt__which ul { margin: 0 0 6px; padding-left: 1.2em; display: grid; gap: 4px; overflow-wrap: anywhere; }
+.an-plan-alt .button { min-height: 44px; display: inline-flex; align-items: center; }
+.an-plan-alt__now { color: var(--teal); font-weight: 700; }
+.an-plan-item__more > summary { cursor: pointer; display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 6px 0; }
+.an-plan-item__sum { display: grid; gap: 2px; flex: 1 1 auto; min-width: 0; }
+.an-plan-item__more > summary .an-plan-item__name { min-width: 0; overflow-wrap: anywhere; flex: 1 1 14rem; color: var(--teal); }
+.an-plan-item__line { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.an-plan-item__more[open] .an-plan-item__line { white-space: normal; }
+.an-plan-item__repeats { color: var(--warn-ink); }
+.an-plan-items { list-style: none; margin: 12px 0; padding: 0; display: grid; }
+.an-plan-item { padding: 10px 0; border-bottom: 1px solid var(--line); min-width: 0; }
+.an-plan-item p { margin: 4px 0 0; overflow-wrap: anywhere; }
+.an-plan-item__head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; font-weight: 600; }
+.an-plan-item__head > a, .an-plan-item__head > span:first-child { min-width: 0; overflow-wrap: anywhere; flex: 1 1 14rem; }
+.an-plan-item__head > a { display: inline-flex; align-items: center; min-height: 44px; }
+.an-plan-item__price { white-space: nowrap; }
+.an-plan-item__price s { color: var(--muted); font-weight: 400; }
+.an-plan-item--fee { color: var(--muted); }
+.an-plan-sums { display: grid; gap: 4px; margin: 0 0 12px; }
+.an-plan-sums > div { display: flex; justify-content: space-between; gap: 12px; }
+.an-plan-sums dd { margin: 0; white-space: nowrap; }
+.an-plan-sums__total { font-weight: 800; border-top: 1px solid var(--line-strong); padding-top: 6px; }
+.an-plan-order { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+.an-plan-order fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: 4px; }
+.an-plan-order legend { font-weight: 600; margin-bottom: 4px; }
+.an-plan-item__facts { display: flex; flex-wrap: wrap; gap: 2px 12px; color: var(--ink-soft, var(--muted)); }
+.an-plan-prep { margin: 0 0 12px; border-top: 1px solid var(--line); padding-top: 4px; }
+.an-plan-prep > summary { min-height: 44px; display: grid; align-content: center; gap: 2px; cursor: pointer; font-weight: 600; padding: 6px 0; }
+.an-plan-prep__gist { font-weight: 400; color: var(--muted); font-size: var(--text-xs); overflow-wrap: anywhere; }
+.an-plan-prep__lab h4 { margin: 12px 0 4px; font-size: var(--text-sm, .95rem); }
+.an-plan-prep__lab .an-plan-prep__group { margin: 12px 0 4px; font-size: var(--text-xs); font-weight: 600; color: var(--muted); }
+.an-plan-prep__lab ul { margin: 0; padding-left: 1.2em; display: grid; gap: 6px; overflow-wrap: anywhere; }
+/* The whole collapsed panel is the summary: padding moves from the panel into it. */
+.an-plan-form > :is(.an-plan-sets, .an-plan-where) { --pad: 24px; padding: 0; margin-bottom: 0; }
+:is(.an-plan-sets, .an-plan-where) > details { padding: 0 var(--pad); }
+:is(.an-plan-sets, .an-plan-where) > details[open] { padding-bottom: var(--pad); }
+:is(.an-plan-sets, .an-plan-where) > details > summary { min-height: 44px; display: grid; align-content: center; gap: 2px; margin: 0 calc(-1 * var(--pad)); padding: 14px 48px 14px var(--pad); }
+:is(.an-plan-sets, .an-plan-where) > details > summary::after { right: calc(var(--pad) - 4px); }
+:is(.an-plan-sets, .an-plan-where) > details > summary h2 { margin: 0; }
+:is(.an-plan-sets, .an-plan-where) > details[open] > summary { margin-bottom: 4px; }
+.an-plan-filters { border: 0; padding: 0; margin: 12px 0 0; min-width: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr)); gap: 8px 12px; align-items: end; }
+.an-plan-filters legend { font-weight: 600; margin-bottom: 6px; }
+.an-plan-filter { display: grid; gap: 4px; font-size: var(--text-xs); font-weight: 600; min-width: 0; }
+.an-plan-filter--wide { grid-column: 1 / -1; }
+.an-plan-filter select, .an-plan-filter input { min-height: 44px; width: 100%; max-width: 100%; min-width: 0; font: inherit; font-weight: 400; }
+.an-plan-filters__go { display: flex; align-items: flex-end; }
+.an-plan-filters__go button { min-height: 44px; }
+.an-plan-filters__count { margin: 0; color: var(--muted); font-size: var(--text-xs); }
+.an-plan-pager { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 4px 0; }
+.an-plan-pager .button { min-height: 44px; min-width: 44px; display: inline-flex; align-items: center; }
+.an-plan-pager__range { color: var(--muted); font-size: var(--text-xs); }
+.an-plan-set { flex-wrap: wrap; }
+.an-plan-set__more { flex: 1 1 100%; padding-left: 34px; min-width: 0; font-size: var(--text-xs); }
+.an-plan-set__more > summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; }
+.an-plan-set__more p { margin: 0 0 6px; }
+.an-plan-set__more ul { margin: 0 0 8px; padding-left: 1.2em; overflow-wrap: anywhere; max-height: 16rem; overflow-y: auto; }
+.an-plan-done__actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0 8px; }
+.an-plan-done__actions .button { min-height: 44px; }
+/* "Measure this again" on a result's page: one lab per column where two fit. */
+.an-measure__labs { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr)); gap: 8px 24px; }
+.an-measure__lab { min-width: 0; }
+.an-measure__lab h3 { margin: 8px 0 0; }
+.an-measure__lab .an-plan-items { margin: 4px 0 8px; }
+.an-measure__kind { display: block; color: var(--muted); font-size: var(--text-2xs); font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+.an-measure .an-plan-go { margin: 16px 0 0; }
+.an-measure .an-plan-go .button { min-height: 44px; display: inline-flex; align-items: center; }
 .an-lab-legend dt { font-weight: 700; }
 .an-lab-legend dd { margin: 0; color: var(--muted); }
 .an-lab-order + .an-lab-order { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); }

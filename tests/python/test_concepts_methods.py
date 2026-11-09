@@ -39,7 +39,7 @@ def resolve(label, value_type="numeric", category=None, **row):
         ("Базофіли (на 100 лейкоцитів)", "Basophils"),
         # The three-part granulocyte channel is not the neutrophil count.
         ("Абсолютне значення гранулоцитів (GRA#)", "Granulocytes, absolute"),
-        # Smear (manual) rows: bare names, EskuLab's (Lymph)/(Mid), and the
+        # Smear (manual) rows: bare names, Esculab's (Lymph)/(Mid), and the
         # segmented/band split no analyser prints.
         ("Сегментоядерні нейтрофіли", "Segmented neutrophils"),
         ("Нейтрофіли сегментоядерні", "Segmented neutrophils"),
@@ -55,7 +55,7 @@ def resolve(label, value_type="numeric", category=None, **row):
 )
 def test_analyser_and_smear_differentials_are_separate_series(printed, expected):
     """Synevo 2025-08-28 prints 50.1 % analyser neutrophils above a smear's
-    50 % segmented; EskuLab 45.0 % lymphocytes above the smear's 43 %."""
+    50 % segmented; Esculab 45.0 % lymphocytes above the smear's 43 %."""
     assert resolve(printed) == expected
 
 
@@ -68,7 +68,7 @@ def test_analyser_and_smear_differentials_are_separate_series(printed, expected)
         ("Еритроцити", "Ery/µL", "не виявлені", None, "Urine erythrocytes (dipstick)"),
         # St. Paraskeva writes the field into the value.
         ("Urine leukocytes", None, "1-2 в п/з", "1 - 6 в п/з", "Urine leukocytes per high-power field"),
-        # EskuLab automated sediment: counts per microlitre stay on the base concept.
+        # Esculab automated sediment: counts per microlitre stay on the base concept.
         ("Лейкоцити в мкл (WBC)", "кл/мкл", None, "жінки < 28.0", "Urine leukocytes"),
         ("Еритроцити в мкл (RBC)", "кл/мкл", None, "чоловіки < 10", "Urine erythrocytes"),
         # Labels that name the strip or the field themselves.
@@ -113,8 +113,8 @@ def test_an_ecg_rate_is_not_a_cuff_pulse():
 
 def test_hepatitis_c_total_antibodies_are_one_concept():
     synevo = resolve("Вірус гепатиту C (HCV), антитіла сумарні")
-    eskulab = resolve("HCV антитіла сумарні")
-    assert synevo == eskulab == "Hepatitis C total antibodies"
+    esculab = resolve("HCV антитіла сумарні")
+    assert synevo == esculab == "Hepatitis C total antibodies"
 
 
 def test_anti_hbc_is_renamed_and_keeps_its_address():

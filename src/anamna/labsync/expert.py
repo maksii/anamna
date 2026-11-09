@@ -1,4 +1,4 @@
-"""Ekspert — Expert Hospital (Лікарня «Експерт», experthospital.com.ua) mobile
+"""Expert Hospital (Лікарня «Експерт», experthospital.com.ua) mobile
 app API, observed from the Android app ``com.mobile.medexpert`` v1.6.10 build
 96 on 2026-11-05 (static analysis only; no live sign-in).
 
@@ -59,10 +59,10 @@ from datetime import date
 
 from . import common
 from .common import ERROR_REPLY, LabSyncError, digits, iso_day, lab_row, sex_of
-from .eskulab import token_expiry
+from .esculab import token_expiry
 
-KEY = "ekspert"
-NAME = "Ekspert"
+KEY = "expert"
+NAME = "Expert Hospital"
 #: What the PDF classifier names these reports (ingest/classifier.py), so old
 #: uploads are recognised by content.
 VENDOR = "Expert Hospital"
@@ -242,7 +242,7 @@ class Client:
                 self._refresh()
                 return self._get(path, person, want=want, again=False)
             if exc.status == 403:  # not linked to MedEir, profile or phone missing: fixed in the app
-                raise LabSyncError("labsync.ekspert_error_forbidden", 403) from None
+                raise LabSyncError("labsync.expert_error_forbidden", 403) from None
             raise
 
     def check(self) -> tuple[list[dict], str | None]:

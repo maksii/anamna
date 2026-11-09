@@ -72,18 +72,18 @@ def _encode_body(payload: object | None, form: dict[str, str] | None) -> tuple[b
 
 def call(method: str, url: str, *, headers: dict[str, str], payload: object | None = None,
          want: str = "json", form: dict[str, str] | None = None,
-         timeout: int | None = None) -> tuple[object, list[str]]:
+         limit: int | None = None, timeout: int | None = None) -> tuple[object, list[str]]:
     """JSON (or PDF bytes) back, with the Set-Cookie headers; 401/403 become
     ``labsync.error_auth``, anything else unexpected ``labsync.error_reply``.
     ``form`` sends an urlencoded body instead of JSON (an OAuth token call).
-    ``timeout`` overrides the default for a JSON call the lab answers slowly."""
+    ``limit`` and ``timeout`` widen the defaults for a slow call or a lab's whole price list."""
     data, kind = _encode_body(payload, form)
     headers = {
         "Accept": "application/pdf" if want == "pdf" else "application/json",
         **({"Content-Type": kind} if data is not None else {}),
         **headers,
     }
-    limit = MAX_PDF_BYTES if want == "pdf" else MAX_JSON_BYTES
+    limit = limit or (MAX_PDF_BYTES if want == "pdf" else MAX_JSON_BYTES)
     status, cookies, body = _http(method, url, headers=headers, body=data,
                                   timeout=timeout or (PDF_TIMEOUT if want == "pdf" else REQUEST_TIMEOUT),
                                   limit=limit)
@@ -169,7 +169,7 @@ def _array_elements(raw: str) -> list[tuple[str, bool]]:
 
 
 def parse_norm(text: object) -> list[str]:
-    """EskuLab's Postgres array literal of reference lines, each ending in
+    """Esculab's Postgres array literal of reference lines, each ending in
     ``#%``: ``{"< 3.8 низького ризику#%","Чоловіки: 130-170#%"}``,
     ``{3.1-19.9#%}``, ``{NULL}``.  Quoted and bare elements may be mixed."""
     raw = str(text or "").strip()
@@ -220,7 +220,7 @@ def lab_row(*, test: object, result: object, units: object = "", resulttype: str
 # --- names and values -------------------------------------------------------------
 
 #: Cyrillic letters that print identically to Latin ones.  Synevo's «МСН» and
-#: «МСНС» are Cyrillic homoglyphs of MCH and MCHC, and EskuLab mixes scripts
+#: «МСНС» are Cyrillic homoglyphs of MCH and MCHC, and Esculab mixes scripts
 #: inside one abbreviation («PСТ»).  Folding both sides through the same map
 #: makes them one key; two genuinely different names stay different because
 #: every other letter still has to agree.

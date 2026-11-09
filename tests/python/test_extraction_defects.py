@@ -176,7 +176,7 @@ def test_cyrillic_homoglyph_codes_still_resolve_to_the_cbc_indices(printed, expe
 @pytest.mark.parametrize(
     "printed, value_type, expected",
     [
-        # EskuLab's automated microscopy, numeric per µL: these minted learned
+        # Esculab's automated microscopy, numeric per µL: these minted learned
         # Ukrainian-only concepts beside the definitions, splitting one analyte
         # across two or three half-length trends -- including a 0.42 цл/мкл
         # hyaline-cast reading above the printed male limit of 0.4.
@@ -294,7 +294,7 @@ def test_a_corrected_definition_heals_a_stale_learned_alias():
 
 
 def test_a_reference_that_wraps_after_the_first_sex_keeps_both_halves():
-    """EskuLab prints the female limit, then the male one two lines below."""
+    """Esculab prints the female limit, then the male one two lines below."""
     text = (
         "Лейкоцити в мкл (WBC) 107.6 кл/мкл жінки < 28.0\n"
         "Приносний матеріал,\n"

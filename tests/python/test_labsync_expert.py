@@ -1,6 +1,6 @@
-"""Ekspert (Expert Hospital): phone + password sign-in, texted code, token
+"""Expert Hospital: phone + password sign-in, texted code, token
 refresh, and reading analyses — all against synthetic replies shaped like the
-models decompiled from the Android app (see labsync/ekspert.py).  HTTP is
+models decompiled from the Android app (see labsync/expert.py).  HTTP is
 stubbed at ``labsync.common._http``, as for the other labs."""
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ import pytest
 
 from anamna import labsync
 from anamna.db import connect
-from anamna.labsync import LabSyncError, common, ekspert
+from anamna.labsync import LabSyncError, common, expert
 
 from test_labsync import csrf, make, router, stub_intake
 
@@ -75,10 +75,10 @@ def capture(store: list, reply):
 
 def test_phone_is_normalised_the_way_the_app_sends_it():
     for typed in ("671234567", "0671234567", "+38 (067) 123 45 67", "380671234567", "+380 67 123 45 67"):
-        assert ekspert.normalize_phone(typed) == "+380671234567"
+        assert expert.normalize_phone(typed) == "+380671234567"
     for bad in ("", "12345", "+48 601 234 567", "06712345678"):
         with pytest.raises(LabSyncError) as caught:
-            ekspert.normalize_phone(bad)
+            expert.normalize_phone(bad)
         assert caught.value.key == "labsync.password_error_phone"
 
 
@@ -86,7 +86,7 @@ def test_sign_in_sends_the_app_fields_and_keeps_only_tokens(monkeypatch):
     sent: list = []
     install(monkeypatch, {("POST", "/api/v1/auth/login"): capture(sent, TOKENS)})
     state = {"device_id": "00000000-0000-4000-8000-000000000001", "trusted": None}
-    creds = ekspert.start_sign_in(URL, "67 000 00 01", PASSWORD, state)
+    creds = expert.start_sign_in(URL, "67 000 00 01", PASSWORD, state)
     payload, headers = sent[0]
     assert payload == {"phone": "+380670000001", "password": PASSWORD, "device_id": state["device_id"],
                        "device_name": "Anamna", "platform": "android", "trusted_device_token": None}
@@ -102,54 +102,54 @@ def test_wrong_password_wrong_code_and_throttling_say_what_to_do(monkeypatch):
     install(monkeypatch, {("POST", "/api/v1/auth/login"): 401, ("POST", "/api/v1/auth/2fa/verify"): 400})
     state = {"device_id": "00000000-0000-4000-8000-000000000001"}
     with pytest.raises(LabSyncError) as caught:
-        ekspert.start_sign_in(URL, "0670000001", PASSWORD, state)
+        expert.start_sign_in(URL, "0670000001", PASSWORD, state)
     assert caught.value.key == "labsync.password_error_invalid"
     with pytest.raises(LabSyncError) as caught:
-        ekspert.verify_code(URL, {"token": "challenge-token-0001"}, "123456", state, "+380670000001")
+        expert.verify_code(URL, {"token": "challenge-token-0001"}, "123456", state, "+380670000001")
     assert caught.value.key == "labsync.password_error_code"
     install(monkeypatch, {("POST", "/api/v1/auth/login"): 429})
     with pytest.raises(LabSyncError) as caught:
-        ekspert.start_sign_in(URL, "0670000001", PASSWORD, state)
+        expert.start_sign_in(URL, "0670000001", PASSWORD, state)
     assert caught.value.key == "labsync.password_error_throttled"
 
 
 def test_texted_code_flow_stores_tokens_never_the_password(tmp_path: Path, monkeypatch):
-    settings, user_id, _ = make(tmp_path, enable=("ekspert",))
+    settings, user_id, _ = make(tmp_path, enable=("expert",))
     sent: list = []
     install(monkeypatch, {("POST", "/api/v1/auth/login"): capture(sent, CHALLENGE),
                           ("POST", "/api/v1/auth/2fa/verify"): capture(sent, TOKENS)})
-    assert labsync.save_credentials(settings, user_id, "ekspert",
+    assert labsync.save_credentials(settings, user_id, "expert",
                                     {"phone": "0670000001", "password": PASSWORD}) == "labsync.password_code_sent"
-    assert labsync.pending_code(user_id, "ekspert") == {"phone_masked": "+380*****0001", "code_length": 6}
-    assert labsync.account(settings, user_id, "ekspert") is None  # nothing stored before the code
-    assert labsync.save_credentials(settings, user_id, "ekspert", {"code": "123 456"}) == "labsync.saved_credentials"
+    assert labsync.pending_code(user_id, "expert") == {"phone_masked": "+380*****0001", "code_length": 6}
+    assert labsync.account(settings, user_id, "expert") is None  # nothing stored before the code
+    assert labsync.save_credentials(settings, user_id, "expert", {"code": "123 456"}) == "labsync.saved_credentials"
     verify = sent[1][0]
     assert verify["challenge_token"] == "challenge-token-0001" and verify["code"] == "123456"
     assert verify["device_id"] == sent[0][0]["device_id"] and verify["fcm_token"] is None
-    row = labsync.account(settings, user_id, "ekspert")
+    row = labsync.account(settings, user_id, "expert")
     assert row["secret"] == ACCESS and row["phone"] == "+380670000001"
     assert json.loads(row["refresh_secret"])["refresh"] == REFRESH
     assert PASSWORD not in json.dumps(dict(row))
-    assert labsync.pending_code(user_id, "ekspert") is None
+    assert labsync.pending_code(user_id, "expert") is None
     with pytest.raises(LabSyncError) as caught:  # a code with no step waiting
-        labsync.save_credentials(settings, user_id, "ekspert", {"code": "123456"})
+        labsync.save_credentials(settings, user_id, "expert", {"code": "123456"})
     assert caught.value.key == "labsync.password_error_code_expired"
 
     # Forgetting drops the tokens but keeps the device, so the lab still
     # trusts it and the next sign-in sends the trusted-device token.
-    labsync.forget(settings, user_id, "ekspert")
-    row = labsync.account(settings, user_id, "ekspert")
+    labsync.forget(settings, user_id, "expert")
+    row = labsync.account(settings, user_id, "expert")
     assert row["secret"] == "" and "refresh" not in json.loads(row["refresh_secret"])
     install(monkeypatch, {("POST", "/api/v1/auth/login"): capture(sent, TOKENS)})
-    labsync.save_credentials(settings, user_id, "ekspert", {"phone": "0670000001", "password": PASSWORD})
+    labsync.save_credentials(settings, user_id, "expert", {"phone": "0670000001", "password": PASSWORD})
     assert sent[-1][0]["trusted_device_token"] == "trusted-device-token-0001"
     assert sent[-1][0]["device_id"] == sent[0][0]["device_id"]
 
 
 def test_an_expired_access_token_is_refreshed_once_and_the_new_pair_kept(tmp_path: Path, monkeypatch):
-    settings, user_id, _ = make(tmp_path, enable=("ekspert",))
+    settings, user_id, _ = make(tmp_path, enable=("expert",))
     install(monkeypatch, {("POST", "/api/v1/auth/login"): TOKENS})
-    labsync.save_credentials(settings, user_id, "ekspert", {"phone": "0670000001", "password": PASSWORD})
+    labsync.save_credentials(settings, user_id, "expert", {"phone": "0670000001", "password": PASSWORD})
     refreshed: list = []
 
     def profile(raw, headers):
@@ -161,9 +161,9 @@ def test_an_expired_access_token_is_refreshed_once_and_the_new_pair_kept(tmp_pat
         ("POST", "/api/v1/auth/refresh"): capture(refreshed, {"access_token": ACCESS2, "refresh_token": REFRESH2,
                                                               "token_type": "bearer"}),
     })
-    people = labsync.check_account(settings, user_id, "ekspert")
+    people = labsync.check_account(settings, user_id, "expert")
     assert refreshed[0][0] == {"refresh_token": REFRESH}
-    row = labsync.account(settings, user_id, "ekspert")
+    row = labsync.account(settings, user_id, "expert")
     assert row["secret"] == ACCESS2 and json.loads(row["refresh_secret"])["refresh"] == REFRESH2
     assert [(p["id"], p["birthday"], p["sex"]) for p in people] == [
         ("p41", "1990-03-14", "male"), ("f12", "2020-06-19", "female"), ("f13", "", "")]
@@ -172,15 +172,15 @@ def test_an_expired_access_token_is_refreshed_once_and_the_new_pair_kept(tmp_pat
     # The lab ends the session: the refresh is refused and the person is told to reconnect.
     install(monkeypatch, {("GET", "/api/v1/profile"): 401, ("POST", "/api/v1/auth/refresh"): 401})
     with pytest.raises(LabSyncError) as caught:
-        labsync.check_account(settings, user_id, "ekspert")
+        labsync.check_account(settings, user_id, "expert")
     assert caught.value.key == "labsync.error_auth"
 
 
 def test_a_profile_the_hospital_has_not_linked_gets_its_own_explanation(monkeypatch):
     install(monkeypatch, {("GET", "/api/v1/profile"): 403})
     with pytest.raises(LabSyncError) as caught:
-        ekspert.Client(URL, ACCESS, "", json.dumps({"refresh": REFRESH})).check()
-    assert caught.value.key == "labsync.ekspert_error_forbidden"
+        expert.Client(URL, ACCESS, "", json.dumps({"refresh": REFRESH})).check()
+    assert caught.value.key == "labsync.expert_error_forbidden"
 
 
 def test_analyses_become_orders_and_indicators_become_lab_rows(monkeypatch):
@@ -189,7 +189,7 @@ def test_analyses_become_orders_and_indicators_become_lab_rows(monkeypatch):
         ("GET", "/api/v1/medical/analyses/501"): ANALYSIS_501,
         ("GET", "/api/v1/medical/analyses/501/file"): b"%PDF-1.4 synthetic",
     })
-    client = ekspert.Client(URL, ACCESS, "", "")
+    client = expert.Client(URL, ACCESS, "", "")
     kid = {"id": "f12", "family_member_id": 12}
     orders = client.orders(kid)
     assert seen[0][1] == "/api/v1/medical/analyses?family_member_id=12"
@@ -215,14 +215,14 @@ def test_analyses_become_orders_and_indicators_become_lab_rows(monkeypatch):
 
 
 def test_sync_imports_a_finished_analysis_and_waits_for_the_rest(tmp_path: Path, monkeypatch):
-    settings, user_id, _ = make(tmp_path, enable=("ekspert",))
+    settings, user_id, _ = make(tmp_path, enable=("expert",))
     install(monkeypatch, {("POST", "/api/v1/auth/login"): TOKENS,
                           ("GET", "/api/v1/profile"): PROFILE, ("GET", "/api/v1/profile/family"): FAMILY})
-    labsync.save_credentials(settings, user_id, "ekspert", {"phone": "0670000001", "password": PASSWORD})
-    labsync.check_account(settings, user_id, "ekspert")
-    labsync.link_person(settings, user_id, "ekspert", "p41", "self", confirmed=False)
+    labsync.save_credentials(settings, user_id, "expert", {"phone": "0670000001", "password": PASSWORD})
+    labsync.check_account(settings, user_id, "expert")
+    labsync.link_person(settings, user_id, "expert", "p41", "self", confirmed=False)
     calls = stub_intake(monkeypatch, settings, user_id, {
-        "ekspert-501.pdf": {"vendor": "Expert Hospital", "order": None, "day": "2025-09-16",
+        "expert-501.pdf": {"vendor": "Expert Hospital", "order": None, "day": "2025-09-16",
                             "values": [("Гемоглобін", 151.0, "г/л", "within_vendor_range"),
                                        ("Лейкоцити", 11.2, "10^9/л", "high")]},
     })
@@ -232,37 +232,37 @@ def test_sync_imports_a_finished_analysis_and_waits_for_the_rest(tmp_path: Path,
         ("GET", "/api/v1/medical/analyses/502"): {**ANALYSES["items"][1], "indicators": []},
         ("GET", "/api/v1/medical/analyses/501/file"): b"%PDF-1.4 synthetic",
     })
-    summary = labsync.sync(settings, user_id, "ekspert", inline=True)
-    assert calls == ["ekspert-501.pdf"]
+    summary = labsync.sync(settings, user_id, "expert", inline=True)
+    assert calls == ["expert-501.pdf"]
     assert (summary["imported"], summary["pending"], summary["failed"]) == (1, 1, 0)
     with connect(settings) as connection:
         states = dict(connection.execute(
-            "SELECT order_id, state FROM lab_orders WHERE provider='ekspert'").fetchall())
+            "SELECT order_id, state FROM lab_orders WHERE provider='expert'").fetchall())
     assert states == {"501": "imported", "502": "pending"}
     assert summary["crosscheck"]["match"] >= 2
-    again = labsync.sync(settings, user_id, "ekspert", inline=True)
-    assert calls == ["ekspert-501.pdf"] and again["imported"] == 0
+    again = labsync.sync(settings, user_id, "expert", inline=True)
+    assert calls == ["expert-501.pdf"] and again["imported"] == 0
 
 
 def test_profile_offers_phone_and_password_then_the_code_in_both_languages(tmp_path: Path, monkeypatch):
-    settings, user_id, client = make(tmp_path, enable=("ekspert",))
+    settings, user_id, client = make(tmp_path, enable=("expert",))
     page = client.get("/profile?tab=connections").text
-    card = page[page.index('id="lab-ekspert"'):]
+    card = page[page.index('id="lab-expert"'):]
     assert 'name="password" type="password"' in card and 'autocomplete="current-password"' in card
     assert "only to the lab&#39;s own server (http://127.0.0.1:9)" in card
     assert "Developer tools" not in card  # nothing to copy from a browser
     form = {"phone": "067 000 00 01", "password": PASSWORD}
-    assert client.post("/profile/lab/ekspert/credentials", data=form, follow_redirects=False).status_code == 403
+    assert client.post("/profile/lab/expert/credentials", data=form, follow_redirects=False).status_code == 403
     install(monkeypatch, {("POST", "/api/v1/auth/login"): CHALLENGE, ("POST", "/api/v1/auth/2fa/verify"): TOKENS,
                           ("GET", "/api/v1/profile"): PROFILE, ("GET", "/api/v1/profile/family"): FAMILY})
-    sent = client.post("/profile/lab/ekspert/credentials", data={**form, "csrf_token": csrf(settings, user_id)},
+    sent = client.post("/profile/lab/expert/credentials", data={**form, "csrf_token": csrf(settings, user_id)},
                        follow_redirects=False)
     assert "lab_msg=labsync.password_code_sent" in sent.headers["location"]
     page = client.get(sent.headers["location"]).text
     assert 'autocomplete="one-time-code"' in page and "+380*****0001" in page and PASSWORD not in page
     client.cookies.set("anamna_lang", "uk")
     assert "Введіть код, який лабораторія надіслала на +380*****0001." in client.get("/profile?tab=connections").text
-    done = client.post("/profile/lab/ekspert/credentials", data={"code": "123456", "csrf_token": csrf(settings, user_id)},
+    done = client.post("/profile/lab/expert/credentials", data={"code": "123456", "csrf_token": csrf(settings, user_id)},
                        follow_redirects=False)
     assert "lab_msg=labsync.saved_checked" in done.headers["location"]  # signed in, then asked who is on the account
     page = client.get(done.headers["location"]).text
@@ -272,25 +272,25 @@ def test_profile_offers_phone_and_password_then_the_code_in_both_languages(tmp_p
     assert not any(PASSWORD in str(item) or ACCESS in str(item) for item in audit)
 
 
-def test_admin_lists_ekspert_with_its_sign_in_note_and_a_new_address_forgets_tokens(tmp_path: Path, monkeypatch):
-    settings, user_id, client = make(tmp_path, enable=("ekspert",))
+def test_admin_lists_expert_with_its_sign_in_note_and_a_new_address_forgets_tokens(tmp_path: Path, monkeypatch):
+    settings, user_id, client = make(tmp_path, enable=("expert",))
     page = client.get("/admin/lab-connections").text
     # The per-provider sign-in note was removed with the admin page's help text.
-    assert 'id="lab-admin-ekspert"' in page and "Mobile-app sign-in" not in page
+    assert 'id="lab-admin-expert"' in page and "Mobile-app sign-in" not in page
     client.cookies.set("anamna_lang", "uk")
     page = client.get("/admin/lab-connections").text
-    assert 'id="lab-admin-ekspert"' in page and "Вхід як у мобільному застосунку" not in page
+    assert 'id="lab-admin-expert"' in page and "Вхід як у мобільному застосунку" not in page
     install(monkeypatch, {("POST", "/api/v1/auth/login"): TOKENS})
-    labsync.save_credentials(settings, user_id, "ekspert", {"phone": "0670000001", "password": PASSWORD})
-    moved = labsync.save_provider_settings(settings, "ekspert", enabled=True, url="https://example.test")
-    row = labsync.account(settings, user_id, "ekspert")
+    labsync.save_credentials(settings, user_id, "expert", {"phone": "0670000001", "password": PASSWORD})
+    moved = labsync.save_provider_settings(settings, "expert", enabled=True, url="https://example.test")
+    row = labsync.account(settings, user_id, "expert")
     assert moved == 1 and row["secret"] == "" and row["refresh_secret"] == ""
 
 
 def test_padded_numbers_lose_their_zeros_and_a_finished_analysis_without_a_pdf_is_named():
-    assert ekspert._trim("5.380000") == "5.38" and ekspert._trim("Від 0.000000 до 2.590000") == "Від 0 до 2.59"
-    assert ekspert._trim("1.05") == "1.05" and ekspert._trim("1000264") == "1000264"
-    rows = ekspert.Client._rows({"name": "Ліпідограма", "indicators": [
+    assert expert._trim("5.380000") == "5.38" and expert._trim("Від 0.000000 до 2.590000") == "Від 0 до 2.59"
+    assert expert._trim("1.05") == "1.05" and expert._trim("1000264") == "1000264"
+    rows = expert.Client._rows({"name": "Ліпідограма", "indicators": [
         {"id": 1, "name": "Тригліцериди", "value": "1.020000", "unit": "ммоль/л",
          "reference_text": "Від 0.000000 до 1.700000", "is_abnormal": False}]})
     assert (rows[0]["result"], rows[0]["norm"]) == ("1.02", ["Від 0 до 1.7"])
@@ -302,6 +302,6 @@ def test_a_finished_analysis_without_a_pdf_is_unavailable_not_pending(monkeypatc
          "date": "2025-09-16T00:00:00", "result_date": "2025-09-16T09:18:59", "has_file": False, "indicators": []},
         {"id": 8, "name": "Біопсія", "status": "Новий", "status_code": "New", "date": None, "result_date": None,
          "has_file": False, "indicators": []}], "total": 2, "has_more": False}})
-    finished, new = ekspert.Client(URL, ACCESS, "", "").orders({"id": "p41", "family_member_id": None})
+    finished, new = expert.Client(URL, ACCESS, "", "").orders({"id": "p41", "family_member_id": None})
     assert finished["complete"] and finished["unavailable"] == "labsync.unavailable_nofile"
     assert not new["complete"]

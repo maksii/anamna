@@ -235,10 +235,12 @@ ORDER_PATTERNS = [
 #: («ui итологічний паспо ee»); the line naming the images does not.
 CYTOLOGY_PASSPORT_RE = re.compile(
     r"індивідуальні цифрові зображення|^\W*\w{0,3}\W*\w?итологічний\s+паспо\w*\W*\w{0,3}\W*$", re.I | re.M)
-#: How lab sync names a laboratory's download: «eskulab-<order>.pdf»,
-#: «synevo-<barcode>-1.pdf», «ekspert-<order>.pdf».  The number is the lab's
-#: own order id, the one to fall back on when the page prints none.
-LAB_SYNC_FILENAME_RE = re.compile(r"^(?:eskulab|synevo|ekspert)-(\d{5,})(?:-\d+)?$")
+#: How lab sync names a laboratory's download: «esculab-<order>.pdf»,
+#: «synevo-<barcode>-1.pdf», «expert-<order>.pdf».  The number is the lab's
+#: own order id, the one to fall back on when the page prints none.  Files
+#: downloaded before the providers' keys took their official spelling
+#: (migration 050) are named «eskulab-…» and «ekspert-…» on disk.
+LAB_SYNC_FILENAME_RE = re.compile(r"^(?:esculab|eskulab|synevo|expert|ekspert)-(\d{5,})(?:-\d+)?$")
 
 
 def extract_order_identifier(text: str, filename: str = "") -> str | None:
@@ -290,10 +292,10 @@ GENITIVE_MONTHS = (
 #: comma («12,10.2023»), a colon («18:08.2023») or a space («03 08.2025»).
 #: Only ever used right after its label, where nothing else is printed.
 _LDATE = r"(\d{2})(?:[./]|[,:][ \t]?|[ \t])(\d{2})[./](\d{4})"
-#: InMed and UltraMed print the examination day in a column beside its label.
+#: InMed and Ultramed print the examination day in a column beside its label.
 #: A photo's OCR often keeps the value and loses the label, leaving the date
 #: alone on a line just under the patient row («ПІБ пацієнта, рік народження
-#: …» / «09.05.2024 , р,»), or under UltraMed's birth year («1990» /
+#: …» / «09.05.2024 , р,»), or under Ultramed's birth year («1990» /
 #: «14.08.2026»).  «О.М. 12.03.2025» (last period) is labelled, so not alone.
 LONE_DATE_UNDER_PATIENT_RE = re.compile(
     r"^(?:[^\n]*ПІБ пацієнта[^\n]*|[^\w\n]{0,3}(?:\S{1,4}[ \t]+)?(?:19|20)\d{2}(?:[ \t]*р\.?)?[^\w\n]{0,3})\n"
@@ -427,9 +429,9 @@ COLLECTED_PATTERNS = [
     re.compile(rf"Дата операції:?\s*{_DMY}", re.I),  # pathology: when tissue was taken
 ]
 ISSUED_PATTERNS = [
-    re.compile(rf"Дата видачі:\s*{_DMY}{_HM}", re.I),  # EskuLab
-    re.compile(rf"Час виконання:\s*{_DMY}{_HM}", re.I),  # EskuLab, older header
-    re.compile(rf"Дата виконання:\s*{_DMY}{_HM}", re.I),  # EskuLab, 2026 header
+    re.compile(rf"Дата видачі:\s*{_DMY}{_HM}", re.I),  # Esculab
+    re.compile(rf"Час виконання:\s*{_DMY}{_HM}", re.I),  # Esculab, older header
+    re.compile(rf"Дата виконання:\s*{_DMY}{_HM}", re.I),  # Esculab, 2026 header
     re.compile(rf"Дата видруку:?\s*{_DMY}{_HM}", re.I),  # Synevo companion report
     re.compile(rf"Дата результату:[\s|]*{_DMY}{_HM}", re.I),  # partner clinic's SILAB print, 2025 on
     re.compile(rf"ЗАБІР КРОВІ\s+НАДРУКОВАНИЙ НА\s+{_DMY}\s+{_DMY}", re.I),  # ALEX², two columns
@@ -439,7 +441,7 @@ ISSUED_PATTERNS = [
     # «18.11.2024 (V. 6.01.21 )».
     re.compile(rf"^{_DMY}\s*\(V\.\s*\d", re.M),
 ]
-ESKULAB_ORDER_DATE_RE = re.compile(rf"Зам\s*овлення:\s*\S+\s*/\s*{_DMY}", re.I)
+ESCULAB_ORDER_DATE_RE = re.compile(rf"Зам\s*овлення:\s*\S+\s*/\s*{_DMY}", re.I)
 SAMPLING_TIME_RE = re.compile(r"Час відбору:\s*(\d{1,2}):(\d{2})", re.I)
 #: «Патологогістологічне дослідження № 40217/24»; OCR reads «№» as «Ме», «N2».
 REPORT_NUMBER_RE = re.compile(
@@ -461,9 +463,9 @@ def extract_collected_at(text: str) -> str | None:
         match = pattern.search(text)
         if match:
             return moment(*match.groups())
-    # EskuLab prints the order date in its header and the sampling time beside
+    # Esculab prints the order date in its header and the sampling time beside
     # every result («Час відбору: 07:40»): together they are the draw.
-    order = ESKULAB_ORDER_DATE_RE.search(text)
+    order = ESCULAB_ORDER_DATE_RE.search(text)
     if order:
         sampled = SAMPLING_TIME_RE.search(text)
         return moment(*order.groups(), *(sampled.groups() if sampled else ()))
@@ -687,7 +689,7 @@ def joined_title(names: list[str]) -> str:
 
 #: «2. F2005 Пакет №6. Ліпідограма».  Applied to collapsed lines, which never
 #: end in a space, so the possessive «\s++» gives back nothing «(.+)» needs.
-ESKULAB_HEADING_RE = re.compile(r"^\d+\.\s+[A-Z]\d{4}\s++(.+)$")
+ESCULAB_HEADING_RE = re.compile(r"^\d+\.\s+[A-Z]\d{4}\s++(.+)$")
 
 
 def _with_wrapped_tail(heading: str, following_lines: list[str]) -> str:
@@ -701,46 +703,46 @@ def _with_wrapped_tail(heading: str, following_lines: list[str]) -> str:
 
 
 #: «1. Кальпротектин <24.0 мг/кг», «1. Хелікобактер пілорі, кал не виявлено»:
-#: a single test EskuLab prints without a panel code.  Its name ends where
+#: a single test Esculab prints without a panel code.  Its name ends where
 #: the result starts.
-ESKULAB_TEST_RE = re.compile(r"^\d+\.\s+(?![A-Z]\d{4}\s)(\S.*)$")
-ESKULAB_RESULT_START_RE = re.compile(
+ESCULAB_TEST_RE = re.compile(r"^\d+\.\s+(?![A-Z]\d{4}\s)(\S.*)$")
+ESCULAB_RESULT_START_RE = re.compile(
     r"\s+(?:[<>≤≥]?\s?\d|не виявлено|виявлено|від`ємна|негативний|позитивний)", re.I
 )
 #: The next line may finish the name: «(СА-125)», «(АМГ, AMH Advanced) сироватка
 #: крові …», «трансглютамінази (t-TG), ELiA …» -- a bracket, after at most one
 #: lower-case word.  «Діти (ж) ≤ 60 д.» and «плазма крові новонароджені (1
 #: день)» are the reference and specimen columns, not the name.
-ESKULAB_NAME_TAIL_RE = re.compile(r"^(?:[а-яіїєґa-z][\w-]*\s+)?\([^)]*\)")
+ESCULAB_NAME_TAIL_RE = re.compile(r"^(?:[а-яіїєґa-z][\w-]*\s+)?\([^)]*\)")
 #: The rest of a bracket the name left open: «(реакція» / «мікропреципітації)».
-ESKULAB_BRACKET_CLOSE_RE = re.compile(r"^[^\d()]*\)")
+ESCULAB_BRACKET_CLOSE_RE = re.compile(r"^[^\d()]*\)")
 #: A packet whose result the report does not carry («Даний результат можна
 #: отримати лише на пункті забору»): the order names it, the paper does not hold it.
-ESKULAB_RESULT_ELSEWHERE_RE = re.compile(r"результат можна отримати лише", re.I)
-#: EskuLab's older form, attached to an order as an image: «30511 Копрограма»
+ESCULAB_RESULT_ELSEWHERE_RE = re.compile(r"результат можна отримати лише", re.I)
+#: Esculab's older form, attached to an order as an image: «30511 Копрограма»
 #: under its table header.
-ESKULAB_FORM_HEADER = "Показники Результат Од. виміру"
-ESKULAB_FORM_HEADING_RE = re.compile(r"^\d{4,6}\s+([^\d\s].*)$")
+ESCULAB_FORM_HEADER = "Показники Результат Од. виміру"
+ESCULAB_FORM_HEADING_RE = re.compile(r"^\d{4,6}\s+([^\d\s].*)$")
 
 
-def _eskulab_test_name(line: str, following: str) -> str | None:
-    match = ESKULAB_TEST_RE.match(line)
-    result = ESKULAB_RESULT_START_RE.search(match.group(1)) if match else None
+def _esculab_test_name(line: str, following: str) -> str | None:
+    match = ESCULAB_TEST_RE.match(line)
+    result = ESCULAB_RESULT_START_RE.search(match.group(1)) if match else None
     if not result:
         return None
     name = match.group(1)[:result.start()].strip()
     if name.count("(") > name.count(")"):
-        closed = ESKULAB_BRACKET_CLOSE_RE.match(following)
+        closed = ESCULAB_BRACKET_CLOSE_RE.match(following)
         name = f"{name} {closed.group(0)}" if closed else name[:name.rindex("(")].strip()
     else:
-        tail = ESKULAB_NAME_TAIL_RE.match(following)
+        tail = ESCULAB_NAME_TAIL_RE.match(following)
         if tail:
             name = f"{name} {tail.group(0)}"
     return name or None
 
 
-def _eskulab_title(lines: list[str]) -> str | None:
-    # An EskuLab order prints one coded heading per panel («2. F2005 Пакет №6.
+def _esculab_title(lines: list[str]) -> str | None:
+    # An Esculab order prints one coded heading per panel («2. F2005 Пакет №6.
     # Ліпідограма», «1. F5000 Коагулограма»).  The first "Пакет" line named a
     # seven-page order of lipids, liver tests, coagulation and a blood count
     # after its lipid panel alone, and that is the label every list shows.
@@ -751,16 +753,16 @@ def _eskulab_title(lines: list[str]) -> str | None:
     tests: list[str] = []
     numbered_tests = any(line.startswith("Результати дослідження №") for line in lines)
     for index, line in enumerate(lines):
-        match = ESKULAB_HEADING_RE.match(line)
-        if not match and index and lines[index - 1].startswith(ESKULAB_FORM_HEADER):
-            match = ESKULAB_FORM_HEADING_RE.match(line)
+        match = ESCULAB_HEADING_RE.match(line)
+        if not match and index and lines[index - 1].startswith(ESCULAB_FORM_HEADER):
+            match = ESCULAB_FORM_HEADING_RE.match(line)
         following = lines[index + 1:index + 3]
         if not match:
-            name = _eskulab_test_name(line, following[0] if following else "") if numbered_tests else None
+            name = _esculab_test_name(line, following[0] if following else "") if numbered_tests else None
             if name and name not in tests:
                 tests.append(name)
             continue
-        if any(ESKULAB_RESULT_ELSEWHERE_RE.search(item) for item in lines[index + 1:index + 4]):
+        if any(ESCULAB_RESULT_ELSEWHERE_RE.search(item) for item in lines[index + 1:index + 4]):
             continue
         heading = _with_wrapped_tail(match.group(1), following)
         if heading not in headings:
@@ -984,7 +986,7 @@ def _allergy_title(text: str) -> str | None:
 
 
 #: «Локалізація патологічного процесу - м'які тканини».  Applied to collapsed
-#: lines, which never end in a space (see ESKULAB_HEADING_RE).
+#: lines, which never end in a space (see ESCULAB_HEADING_RE).
 ULTRASOUND_SITE_RE = re.compile(r"^Локалізація патологічного процесу\s*[–-]\s*+(.+)$")
 STUDY_AREA_RE = re.compile(r"^(?:Область|Ділянка) дослідження:")
 MRI_STUDY_RE = re.compile(r"^(?:Ділянка обстеження:\s*)?(МРТ\s.+)$")
@@ -1076,7 +1078,7 @@ INMED_HEADING_RE = re.compile(
     r"|молочних\s+залоз))(?![^\W\d_])",
     re.I,
 )
-#: UltraMed's subject line under «Протокол ультразвукового обстеження»:
+#: Ultramed's subject line under «Протокол ультразвукового обстеження»:
 #: «Обстеження шлунково кишкового тракту (ШКТ)», «Ультрасонографічне
 #: обстеження скронево-нижньощелепних суглобів» / «та жувальних м'язів».
 STUDY_SUBJECT_RE = re.compile(r"^(?:ультрасонографічне\s+)?обстеження\s+([а-яіїєґ'’ -]{6,}?)\s*(?:\(.*)?$", re.I)
@@ -1219,7 +1221,7 @@ CLINIC_FILENAME_RE = re.compile(r"^(?P<clinic>[a-z]+)-\d+(?:-\d+)?\s+(?P<day>\d{
 
 #: The lab-sync key of a clinic → the vendor its own documents are filed under.
 CLINIC_VENDORS = {
-    "veselka": ("Veselka Medical Center", "https://veselka.clinic"),
+    "veselka": ("Veselka", "https://veselka.clinic"),
     "paraskeva": ("St. Paraskeva Medical Center", None),
 }
 
@@ -1316,7 +1318,7 @@ def extract_title(text: str, filename: str, clinical_type: str) -> str:
         return "Цитологічний паспорт"
     lines = [line for line in (collapse_space(raw) for raw in text.splitlines()) if line]
     candidates = (
-        lambda: _eskulab_title(lines),
+        lambda: _esculab_title(lines),
         lambda: _heading_block_title(lines),
         # Before Synevo's own reader: a scan whose table header OCR read clean
         # would otherwise be titled by the heading under it as OCR spelt it.
@@ -1373,10 +1375,10 @@ _VENDOR_RULES: tuple[tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], st
         ("сінево", "synevo", "індикатор зони підвищеної уваги", "інформаційної системи silab"),
         ("__synevo__", "synevo-"), (), "Synevo", "https://www.synevo.ua",
     ),
-    (("esculab.com", "елаб"), ("__eskulab__", "eskulab-"), ("Apache FOP",), "EskuLab", "https://esculab.com"),
+    (("esculab.com", "елаб"), ("__eskulab__", "esculab-", "eskulab-"), ("Apache FOP",), "Esculab", "https://esculab.com"),
     # Medical centre «Veselka», operated by ТзОВ «Повноділ»; its
     # vaccination card prints only the operator's name.
-    (("повноділ", "veselka.clinic"), (), (), "Veselka Medical Center", "https://veselka.clinic"),
+    (("повноділ", "veselka.clinic"), (), (), "Veselka", "https://veselka.clinic"),
     (("3d діагностики",), (), (), "Center of Medical 3D Diagnostics", None),
     (("оксфорд медікал", "oxford.lviv"), (), (), "Oxford Medical Lviv", "https://lviv.oxford-med.com.ua"),
     # Medical centre «Мати та дитина», trade mark of ТОВ «НЕОМЕД 2007».  Before
@@ -1396,10 +1398,10 @@ _VENDOR_RULES: tuple[tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], st
         ("інмед", "inmed", "мазепи, 25", "лемківська, 28", "їн мед", "пн мед", "068 688 06 69", "068 207 47 87",
          "096 48 49 909"), (), (), "InMed", None,
     ),
-    (("ultramed", "ультрамед"), (), (), "UltraMed", None),
+    (("ultramed", "ультрамед"), (), (), "Ultramed", None),
     (("клініка лоно", "lono.clinic"), (), (), "LONO Clinic", None),
     (("medicover", "медікавер"), (), (), "Medicover", None),
-    (("parens", "паренс"), (), (), "PARENS", None),
+    (("parens", "паренс"), (), (), "Parens", None),
     # Its e-mail domain as OCR reads it («ivivmedicaicenter.com»), and the
     # company's registry code (ЄДРПОУ), printed on every form.
     (
@@ -1418,13 +1420,13 @@ _VENDOR_RULES: tuple[tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], st
     (("друге клінічне", "44625774"), (), (), "Second Clinical Territorial Medical Association of Lviv", None),
     (
         ("святого луки", "кнп ітмо", "кнп 1тмо", "кнп 1 тмо", "44496574"), (), (),
-        "First Territorial Medical Association of Lviv, St. Luke's Hospital", None,
+        "First Clinical Territorial Medical Association of Lviv, St. Luke's Hospital", None,
     ),
     (("львівське територіальне медичне",), (), (), "Lviv Territorial Medical Association", None),
     (("медцентр св. параскеви", "святої параскеви"), ("st-paraskeva",), (), "St. Paraskeva Medical Center", None),
 )
 #: «Антибіотики/Антимікотики <organism>» heads an antibiogram, and is all an
-#: EskuLab culture's second page prints of it: typed as a laboratory page, that
+#: Esculab culture's second page prints of it: typed as a laboratory page, that
 #: page was read as a report of its own and its rows lost the specimen the
 #: first page names.
 MICROBIOLOGY_TOKENS = ("антибіотикограм", "бакпосів", "мікробіологічне", "мікроорганізм", "антибіотики/антимікотики")
@@ -1540,7 +1542,7 @@ ULTRASOUND_PROTOCOL_RE = re.compile(
     r"|(?:матка|щитоподібна[ \t]+залоза)[ \t]+розташован|грудні[ \t]+залози[ \t]+симетричн)",
     re.M,
 )
-#: UltraMed's protocols: one organ heading per section, each on a line of its
+#: Ultramed's protocols: one organ heading per section, each on a line of its
 #: own («ПЕЧІНКА.», «НИРКИ.»; «Стравохід», «Тонкий кишечник»).  A laboratory
 #: groups its biochemistry under «Печінка» / «Нирки» too, never with the stop.
 ORGAN_SECTION_RE = re.compile(
@@ -1606,7 +1608,7 @@ def _content_type(filename: str, mime_type: str, folded: str) -> str:
         clinical_type = "radiology_xray"
     elif _is_ultrasound(filename, folded):
         clinical_type = "ultrasound"
-    # POLYCHECK (Biocheck) specific-IgE chips, as EskuLab issues them, are an
+    # POLYCHECK (Biocheck) specific-IgE chips, as Esculab issues them, are an
     # allergy panel like ALEX²: the same reader and the same review.
     elif _any_in(folded, ("alex2", "алергодіагност", "алерген", "polycheck")):
         clinical_type = "allergy"

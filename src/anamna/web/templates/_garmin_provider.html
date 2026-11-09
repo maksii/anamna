@@ -18,8 +18,7 @@
   <div><dt>{{ t('integrations.garmin_backfill_label') }}</dt>
     <dd>{{ t('integrations.garmin_backfill_' ~ provider.backfill_state) }}</dd></div>
 </dl>
-<form action="/integrations/garmin/sync" method="post" class="inline-form"
-      onsubmit="var b=this.querySelector('button');setTimeout(function(){b.disabled=true;b.textContent=b.dataset.working;},0)">
+<form action="/integrations/garmin/sync" method="post" class="inline-form">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <button class="secondary" type="submit" data-working="{{ t('integrations.working') }}">{{ t('integrations.garmin_sync_action') }}</button>
 </form>

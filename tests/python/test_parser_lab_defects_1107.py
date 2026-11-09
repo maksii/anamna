@@ -1,6 +1,6 @@
 """Parser defects found on 2026-11-07 by cross-checking parsed PDFs against the labs' own result rows.
 
-Word geometry is taken from the real reports (EskuLab, Synevo and Ekspert reports); names, dates and other identifying
+Word geometry is taken from the real reports (Esculab, Synevo and Expert Hospital reports); names, dates and other identifying
 lines are left out.  Only the printed result rows are kept.
 """
 
@@ -27,17 +27,17 @@ def rows_by_name(vendor, lines):
     return {row.raw_name: row for row in parse_document(vendor, "laboratory", [layout(lines)])}
 
 
-ESKULAB_HEADER = (195.0, "Показник@28.3 Результат@231.0 Одиниці@316.3 Референтні@416.6 значення@480.7")
+ESCULAB_HEADER = (195.0, "Показник@28.3 Результат@231.0 Одиниці@316.3 Референтні@416.6 значення@480.7")
 
 
 # --- 1. A «<1» result keeps its comparator ------------------------------------
 
 
-def test_eskulab_less_than_result_keeps_its_comparator():
+def test_esculab_less_than_result_keeps_its_comparator():
     """«Гідроксилізин <1 мкмоль/л» was stored as the measured value 1, and calprotectin
     «<24.0» as 24.0: `parse_decimal` strips the «<» and `_numeric_observation` dropped it."""
-    rows = rows_by_name("EskuLab", [
-        ESKULAB_HEADER,
+    rows = rows_by_name("Esculab", [
+        ESCULAB_HEADER,
         (217.0, "Гідроксилізин@28.3 <1@248.7 мкмоль/л@321.0 <24@378.4 міс.:@395.0 <4@420.0"),
         (220.0, "сироватка@120.0 крові@160.0"),
         (228.0, "2-17@378.4 років:@395.0 <3@425.0"),
@@ -52,13 +52,13 @@ def test_eskulab_less_than_result_keeps_its_comparator():
 # --- 3. The specimen label never joins the name; a stool test keeps its whole scale --------
 
 
-def test_eskulab_stool_specimen_is_not_part_of_the_name():
+def test_esculab_stool_specimen_is_not_part_of_the_name():
     """«Приносний» / «матеріал, кал» wrapped back to the margin and was read as more of the
     name; «кал» was missing from the specimen vocabulary.  The same miss treated the
     indented «Приносний матеріал, кал» under calprotectin as a second table and cut its
     reference scale off after the first band."""
-    rows = rows_by_name("EskuLab", [
-        ESKULAB_HEADER,
+    rows = rows_by_name("Esculab", [
+        ESCULAB_HEADER,
         (217.0, "1.@28.3 Кальпротектин@39.8 <24.0@243.5 мг/кг@325.7 негативний:@378.4 <@426.2 50@434.3"),
         (220.0, "Приносний@113.0 матеріал,@149.7 кал@181.8"),
         (228.0, "Час@28.3 відбору:@41.3 09:00@69.3 сумнівний:@378.4 50-120@420.5"),
@@ -83,11 +83,11 @@ def test_eskulab_stool_specimen_is_not_part_of_the_name():
 # --- 5. Panel numbering in front of a chemical position ------------------------
 
 
-def test_eskulab_numbering_before_a_chemical_position_is_stripped():
+def test_esculab_numbering_before_a_chemical_position_is_stripped():
     """«2. 25-Гідроксивітамін D (Вітамін D» / «загальний)»: the numbering was only stripped
     before a letter, so the name kept «2. » and the row was rejected outright."""
-    rows = rows_by_name("EskuLab", [
-        ESKULAB_HEADER,
+    rows = rows_by_name("Esculab", [
+        ESCULAB_HEADER,
         (275.0, "2.@28.3 25-Гідроксивітамін@39.8 D@132.6 (Вітамін@142.4 D@183.3 35.3@247.2 нг/мл@324.9"),
         (278.0, "Ризик@378.4 дефіциту:@401.9 <@441.0 10.0@449.1 Дорослі:@472.7 30.0-50.0@506.0"),
         (286.0, "загальний)@28.3 Ризик@378.4 недостатнього@401.9 Інтоксикація:@472.7 >150.0@524.3"),
@@ -102,12 +102,12 @@ def test_eskulab_numbering_before_a_chemical_position_is_stripped():
 # --- 6. «крові» at the margin: name tail or specimen tail -----------------------
 
 
-def test_eskulab_margin_specimen_word_ends_the_name_until_the_specimen_starts():
+def test_esculab_margin_specimen_word_ends_the_name_until_the_specimen_starts():
     """«Концентрація Ig А в сироватці» / «крові» (margin) / «сироватка крові» (indented):
     «крові» finishes the name.  Under TSH, «сироватка» (indented) / «крові» (margin) is the
     specimen wrapping, and stays out of the name."""
-    rows = rows_by_name("EskuLab", [
-        ESKULAB_HEADER,
+    rows = rows_by_name("Esculab", [
+        ESCULAB_HEADER,
         (209.0, "1.@28.3 Тиреотропний@39.8 гормон@110.6 (TSH)@147.5 1.02@247.2 мкМО/мл@300.0"),
         (212.0, "сироватка@172.5 Дорослі:@378.4 0,27@410.0 -@430.0 4,2@436.0"),
         (224.0, "крові@28.3"),
@@ -194,7 +194,7 @@ def test_synevo_rows_with_a_unit_stay_with_the_text_passes():
     assert not [name for name in rows if name.startswith("Звіт")]
 
 
-# --- 4. Ekspert blood count with a «РЕФЕРЕНТНІ ЗНАЧЕННЯ» header ---------------
+# --- 4. Expert Hospital blood count with a «РЕФЕРЕНТНІ ЗНАЧЕННЯ» header ---------------
 
 
 EXPERT_CBC = [
@@ -211,7 +211,7 @@ EXPERT_CBC = [
 
 
 def test_expert_blood_count_with_referentni_znachennya_header_is_read():
-    """One Ekspert blood count printed «РЕФЕРЕНТНІ ЗНАЧЕННЯ» where other panels print «НОРМА»; the
+    """One Expert Hospital blood count printed «РЕФЕРЕНТНІ ЗНАЧЕННЯ» where other panels print «НОРМА»; the
     header was matched word for word, so 27 results yielded nothing at all."""
     rows = rows_by_name("Expert Hospital", EXPERT_CBC)
     assert (rows["Лейкоцити (WBC)"].value_numeric, rows["Лейкоцити (WBC)"].unit_raw) == (10.05, "х 10*9/л")

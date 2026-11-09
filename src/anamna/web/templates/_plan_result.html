@@ -1,0 +1,197 @@
+{#- The plan result: one tile per lab (and a split between labs), best
+    first.  A tile's summary is what a person compares (lab, total, how much
+    of the list it covers, items, discount); tapping it opens the fuller
+    options, the items, preparation and the order or cart action. -#}
+{% from "_components.html" import plural_t with context %}
+{% if request.query_params.get('plan') %}
+<section id="plan-result" class="an-plan-result" aria-labelledby="plan-result-heading" tabindex="-1" data-stale-text="{{ t('plan.stale') }}">
+  <h2 id="plan-result-heading">{{ t('plan.result_heading') }}</h2>
+  {% if not selected %}
+  <p>{{ t('plan.result_empty') }}</p>
+  {% elif not plans %}
+  <p>{{ t('plan.result_no_catalog') }}</p>
+  {% else %}
+  <ul class="an-plan-tiles">
+  {% for plan in plans %}
+  {% set shown = plan.options[plan.option_index] if plan.options else none %}
+  <li id="plan-{{ plan.lab }}" class="an-plan-card{{ ' an-plan-card--best' if loop.first else '' }}">
+    <details class="an-plan-tile"{{ ' open' if plans|length == 1 or request.query_params.get('alt_' ~ plan.lab) else '' }}>
+      <summary><span class="an-plan-tile__sum">
+        <span class="an-plan-tile__top">
+          <span class="an-plan-tile__name">
+            {% if loop.first %}<span class="an-plan-tile__badge">{{ t('plan.mode_complete') if prefs.mode == 'complete' else t('plan.best') }}</span>{% endif %}
+            <span class="an-plan-tile__lab" id="plan-{{ plan.lab }}-heading">{{ plan.name }}</span>
+          </span>
+          <span class="an-plan-total"><span class="visually-hidden">{{ t('plan.total') }}: </span>{{ plan.cost|uah }}</span>
+        </span>
+        <span class="an-plan-tile__facts">
+          <span class="{{ 'an-plan-tile__short' if plan.missing_names else '' }}">{{ t('plan.covers', covered=plan.covered|length|countfmt, total=plan.required_count|countfmt) }}</span>
+          <span>{{ plural_t('plan.tile_items', plan['items']|length) }}</span>
+          {% if plan.saving > 0 %}<span>{{ t('plan.tile_saving', saving=plan.saving|uah) }}</span>{% endif %}
+        </span>
+        {% if plan.lab == 'mixed' %}<span class="an-plan-tile__note">{{ t('plan.mixed_saving', saving=plan.split_saving|uah) }}</span>{% endif %}
+        {% if prefs.mode == 'complete' and not plan.option_index and plan.delta_cost and plan.delta_cost > 0 and plan.more_results and plan.more_results > 0 %}<span class="an-plan-tile__note">{{ t('plan.tile_complete', delta=plan.delta_cost|uah) }}, {{ plural_t('plan.alt_gain', plan.more_results) }}</span>{% endif %}
+        {% if plan.option_index and shown %}<span class="an-plan-tile__note">{{ t('plan.tile_switched_cheaper', total=shown.cost|uah) if prefs.mode == 'complete' else t('plan.tile_switched', delta=shown.delta|uah) }}</span>
+        {% elif plan.options and plan.options|length > 1 %}<span class="an-plan-tile__note">{{ plural_t('plan.tile_options_cheaper' if prefs.mode == 'complete' else 'plan.tile_options', plan.options|length - 1) }}</span>{% endif %}
+      </span></summary>
+      <div class="an-plan-tile__body">
+        {% if plan.options and plan.options|length > 1 %}
+        <section class="an-plan-alts" aria-labelledby="plan-{{ plan.lab }}-alts">
+          <h3 id="plan-{{ plan.lab }}-alts">{{ t('plan.alts_heading_complete') if prefs.mode == 'complete' else t('plan.alts_heading') }}</h3>
+          <ul class="an-plan-alts__list">
+            {% for option in plan.options %}
+            {% if option.index or plan.option_index %}
+            <li class="an-plan-alt{{ ' an-plan-alt--chosen' if option.chosen else '' }}">
+              {% if option.base %}
+              <p class="an-plan-alt__gain"><strong>{{ t('plan.alt_first') }}</strong></p>
+              {% else %}
+              <p class="an-plan-alt__gain">{% if option.index == 0 %}<strong>{{ t('plan.alt_first_complete') }}</strong>: {% endif %}<strong>+{{ option.delta|uah }}</strong>: {{ plural_t('plan.alt_gain', option.gained|length) }}{% if option.tracked_count %}, {{ t('plan.alt_tracked', count=option.tracked_count|countfmt) }}{% endif %}</p>
+              {% endif %}
+              <p class="tiny muted">{{ t('plan.alt_total', total=option.cost|uah) }}</p>
+              {% if option.gained %}
+              <details class="an-plan-alt__which">
+                <summary>{{ t('plan.alt_which') }}</summary>
+                <ul>
+                  {% for row in option.gained %}<li>{{ row.name }}{% if row.source %} <span class="muted">· {{ row.source }}</span>{% endif %}{% if row.tracked %} <span class="pill">{{ t('plan.alt_in_record') }}</span>{% endif %}</li>{% endfor %}
+                </ul>
+                {% if option.lost %}<p class="tiny muted">{{ t('plan.alt_lost', names=option.lost|join(', ')) }}</p>{% endif %}
+              </details>
+              {% endif %}
+              {% if option.chosen %}<p class="an-plan-alt__now">{{ t('plan.option_current') }}</p>
+              {% else %}<a class="button secondary" href="{{ page_url(request.query_params, 'alt_' ~ plan.lab, option.index + 1, 'plan-' ~ plan.lab) }}">{{ t('plan.option_use') }}<span class="visually-hidden">, {{ option.cost|uah }}</span></a>{% endif %}
+            </li>
+            {% endif %}
+            {% endfor %}
+          </ul>
+        </section>
+        {% endif %}
+        {% if plan.not_here %}<p class="tiny muted">{{ t('plan.not_here', lab=plan.name, names=plan.not_here|join(', ')) }}</p>{% endif %}
+        {% if plan.missing_names %}<p class="alert warning">{{ t('plan.missing', names=plan.missing_names|join(', ')) }}</p>{% endif %}
+        {% if plan.missing_included %}<p class="tiny muted">{{ plural_t('plan.missing_included', plan.missing_included) }}</p>{% endif %}
+        <ul class="an-plan-items">
+          {% for item in plan['items'] %}
+          <li class="an-plan-item">
+            <details class="an-plan-item__more">
+              <summary><span class="an-plan-item__sum">
+                <span class="an-plan-item__head">
+                  <span class="an-plan-item__name" lang="{{ item.label_lang }}">{{ item.label }}</span>
+                  <span class="an-plan-item__price">{% if item.final_price < item.price %}<s aria-label="{{ t('plan.list_price') }}">{{ item.price|uah }}</s> {% endif %}{{ item.final_price|uah }}</span>
+                </span>
+                <span class="an-plan-item__line tiny muted">
+                  {% if item.forced %}<span class="pill">{{ t('plan.item_chosen') }}</span> {% endif %}{% if plan.lab == 'mixed' %}{{ lab_names[item.lab] }} · {% endif %}{{ t('plan.item_covers', names=item.covers_names|join(', ')) }}
+                </span>
+              </span></summary>
+              <p class="tiny muted">
+                {% if item.code %}{{ t('plan.code', code=item.code) }}{% endif %}
+                {% if item.extra_count %} · {{ plural_t('plan.extra', item.extra_count) }}{% endif %}
+                {% if item.discount_pct %} · {{ t('plan.discount', pct=item.discount_pct|int) }}{% endif %}
+              </p>
+              {% if item.repeats and not item.forced %}
+              <p class="tiny an-plan-item__repeats">{{ plural_t('plan.repeats', item.repeats) }}{% if item.justified_names %} {{ t('plan.needed_for', names=item.justified_names|join(', ')) }}{% endif %}</p>
+              {% endif %}
+              {% if item.days or item.minutes or item.materials %}
+              <p class="tiny an-plan-item__facts">
+                {% if item.days %}<span>{{ plural_t('plan.ready_days', item.days) }}</span>{% elif item.minutes %}<span>{{ t('plan.ready_minutes', count=item.minutes|countfmt) }}</span>{% endif %}
+                {% if item.materials %}<span>{{ t('plan.sample') }} {% for m in item.materials %}<span lang="{{ m.lang }}">{{ m.text }}</span>{{ ', ' if not loop.last else '' }}{% endfor %}</span>{% endif %}
+              </p>
+              {% endif %}
+              {% if item.url %}<a class="an-plan-need__link tiny" href="{{ item.url }}" target="_blank" rel="noopener noreferrer">{{ t('plan.lab_page', lab=lab_names[item.lab]) }}<span class="visually-hidden">: {{ item.label }}</span></a>{% endif %}
+            </details>
+          </li>
+          {% endfor %}
+          {% for fee in plan.fees %}
+          <li class="an-plan-item an-plan-item--fee">
+            <div class="an-plan-item__head"><span>{{ fee.name }}</span><span class="an-plan-item__price">{{ fee.price|uah }}</span></div>
+            <p class="tiny muted">{{ t('plan.fee_note') }}</p>
+          </li>
+          {% endfor %}
+        </ul>
+        <dl class="an-plan-sums">
+          <div><dt>{{ t('plan.sum_tests') }}</dt><dd>{{ plan.items_cost|uah }}</dd></div>
+          {% if plan.fees_cost %}<div><dt>{{ t('plan.sum_fees') }}</dt><dd>{{ plan.fees_cost|uah }}</dd></div>{% endif %}
+          <div class="an-plan-sums__total"><dt>{{ t('plan.total') }}</dt><dd>{{ plan.cost|uah }}</dd></div>
+          {% if plan.saving > 0 %}<div><dt>{{ t('plan.saving') }}</dt><dd>{{ plan.saving|uah }}</dd></div>{% endif %}
+          {% if plan.separately and plan.separately > plan.cost %}
+          <div><dt>{{ t('plan.separately') }}</dt><dd>{{ plan.separately|uah }}</dd></div>
+          {% endif %}
+        </dl>
+        {% if plan.duplicate_cost %}<p class="tiny muted">{{ t('plan.duplicate_cost', cost=plan.duplicate_cost|uah) }}</p>{% endif %}
+        {% if plan.prep %}
+        <details class="an-plan-prep">
+          <summary>{{ t('plan.prep_heading') }}
+            {% if plan.prep.gist %}<span class="an-plan-prep__gist">{{ plan.prep.gist }}</span>{% endif %}
+          </summary>
+          {% for group in plan.prep.groups %}
+          <div class="an-plan-prep__lab">
+            {% if group.vendor %}<h4>{{ t('plan.prep_lab', lab=group.vendor) }}</h4>{% endif %}
+            {% set level = 'h5' if group.vendor else 'h4' %}
+            {% for section in group.sections %}
+            <{{ level }} class="an-plan-prep__group">{{ section.heading }}</{{ level }}>
+            <ul>{% for line in section.lines %}<li>{{ line }}</li>{% endfor %}</ul>
+            {% endfor %}
+          </div>
+          {% else %}
+          <p class="tiny muted">{{ t('plan.prep_none') }}</p>
+          {% endfor %}
+          {% if plan.prep.groups %}<p class="tiny muted">{{ t('plan.prep_source') }}</p>{% endif %}
+        </details>
+        {% endif %}
+        {% if not plan.exact %}<p class="tiny muted">{{ t('plan.not_exact') }}</p>{% endif %}
+        {% if plan.fetched_at %}<p class="tiny muted">{{ t('plan.prices_read', date=plan.fetched_at|stamp|datefmt) }}</p>{% endif %}
+
+        {% set form = order_forms.get(plan.lab) %}
+        {% if plan.lab == 'esculab' and can_order %}
+        {% if form and form.connected and form.person %}
+        <form class="stack-form an-plan-order" action="/plan-tests/order/esculab" method="post">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="region" value="{{ plan.region }}">
+          <input type="hidden" name="plan_query" value="{{ plan_query(request.query_params) }}">
+          <input type="hidden" name="expected" value="{{ plan.cost }}">
+          {% for item in plan['items'] %}<input type="hidden" name="item" value="{{ item.id }}">{% endfor %}
+          <h3>{{ t('plan.order_heading') }}</h3>
+          <p class="tiny muted">{{ t('plan.order_lead') }}</p>
+          <label>{{ t('plan.order_point') }}
+            <select name="point" required>
+              {% for point in form.points %}
+              <option value="{{ point.id }}" {{ 'selected' if point.id == form.point else '' }}>{{ point.address }}{% if point.hours %} ({{ point.hours }}){% endif %}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label>{{ t('plan.order_date') }}<input type="date" name="date" value="{{ today }}" min="{{ today }}"></label>
+          <fieldset>
+            <legend>{{ t('plan.order_payment') }}</legend>
+            <label class="an-plan-check"><input type="radio" name="payment" value="online" checked> {{ t('plan.order_pay_online') }}</label>
+            <label class="an-plan-check"><input type="radio" name="payment" value="point"> {{ t('plan.order_pay_point') }}</label>
+          </fieldset>
+          <button class="primary" type="submit" data-busy="{{ t('plan.ordering') }}">{{ t('plan.order_submit', total=plan.cost|uah) }}</button>
+        </form>
+        {% elif form and form.connected %}
+        <p class="tiny muted">{{ t('plan.order_no_person') }} <a href="/profile?tab=connections#lab-esculab">{{ t('plan.order_connect') }}</a></p>
+        {% else %}
+        <p class="tiny muted">{{ t('plan.order_not_connected', lab='Esculab') }} <a href="/profile?tab=connections#lab-esculab">{{ t('plan.order_connect') }}</a></p>
+        {% endif %}
+        {% elif plan.lab == 'synevo' and can_order %}
+        {% if form and form.connected %}
+        <form class="stack-form an-plan-order" action="/plan-tests/cart/synevo" method="post">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="region" value="{{ plan.region }}">
+          <input type="hidden" name="plan_query" value="{{ plan_query(request.query_params) }}">
+          {% for item in plan['items'] %}<input type="hidden" name="item" value="{{ item.id }}">{% endfor %}
+          <h3>{{ t('plan.cart_heading') }}</h3>
+          <p class="tiny muted">{{ t('plan.cart_lead') }}</p>
+          <button class="primary" type="submit" data-busy="{{ t('plan.carting') }}">{{ t('plan.cart_submit') }}</button>
+        </form>
+        {% else %}
+        <p class="tiny muted">{{ t('plan.order_not_connected', lab='Synevo') }} <a href="/profile?tab=connections#lab-synevo">{{ t('plan.order_connect') }}</a></p>
+        {% endif %}
+        {% elif plan.lab == 'mixed' %}
+        <p class="tiny muted">{{ t('plan.mixed_order') }}</p>
+        {% endif %}
+      </div>
+    </details>
+  </li>
+  {% endfor %}
+  </ul>
+  {% endif %}
+</section>
+{% endif %}

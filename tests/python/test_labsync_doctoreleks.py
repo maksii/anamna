@@ -1,4 +1,4 @@
-"""Doctor ELEKS clinics (St. Paraskeva, Veselka): phone + texted-code sign-in,
+"""Doctor Eleks clinics (St. Paraskeva, Veselka): phone + texted-code sign-in,
 choosing among several accounts, token renewal, the people on an account, and
 reading results — against synthetic replies shaped like what the Android apps
 send and receive (see labsync/doctoreleks.py).  HTTP is stubbed at
@@ -506,7 +506,7 @@ def test_profile_asks_for_phone_and_code_only_in_both_languages(tmp_path: Path, 
     assert 'type="radio" name="patient" value="101"' in page and "Тестова Дитина Тестівна" in page
     client.cookies.set("anamna_lang", "uk")
     page = client.get("/profile?tab=connections").text
-    assert "Медичний центр «Веселка»" in page and "Отримати код у SMS" in page
+    assert "Веселка" in page and "Отримати код у SMS" in page
     assert "До цього номера в клініці прив’язано кілька облікових записів" not in page  # message only after the redirect
     assert "Підключити цей обліковий запис" in page
 
@@ -522,7 +522,7 @@ def test_admin_lists_both_clinics_off_with_the_texted_code_note(tmp_path: Path):
     assert labsync.active_providers(settings) == []
     client.cookies.set("anamna_lang", "uk")
     page = client.get("/admin/lab-connections").text
-    assert "Медичний центр св. Параскеви" in page
+    assert "Медичний центр Святої Параскеви" in page
 
 
 

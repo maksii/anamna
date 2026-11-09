@@ -253,7 +253,10 @@
     period.form.querySelector('[data-js-hide]').remove();
     period.addEventListener('change', () => {
       const chosen = period.selectedOptions[0];
-      if (chosen && chosen.dataset.url) location.assign(chosen.dataset.url);
+      if (chosen && chosen.dataset.url) {
+        globalThis.anamnaBusy?.navigating(period);
+        location.assign(chosen.dataset.url);
+      }
     });
   }
   // Arriving at #changes-ai (after generating a summary) opens it.
@@ -284,11 +287,11 @@
     const button = form.querySelector('button[type="submit"]');
     const status = document.querySelector('#changes-ai-status');
     const original = button.textContent;
-    button.disabled = true;
     button.textContent = button.dataset.working;
     status.textContent = button.dataset.working;
+    let leaving = false;
     try {
-      const response = await fetch(form.action, {method: 'POST', body: new FormData(form), headers: {'Accept': 'application/json'}});
+      const response = await globalThis.anamnaBusy.track(button, () => fetch(form.action, {method: 'POST', body: new FormData(form), headers: {'Accept': 'application/json'}}));
       const result = await response.json();
       if (!response.ok || !result.ok) {
         status.textContent = form.dataset['error' + (result.reason || 'network').replace(/(^|_)(.)/g, (_, __, c) => c.toUpperCase())]
@@ -296,14 +299,16 @@
         return;
       }
       history.replaceState(null, '', result.location);
+      leaving = true;
       globalThis.location.reload();
     } catch (error_) {
       console.error(error_);
       status.textContent = form.dataset.errorNetwork;
     } finally {
-      delete form.dataset.busy;
-      button.disabled = false;
-      button.textContent = original;
+      if (!leaving) {
+        delete form.dataset.busy;
+        button.textContent = original;
+      }
     }
   });
 })();

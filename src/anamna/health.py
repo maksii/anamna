@@ -270,7 +270,7 @@ UNIT_TRANSLATIONS = {
     "кл/мкл": _CELLS_UL,
     "цл/мкл": "casts/µL",
     "гє/мл": _GENOME_EQ_ML,
-    # The same unit with the Е/Є homoglyph pair: EskuLab prints «ГЄ/мл» on the
+    # The same unit with the Е/Є homoglyph pair: Esculab prints «ГЄ/мл» on the
     # Ureaplasma rows and «Mycoplasma genitalium (ПЛР)... ГЕ/мл» two lines down.
     "ге/мл": _GENOME_EQ_ML,
     "куо/г": "CFU/g",
@@ -441,7 +441,7 @@ UNIT_SYNONYMS = {
     # per microlitre.  Keyed as casefold() leaves them (µ becomes U+03BC).
     "ery/μl": _CELLS_UL,
     "leu/μl": _CELLS_UL,
-    # EskuLab writes the denominator the Synevo panels lost to a neighbouring
+    # Esculab writes the denominator the Synevo panels lost to a neighbouring
     # text object, and spells the numerator out for the absolute differential.
     # A count of 10^9 *cells* per litre is a count of 10^9 per litre, so all
     # three are one measurement; unfolded, «10^9/л» would give the leukocyte
@@ -464,7 +464,7 @@ UNIT_SYNONYMS = {
     "од.": "units",
     # Expert Hospital labels urine specific gravity «Питома вага, г/мл 1,035».
     # The figure is the relative density every other laboratory here prints
-    # without a unit (EskuLab 1.032, St. Paraskeva 1.005), and the reference
+    # without a unit (Esculab 1.032, St. Paraskeva 1.005), and the reference
     # library files the analyte unitless; folded to "" so the three stay one
     # series instead of the Expert reading starting a second, g/mL one.
     "г/мл": "",
@@ -492,7 +492,7 @@ UNIT_SYNONYMS = {
     # counts per gram («КУО/г», CFU/g above).  Not the same quantity, so not
     # folded together; this only gives the per-millilitre spelling its name.
     "куо/мл": "CFU/mL",
-    # EskuLab's partner coprogram heads its unit column «кількість в п/з»: a
+    # Esculab's partner coprogram heads its unit column «кількість в п/з»: a
     # count per field of view, the same unit as «в п/з».
     "кількість в п/з": "per HPF",
 }
@@ -662,7 +662,7 @@ _BLOOD_GROUP_RE = re.compile(r"^(0|O|О|AB|АВ|AВ|АB|A|А|B|В)\s*\(\s*(IV|І
 def _blood_group(text: str) -> str | None:
     """One spelling of an ABO group, whatever script the report printed it in.
 
-    EskuLab prints «А (II)» with Latin numerals, Expert Hospital «А(ІІ)» with
+    Esculab prints «А (II)» with Latin numerals, Expert Hospital «А(ІІ)» with
     Cyrillic І -- the same group, rendered as two different values side by
     side.  Numerals are Roman (Latin) in both languages; the letters are
     Cyrillic in Ukrainian («0», «А», «В», «АВ») and Latin in English.
@@ -698,13 +698,13 @@ def display_value(value: str | None) -> str:
 
 
 _SEX_TOKENS = {
-    # «(ч)» and «(ж)» are EskuLab's short forms, printed beside the long ones in
+    # «(ч)» and «(ж)» are Esculab's short forms, printed beside the long ones in
     # the same block: «Дорослі жінки: 35-104» sits opposite «Дорослі (ч):
     # 40-129».  Without them the men's alkaline phosphatase band was
     # indistinguishable from the women's, and a block naming both sexes read as
     # naming neither.  Only the parenthesised forms are accepted -- a bare «ч»
     # is a letter in half the words on the page.
-    # «чол.» is the abbreviation EskuLab's liver panel prints beside «жін.».
+    # «чол.» is the abbreviation Esculab's liver panel prints beside «жін.».
     "male": re.compile(r"чолов|\bчол\b|\(\s*ч\s*\)|\bmale\b|\bmen\b", re.I),
     "female": re.compile(r"жін|\(\s*ж\s*\)|\bfemale\b|\bwomen\b|вагіт|pregnan|триместр", re.I),
 }
@@ -713,7 +713,7 @@ _ADULT_RE = re.compile(r"дорослі|дорослих|\badults?\b", re.I)
 #: Ages, in every unit and spelling these reports write them in, and how many
 #: years one of those units is.
 #:
-#: «р» abbreviated to a single letter is EskuLab's house style for the blood
+#: «р» abbreviated to a single letter is Esculab's house style for the blood
 #: count and the ESR («Чоловіки 17 - 50р», «1-12р.», «Діти до 17р»), and until
 #: it was read as a year the two men's ESR bands both applied to a 34-year-old
 #: at once -- the 17-50 limit of 15 mm/h and the over-50 limit of 20, with
@@ -1088,7 +1088,7 @@ def applicable_band(
 ) -> str | None:
     """The one band of a multi-population reference block that describes this patient.
 
-    EskuLab prints a whole paediatric table beside the adult one -- ten bands for
+    Esculab prints a whole paediatric table beside the adult one -- ten bands for
     γ-GT, thirteen for alkaline phosphatase -- and the two men's rows sit inside
     it rather than above it.  Judged as a single string the block is
     unmistakably about children, so `reference_applies` refused all of it and a
@@ -1245,7 +1245,7 @@ def applicable_reference_bounds(
 def _fragment_bounds(fragment: str) -> tuple[float | None, float | None]:
     """Bounds of the interval part of a reference already judged to apply."""
     if demographic_reference(fragment):
-        # No colon separates the qualifier from its interval -- EskuLab prints
+        # No colon separates the qualifier from its interval -- Esculab prints
         # "чоловіки < 10" -- so the interval was confirmed to describe this
         # patient on the line above and then thrown away regardless, leaving a
         # urinary erythrocyte count with no bar to be measured against.
@@ -1475,7 +1475,7 @@ REFERENCE_FRAGMENTS_EN: dict[str, str] = {
     # selector surfaces whichever of them the reader falls in.
     "старші": "over",
     "старше": "over",
-    # The singular is EskuLab's own row heading on the absolute eosinophil
+    # The singular is Esculab's own row heading on the absolute eosinophil
     # count: «Чоловік: 0,04-0,54 Жінки: 0,04-0,36».  Missing from here, the
     # band the selector surfaced kept its Cyrillic, `reference_display` answers
     # Cyrillic-under-English with "not supplied", and the English reader was
@@ -1507,7 +1507,7 @@ REFERENCE_FRAGMENTS_EN: dict[str, str] = {
     "роки": "years",
     "року": "years",
     "рік": "year",
-    # EskuLab abbreviates the year to one letter in the blood count and the ESR
+    # Esculab abbreviates the year to one letter in the blood count and the ESR
     # -- «Чоловіки 17 - 50р», «1-12р.» -- and the band selector surfaces those
     # labels now, so the English page was reading "men 17 - 50р".  The fragment
     # boundaries only match it standing alone, never inside a word.
@@ -1519,7 +1519,7 @@ REFERENCE_FRAGMENTS_EN: dict[str, str] = {
     "р": "y",
     "міс.": "mo",
     "міс": "mo",
-    # EskuLab's short forms for the sexes, printed beside the long ones in the
+    # Esculab's short forms for the sexes, printed beside the long ones in the
     # same block: «Дорослі жінки: 35-104» opposite «Дорослі (ч): 40-129».
     "(ч)": "(m)",
     "(ж)": "(f)",
@@ -1660,7 +1660,7 @@ _STUDIES: tuple[tuple[str, str, tuple[str, ...], frozenset[str] | None, re.Patte
         ("carotid_duplex", "Carotid and vertebral artery ultrasound", ("heart",), None, r"сонних|carotid|вертебральних\s+артері"),
         ("thyroid_us", "Thyroid ultrasound", ("thyroid",), None, r"щитоподібн|щитовидн|thyroid"),
         ("gi_us", "Gastrointestinal tract ultrasound", ("digestive",), {"ultrasound"}, r"шлунково\s*-?\s*кишков"),
-        # UltraMed's photographed protocol keeps no title in OCR; its organ
+        # Ultramed's photographed protocol keeps no title in OCR; its organ
         # headings («ПІДШЛУНКОВА ЗАЛОЗА.») name the study.
         ("abdominal_us", "Abdominal ultrasound", ("liver", "kidneys"), None,
          r"черевної\s+порожнини|abdominal|підшлункова\s+залоза\s*[.:]"),

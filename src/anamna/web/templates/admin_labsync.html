@@ -46,8 +46,7 @@
   <div class="panel-head">
     <div><span class="eyebrow">{{ t('labsync.provider_eyebrow') }}</span><h2 id="lab-recheck-heading">{{ t('labsync.recheck_heading') }}</h2></div>
   </div>
-  <form action="/admin/lab-connections/recheck" method="post" class="inline-form"
-        onsubmit="var b=this.querySelector('button');setTimeout(function(){b.disabled=true;b.textContent=b.dataset.working;},0)">
+  <form action="/admin/lab-connections/recheck" method="post" class="inline-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <button class="secondary" type="submit" data-working="{{ t('labsync.working') }}">{{ t('labsync.recheck_action') }}</button>
   </form>

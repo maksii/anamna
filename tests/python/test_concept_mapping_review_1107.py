@@ -164,7 +164,7 @@ def test_a_smear_row_is_not_a_urinalysis_row(connection, raw_name):
 
 def test_microscopy_on_the_slide_is_per_field_and_the_analyser_count_is_per_microlitre(connection):
     """Synevo's manual sediment «Еритроцити: не виявлені (не виявлені,
-    поодинокі в препараті)» joined the analyser's per-µL series; EskuLab's
+    поодинокі в препараті)» joined the analyser's per-µL series; Esculab's
     «Незмінені еритроцити (NL RBC) 16.4 кл/мкл» joined the per-field one."""
     assert filed(connection, "Еритроцити", title=URINALYSIS_TITLE, value_text="не виявлені",
                  reference_text="не виявлені, поодинокі в препараті") == "urine-erythrocytes-per-high-power-field"

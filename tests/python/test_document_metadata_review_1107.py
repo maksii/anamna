@@ -21,7 +21,7 @@ def page(text: str, number: int = 1, ocr: str = "") -> dict[str, object]:
             "image_count": 0}
 
 
-ESKULAB_HEAD = (
+ESCULAB_HEAD = (
     "Замовлення: 10000001 / 12.04.2025 11:24 Дата видачі: 12.04.2025 15:53\n"
     "Здоров’я планується вчасно\n"
     "Пацієнт: Тестова Ольга Іванівна ДН: 01.01.1990 Стать: Жін.\n"
@@ -34,7 +34,7 @@ ESKULAB_HEAD = (
 
 
 def test_an_order_of_uncoded_tests_is_titled_by_its_tests_not_its_file_name():
-    text = ESKULAB_HEAD + (
+    text = ESCULAB_HEAD + (
         "1. Онкомаркер яєчників 31.4 Од/мл Референтне значення < 35\n"
         "(СА-125)\n"
         "сироватка крові\n"
@@ -44,12 +44,12 @@ def test_an_order_of_uncoded_tests_is_titled_by_its_tests_not_its_file_name():
         "Діти (ж) ≤ 60 д.: 0.01 - Діти (ч) ≤ 60 д.: 15.11 -\n"
         "(АМГ, AMH Advanced) сироватка крові 3.39 266.59\n"
     )
-    title = extract_title(text, "eskulab-10000001.pdf", "laboratory")
+    title = extract_title(text, "esculab-10000001.pdf", "laboratory")
     assert title == "Онкомаркер яєчників (СА-125) · Ранній онкомаркер раку яєчників · Антимюллерів гормон Advanced"
 
 
 def test_a_test_name_ends_where_its_result_starts_and_keeps_its_bracket():
-    text = ESKULAB_HEAD + (
+    text = ESCULAB_HEAD + (
         "1. Хелікобактер пілорі, кал не виявлено - не виявлено\n"
         "Приносний\n"
         "2. Скринінг на сифіліс (реакція від`ємна - від`ємна\n"
@@ -62,7 +62,7 @@ def test_a_test_name_ends_where_its_result_starts_and_keeps_its_bracket():
         "плазма крові новонароджені (1 день): Маніфестний цукровий\n"
         "6. Кальпротектин <24.0 мг/кг негативний: < 50\n"
     )
-    assert extract_title(text, "eskulab-10000001.pdf", "laboratory").split(" · ") == [
+    assert extract_title(text, "esculab-10000001.pdf", "laboratory").split(" · ") == [
         "Хелікобактер пілорі, кал",
         "Скринінг на сифіліс (реакція мікропреципітації)",
         "25-Гідроксивітамін D",
@@ -73,14 +73,14 @@ def test_a_test_name_ends_where_its_result_starts_and_keeps_its_bracket():
 
 
 def test_every_panel_is_named_and_no_title_ends_in_a_dangling_separator():
-    text = ESKULAB_HEAD + (
+    text = ESCULAB_HEAD + (
         "1. С-пептид 1.47 нг/мл 0,9-7,1\n"
         "3. L0610 Пакет №375. D3+B9+B12\n"
         "1. F4001 Загальний аналіз крові (ЗАК автоматизований + ручна лейкоформула)\n"
         "2. F4003 Загальний аналіз крові з ручним підрахунком лейкоцитарної формули та\n"
         "ретикулоцитів\n"
     )
-    title = extract_title(text, "eskulab-10000001.pdf", "laboratory")
+    title = extract_title(text, "esculab-10000001.pdf", "laboratory")
     assert title == (
         "D3+B9+B12 · Загальний аналіз крові (ЗАК автоматизований + ручна лейкоформула) · "
         "Загальний аналіз крові з ручним підрахунком лейкоцитарної формули та ретикулоцитів · С-пептид"
@@ -90,27 +90,27 @@ def test_every_panel_is_named_and_no_title_ends_in_a_dangling_separator():
 def test_a_title_cut_for_length_says_so_instead_of_ending_in_a_bullet():
     names = "Альфа Бета Гамма Дельта Епсилон Дзета Ета Тета Йота Каппа Лямбда Мю".split()
     tests = "".join(f"{n}. Тестовий показник {name} довгої назви {n}.5 ммоль/л\n" for n, name in enumerate(names, 1))
-    title = extract_title(ESKULAB_HEAD + tests, "eskulab-10000001.pdf", "laboratory")
+    title = extract_title(ESCULAB_HEAD + tests, "esculab-10000001.pdf", "laboratory")
     assert title.endswith(" · ...") and len(title) <= 240
     assert not title.endswith(" ·")
 
 
 def test_a_packet_whose_result_is_not_on_the_paper_does_not_name_the_document():
-    text = ESKULAB_HEAD + (
+    text = ESCULAB_HEAD + (
         "1. K0000 ВІЛ експрес-тест (якісне визначення) з підтвердженням\n"
         "Дослідження: ВІЛ-тест (якісне визначення)\n"
         "Даний результат можна отримати лише на пункті забору за адресою: м. Тестове, вул. Тестова, 1\n"
         "1. F4001 Загальний аналіз крові (ЗАК автоматизований + ручна лейкоформула)\n"
         "1. Феритин 64.9 нг/мл\n"
     )
-    assert extract_title(text, "eskulab-10000001.pdf", "laboratory") == (
+    assert extract_title(text, "esculab-10000001.pdf", "laboratory") == (
         "Загальний аналіз крові (ЗАК автоматизований + ручна лейкоформула) · Феритин"
     )
 
 
-def test_the_older_eskulab_form_names_its_test():
+def test_the_older_esculab_form_names_its_test():
     text = "Показники Результат Од. виміру Реф. значення\n30511 Копрограма\nФорма оформлений\n"
-    assert extract_title(text, "eskulab-10000001.pdf", "laboratory") == "Копрограма"
+    assert extract_title(text, "esculab-10000001.pdf", "laboratory") == "Копрограма"
 
 
 SYNEVO_HEAD = (
@@ -194,14 +194,14 @@ def test_expert_hospital_dates_a_report_by_the_second_date_on_the_patient_line()
         "Пацієнт: Тестова Ольга Іванівна, 01.01.1990 01.01.2024\n"
         "ПОКАЗНИК РЕЗУЛЬТАТ РЕФЕРЕНТНІ ЗНАЧЕННЯ\nЛейкоцити (WBC), х 10*9/л 6,05 від 4 до 9\n"
     )
-    result = classify_document("ekspert-100001.pdf", "application/pdf", [page(text)])
+    result = classify_document("expert-100001.pdf", "application/pdf", [page(text)])
     assert result.report_date == "2024-01-01"
     # Not printed: lab sync named the file by the lab's own order number.
     assert result.order_identifier == "100001"
     assert classify_document("upload.pdf", "application/pdf", [page(text)]).order_identifier is None
 
 
-def test_one_eskulab_order_of_a_culture_and_a_urinalysis_is_one_laboratory_report():
+def test_one_esculab_order_of_a_culture_and_a_urinalysis_is_one_laboratory_report():
     head = "Замовлення: 10000003 / 18.05.2026 11:42 Дата виконання: 21.05.2026 12:00\nРезультати дослідження №10000003\n"
     culture = head + (
         "1. J0008 Мікробіологічне дослідження сечі із визначенням чутливості виділених\n"
@@ -210,7 +210,7 @@ def test_one_eskulab_order_of_a_culture_and_a_urinalysis_is_one_laboratory_repor
     )
     urine = head + "1. F6001 Загальний аналіз сечі автоматизований (ЗАС автоматизований)\nПоказник Результат Одиниці\n"
     classification, per_page = classify_pages(
-        "eskulab-10000003.pdf", "application/pdf", [page(culture, 1), page(urine, 2)], {})
+        "esculab-10000003.pdf", "application/pdf", [page(culture, 1), page(urine, 2)], {})
     assert [item.clinical_type for item in per_page] == ["microbiology", "laboratory"]
     assert classification.clinical_type == "laboratory"
     assert (classification.report_date, classification.order_identifier) == ("2026-05-18", "10000003")
@@ -236,10 +236,10 @@ POLYCHECK_TEXT = (
 )
 
 
-def test_a_polycheck_chip_from_eskulab_is_a_dated_allergy_report():
+def test_a_polycheck_chip_from_esculab_is_a_dated_allergy_report():
     pages = [page(POLYCHECK_TEXT, ocr="[Embedded image region 1]\nPOLYCHECK®\nwww.polycheck.de\n")]
-    result = classify_document("eskulab-10000005.pdf", "application/pdf", pages)
-    assert (result.vendor, result.clinical_type, result.status) == ("EskuLab", "allergy", "final")
+    result = classify_document("esculab-10000005.pdf", "application/pdf", pages)
+    assert (result.vendor, result.clinical_type, result.status) == ("Esculab", "allergy", "final")
     assert (result.report_date, result.order_identifier) == ("2024-11-18", "10000005")
     # The panel as printed, its Latin «a» read as the Cyrillic letter it stands for.
     assert result.title == "POLYCHECK - Харчова 20-I"

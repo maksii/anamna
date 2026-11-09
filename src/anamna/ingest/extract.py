@@ -388,7 +388,7 @@ def _pdf_page(path: Path, index: int, page, run_ocr: bool) -> dict[str, object]:
         "extraction_method": method,
         # Where each word sits on the page.  A report printed as
         # a table loses its columns the moment it is flattened
-        # to text: EskuLab indents the specimen under the
+        # to text: Esculab indents the specimen under the
         # analyte name, so «Приносний матеріал, сеча» arrives
         # looking exactly like a continuation of the name above
         # it, and the reference column -- which wraps over the

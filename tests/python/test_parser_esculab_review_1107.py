@@ -1,4 +1,4 @@
-"""Regression tests for the 2026-11-07 value-by-value review: the EskuLab PDF reader.
+"""Regression tests for the 2026-11-07 value-by-value review: the Esculab PDF reader.
 
 Every fixture is the real word geometry of a real page, «word@x0-x1» per
 printed line, transcribed from the report the finding names.  Patient lines,
@@ -51,7 +51,7 @@ URINE_TAIL = [
 
 def test_the_page_number_is_not_the_end_of_the_last_rows_reference():
     """«Сторінка 1 з 3» was stored as part of «жінки < 100.0 чоловіки < 26.4»."""
-    bacteria = by_name("EskuLab", "laboratory", page(URINE_TAIL))["Бактерії в мкл (BACT)"]
+    bacteria = by_name("Esculab", "laboratory", page(URINE_TAIL))["Бактерії в мкл (BACT)"]
     assert bacteria.reference_text == "жінки < 100.0 чоловіки < 26.4"
 
 
@@ -82,7 +82,7 @@ def test_a_two_column_block_whose_left_labels_wrap_is_read_column_by_column():
     Read line by line, «Новонароджені (1-10» took «Діти 1-3 роки: 0,18-1,0» and
     «Діти від 1 міс.-1 року:» was left without its interval.
     """
-    reticulocytes = by_name("EskuLab", "laboratory", page(RETICULOCYTES))["Ретикулоцити %"]
+    reticulocytes = by_name("Esculab", "laboratory", page(RETICULOCYTES))["Ретикулоцити %"]
     assert reticulocytes.reference_text == (
         "Новонароджені (1-10 днів): 1,0-7,0 жінки: 0,12-2,0 Діти 7-12 років: 0,2-1,2 Діти 4-6 років: 0,2-0,7 "
         "Діти 1-3 роки: 0,18-1,0 чоловіки: 0,24-1,7 Діти від 1 міс.-1 року: 0,2-4,8"
@@ -105,7 +105,7 @@ GLUCOSE = [
 
 def test_the_newborn_label_does_not_take_the_adults_interval():
     """«Новонароджені (1 день):» ends two points short of «Дорослі:», an ordinary space."""
-    glucose = by_name("EskuLab", "laboratory", page(GLUCOSE))["Глюкоза (сироватка)"]
+    glucose = by_name("Esculab", "laboratory", page(GLUCOSE))["Глюкоза (сироватка)"]
     assert glucose.reference_text == (
         "Новонароджені (1 день): 2.22 - 3.33 Новонароджені (> 1 дня): 2.78 - 4.44 Діти: 3.33 - 5.55 "
         "Дорослі: 4.11 - 5.89 60-90 років: 4.56 - 6.38 > 90 років: 4.16 - 6.72"
@@ -130,7 +130,7 @@ ESTRADIOL = [
 
 
 def test_a_band_fused_into_the_next_columns_age_label_is_cut_at_the_column():
-    estradiol = by_name("EskuLab", "laboratory", page(ESTRADIOL))["Естрадіол (E2)"]
+    estradiol = by_name("Esculab", "laboratory", page(ESTRADIOL))["Естрадіол (E2)"]
     assert "Період овуляції: 32.1-517 Лютеїнова" in estradiol.reference_text
     assert "Діти (хлопці та дівчата) 1-<12 р.: <15.0 Чоловіки" in estradiol.reference_text
     assert "5171" not in estradiol.reference_text
@@ -149,7 +149,7 @@ BLOOD_NOTES = [
 
 
 def test_a_notes_row_that_says_something_is_a_text_result():
-    parsed = by_name("EskuLab", "laboratory", page(BLOOD_NOTES))
+    parsed = by_name("Esculab", "laboratory", page(BLOOD_NOTES))
     note = parsed["Примітки (зак)"]
     assert (note.value_text, note.value_numeric, note.specimen) == (
         "Токсигенна зернистість окремих нейтрофілів.", None, "цільна кров"
@@ -159,7 +159,7 @@ def test_a_notes_row_that_says_something_is_a_text_result():
 
 def test_a_notes_row_that_prints_a_dash_is_nothing():
     lines = [HEADER, (583.4, "Примітки@28.3-76.6 (зас)@79.8-104.6"), (594.5, "-@28.3-31.6")]
-    assert "Примітки (зас)" not in by_name("EskuLab", "laboratory", page(lines))
+    assert "Примітки (зас)" not in by_name("Esculab", "laboratory", page(lines))
 
 
 URINE_HEAD = [
@@ -180,7 +180,7 @@ URINE_HEAD = [
 
 
 def test_turbidity_printed_as_a_dash_is_stored_and_a_heading_is_not():
-    parsed = by_name("EskuLab", "laboratory", page(URINE_HEAD))
+    parsed = by_name("Esculab", "laboratory", page(URINE_HEAD))
     turbidity = parsed["Каламутність(рівень) (C-CLOUD)"]
     assert (turbidity.value_text, turbidity.reference_text, turbidity.unit_raw) == ("-", "-", None)
     assert "Фізико-хімічні властивості" not in parsed
@@ -190,7 +190,7 @@ def test_turbidity_printed_as_a_dash_is_stored_and_a_heading_is_not():
 
 def test_a_negative_dipstick_pad_keeps_the_unit_its_scale_is_printed_in():
     """Stored without it, the ketone row was given the concept's mmol/L."""
-    ketones = by_name("EskuLab", "laboratory", page(URINE_HEAD))["Кетони (C-KET)"]
+    ketones = by_name("Esculab", "laboratory", page(URINE_HEAD))["Кетони (C-KET)"]
     assert (ketones.value_text, ketones.unit_raw) == ("не виявлені", "мг/дл")
 
 
@@ -232,11 +232,11 @@ ANTIBIOGRAM_CONTINUED = [
 
 def test_culture_rows_with_a_reference_column_are_read_with_their_sections_material():
     """Every row of a stool dysbacteriosis culture was lost, the abnormal ones included."""
-    parsed = rows("EskuLab", "microbiology", page(CULTURES))
+    parsed = rows("Esculab", "microbiology", page(CULTURES))
     # Two Lactobacillus rows on one page, one per section: the de-duplication
     # key holds the specimen, so both survive.
     lactobacilli = {
-        item.specimen: item for item in parse_document("EskuLab", "microbiology", [page(CULTURES)])
+        item.specimen: item for item in parse_document("Esculab", "microbiology", [page(CULTURES)])
         if item.raw_name == "Lactobacillus spp."
     }
     urine, stool = lactobacilli["сеча"], [lactobacilli["кал"]]
@@ -260,7 +260,7 @@ def test_culture_rows_with_a_reference_column_are_read_with_their_sections_mater
 
 
 def test_an_antibiogram_names_its_isolate_and_keeps_its_material_over_the_page_break():
-    parsed = rows("EskuLab", "microbiology", page(CULTURES), page(ANTIBIOGRAM_CONTINUED, 2))
+    parsed = rows("Esculab", "microbiology", page(CULTURES), page(ANTIBIOGRAM_CONTINUED, 2))
     for key in ((1, "Азитроміцин"), (1, "Доріпенем"), (2, "Кліндаміцин"), (2, "Меропенем")):
         item = parsed[key]
         assert (item.note, item.specimen) == ("Staphylococcus epidermidis", "кал"), key
@@ -276,7 +276,7 @@ def test_cefoxitin_the_mrsa_screen_is_kept():
         (396.4, "Антибіотики/Антимікотики@28.3-182.5 Staphylococcus@243.8-321.7 aureus@324.9-359.1"),
         (569.7, "Цефокситин@28.3-93.8 30@96.9-109.7 мкг@112.8-131.7 Чутливий@243.8-294.1"),
     ]
-    parsed = by_name("EskuLab", "laboratory", page(lines))
+    parsed = by_name("Esculab", "laboratory", page(lines))
     assert parsed["Staphylococcus aureus"].value_numeric == 3e6
     assert (parsed["Цефокситин"].value_text, parsed["Цефокситин"].note) == ("Чутливий", "Staphylococcus aureus")
 
@@ -288,7 +288,7 @@ def test_a_throat_culture_takes_the_material_its_heading_prints():
         (236.8, "Мікроорганізм@28.3-112.8 Результат@243.8-302.2 Референтні@378.4-446.2 значення@449.6-503.0"),
         (249.3, "Neisseria@28.3-74.3 sicca@77.5-102.5 1.0@243.8-259.7 x@262.8-268.7 10^5@271.9-299.4 КУО/г@302.5-332.2"),
     ]
-    neisseria = by_name("EskuLab", "microbiology", page(lines))["Neisseria sicca"]
+    neisseria = by_name("Esculab", "microbiology", page(lines))["Neisseria sicca"]
     assert (neisseria.specimen, neisseria.value_numeric, neisseria.value_printed) == (
         "виділення із зіву", 100000.0, "1.0 x 10^5"
     )
@@ -308,7 +308,7 @@ EXPRESS = [
 
 
 def test_an_express_microbiology_checklist_yields_each_organism():
-    parsed = by_name("EskuLab", "microbiology", page(EXPRESS))
+    parsed = by_name("Esculab", "microbiology", page(EXPRESS))
     assert {name: (item.value_text, item.specimen) for name, item in parsed.items()} == {
         "Escherichia coli": ("Не виявлено", "сеча"),
         "KES group (Klebsiella, Enterobacter, Serratia)": ("Не виявлено", "сеча"),
@@ -332,7 +332,7 @@ k202 CCD - перехресно реактивні вуглеводні дете
 3 3.5 - <17.5 Значна концентрація антитіл"""
 
 
-@pytest.mark.parametrize("vendor, kind", [("Unknown vendor", "allergy"), ("EskuLab", "laboratory"), ("EskuLab", "allergy")])
+@pytest.mark.parametrize("vendor, kind", [("Unknown vendor", "allergy"), ("Esculab", "laboratory"), ("Esculab", "allergy")])
 def test_the_polycheck_panel_is_read_with_code_class_and_comparator(vendor, kind):
     parsed = by_name(vendor, kind, {"page_number": 1, "native_text": POLYCHECK, "ocr_text": "POLYCHECK®"})
     assert list(parsed) == ["k202 CCD/Bromelain", "f17 Лісовий горіх", "f13 Арахіс", "f75 Жовток курячого яйця"]
@@ -369,7 +369,7 @@ PARTNER_COPROGRAM = [
 
 
 def test_the_partner_laboratorys_coprogram_page_is_read():
-    parsed = by_name("EskuLab", "laboratory", page(PARTNER_COPROGRAM, 2))
+    parsed = by_name("Esculab", "laboratory", page(PARTNER_COPROGRAM, 2))
     assert {name: (item.value_numeric, item.value_text, item.reference_text) for name, item in parsed.items()} == {
         "Форма": (None, "оформлений", "Дорослі: оформлений; Діти: допускається неоформлений."),
         "Колір": (None, "коричневий", "коричневий"),
@@ -392,6 +392,6 @@ def test_a_second_ticked_answer_is_part_of_the_coprogram_result():
         (314.4, "неперетравленої@28.3-100.3"),
         (325.2, "їжі@28.3-40.0"),
     ]
-    parsed = by_name("EskuLab", "laboratory", page(lines))
+    parsed = by_name("Esculab", "laboratory", page(lines))
     assert parsed["Запах"].value_text == "специфічний, каловий"
     assert parsed["Залишки неперетравленої їжі"].value_text == "невелика к-сть."

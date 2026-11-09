@@ -9,11 +9,11 @@ ever marked verified automatically.
 
 | Key | Lab | Credential | Module |
 |---|---|---|---|
-| `eskulab` | EskuLab | bearer token pasted from the browser | `eskulab.py` |
+| `esculab` | Esculab | phone + SMS code in our form | `esculab.py` |
 | `synevo` | Synevo | session cookie pasted from the browser | `synevo.py` |
-| `ekspert` | Expert Hospital | phone + password (+ SMS code) in our form | `ekspert.py` |
+| `expert` | Expert Hospital | phone + password (+ SMS code) in our form | `expert.py` |
 | `paraskeva` | St. Paraskeva Medical Center | phone + SMS code in our form | `doctoreleks.py` |
-| `veselka` | Veselka Medical Center | phone + SMS code in our form | `doctoreleks.py` |
+| `veselka` | Veselka | phone + SMS code in our form | `doctoreleks.py` |
 
 A provider is a module (or a `types.SimpleNamespace`) with `KEY`, `NAME`,
 `VENDOR`, `DEFAULT_URL`, `SIGN_IN` and a `Client(url, secret, phone[, refresh])`
@@ -33,7 +33,7 @@ to the holder's own record, to a family member's (anyone in a `record_shares`
 relation, either direction), or to nobody.
 
 - **Several lab people, one record.** A lab often lists one person more than
-  once: EskuLab keeps a profile per registration (a profile under a maiden name
+  once: Esculab keeps a profile per registration (a profile under a maiden name
   survives a surname change), and Synevo keeps both profiles after renaming one.
   Link each of them to the same record. Orders are keyed per record by their
   number (`lab_orders` primary key `owner_user_id, provider, order_id`), so an
@@ -61,7 +61,7 @@ relation, either direction), or to nobody.
 ## Orders with values but no PDF
 
 Some finished orders have results in the lab's record but no file:
-Ekspert's `has_file: false` (`labsync.unavailable_nofile`), a Synevo in-lab
+Expert Hospital's `has_file: false` (`labsync.unavailable_nofile`), a Synevo in-lab
 order without a web id (`unavailable_offline`), or one behind an eHealth
 one-time code (`unavailable_esoz`). When such an order carries rows with a
 result, the sync files them as **the lab's own record of the order**:
@@ -107,22 +107,55 @@ result, the sync files them as **the lab's own record of the order**:
   document, or the newer side of one, is a copy and never takes part.
 - A lab flag on a value the printed band holds is not adopted, and an earlier
   adoption is taken back: the printed band decides, on an inclusive bound too.
-- EskuLab culture comments (`comments`, each organism's `defaultComment`) go
+- Esculab culture comments (`comments`, each organism's `defaultComment`) go
   into the note of the value they name, in the lab's words, matched by
   specimen. A comment that only restates a value is skipped.
 - A document whose page prints no collection time takes the order's
   `ordered_at` (never later than the report day); a re-read keeps it.
   - Deleting the record makes the order `removed`, as for any document.
 
-## Doctor ELEKS clinics
+## Esculab sign-in
 
-Doctor ELEKS ([doctor.eleks.com](https://doctor.eleks.com)) is a clinic
+Mapped from the Esculab Android app 3.0.6 (`com.mak.elab`, React Native) on
+2026-11-08 by static analysis of its Hermes bundle (`hermes-dec`; the
+artefacts are in `work/esculab-apk/`, which is gitignored). The app's server
+is `https://cabinet-api.mz-group.com.ua`; `esculab.com` fronts the same
+backend (a stored token answers `findPatientSite` on both, and `/api/auth/*`
+answers identically on both), so the configured address serves sign-in and
+results alike and the default stays `https://esculab.com`.
+
+1. `POST /api/auth/authorise` `{"phone": "+380XXXXXXXXX", "uuid": <uuid4>}`.
+   The app builds the phone as `+380` and 9 digits and makes a fresh uuid per
+   attempt; Esculab texts a 4-digit code. The app ignores the reply; we refuse
+   only on an HTTP 4xx (`labsync.sms_error_phone`) or 429 (throttled).
+2. `POST /api/auth/application/accept` `{"code", "uuid"}` with header
+   `AccessPhone: <phone>`. The reply has one entry per role on the number,
+   `{clientType: "PATIENT"|"DOCTOR", tokens: {token, exist, ...}}`; the
+   app's ConfirmFlow keeps the PATIENT entry. No PATIENT entry is the app's
+   "User not found", and `exist: false` sends the app to create a patient
+   profile first; both are `labsync.esculab_error_no_patient` here. A wrong
+   code is an HTTP 4xx with Spring's error JSON (`labsync.password_error_code`).
+   The older patient-only `POST /api/auth/accept` (`{token, exist}`) is
+   exported by the app but not called by its code screen; its reply shape is
+   read too, defensively.
+
+Stored: the PATIENT token as `secret` (a JWT; `exp`, read without verifying
+the signature, is `secret_expires_at`, about a year out), the phone as
+`+380XXXXXXXXX` (the same form pasted connections held, and what `AccessPhone`
+needs), and an empty `refresh_secret`: Esculab issues no renewal token, so
+when the token ends the person signs in again. Every signed-in call sends
+`Authorization: Bearer <token>` and `AccessPhone: <phone>`, exactly as the
+earlier pasted-token connections did, so those keep working unchanged.
+
+## Doctor Eleks clinics
+
+Doctor Eleks ([doctor.eleks.com](https://doctor.eleks.com)) is a clinic
 information system made by ELEKS. Each clinic using it ships its own build of
 one white-label Expo/React Native patient app (`com.eleks.<clinic>`). The
 protocol below was mapped from the St. Paraskeva 1.8.2 and Veselka 1.6.5 builds
 (Hermes bytecode, decompiled with `hermes-dec`). The two builds have the same
 procedure names; they differ only in a tenant id.
-This is not the platform Ekspert uses: Ekspert is a Flutter app talking to its
+This is not the platform Expert Hospital uses: Expert Hospital is a Flutter app talking to its
 own REST backend.
 
 - **One server for every clinic.** All calls go to `https://portal-doctor.eleks.com/api`.
@@ -179,7 +212,7 @@ own REST backend.
   member (`isMain` false) stops the sync with
   `labsync.doctoreleks_error_unmapped` rather than receive the holder's files.
 
-### Adding another Doctor ELEKS clinic
+### Adding another Doctor Eleks clinic
 
 1. Get the clinic's `installationId` from its APK. Decompile
    `assets/index.android.bundle` and search for `installationId': '`. Or ask
@@ -209,5 +242,5 @@ Known unknowns:
   the match by hand.
 - How long the refresh token lasts, and whether signing in here signs the
   clinic's app out on the phone.
-- Whether lab values arrive padded with zeros, as Ekspert's do. Trailing zeros
+- Whether lab values arrive padded with zeros, as Expert Hospital's do. Trailing zeros
   are trimmed either way.

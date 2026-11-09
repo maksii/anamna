@@ -139,9 +139,9 @@ ON_LINES = {
         _old_sub(r"\s*\S*(?:\.{3}|…)$", ""),
         classifier._strip_truncated_tail,
     ),
-    "eskulab heading": (
+    "esculab heading": (
         lambda value: (m := re.match(r"^\d+\.\s+[A-Z]\d{4}\s+(.+)$", value)) and m.group(1),
-        lambda value: (m := classifier.ESKULAB_HEADING_RE.match(value)) and m.group(1),
+        lambda value: (m := classifier.ESCULAB_HEADING_RE.match(value)) and m.group(1),
     ),
     "ultrasound site": (
         lambda value: (m := re.match(r"^Локалізація патологічного процесу\s*[–-]\s*(.+)$", value)) and m.group(1),
@@ -202,8 +202,8 @@ def test_unit_tail_strip_answers_as_the_single_alternation_did():
     assert cut > 2000, cut
 
 
-def test_ekspert_unpadding_answers_as_before():
-    from anamna.labsync import ekspert
+def test_expert_unpadding_answers_as_before():
+    from anamna.labsync import expert
 
     old = re.compile(r"(?<![\d.,])(\d+)[.,](\d+)(?!\d)")
     pieces = ["0", "00", "5", "38", ".", ",", " ", "Від ", "до", "x", "\n", "-", "1.50", "2,000", "7.0"]
@@ -213,8 +213,8 @@ def test_ekspert_unpadding_answers_as_before():
     values += ["1" * 400 + "x", "1" * 400 + ".", "1." * 300, "x" + "0" * 400 + ".000"]
     trimmed = 0
     for value in values:
-        expected = old.sub(ekspert._unpad, value)
-        assert ekspert._trim(value) == expected, value
+        expected = old.sub(expert._unpad, value)
+        assert expert._trim(value) == expected, value
         trimmed += expected != value
     assert trimmed > 1000, trimmed
 

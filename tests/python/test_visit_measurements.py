@@ -6,7 +6,7 @@ primary-care notes' temperature, pulse, breathing rate and saturation, a
 cardiologist's weight, height, BMI and both arms' blood pressure, and an ECG's
 interval table were in the record as page text and nowhere else.
 
-The samples are the real lines from those Veselka (Doctor ELEKS) documents,
+The samples are the real lines from those Veselka (Doctor Eleks) documents,
 with the patient's name and date of birth replaced.
 """
 

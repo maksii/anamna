@@ -1,4 +1,4 @@
-"""Round-2 value-by-value review (2026-11-07): the EskuLab and Synevo readers, concepts and units.
+"""Round-2 value-by-value review (2026-11-07): the Esculab and Synevo readers, concepts and units.
 
 Every line is synthetic, shaped like the evidence the reviewers quoted: invented names,
 orders and numbers, real column positions.  Nothing here identifies anyone.
@@ -29,7 +29,7 @@ from anamna.ingest.pipeline import _inferred_category, ensure_concept, ensure_ve
 from anamna.ingest.text import normalized_key
 from anamna.reference import canonical_unit
 
-from test_parser_eskulab_review_1107 import page
+from test_parser_esculab_review_1107 import page
 from test_parser_lab_defects_1107 import layout
 
 
@@ -42,7 +42,7 @@ def connection(tmp_path: Path):
         yield conn
 
 
-def filed(connection, raw_name, *, vendor="EskuLab", value_type="text", clinical_type="laboratory", **row):
+def filed(connection, raw_name, *, vendor="Esculab", value_type="text", clinical_type="laboratory", **row):
     concept_id, _unit = ensure_concept(
         connection, raw_name, ensure_vendor(connection, vendor, None), value_type=value_type,
         clinical_type=clinical_type, **row,
@@ -54,7 +54,7 @@ def concept(connection, concept_id):
     return connection.execute("SELECT canonical_name, category FROM concepts WHERE id=?", (concept_id,)).fetchone()
 
 
-# --- EskuLab 1-3: the partner laboratory's coprogram ------------------------------------
+# --- Esculab 1-3: the partner laboratory's coprogram ------------------------------------
 
 PARTNER_COPROGRAM = [
     (245.0, "Показники@100.8-153.1 Результат@249.3-299.0 Од.@352.4-369.3 виміру@372.1-406.0 Реф.@451.1-474.9 значення@477.7-523.6"),
@@ -72,7 +72,7 @@ PARTNER_COPROGRAM = [
 
 def test_coprogram_names_stay_as_printed_and_the_per_field_unit_is_kept():
     """«Форма (кал)» was a label no report prints, and «кількість в п/з» was dropped on 20 rows."""
-    parsed = {item.raw_name: item for item in parse_document("EskuLab", "laboratory", [page(PARTNER_COPROGRAM, 2)])}
+    parsed = {item.raw_name: item for item in parse_document("Esculab", "laboratory", [page(PARTNER_COPROGRAM, 2)])}
     assert set(parsed) == {"Колір", "Реакція (рН)", "Лейкоцити", "Еритроцити", "Яйця глистів"}
     assert {item.specimen for item in parsed.values()} == {"кал"}
     assert (parsed["Лейкоцити"].value_text, parsed["Лейкоцити"].unit_raw) == ("поодинокі в препараті", "кількість в п/з")
@@ -119,12 +119,12 @@ def test_an_unknown_stool_row_is_a_stool_concept_of_its_own(connection):
     assert concept(connection, urine)["category"] == "urinalysis"
 
 
-# --- EskuLab 4: an antibiogram continued on a page of its own ---------------------------
+# --- Esculab 4: an antibiogram continued on a page of its own ---------------------------
 
 def test_an_antibiogram_page_is_typed_as_the_culture_it_continues():
     """Typed «laboratory», page 2 was read as a report of its own and lost the stool specimen."""
     continued = classify_document(
-        "eskulab-10000001.pdf", "application/pdf",
+        "esculab-10000001.pdf", "application/pdf",
         [{"page_number": 2, "native_text": "Замовлення: 10000001 / 01.01.2026 10:00\n"
           "Антибіотики/Антимікотики Staphylococcus epidermidis\nКліндаміцин 2 мкг Чутливий\n"}], {},
     )
@@ -157,7 +157,7 @@ def test_a_continued_antibiogram_takes_the_material_of_the_nearest_one_above():
     ]
 
 
-# --- EskuLab 5 and Synevo 11: the specimen keeps auto concepts apart --------------------
+# --- Esculab 5 and Synevo 11: the specimen keeps auto concepts apart --------------------
 
 def test_urine_and_stool_counts_of_one_organism_are_two_series(connection):
     urine = filed(connection, "Lactobacillus spp.", value_type="numeric", clinical_type="microbiology",
@@ -180,7 +180,7 @@ def test_smear_readings_are_kept_apart_by_site_and_from_urine(connection):
     assert tuple(concept(connection, smear)) == ("Епітелій (VAGINA)", "microbiology")
 
 
-# --- EskuLab 6: a wrapped heading is no antibiotic --------------------------------------
+# --- Esculab 6: a wrapped heading is no antibiotic --------------------------------------
 
 EXPRESS = [
     (130.0, "(матеріал:@28.3-89.0 Приносний@92.5-155.6 матеріал,@159.1-215.0 сеча)@218.5-249.3"),
@@ -196,7 +196,7 @@ EXPRESS = [
 
 def test_a_heading_that_wraps_after_its_noun_is_not_sent_to_review():
     issues: list[ParseIssue] = []
-    parsed = parse_document("EskuLab", "microbiology", [page(EXPRESS)], issues=issues)
+    parsed = parse_document("Esculab", "microbiology", [page(EXPRESS)], issues=issues)
     assert [(item.raw_name, item.value_text) for item in parsed] == [("Candida spp.", "Не виявлено")]
     assert issues == []
 
@@ -210,21 +210,21 @@ def test_every_verdict_form_is_still_a_verdict():
         (272.0, "Ципрофлоксацин@28.3-100.0 Чутливий,@384.8-430.0 збільшена@432.0-480.0 експозиція@482.0-540.0"),
         (284.0, "Цефепім@28.3-70.0 резистентний@384.8-440.0"),
     ]
-    parsed = {item.raw_name: item.value_text for item in parse_document("EskuLab", "microbiology", [page(lines)])}
+    parsed = {item.raw_name: item.value_text for item in parse_document("Esculab", "microbiology", [page(lines)])}
     assert parsed == {
         "Амікацин": "Чутливий", "Меропенем": "Стійка", "Ципрофлоксацин": "Чутливий, збільшена експозиція",
         "Цефепім": "резистентний",
     }
 
 
-# --- EskuLab 7: the POLYCHECK print date ------------------------------------------------
+# --- Esculab 7: the POLYCHECK print date ------------------------------------------------
 
 def test_the_polycheck_print_date_is_the_issue_date():
     text = "Тестова Харчовa 20-I\nОльга Іванівна /\n01.01.1990 03.02.2025\n03.02.2025 (V. 6.01.21 )\n"
     assert extract_issued_at(text) == "2025-02-03"
 
 
-# --- EskuLab 8: urea in the title is not urine ------------------------------------------
+# --- Esculab 8: urea in the title is not urine ------------------------------------------
 
 AMINO_TITLE = "Амінокислоти (скринінг 39 показників в сироватці) · Сечовина"
 

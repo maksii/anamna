@@ -538,7 +538,7 @@ def test_a_dose_is_confirmed_beside_the_page_it_was_read_from(tmp_path: Path):
     assert away.headers["location"].startswith("/vaccinations")
 
 
-#: The «Вакцинації» block of a Veselka (Doctor ELEKS) visit note, 08.01.2026,
+#: The «Вакцинації» block of a Veselka (Doctor Eleks) visit note, 08.01.2026,
 #: as its PDF text layer prints it -- Cyrillic «К» inside a Latin lot included.
 VISIT_NOTE = (
     "Огляд лікаря первинка\nДата взаємодії: 08.01.2026 8:32\nВакцинації\n"

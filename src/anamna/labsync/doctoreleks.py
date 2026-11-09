@@ -1,10 +1,10 @@
-"""Doctor ELEKS — the clinic platform by ELEKS (doctor.eleks.com) behind the
+"""Doctor Eleks — the clinic platform by ELEKS (doctor.eleks.com) behind the
 patient apps of several Ukrainian clinics.  Each clinic ships its own build
 of one white-label Expo/React Native app (``com.eleks.<clinic>``); they differ
 only in a tenant id.  Observed from St. Paraskeva Medical Center 1.8.2
 (``com.eleks.stparaskeva``) and Veselka 1.6.5 (``com.eleks.veselka``) on
 2026-11-06: static analysis of the Hermes bytecode, plus the two calls the app
-makes before anyone signs in.  Not the Ekspert vendor: a different stack,
+makes before anyone signs in.  Not the Expert Hospital vendor: a different stack,
 transport and model.
 
 One server for every clinic, ``https://portal-doctor.eleks.com/api``; the
@@ -76,7 +76,7 @@ from datetime import UTC, datetime
 
 from . import common
 from .common import ERROR_REPLY, LabSyncError, digits, iso_day, sex_of
-from .ekspert import _birthday, normalize_phone
+from .expert import _birthday, normalize_phone
 
 ERROR_CODE = "labsync.password_error_code"
 ERROR_UNMAPPED = "labsync.doctoreleks_error_unmapped"
@@ -552,7 +552,7 @@ def _document_entry(ident: str, cell: dict, view: dict | None) -> dict:
 
 
 def clinic(key: str, name: str, vendor: str, installation: str):
-    """One clinic on Doctor ELEKS: ``vendor`` is the name the PDF classifier
+    """One clinic on Doctor Eleks: ``vendor`` is the name the PDF classifier
     gives its reports (ingest/classifier.py), so old uploads are recognised."""
     return types.SimpleNamespace(
         KEY=key, NAME=name, VENDOR=vendor, DEFAULT_URL=DEFAULT_URL, SIGN_IN=SIGN_IN, MESSAGES=FAMILY,
@@ -566,7 +566,7 @@ def clinic(key: str, name: str, vendor: str, installation: str):
 CLINICS = {c.KEY: c for c in (
     clinic("paraskeva", "St. Paraskeva Medical Center", "St. Paraskeva Medical Center",
            "8CF86A8D-E826-44C6-9985-9D8A5F31C7EB"),
-    clinic("veselka", "Veselka Medical Center", "Veselka Medical Center", "7d4e1338-2149-48f9-9f7f-8a9f920ab4d6"),
+    clinic("veselka", "Veselka", "Veselka", "7d4e1338-2149-48f9-9f7f-8a9f920ab4d6"),
 )}
 
 __all__ = ["CLINICS", "DOCUMENTS_MENU", "Client", "clinic", "start_sign_in", "verify_code"]

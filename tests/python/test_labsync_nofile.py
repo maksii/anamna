@@ -18,7 +18,7 @@ from anamna.ingest.pipeline import RereadRefused, reingest_document
 from anamna.labsync import common
 
 from test_labsync import make, router, seed_doc, stub_intake
-from test_labsync_ekspert import FAMILY, PASSWORD, PROFILE, TOKENS
+from test_labsync_expert import FAMILY, PASSWORD, PROFILE, TOKENS
 
 ANTIGEN = "sars-cov-2-antigen"
 NOFILE = {"id": 100169, "name": '"Тест на визначення антигену SARS-CoV-2"', "category": "lab",
@@ -37,19 +37,19 @@ def routes(analysis: dict, indicators=INDICATORS) -> dict:
 
 
 def connected(tmp_path: Path, monkeypatch):
-    settings, user_id, client = make(tmp_path, enable=("ekspert",))
+    settings, user_id, client = make(tmp_path, enable=("expert",))
     monkeypatch.setattr(common, "_http", router({("POST", "/api/v1/auth/login"): TOKENS,
                                                  ("GET", "/api/v1/profile"): PROFILE,
                                                  ("GET", "/api/v1/profile/family"): FAMILY}))
-    labsync.save_credentials(settings, user_id, "ekspert", {"phone": "0670000001", "password": PASSWORD})
-    labsync.check_account(settings, user_id, "ekspert")
-    labsync.link_person(settings, user_id, "ekspert", "p41", "self", confirmed=False)
+    labsync.save_credentials(settings, user_id, "expert", {"phone": "0670000001", "password": PASSWORD})
+    labsync.check_account(settings, user_id, "expert")
+    labsync.link_person(settings, user_id, "expert", "p41", "self", confirmed=False)
     return settings, user_id, client
 
 
 def sync(settings, user_id, monkeypatch, analysis: dict, indicators=INDICATORS) -> dict:
     monkeypatch.setattr(common, "_http", router(routes(analysis, indicators)))
-    return labsync.sync(settings, user_id, "ekspert", inline=True)
+    return labsync.sync(settings, user_id, "expert", inline=True)
 
 
 def state(settings) -> dict:
@@ -128,13 +128,13 @@ def test_a_second_sync_changes_nothing_and_an_amended_record_replaces_the_old(tm
 def test_a_pdf_the_lab_attaches_later_takes_the_order_over(tmp_path: Path, monkeypatch):
     settings, user_id, _ = connected(tmp_path, monkeypatch)
     calls = stub_intake(monkeypatch, settings, user_id, {
-        "ekspert-100169.pdf": {"vendor": "Expert Hospital", "order": "100169", "day": "2025-09-18",
+        "expert-100169.pdf": {"vendor": "Expert Hospital", "order": "100169", "day": "2025-09-18",
                                "values": [("Антиген SARS-CoV-2", "не виявлено", None, "within_vendor_range")]},
     })
     sync(settings, user_id, monkeypatch, NOFILE)
     record = state(settings)["order"]["document_id"]
     summary = sync(settings, user_id, monkeypatch, {**NOFILE, "has_file": True})
-    assert calls == ["ekspert-100169.pdf"] and summary["imported"] == 1
+    assert calls == ["expert-100169.pdf"] and summary["imported"] == 1
     now = state(settings)
     pdf = next(doc for doc in now["documents"] if doc["id"] != record)
     assert now["order"]["state"] == "imported" and now["order"]["document_id"] == pdf["id"]
@@ -147,7 +147,7 @@ def test_a_pdf_the_lab_attaches_later_takes_the_order_over(tmp_path: Path, monke
             "SELECT COUNT(*) FROM audit_events WHERE action='labsync_lab_record_retired' AND entity_id=?",
             (record,)).fetchone()[0] == 1
     assert sync(settings, user_id, monkeypatch, {**NOFILE, "has_file": True})["already"] == 1
-    assert calls == ["ekspert-100169.pdf"]
+    assert calls == ["expert-100169.pdf"]
 
 
 def test_a_report_the_person_uploads_takes_the_order_over_too(tmp_path: Path, monkeypatch):
@@ -166,7 +166,7 @@ def test_a_report_the_person_uploads_takes_the_order_over_too(tmp_path: Path, mo
 
 def test_any_provider_whose_order_carries_rows_but_no_file_is_filed_the_same_way(tmp_path: Path, monkeypatch):
     """Synevo's in-lab order and its eHealth-locked one have rows and no PDF
-    too; the path is the order dict's, not Ekspert's."""
+    too; the path is the order dict's, not Expert Hospital's."""
     settings, user_id, _ = make(tmp_path, enable=("synevo",))
 
     class Lab:
@@ -215,7 +215,7 @@ def test_the_pages_say_where_the_values_came_from(tmp_path: Path, monkeypatch, l
     assert heading in page and "100169" in page and 'id="lab-record"' in page
     assert 'data-source-viewer' not in page and f'/documents/{record}/rescan' not in page
     profile = client.get("/profile?tab=connections").text
-    card = profile[profile.index('id="lab-ekspert"'):]
+    card = profile[profile.index('id="lab-expert"'):]
     assert state_text in card and f"/documents/{record}#lab-record" in card
     assert source_text in client.get(f"/metrics/{ANTIGEN}").text
     listing = client.get("/documents").text

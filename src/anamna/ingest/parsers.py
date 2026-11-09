@@ -87,7 +87,7 @@ UNIT_PATTERN = (
     # so the unit stayed glued to the name and `unit_raw` was empty.
     r"г/мл|в\s*п/з|"
     r"kUA/L|kU/L|КУО/г|COI|R|AI|пг|"
-    # A urine culture counts colonies per millilitre, not per gram (EskuLab
+    # A urine culture counts colonies per millilitre, not per gram (Esculab
     # J0008, Synevo's urogenital culture):
     #     Lactobacillus spp. 1.0 x 10^3 КУО/мл Не виявлено
     #     Ступінь бактеріурії 1,0*10^3 КУО/мл
@@ -191,7 +191,7 @@ DEMOGRAPHIC_REFERENCE_RE = re.compile(
     r"новонарод|дитин|діт|рок(?:ів|и|у)?\b|місяц|чолов|жін|вагіт|триместр|"
     # «чол.: до 41 жін.: до 33» (ALT): the men's row abbreviated.
     r"\bчол\b|"
-    # «12-16р.: 40-65» is an age band spelled the way EskuLab spells it in the
+    # «12-16р.: 40-65» is an age band spelled the way Esculab spells it in the
     # blood count.  Without this the whole segmented-neutrophil block read as
     # one plain interval and `reference_bounds` returned its first pair -- the
     # under-ones' 15-45 -- so a normal adult 46% was one point above "range".
@@ -373,7 +373,7 @@ RELATIVE_PERCENT_RE = re.compile(r"\d\s*%\s*від\b", re.I)
 #: Deliberately only the immunoassay word: a risk or optimum tier («оптимальний
 #: рівень», «Низький рівень ризику») is a tier and stays refused.
 #: «Здорове населення» ("healthy population") is the same statement in
-#: EskuLab's vitamin D scale: «Ризик дефіциту: <20.0 Ризик недостатнього
+#: Esculab's vitamin D scale: «Ризик дефіциту: <20.0 Ризик недостатнього
 #: вживання: 20.0 - <30.0 Здорове населення: 30.0 - 100.0», where the first pair
 #: of numbers is the insufficiency tier.
 _NORMAL_LABEL = r"негатив\w*|negative|здоров\w*\s+населенн\w*"
@@ -715,7 +715,7 @@ def parse_categorical_rows(text: str, page_number: int) -> list[ParsedObservatio
 
 
 def parse_pcr_sections(text: str, page_number: int) -> list[ParsedObservation]:
-    """Quantitative PCR results, which EskuLab prints as a panel, not a row.
+    """Quantitative PCR results, which Esculab prints as a panel, not a row.
 
     Ureaplasma is written out over six labelled lines -- «Вид дослідження»,
     «Метод дослідження», «Прилад», «Результат», «Клінічно значуща кількість» --
@@ -1261,7 +1261,7 @@ def _label_tail_words(following: list[str], *, lowercase_allowed: bool) -> list[
 
 
 #: A reference interval that prints one limit per sex and wraps after the
-#: first.  EskuLab's automated urinalysis puts the female limit on the value
+#: first.  Esculab's automated urinalysis puts the female limit on the value
 #: line and the male limit on the line below:
 #:
 #:     Лейкоцити в мкл (WBC) 107.6 кл/мкл жінки < 28.0
@@ -1970,7 +1970,7 @@ def _numeric_observation(
         return None
     low, high = reference_bounds(reference)
     # `parse_decimal` drops a leading «<»; the comparator has to be kept here
-    # or «<1» is stored as the measured value 1 (EskuLab amino acids;
+    # or «<1» is stored as the measured value 1 (Esculab amino acids;
     # calprotectin «<24.0»).
     comparator = _COMPARATOR.match(raw_value.strip())
     return ParsedObservation(
@@ -2245,7 +2245,7 @@ GARMIN_MONTHS = {
 }
 
 
-#: EskuLab prints its results as a table, and flattening a table to text throws
+#: Esculab prints its results as a table, and flattening a table to text throws
 #: away the one thing that says which column a word was in.  The specimen is
 #: indented under the analyte name, so «Приносний матеріал, сеча» arrives
 #: looking exactly like a continuation of that name; the reference cell wraps
@@ -2256,29 +2256,29 @@ GARMIN_MONTHS = {
 #: Reading the x position settles both, and needs no heuristic at all.
 #:
 #: The boundaries sit in the whitespace between the printed columns, measured
-#: off the header row that every EskuLab report places identically --
+#: off the header row that every Esculab report places identically --
 #: Показник@28.3 Результат@231.0 Одиниці@316.3 Референтні@416.6 -- and checked
 #: against the widest content on either side of each boundary across all six
 #: reports in this record.  They are not the header positions: values are
 #: centred in their column («солом`яний» starts at 229.3) and the reference
 #: block starts well left of its own heading (378.4 against 416.6).
-ESKULAB_PANEL_COLUMNS = (218.0, 295.0, 375.0)
+ESCULAB_PANEL_COLUMNS = (218.0, 295.0, 375.0)
 
 #: The coprogram prints a narrower table, and gives its first column no heading
 #: at all: Результат@200.4, Референтні@402.0.
-ESKULAB_STOOL_COLUMNS = (170.0, 300.0)
+ESCULAB_STOOL_COLUMNS = (170.0, 300.0)
 
 #: How far right of the left margin a word can start and still be part of the
 #: analyte name.  Names begin at 28.3; the specimen printed under them is
 #: indented to 117 or 181 depending on how the line wrapped, which is the only
 #: thing distinguishing «сечі» -- the tail of "К-сть клітин схожих на атипові в
 #: мкл сечі" -- from «сеча», the specimen, one letter away from it.
-ESKULAB_NAME_INDENT = 40.0
+ESCULAB_NAME_INDENT = 40.0
 
 #: The collection time, printed under every row of a urinalysis.  Its own
 #: right-hand column carries the continuation of the reference block above it,
 #: so the row is skipped without ending the analyte it sits under.
-ESKULAB_ROW_NOISE = re.compile(r"^Час відбору", re.I)
+ESCULAB_ROW_NOISE = re.compile(r"^Час відбору", re.I)
 
 #: What separates one panel from the next, and the table from the page.  A
 #: report of several panels prints all of this *between* them, mid-page: its
@@ -2288,7 +2288,7 @@ ESKULAB_ROW_NOISE = re.compile(r"^Час відбору", re.I)
 #: across twelve pages.  None of it belongs to an analyte either, which is how
 #: «Сторінка 1 з 3» reached a reference interval, so a row matching this ends
 #: whatever row is open and starts nothing.
-ESKULAB_END = re.compile(
+ESCULAB_END = re.compile(
     r"^(?:Примітки|Дослідження виконала|Завідувач|Пункт забору|ЕЛаб|"
     r"\*?Сфера акредитації|Діагноз не може|досліджень проводиться|відповідальності|"
     r"Ф(?:ОР)?_\d|Зам\s?овлення|Пацієнт:|Результати дослідження|Показник|Л:\d|"
@@ -2298,7 +2298,7 @@ ESKULAB_END = re.compile(
 )
 
 #: The page number, printed by itself at the foot of the reference column.
-ESKULAB_PAGE_FOOTER = re.compile(r"^Сторінка\s+\d+\s+з\s+\d+$", re.I)
+ESCULAB_PAGE_FOOTER = re.compile(r"^Сторінка\s+\d+\s+з\s+\d+$", re.I)
 
 #: The specimen, printed under the analyte name.  It is normally indented, but
 #: when it wraps the tail returns to the left margin, where it is
@@ -2308,32 +2308,32 @@ ESKULAB_PAGE_FOOTER = re.compile(r"^Сторінка\s+\d+\s+з\s+\d+$", re.I)
 #: «кал»: a stool test wraps «Приносний» / «матеріал, кал», and without it the
 #: tail was read as more of the name («Панкреатична еластаза (кал) матеріал,
 #: кал»).
-ESKULAB_SPECIMEN_WORDS = frozenset(
+ESCULAB_SPECIMEN_WORDS = frozenset(
     """приносний матеріал сеча сироватка сироватці крові кров цільна
        плазма зак виділення кал""".split()
 )
 
 
-def _eskulab_specimen(fragment: str) -> bool:
+def _esculab_specimen(fragment: str) -> bool:
     """True when a left-margin fragment is the wrapped tail of the specimen."""
     words = [word.strip(" ,.").casefold() for word in fragment.split()]
-    return bool(words) and all(word in ESKULAB_SPECIMEN_WORDS for word in words)
+    return bool(words) and all(word in ESCULAB_SPECIMEN_WORDS for word in words)
 
 #: A panel heading -- "5. F0502 Пакет №3. Ниркові проби".  Always a digit, a
 #: full stop, then a letter-and-four-digits catalogue code, which no analyte
 #: name has.  Distinguishing this from "1. С-пептид 2.41 нг/мл" is the whole
 #: reason the numbering cannot simply be stripped.
-ESKULAB_SECTION = re.compile(r"^\d+\.\s+[A-ZА-ЯІЇЄҐ]\d{4}\b")
+ESCULAB_SECTION = re.compile(r"^\d+\.\s+[A-ZА-ЯІЇЄҐ]\d{4}\b")
 
 #: The phrase a dipstick legend uses for its negative band.  The result column
 #: prints "-" and the legend defines what that means: «не виявлена (-) 250 = ++
 #: …» maps (-) to "not detected", so the row is a negative finding rather than
 #: an empty one.  Only the leading phrase is taken; the rest of the legend is
 #: the colour scale.
-ESKULAB_NEGATIVE = re.compile(r"^(не виявлен\w+|в нормі|негативн\w+)", re.I)
+ESCULAB_NEGATIVE = re.compile(r"^(не виявлен\w+|в нормі|негативн\w+)", re.I)
 
 
-def eskulab_table_page(words: list) -> bool:
+def esculab_table_page(words: list) -> bool:
     """True when the page draws one of the tables the column parser reads.
 
     Checked before parsing rather than after, so that a page which draws a
@@ -2350,21 +2350,21 @@ def eskulab_table_page(words: list) -> bool:
 #: How wide a gap inside one cell means the report drew two columns there.
 #: The reference column's second column starts around x=470 against a first at
 #: x=378, and no single phrase leaves this much space between two words.
-ESKULAB_CELL_GAP = 18.0
+ESCULAB_CELL_GAP = 18.0
 
 #: How close to the measured sub-column x a word must start to be counted as
 #: beginning it.  Every genuine start on a page sits at one x to a tenth of a
 #: point; the near misses are ordinary words that happen to land there, and at
 #: 0.5 the two populations do not overlap in any report in this record.
-ESKULAB_COLUMN_TOLERANCE = 0.5
+ESCULAB_COLUMN_TOLERANCE = 0.5
 
 #: How many lines must agree before a measured x is trusted as the sub-column.
 #: Two lines that both happen to break at the same place is a coincidence; a
 #: printed column repeats down the whole block.
-ESKULAB_COLUMN_VOTES = 3
+ESCULAB_COLUMN_VOTES = 3
 
 
-def _eskulab_reference_split(words: list, edge: float) -> tuple[float, float] | None:
+def _esculab_reference_split(words: list, edge: float) -> tuple[float, float] | None:
     """Where the reference cell's two printed sub-columns begin on this page.
 
     Splitting each line on its own wide gap works only while the left
@@ -2395,7 +2395,7 @@ def _eskulab_reference_split(words: list, edge: float) -> tuple[float, float] | 
         lines.setdefault(key, []).append((x0, x1))
 
     def vote(tally: dict[float, int], x0: float) -> None:
-        key = next((seen for seen in tally if abs(seen - x0) <= ESKULAB_COLUMN_TOLERANCE), x0)
+        key = next((seen for seen in tally if abs(seen - x0) <= ESCULAB_COLUMN_TOLERANCE), x0)
         tally[key] = tally.get(key, 0) + 1
 
     splits: dict[float, int] = {}
@@ -2406,7 +2406,7 @@ def _eskulab_reference_split(words: list, edge: float) -> tuple[float, float] | 
         vote(lefts, row[0][0])
         previous: float | None = None
         for x0, x1 in row:
-            if previous is not None and x0 - previous >= ESKULAB_CELL_GAP:
+            if previous is not None and x0 - previous >= ESCULAB_CELL_GAP:
                 vote(splits, x0)
             vote(starts, x0)
             previous = x1
@@ -2421,11 +2421,11 @@ def _eskulab_reference_split(words: list, edge: float) -> tuple[float, float] | 
     # lines per block, one short of a column, and the newborn label took the
     # adults' interval.
     def support(x: float) -> int:
-        return sum(count for start, count in starts.items() if abs(start - x) <= ESKULAB_COLUMN_TOLERANCE)
+        return sum(count for start, count in starts.items() if abs(start - x) <= ESCULAB_COLUMN_TOLERANCE)
 
     split = max(splits, key=lambda x: (support(x), splits[x], -x))
     left, _ = max(lefts.items(), key=lambda item: (item[1], item[0]))
-    if support(split) < ESKULAB_COLUMN_VOTES or left >= split - ESKULAB_CELL_GAP:
+    if support(split) < ESCULAB_COLUMN_VOTES or left >= split - ESCULAB_CELL_GAP:
         return None
     return left, split
 
@@ -2456,7 +2456,7 @@ def _eskulab_reference_split(words: list, edge: float) -> tuple[float, float] | 
 #: age, «1-<12 р.»: oestradiol's «Період овуляції: 32.1-517» runs into the next
 #: column's «1-<12 р.: <15.0» and comes back as «32.1-5171-<12», the ovulation
 #: band ending at 5171 and the children's band losing its label.
-ESKULAB_GLUE = re.compile(
+ESCULAB_GLUE = re.compile(
     r"(?<=\d)(?=[^\W\d_])"
     r"|(?<=[^\W\d_])(?=[<>≤≥])"
     r"|(?<=[.,]\d)(?=\d+[.,]\d|\d{1,3}[-–—]\d{1,3}(?![\d.,]))"
@@ -2483,7 +2483,7 @@ def _unglue(text: str, x0: float, x1: float, split: float) -> list[str]:
     cut = round(len(text) * (split - x0) / (x1 - x0))
     candidates = [
         match.start()
-        for match in ESKULAB_GLUE.finditer(text)
+        for match in ESCULAB_GLUE.finditer(text)
         if 0 < match.start() < len(text) and abs(match.start() - cut) <= 1
     ]
     if not candidates:
@@ -2492,14 +2492,14 @@ def _unglue(text: str, x0: float, x1: float, split: float) -> list[str]:
     return [text[:at], text[at:]]
 
 
-def _eskulab_rows(
+def _esculab_rows(
     words: list, boundaries: tuple[float, ...]
 ) -> list[tuple[list[str], list[str], float]]:
     """Group words into the rows and columns the report actually printed.
 
     A row counts as a table row only when no word crosses a column boundary.
     Prose does cross -- the page furniture, the panel headings, and the
-    free-form blocks EskuLab uses for quantitative PCR all run straight through
+    free-form blocks Esculab uses for quantitative PCR all run straight through
     the gaps between columns -- so this one test is also what separates the
     table from everything else on the page.
     """
@@ -2507,7 +2507,7 @@ def _eskulab_rows(
     for x0, x1, top, text in words:
         key = next((seen for seen in lines if abs(seen - top) <= 2.0), top)
         lines.setdefault(key, []).append((x0, x1, top, text))
-    measured = _eskulab_reference_split(words, boundaries[-1])
+    measured = _esculab_reference_split(words, boundaries[-1])
     rows: list[tuple[list[str], list[str], float]] = []
     for top in sorted(lines):
         row = sorted(lines[top])
@@ -2516,13 +2516,13 @@ def _eskulab_rows(
         # «Сторінка 1 з 3» on a line of its own sits inside the reference
         # column, below the page's last row, and was stored as the end of
         # that row's interval («жінки < 100.0 чоловіки < 26.4 Сторінка 1 з 3»).
-        if ESKULAB_PAGE_FOOTER.match(" ".join(text for _, _, _, text in row)):
+        if ESCULAB_PAGE_FOOTER.match(" ".join(text for _, _, _, text in row)):
             continue
-        rows.append(_eskulab_row(row, boundaries, measured))
+        rows.append(_esculab_row(row, boundaries, measured))
     return rows
 
 
-def _eskulab_row(
+def _esculab_row(
     row: list[tuple[float, float, float, str]],
     boundaries: tuple[float, ...],
     measured: tuple[float, float] | None,
@@ -2544,18 +2544,18 @@ def _eskulab_row(
     # measurable second column -- falls back to the wide-gap rule, which
     # leaves a genuine single column untouched.
     aligned = bool(reference) and measured is not None and any(
-        abs(reference[0][0] - anchor) <= ESKULAB_COLUMN_TOLERANCE for anchor in measured
+        abs(reference[0][0] - anchor) <= ESCULAB_COLUMN_TOLERANCE for anchor in measured
     )
-    segments = _eskulab_measured_cells(reference, measured[1]) if aligned else _eskulab_gap_cells(reference)
+    segments = _esculab_measured_cells(reference, measured[1]) if aligned else _esculab_gap_cells(reference)
     columns[last] = [word for segment in segments for word in segment]
     cells = [collapse_space(" ".join(column)) for column in columns]
-    # Empty sub-columns are kept: `parse_eskulab` reads a block by position,
+    # Empty sub-columns are kept: `parse_esculab` reads a block by position,
     # and a line printed only in the right column has to stay in the right
     # column or its band lands under the wrong heading.
     return cells, [collapse_space(" ".join(s)) for s in segments], row[0][0]
 
 
-def _eskulab_measured_cells(reference: list[tuple[float, float, str]], split: float) -> list[list[str]]:
+def _esculab_measured_cells(reference: list[tuple[float, float, str]], split: float) -> list[list[str]]:
     """The reference words of a line laid out on the measured sub-columns."""
     left_cell: list[str] = []
     right_cell: list[str] = []
@@ -2563,26 +2563,26 @@ def _eskulab_measured_cells(reference: list[tuple[float, float, str]], split: fl
         for piece_index, piece in enumerate(_unglue(text, x0, x1, split)):
             # Once a line crosses into the right sub-column it stays
             # there; the second half of a glued word is already across.
-            if piece_index or abs(x0 - split) <= ESKULAB_COLUMN_TOLERANCE or right_cell:
+            if piece_index or abs(x0 - split) <= ESCULAB_COLUMN_TOLERANCE or right_cell:
                 right_cell.append(piece)
             else:
                 left_cell.append(piece)
     return [left_cell, right_cell]
 
 
-def _eskulab_gap_cells(reference: list[tuple[float, float, str]]) -> list[list[str]]:
+def _esculab_gap_cells(reference: list[tuple[float, float, str]]) -> list[list[str]]:
     """The reference words of a line, split wherever a wide gap separates them."""
     segments: list[list[str]] = [[]]
     previous_x1: float | None = None
     for x0, x1, text in reference:
-        if previous_x1 is not None and x0 - previous_x1 >= ESKULAB_CELL_GAP:
+        if previous_x1 is not None and x0 - previous_x1 >= ESCULAB_CELL_GAP:
             segments.append([])
         segments[-1].append(text)
         previous_x1 = x1
     return segments
 
 
-def _eskulab_result(
+def _esculab_result(
     name: str, result: str, unit: str | None, band: str | None, page_number: int, evidence: str
 ) -> ParsedObservation:
     """A row with something in its result column: a number, or a categorical finding."""
@@ -2616,7 +2616,7 @@ def _eskulab_result(
 _WRAPPED_UNIT = re.compile(r"(\d[^\W\d_]+/) (?=[^\W\d_])")
 
 
-def _eskulab_observation(
+def _esculab_observation(
     name: str, result: str, unit: str, reference: list[str], page_number: int
 ) -> ParsedObservation | None:
     """One finished table row, numeric or categorical."""
@@ -2646,12 +2646,12 @@ def _eskulab_observation(
     unit = unit.strip() or None
     evidence = collapse_space(f"{name} {result} {unit or ''} {joined}")
     if result and result != "-":
-        return _eskulab_result(name, result, unit, band, page_number, evidence)
+        return _esculab_result(name, result, unit, band, page_number, evidence)
     # An empty result column with a unit and a legend under it is a dipstick
     # pad that read negative -- the legend itself defines "-" as «не виявлена».
     # An empty result with no unit and no legend is a section heading
     # («Фізико-хімічні властивості»), which is not a finding at all.
-    negative = ESKULAB_NEGATIVE.match(joined) if (unit and joined) else None
+    negative = ESCULAB_NEGATIVE.match(joined) if (unit and joined) else None
     # A dash in every column -- «Каламутність(рівень) (C-CLOUD) - - -» -- is
     # the analyser's reading against a reference that is itself a dash: no
     # turbidity, as printed.  A heading prints no unit and no reference.
@@ -2678,7 +2678,7 @@ _INDICATOR_HEADING = "Показник"
 _RESULT_HEADING = "Результат"
 
 
-def _eskulab_header(rows: list[tuple[list[str], list[str], float]]) -> int | None:
+def _esculab_header(rows: list[tuple[list[str], list[str], float]]) -> int | None:
     """The index of the «Показник | Результат» header row, or None."""
     return next(
         (
@@ -2690,7 +2690,7 @@ def _eskulab_header(rows: list[tuple[list[str], list[str], float]]) -> int | Non
     )
 
 
-def _eskulab_material(text: str) -> str | None:
+def _esculab_material(text: str) -> str | None:
     """The specimen a «цільна кров ЗАК» / «Приносний матеріал, сеча» line names."""
     material = collapse_space(text)
     phrase = SPECIMEN_PHRASE.search(material) or re.search(
@@ -2699,8 +2699,8 @@ def _eskulab_material(text: str) -> str | None:
     return phrase.group(0) if phrase else None
 
 
-class _EskulabPanel:
-    """The analyte row being read off an EskuLab panel, until the next one starts."""
+class _EsculabPanel:
+    """The analyte row being read off an Esculab panel, until the next one starts."""
 
     def __init__(self, page_number: int) -> None:
         self.page_number = page_number
@@ -2722,26 +2722,26 @@ class _EskulabPanel:
 
     def flush(self) -> None:
         if self.name:
-            found = _eskulab_observation(
+            found = _esculab_observation(
                 self.name, self.result, self.unit,
                 [p for column in self.reference for p in column], self.page_number,
             )
             if found is not None:
-                self.observations.append(replace(found, specimen=_eskulab_material(" ".join(self.specimen))))
+                self.observations.append(replace(found, specimen=_esculab_material(" ".join(self.specimen))))
         self.name = self.result = self.unit = ""
         self.reference = []
         self.specimen = []
 
     def read(self, cells: list[str], segments: list[str], indent: float) -> None:
         first, _value, _measure, band = cells
-        if ESKULAB_END.match(first) or ESKULAB_SECTION.match(first):
+        if ESCULAB_END.match(first) or ESCULAB_SECTION.match(first):
             self.flush()
             return
-        if ESKULAB_ROW_NOISE.match(first):
+        if ESCULAB_ROW_NOISE.match(first):
             if band and self.name:
                 self.collect(segments)
             return
-        self._read_table_line(cells, segments, indent < ESKULAB_NAME_INDENT)
+        self._read_table_line(cells, segments, indent < ESCULAB_NAME_INDENT)
 
     def _read_table_line(self, cells: list[str], segments: list[str], left_margin: bool) -> None:
         first, value, measure, band = cells
@@ -2749,7 +2749,7 @@ class _EskulabPanel:
         # only once the indented specimen has begun («сироватка» / «крові»).
         # Before that it ends the name: «Концентрація Ig А в сироватці» /
         # «крові», with «сироватка крові» indented under it.
-        specimen = _eskulab_specimen(first) and (not left_margin or bool(self.specimen))
+        specimen = _esculab_specimen(first) and (not left_margin or bool(self.specimen))
         if first and not value and self.name and specimen:
             self.specimen.append(first)
         # A second table, printed inside the rows the reference column wraps
@@ -2789,35 +2789,35 @@ class _EskulabPanel:
             self.name = f"{self.name} {first}"
 
 
-def parse_eskulab(words: list, page_number: int) -> list[ParsedObservation]:
-    """Read the EskuLab results table off the page's word positions.
+def parse_esculab(words: list, page_number: int) -> list[ParsedObservation]:
+    """Read the Esculab results table off the page's word positions.
 
     Returns nothing for a page that does not print the four-column header --
     the microbiology and quantitative-PCR reports use other layouts, and the
     shared passes already read those.
     """
-    rows = _eskulab_rows(words, ESKULAB_PANEL_COLUMNS)
-    header = _eskulab_header(rows)
+    rows = _esculab_rows(words, ESCULAB_PANEL_COLUMNS)
+    header = _esculab_header(rows)
     if header is None:
         return []
-    panel = _EskulabPanel(page_number)
+    panel = _EsculabPanel(page_number)
     for cells, segments, indent in rows[header + 1 :]:
         panel.read(cells, segments, indent)
     panel.flush()
-    return panel.observations + _eskulab_notes(words, page_number)
+    return panel.observations + _esculab_notes(words, page_number)
 
 
 #: The free-text notes row a blood count or urinalysis closes with:
 #: «Примітки (зак) Токсигенна зернистість окремих нейтрофілів.»  It usually
 #: prints «-»; when it prints anything else that is a finding of the smear.
-_ESKULAB_NOTES = re.compile(r"^Примітки\b", re.I)
+_ESCULAB_NOTES = re.compile(r"^Примітки\b", re.I)
 
 
-def _eskulab_notes(words: list, page_number: int) -> list[ParsedObservation]:
+def _esculab_notes(words: list, page_number: int) -> list[ParsedObservation]:
     """Each notes row that says something, as a text result.
 
     The note runs straight across the result, unit and reference columns, so
-    `_eskulab_rows` drops the line as prose, and `ESKULAB_END` ends the panel
+    `_esculab_rows` drops the line as prose, and `ESCULAB_END` ends the panel
     on its label: the one morphology finding of a blood count was stored
     nowhere.  Words right of the name column on the label's line, and on the
     lines that continue it there, are the note.
@@ -2825,18 +2825,18 @@ def _eskulab_notes(words: list, page_number: int) -> list[ParsedObservation]:
     lines = _word_lines(words)
     observations: list[ParsedObservation] = []
     for index, line in enumerate(lines):
-        if line[0][0] >= ESKULAB_NAME_INDENT or not _ESKULAB_NOTES.match(line[0][3]):
+        if line[0][0] >= ESCULAB_NAME_INDENT or not _ESCULAB_NOTES.match(line[0][3]):
             continue
-        label = collapse_space(" ".join(word[3] for word in line if word[0] < ESKULAB_PANEL_COLUMNS[0]))
-        note = [word[3] for word in line if word[0] >= ESKULAB_PANEL_COLUMNS[0]]
+        label = collapse_space(" ".join(word[3] for word in line if word[0] < ESCULAB_PANEL_COLUMNS[0]))
+        note = [word[3] for word in line if word[0] >= ESCULAB_PANEL_COLUMNS[0]]
         specimen = None
         for following in lines[index + 1 : index + 4]:
-            if following[0][0] >= ESKULAB_PANEL_COLUMNS[0]:
+            if following[0][0] >= ESCULAB_PANEL_COLUMNS[0]:
                 note.extend(word[3] for word in following)
                 continue
             text = " ".join(word[3] for word in following)
-            if _eskulab_specimen(text):
-                specimen = _eskulab_material(text)
+            if _esculab_specimen(text):
+                specimen = _esculab_material(text)
             break
         value = collapse_space(" ".join(note))
         if not value or value == "-":
@@ -2852,7 +2852,7 @@ def _eskulab_notes(words: list, page_number: int) -> list[ParsedObservation]:
     return observations
 
 
-def eskulab_leading_reference(words: list) -> str | None:
+def esculab_leading_reference(words: list) -> str | None:
     """Reference lines at the top of a page, before its first result row.
 
     They are the end of the previous page's last block: ESR's «Чоловіки
@@ -2860,14 +2860,14 @@ def eskulab_leading_reference(words: list) -> str | None:
     where the page they belong to cannot see them.  `parse_document` hands
     them back to that row when it reads the pages together.
     """
-    rows = _eskulab_rows(words, ESKULAB_PANEL_COLUMNS)
-    header = _eskulab_header(rows)
+    rows = _esculab_rows(words, ESCULAB_PANEL_COLUMNS)
+    header = _esculab_header(rows)
     if header is None:
         return None
     parts: list[str] = []
     for cells, _segments, _indent in rows[header + 1 :]:
         first, value, _measure, band = cells
-        if value or (first and not _eskulab_specimen(first)) or ESKULAB_END.match(first):
+        if value or (first and not _esculab_specimen(first)) or ESCULAB_END.match(first):
             break
         if band:
             parts.append(band)
@@ -2877,14 +2877,14 @@ def eskulab_leading_reference(words: list) -> str | None:
 #: Quantities a coprogram reports, as opposed to the sub-headings it reports
 #: them under.  «М'язові волокна» is followed by «змінені» and «не змінені»,
 #: each with its own quantity underneath, and both sit in the same column.
-ESKULAB_STOOL_QUANTITY = re.compile(
+ESCULAB_STOOL_QUANTITY = re.compile(
     r"^(?:не виявлено|поодиноко|невелика к-сть|значна к-сть|помірна к-сть|"
     r"незначна к-сть|велика к-сть|\d+[.,]?\d*|.*в п/з)",
     re.I,
 )
 
 
-def _eskulab_stool_header(rows: list[tuple[list[str], list[str], float]], page_text: str) -> int | None:
+def _esculab_stool_header(rows: list[tuple[list[str], list[str], float]], page_text: str) -> int | None:
     """Where the coprogram's rows start: after its header row, from the top of
     a page that continues it (-1), or None for a page that is no coprogram."""
     header = next(
@@ -2912,12 +2912,12 @@ def _eskulab_stool_header(rows: list[tuple[list[str], list[str], float]], page_t
     continuation = sum(
         1
         for cells, _, indent in rows
-        if indent < ESKULAB_NAME_INDENT and all(cells) and not ESKULAB_END.match(cells[0])
+        if indent < ESCULAB_NAME_INDENT and all(cells) and not ESCULAB_END.match(cells[0])
     )
     return -1 if continuation >= 2 else None
 
 
-class _EskulabStool:
+class _EsculabStool:
     """The coprogram row being read: a flat row, or a nested parent's sub-rows."""
 
     def __init__(self, page_number: int) -> None:
@@ -2928,7 +2928,7 @@ class _EskulabStool:
 
     def flush(self) -> None:
         if self.name and self.value:
-            found = _eskulab_observation(self.name, self.value, "", [self.band], self.page_number)
+            found = _esculab_observation(self.name, self.value, "", [self.band], self.page_number)
             if found is not None:
                 self.observations.append(replace(found, specimen="кал"))
         self.name = self.value = self.band = ""
@@ -2968,10 +2968,10 @@ class _EskulabStool:
         # Inside a nested block the result column alternates sub-heading and
         # quantity.  Naming the quantities is what tells the two apart --
         # counting alone mis-pairs the moment a sub-heading wraps.
-        if not ESKULAB_STOOL_QUANTITY.match(result):
+        if not ESCULAB_STOOL_QUANTITY.match(result):
             self.subheading = result
             return
-        found = _eskulab_observation(
+        found = _esculab_observation(
             f"{self.parent} {self.subheading}".strip(), result, "", [self.parent_band], self.page_number,
         )
         if found is not None:
@@ -2979,7 +2979,7 @@ class _EskulabStool:
         self.subheading = ""
 
 
-def parse_eskulab_stool(words: list, page_number: int) -> list[ParsedObservation]:
+def parse_esculab_stool(words: list, page_number: int) -> list[ParsedObservation]:
     """Read the coprogram, whose table gives its first column no heading.
 
     Most rows are flat -- «Слиз | не виявлено | не виявлено» -- and their names
@@ -3000,18 +3000,18 @@ def parse_eskulab_stool(words: list, page_number: int) -> list[ParsedObservation
     # The panel heading names its own material -- "F9014 Копрограма (матеріал:
     # Приносний матеріал, кал)" -- and it is prose, so it spans the columns and
     # never reaches `rows`.  Requiring it is also what keeps this parser off
-    # any other two-column table EskuLab may print.
+    # any other two-column table Esculab may print.
     page_text = " ".join(text for _, _, _, text in words)
-    rows = _eskulab_rows(words, ESKULAB_STOOL_COLUMNS)
-    header = _eskulab_stool_header(rows, page_text)
+    rows = _esculab_rows(words, ESCULAB_STOOL_COLUMNS)
+    header = _esculab_stool_header(rows, page_text)
     if header is None:
         return []
-    stool = _EskulabStool(page_number)
+    stool = _EsculabStool(page_number)
     for cells, _segments, indent in rows[header + 1 :]:
         first, result, reference = cells
-        if ESKULAB_END.match(first) or ESKULAB_SECTION.match(first):
+        if ESCULAB_END.match(first) or ESCULAB_SECTION.match(first):
             break
-        if first and indent < ESKULAB_NAME_INDENT:
+        if first and indent < ESCULAB_NAME_INDENT:
             stool.read_name(first, result, reference)
         else:
             stool.read_result(result, reference)
@@ -3270,7 +3270,7 @@ def parse_kardia_ecg(pages: list[dict[str, object]]) -> list[ParsedObservation]:
 VISIT_MEASUREMENT_TYPES = frozenset({"consultation", "clinical_report"})
 
 # Each unit spelling below is proven by a line in the record (Veselka /
-# Doctor ELEKS notes, 2025-12 to 2026-08) and accepted only in the column or
+# Doctor Eleks notes, 2025-12 to 2026-08) and accepted only in the column or
 # behind the label that gives it its meaning -- a bare «хв» is minutes anywhere
 # else, and «%» or «см» on their own are anything at all:
 #     «Температура: 36,6 ° C»                          primary-care visit note
@@ -3586,7 +3586,7 @@ def parse_visit_measurements(pages: list[dict[str, object]]) -> list[ParsedObser
 #: The microbiology table: «Мікроорганізм@28 Результат@243.8 Референтні@378.4».
 #: Organism names end by 207.5 («E.сoli із зміненими властивостями») and the
 #: result column starts at 243.8; counts end by 340.9 («… КУО/мл»).
-ESKULAB_CULTURE_COLUMNS = (220.0, 375.0)
+ESCULAB_CULTURE_COLUMNS = (220.0, 375.0)
 
 #: A colony count the result column prints: «1.0 x 10^7 КУО/г», «<1.0 x 10^5
 #: КУО/г», and the bacteriuria line's «1,0*10^3 КУО/мл».  The comparator is
@@ -3614,7 +3614,7 @@ _CULTURE_ANTIBIOGRAM_HEAD = re.compile(r"^Антибіотики/Антимік�
 #: disk held, never a measurement of the patient, so it is matched only to be
 #: discarded; the verdict is the finding, EUCAST's «збільшена експозиція»
 #: qualifier included.
-ESKULAB_ANTIBIOGRAM = re.compile(
+ESCULAB_ANTIBIOGRAM = re.compile(
     rf"^(?P<name>[^\W\d_][^\d]*?)(?:\s+\d+(?:[.,]\d+)?\s*(?:мкг|од)\.?)?\s+"
     rf"(?P<verdict>(?:{SUSCEPTIBILITY_VERDICT})(?:,\s*збільшена експозиція)?)$",
     re.I,
@@ -3657,7 +3657,7 @@ def _culture_row(
 def _antibiogram_row(
     line: str, page_number: int, specimen: str | None, organism: str | None
 ) -> ParsedObservation | None:
-    match = ESKULAB_ANTIBIOGRAM.match(line)
+    match = ESCULAB_ANTIBIOGRAM.match(line)
     if not match:
         return None
     name = collapse_space(match.group("name")).strip(" ,.:;")
@@ -3673,7 +3673,7 @@ def _antibiogram_row(
     )
 
 
-class _EskulabCulture:
+class _EsculabCulture:
     """A microbiology page read top to bottom: sections, organism rows, antibiograms."""
 
     def __init__(self, page_number: int) -> None:
@@ -3697,7 +3697,7 @@ class _EskulabCulture:
             self.organism = collapse_space(head.group("organism")) or self.organism
             self.in_table = False
             return
-        if ESKULAB_SECTION.match(text):
+        if ESCULAB_SECTION.match(text):
             self.organism, self.specimen, self.in_table = None, None, False
             return
         antibiotic = _antibiogram_row(text, self.page_number, self.specimen, self.organism)
@@ -3708,7 +3708,7 @@ class _EskulabCulture:
         if text.startswith("Мікроорганізм") and _RESULT_HEADING in text:
             self.in_table, self.open_row = True, None
             return
-        if line[0][0] >= ESKULAB_CULTURE_COLUMNS[0] and any(item.raw_name == text for item in self.observations):
+        if line[0][0] >= ESCULAB_CULTURE_COLUMNS[0] and any(item.raw_name == text for item in self.observations):
             # The organism's own antibiogram sub-heading, printed off the
             # margin with no label: «Staphylococcus aureus» again.
             self.organism, self.in_table, self.open_row = text, False, None
@@ -3717,8 +3717,8 @@ class _EskulabCulture:
             self._read_table_line(line)
 
     def _read_table_line(self, line: list[tuple[float, float, float, str]]) -> None:
-        name_to, result_to = ESKULAB_CULTURE_COLUMNS
-        if any(x0 < edge < x1 for x0, x1, _, _ in line for edge in ESKULAB_CULTURE_COLUMNS):
+        name_to, result_to = ESCULAB_CULTURE_COLUMNS
+        if any(x0 < edge < x1 for x0, x1, _, _ in line for edge in ESCULAB_CULTURE_COLUMNS):
             # Prose runs across the columns: the commentary under a table
             # («Виявлений збудник … є контамінантом»), a signature.  The
             # table is over.
@@ -3746,7 +3746,7 @@ class _EskulabCulture:
             )
 
 
-def parse_eskulab_culture(words: list, page_number: int) -> list[ParsedObservation]:
+def parse_esculab_culture(words: list, page_number: int) -> list[ParsedObservation]:
     """Read the organisms a culture grew, and the antibiogram under them.
 
     One page can carry several sections -- a urine culture, then a stool
@@ -3772,7 +3772,7 @@ def parse_eskulab_culture(words: list, page_number: int) -> list[ParsedObservati
     texts = [" ".join(word[3] for word in line) for line in lines]
     if not any(text.startswith("Мікроорганізм") or _CULTURE_ANTIBIOGRAM_HEAD.match(text) for text in texts):
         return []
-    culture = _EskulabCulture(page_number)
+    culture = _EsculabCulture(page_number)
     for line in lines:
         culture.read(line)
     return culture.observations
@@ -3781,11 +3781,11 @@ def parse_eskulab_culture(words: list, page_number: int) -> list[ParsedObservati
 #: The express urine microbiology checklist (J1008, J1014): a group label at
 #: the margin («Мікроорганізми:»), the organism at 189.9 and the answer at
 #: 483.2 -- «Escherichia coli … Не виявлено».
-ESKULAB_EXPRESS_COLUMNS = (180.0, 470.0)
+ESCULAB_EXPRESS_COLUMNS = (180.0, 470.0)
 _EXPRESS_ANSWER = re.compile(r"^(?:не\s+)?виявлен\w*$", re.I)
 
 
-def parse_eskulab_express(words: list, page_number: int) -> list[ParsedObservation]:
+def parse_esculab_express(words: list, page_number: int) -> list[ParsedObservation]:
     """Each organism of an express microbiology checklist, with its answer.
 
     The page has no results table -- a lone «Результат» heading and then one
@@ -3797,7 +3797,7 @@ def parse_eskulab_express(words: list, page_number: int) -> list[ParsedObservati
     lines = _word_lines(words)
     if not any([word[3] for word in line] == [_RESULT_HEADING] for line in lines):
         return []
-    label_to, answer_from = ESKULAB_EXPRESS_COLUMNS
+    label_to, answer_from = ESCULAB_EXPRESS_COLUMNS
     specimen: str | None = None
     observations: list[ParsedObservation] = []
     for line in lines:
@@ -3819,7 +3819,7 @@ def parse_eskulab_express(words: list, page_number: int) -> list[ParsedObservati
     return observations
 
 
-#: The partner laboratory's coprogram, attached to an EskuLab order as a page
+#: The partner laboratory's coprogram, attached to an Esculab order as a page
 #: of its own: «Показники@100.8 Результат@249.3 Од. виміру@352.4 Реф.
 #: значення@451.1».  Names end by 175.4, results run 212.8-335.0 (centred),
 #: units 349.6-408.6 and references start at 424.3.
@@ -3835,7 +3835,7 @@ def parse_partner_coprogram(words: list, page_number: int) -> list[ParsedObserva
     below the name: «Дорослі: оформлений; Діти:» sits over «Форма», and
     «допускається неоформлений.» under it.  Each line belongs to the name
     nearest it; the cells are joined top to bottom.  Rows carry the specimen,
-    as on EskuLab's own coprogram, or «Колір» and «Лейкоцити» resolve onto the
+    as on Esculab's own coprogram, or «Колір» and «Лейкоцити» resolve onto the
     urine concepts of the same name.  The unit column («кількість в п/з») is
     kept with the text result it qualifies (``finalise``).
     """
@@ -3869,7 +3869,7 @@ def parse_partner_coprogram(words: list, page_number: int) -> list[ParsedObserva
         name, result, unit, reference = (collapse_space(" ".join(cell)) for cell in cells)
         if not result:
             continue  # the «30511 Копрограма» heading
-        found = _eskulab_observation(name, result, unit, [reference], page_number)
+        found = _esculab_observation(name, result, unit, [reference], page_number)
         if found is not None:
             observations.append(replace(found, specimen="кал"))
     return observations
@@ -4347,7 +4347,7 @@ _US_PAIR = rf"{_us_n('a')}{_US_TIMES}{_us_n('b')}\s*{_US_MM}"
 #: The organ headings an abdominal protocol prints, Expert's and Veselka's
 #: alike.  A measurement is read only inside its own organ's text, so the
 #: «Розмірами: A * B мм» every organ prints cannot be filed under another one.
-#: UltraMed prints them in capitals («ПЕЧІНКА.», «ЖОВЧНИЙ МІХУР.») and spells
+#: Ultramed prints them in capitals («ПЕЧІНКА.», «ЖОВЧНИЙ МІХУР.») and spells
 #: the gallbladder «Жовчний»; a lower-case «печінка» inside prose is not a
 #: heading, so only the two printed cases are read.
 _US_ORGAN_NAMES = (
@@ -5504,10 +5504,10 @@ def _with_reference(item: ParsedObservation, reference: str | None) -> ParsedObs
     ))
 
 
-def _eskulab_page(
+def _esculab_page(
     text: str, page_number: int, words: list, issues: list[ParseIssue] | None
 ) -> list[ParsedObservation] | None:
-    """The rows of an EskuLab page its column parser owns, or None.
+    """The rows of an Esculab page its column parser owns, or None.
 
     The column parser owns any page it read rows from, and any page that
     draws a table even when it read none.  That second half matters:
@@ -5520,13 +5520,13 @@ def _eskulab_page(
     through to the passes that read those.
     """
     table = (
-        parse_eskulab(words, page_number)
-        + parse_eskulab_stool(words, page_number)
-        + parse_eskulab_culture(words, page_number)
-        + parse_eskulab_express(words, page_number)
+        parse_esculab(words, page_number)
+        + parse_esculab_stool(words, page_number)
+        + parse_esculab_culture(words, page_number)
+        + parse_esculab_express(words, page_number)
         + parse_partner_coprogram(words, page_number)
     )
-    if table or eskulab_table_page(words):
+    if table or esculab_table_page(words):
         return _review_antibiotics(
             table + parse_pcr_sections(text, page_number), page_number, issues
         )
@@ -5573,7 +5573,7 @@ def _with_culture_material(observations: list[ParsedObservation], text: str) -> 
     """Every row without a specimen takes the one a microbiology page prints.
 
     Expert prints the specimen above the results («Матеріал: мазок із
-    зіву») rather than in the title an EskuLab culture carries it in, so
+    зіву») rather than in the title an Esculab culture carries it in, so
     every row on the page takes it from that line.
     """
     material = re.search(r"^\s*Матеріал\s*:\s*(?P<specimen>[^\n:]{3,60}?)\s*$", text, re.M | re.I)
@@ -5809,16 +5809,16 @@ def parse_source_text(
         return polycheck
     if clinical_type == "allergy":
         return parse_allergy_panel(text, page_number, words)
-    # EskuLab draws a table, and the generic passes read the parts of it that
+    # Esculab draws a table, and the generic passes read the parts of it that
     # wrap -- the specimen under the name, the reference cell under the row --
     # as more results.  Its own parser reads the columns instead, so where it
     # recognises the page it replaces every shared pass rather than adding to
     # them.  It returns nothing for the layouts it does not draw as a table
     # (quantitative PCR, microbiology), and those fall through unchanged.
-    if vendor == "EskuLab" and words:
-        eskulab = _eskulab_page(text, page_number, words, issues)
-        if eskulab is not None:
-            return eskulab
+    if vendor == "Esculab" and words:
+        esculab = _esculab_page(text, page_number, words, issues)
+        if esculab is not None:
+            return esculab
     observations = _shared_passes(vendor, text, page_number, words, issues)
     if clinical_type == "microbiology":
         observations.extend(parse_microbiology_narrative(text, page_number))
@@ -5832,7 +5832,7 @@ def parse_source_text(
 
 
 #: One tier of a dipstick scale, either way round: «+=25», «+++≥100» (Expert)
-#: or «25 = +», «500 = +++» (EskuLab).  «+-» is the trace tier, which is not
+#: or «25 = +», «500 = +++» (Esculab).  «+-» is the trace tier, which is not
 #: a positive one, and is excluded by refusing a plus run that touches a minus.
 _PLUS_TIER = re.compile(
     r"(?<![+\-\d])(?P<plus>\+{1,4})(?![+\-])\s*[=≥]\s*(?P<num>\d+(?:[.,]\d+)?)"
@@ -6761,7 +6761,7 @@ def _special_layout_rows(
 
 def _carry_leading_reference(observations: list[ParsedObservation], page_words: list, page_number: int) -> None:
     """Give the previous page's last block the reference lines that opened this page."""
-    carried = eskulab_leading_reference(page_words)
+    carried = esculab_leading_reference(page_words)
     last = len(observations) - 1
     if carried and observations[last].page_number == page_number - 1 and observations[last].reference_text:
         observations[last] = _with_reference(
@@ -6865,12 +6865,12 @@ def parse_document(
     silab, silab_state = silab_print(pages), {}
     for page in pages:
         page_words = page.get("words")
-        # An EskuLab page whose native layer draws the table is read from its
+        # An Esculab page whose native layer draws the table is read from its
         # columns, so the OCR pass over the same page is skipped entirely.  It
         # carries no word positions, which would send it to the passes that
         # read the page as flat text -- and read the reference block under
         # each row as more results, which is the bug the columns exist to fix.
-        columns_own_page = bool(vendor == "EskuLab" and page_words and eskulab_table_page(page_words))
+        columns_own_page = bool(vendor == "Esculab" and page_words and esculab_table_page(page_words))
         if columns_own_page and observations:
             # The previous page's last block, continued over the break.
             _carry_leading_reference(observations, page_words, int(page["page_number"]))

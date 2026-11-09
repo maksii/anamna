@@ -245,7 +245,7 @@
    * assembled files join the same queue. Both numbers come from the server;
    * this file holds neither wording nor limits of its own. */
   const form = document.querySelector("form.an-upload");
-  if (form && picker && globalThis.crypto && crypto.randomUUID) {
+  if (form && picker && globalThis.XMLHttpRequest && globalThis.FormData) {
     const sliceSize = Number(form.dataset.chunkSize) || 0;
     const threshold = Number(form.dataset.chunkThreshold) || 0;
     const button = form.querySelector("button[type=submit]");
@@ -268,11 +268,8 @@
           const payload = await response.json();
           if (!response.ok) throw payload;
           sent += part.size;
-          if (chosen) {
-            chosen.textContent = form.dataset.progress
-              .replace("{name}", file.name)
-              .replace("{percent}", String(Math.min(100, Math.round((sent / total) * 100))));
-          }
+          const percent = Math.min(100, Math.round((sent / total) * 100));
+          show(percent, form.dataset.progress.replace("{name}", file.name).replace("{percent}", String(percent)));
           if (payload.status === "rejected") {
             // The queue row already says why; move on to the next file.
             sent += Math.max(0, file.size - offset - part.size);
@@ -283,19 +280,57 @@
       globalThis.location.assign("/upload?batch=" + session);
     };
 
+    const bar = document.getElementById("an-upload-bar");
+    const problem = document.getElementById("an-upload-js-error");
+    const say = (text) => {
+      if (!problem) return;
+      problem.className = "an-upload__error";
+      problem.textContent = text || "";
+      problem.hidden = !text;
+    };
+    const show = (percent, text) => {
+      if (bar) { bar.hidden = false; bar.value = percent; }
+      if (chosen) chosen.textContent = text;
+    };
+
+    /* One ordinary request, sent by XHR only so the bytes can be counted: the
+       server always answers with a redirect, which XHR follows, and the page
+       goes to wherever that landed. */
+    const sendOnce = (files) => new Promise((resolve, reject) => {
+      const request = new XMLHttpRequest();
+      request.open("POST", form.action);
+      request.upload.onprogress = (event) => {
+        if (!event.lengthComputable) return;
+        const percent = Math.min(100, Math.round((event.loaded / event.total) * 100));
+        show(percent, percent >= 100 ? form.dataset.saving : form.dataset.progressBatch.replace("{percent}", String(percent)));
+      };
+      request.onload = () => (request.status >= 200 && request.status < 400 ? resolve(request.responseURL) : reject(new Error(String(request.status))));
+      request.onerror = () => reject(new Error("network"));
+      request.send(new FormData(form));
+    }).then((url) => globalThis.location.assign(url || "/upload"));
+
     form.addEventListener("submit", (event) => {
+      if (form.dataset.sending) { event.preventDefault(); return; }
       const files = picker.files ? [...picker.files] : [];
       const total = files.reduce((sum, item) => sum + item.size, 0);
-      if (!sliceSize || !files.length || total <= threshold) return; // one ordinary request
+      if (!files.length) return;
       event.preventDefault();
+      form.dataset.sending = "1";
+      say("");
       if (button) button.disabled = true;
-      send(files, total).catch((error_) => {
+      // Long release: the shared 20 s timer would clear the spinner mid-upload.
+      globalThis.anamnaBusy?.navigating(button, 3_600_000);
+      const chunked = sliceSize && total > threshold && globalThis.crypto && crypto.randomUUID;
+      (chunked ? send(files, total) : sendOnce(files)).catch((error_) => {
+        delete form.dataset.sending;
         if (button) button.disabled = false;
+        globalThis.anamnaBusy?.reset();
+        if (bar) bar.hidden = true;
         if (error_?.error) {
           // The server named the problem; the page renders it the usual way.
           globalThis.location.assign("/upload?upload_error=" + encodeURIComponent(error_.error));
-        } else if (chosen) {
-          chosen.textContent = form.dataset.chunkError;
+        } else {
+          say(form.dataset.chunkError);
         }
       });
     });

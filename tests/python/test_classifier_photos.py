@@ -37,7 +37,7 @@ INMED = (
         ("ПІБ пацієнта, рік народження\nДата обстеження Петренко Ольга 1990\n09.05.2024 , р,\nО.М. 01.05.2024\n",
          "2024-05-09"),
         ("ПІБ пацієнта, рік народження Петренко Ольга, 1990 р.\nО.М. 12.03.2025\nГрудні залози симетричні;\n", None),
-        # UltraMed: the name, the birth year, then the examination day.
+        # Ultramed: the name, the birth year, then the examination day.
         ("Протокол ульт\n08-2026\nПетренко Ольга\nназ\n1990\n14.08.2026\nПЕЧІНКА.\n", "2026-08-14"),
         ("Дате: 16.04.2025\nЛікар\n", "2025-04-16"),
         ("Діагноз клінічний\nпідпис\nдата 18:08.2023\n", "2023-08-18"),
@@ -85,7 +85,7 @@ def test_ultramed_subject_line_names_the_study_and_a_lab_section_does_not():
         "Ультра/мед (068) 000-00-00\nwww.ultramed\nПротокол ультразвукового обстежен ня\n"
         "Обстеження шлунково кишкового тракту (ШКТ У\nСтравохід 10 мм\n"
     )
-    assert (gut.clinical_type, gut.title, gut.vendor) == ("ultrasound", "УЗД шлунково-кишкового тракту", "UltraMed")
+    assert (gut.clinical_type, gut.title, gut.vendor) == ("ultrasound", "УЗД шлунково-кишкового тракту", "Ultramed")
     joint = photo(
         "Протокол ультразвукового обстеження\nДата обстеження 14.08.2026\n"
         "Ультрасонографічне обстеження скронево-нижньощелепних суглобів\nта жувальних м'язів i\nЛівий СНЩС\n"
@@ -202,7 +202,7 @@ def test_vaccination_booklet_and_rabies_card_are_vaccination_records():
     rabies = photo("но 045/0\nЗАТВЕРДЖЕНО\nми ї коли: КНП ІТМО ВП лікарня святого\nТирабічн: щеплення\n")
     assert (rabies.clinical_type, rabies.title, rabies.vendor) == (
         "immunization_record", "Карта звернення за антирабічною допомогою",
-        "First Territorial Medical Association of Lviv, St. Luke's Hospital",
+        "First Clinical Territorial Medical Association of Lviv, St. Luke's Hospital",
     )
 
 
@@ -210,7 +210,7 @@ def test_lviv_territorial_associations_and_a_private_practice_are_named():
     second = photo("ТОВАРИСТВО \"ДРУГЕ КЛІНІЧНЕ.\nКАРТА ПРОФІЛАКТИЧНИХ ЩЕПЛЕНЬ\n")
     assert second.vendor == "Second Clinical Territorial Medical Association of Lviv"
     first = photo("ЄДРПОУ: 44496574\nКонсультаційний висновок спеціаліста\n")
-    assert first.vendor == "First Territorial Medical Association of Lviv, St. Luke's Hospital"
+    assert first.vendor == "First Clinical Territorial Medical Association of Lviv, St. Luke's Hospital"
     practice = photo("ФОП Коваленко Петро Іванович\n02000, м.Київ\nКОНСУЛЬТАЦІЙНИЙ ВИСНОВОК СПЕЦІАЛІСТА\n")
     assert practice.vendor == "ФОП Коваленко П. І."
 

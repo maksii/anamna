@@ -102,7 +102,7 @@ KEY_ENVIRONMENT = {
 # provider's live list (models.list()) once a key is stored.  Haiku because it
 # is enough once the review transcribes and the diff runs in code: measured on
 # 2026-11-05 it found a planted ×10 value and a deleted row on an 83-row
-# EskuLab order in 3 runs of 3, with no false alarms, at ~2 US cents a review
+# Esculab order in 3 runs of 3, with no false alarms, at ~2 US cents a review
 # (~135k tokens in, ~15k out across the three checks; Sonnet 5.5 ~14 cents).
 DEFAULT_MODELS = {
     "openrouter": DEFAULT_MODEL,

@@ -28,6 +28,9 @@
       <span class="eyebrow">{{ t('area.eyebrow') }}</span>
       <h1>{{ area.name }}</h1>
       <p>{{ area.description }}</p>
+      {#- The allergy area reads better on its own page: every allergen
+          tested, searchable, with what the protein families mean. -#}
+      {% if area.id == 'allergy' %}<p><a class="button secondary" href="/allergy">{{ t('special.overview_allergy') }}</a></p>{% endif %}
     </div>
     <dl class="area-evidence-summary">
       <div><dt>{{ t('area.conclusions') }}</dt><dd>{{ findings|length }}</dd></div>

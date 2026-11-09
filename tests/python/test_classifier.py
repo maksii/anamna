@@ -173,7 +173,7 @@ def test_order_number_is_never_the_day_of_the_order_date():
     assert extract_order_identifier("Замовлення: 12345678 / 05.11.2026 08:13") == "12345678"
 
 
-def test_an_eskulab_order_is_titled_by_all_its_panels():
+def test_an_esculab_order_is_titled_by_all_its_panels():
     """The first «Пакет» line named a whole multi-panel order after one panel."""
     from anamna.ingest.classifier import extract_title
 
@@ -193,14 +193,14 @@ def test_an_eskulab_order_is_titled_by_all_its_panels():
 
 
 def test_a_clinic_document_takes_its_name_day_and_clinic_from_the_lab_sync_file_name():
-    """Doctor ELEKS documents arrive as «<clinic>-<id> <day> <the clinic's name>.pdf»:
+    """Doctor Eleks documents arrive as «<clinic>-<id> <day> <the clinic's name>.pdf»:
     a cardiology note quoting an ultrasound is still the cardiology consultation,
     a note with no printed date or clinic name still gets both."""
     quoting = "Скарги відсутні\nУЗД ОЧП Сонографічно незначні дифузні зміни паренхіми печінки\nРекомендовано контроль"
     result = classify_document("veselka-2000161 2026-08-09 Консультація лікаря-кардіолога.pdf", "application/pdf",
                                [pdf_page(quoting)])
     assert (result.vendor, result.clinical_type, result.title, result.report_date) == (
-        "Veselka Medical Center", "consultation", "Консультація лікаря-кардіолога", "2026-08-09")
+        "Veselka", "consultation", "Консультація лікаря-кардіолога", "2026-08-09")
     bare = classify_document("paraskeva-4000786 2022-03-17 Загальний аналіз крові.pdf", "application/pdf",
                              [pdf_page("Гемоглобін 152 г/л 130-165\nПопередні аналізи Synevo в нормі")])
     assert (bare.vendor, bare.title) == ("St. Paraskeva Medical Center", "Загальний аналіз крові")

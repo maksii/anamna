@@ -22,8 +22,8 @@ from anamna.reference import evaluate
 from anamna.security import create_access_token
 
 from test_labsync import (
-    PHONE, TOKEN, connect_eskulab, csrf, es_row, eskulab_routes, family_member, make, obs, order, router, row,
-    seed_doc, stub_intake,
+    PHONE, TOKEN, connect_esculab, csrf, es_row, esculab_routes, family_member, make, obs, order, router, row,
+    seed_doc, sign_in_esculab, stub_intake,
 )
 
 
@@ -53,7 +53,7 @@ def audit_count(settings, action):
 
 def test_a_lab_flag_reaches_the_verdict_survives_a_restart_and_follows_an_amendment(tmp_path: Path, monkeypatch):
     settings, user_id, client = make(tmp_path)
-    document_id = seed_doc(settings, user_id, vendor="EskuLab", order="9700", day="2026-01-10", values=[
+    document_id = seed_doc(settings, user_id, vendor="Esculab", order="9700", day="2026-01-10", values=[
         ("рН (C-PH)", 5.5, None, "within_vendor_range"), ("Еозинофіли", 1.0, "%", "within_vendor_range"),
         ("Гемоглобін (HGB)", 151.0, "г/л", "within_vendor_range"), ("Білок", 0.3, "г/л", None)])
     ph, eos, hgb, protein = (f"{document_id}-{index}" for index in range(4))
@@ -68,10 +68,10 @@ def test_a_lab_flag_reaches_the_verdict_survives_a_restart_and_follows_an_amendm
                      lab_row("Еозинофіли", "1", "%", state="critical"),
                      lab_row("Гемоглобін (HGB)", "151", "г/л", norm="{130-170#%}"),
                      lab_row("Білок", "0.3", "г/л", state="critical", norm="{0-0.14#%}")]}
-    routes = eskulab_routes([order(9700, ready=4, total=4)], rows)
-    connect_eskulab(settings, user_id, monkeypatch, routes)
+    routes = esculab_routes([order(9700, ready=4, total=4)], rows)
+    connect_esculab(settings, user_id, monkeypatch, routes)
     stub_intake(monkeypatch, settings, user_id, {})
-    labsync.sync(settings, user_id, "eskulab", inline=True)
+    labsync.sync(settings, user_id, "esculab", inline=True)
 
     # On an inclusive bound of the printed interval the printed band decides:
     # in range, however the lab's record flags it, and an earlier adoption is
@@ -99,28 +99,28 @@ def test_a_lab_flag_reaches_the_verdict_survives_a_restart_and_follows_an_amendm
     page = client.get(f"/documents/{document_id}").text
     assert "The verdict now follows the lab&#39;s flag" in page and "Values the lab flags differently (3)" in page
 
-    labsync.sync(settings, user_id, "eskulab", inline=True)
+    labsync.sync(settings, user_id, "esculab", inline=True)
     assert audit_count(settings, "observation_flag_from_lab") == 1  # idempotent
     assert audit_count(settings, "observation_flag_from_lab_undone") == 1
 
     # The lab amends the protein to normal: our reading goes back to the report's.
     rows["9700"][3]["state"] = "normal"
-    monkeypatch.setattr(common, "_http", router(eskulab_routes([order(9700, ready=4, total=4)], rows)))
-    labsync.sync(settings, user_id, "eskulab", inline=True)
+    monkeypatch.setattr(common, "_http", router(esculab_routes([order(9700, ready=4, total=4)], rows)))
+    labsync.sync(settings, user_id, "esculab", inline=True)
     assert observation(settings, protein)["vendor_interpretation_source"] is None
     assert audit_count(settings, "observation_flag_from_lab_undone") == 2
 
 
 def test_the_flag_direction_comes_from_the_band_that_fits_the_person(tmp_path: Path, monkeypatch):
     settings, user_id, _ = make(tmp_path)  # born 1990: an adult
-    document_id = seed_doc(settings, user_id, vendor="EskuLab", order="9701", day="2026-01-10", values=[
+    document_id = seed_doc(settings, user_id, vendor="Esculab", order="9701", day="2026-01-10", values=[
         ("Лімфоцити (Lymph)", 43.0, "%", None)])
     set_reference(settings, f"{document_id}-0",
                   "До 1р.: 38-74 1-6р.: 26-60 6-12р.: 24-54 12-16р.: 22-50 Дорослі: 20-40", None, None, None)
     rows = {"9701": [lab_row("Лімфоцити (Lymph)", "43", "%", state="critical")]}
-    connect_eskulab(settings, user_id, monkeypatch, eskulab_routes([order(9701, ready=1, total=1)], rows))
+    connect_esculab(settings, user_id, monkeypatch, esculab_routes([order(9701, ready=1, total=1)], rows))
     stub_intake(monkeypatch, settings, user_id, {})
-    labsync.sync(settings, user_id, "eskulab", inline=True)
+    labsync.sync(settings, user_id, "esculab", inline=True)
     assert observation(settings, f"{document_id}-0")["vendor_interpretation"] == "high"
 
 
@@ -136,7 +136,7 @@ def test_a_flag_whose_direction_no_interval_shows_is_indeterminate_not_green():
 
 def test_units_are_adopted_only_when_real_and_the_repair_takes_wrong_ones_back(tmp_path: Path, monkeypatch):
     settings, user_id, _ = make(tmp_path)
-    document_id = seed_doc(settings, user_id, vendor="EskuLab", order="9710", day="2026-01-10", values=[
+    document_id = seed_doc(settings, user_id, vendor="Esculab", order="9710", day="2026-01-10", values=[
         ("АЛАТ(АЛТ)", 37.0, None, None), ("Питома вага", 1.035, None, None)])
     alt, gravity = f"{document_id}-0", f"{document_id}-1"
     with connect(settings) as connection:
@@ -145,9 +145,9 @@ def test_units_are_adopted_only_when_real_and_the_repair_takes_wrong_ones_back(t
             "WHERE o.document_id=?", (document_id,)).fetchall())
     assert preferred[alt] == "U/L" and not preferred[gravity]  # specific gravity is dimensionless
     rows = {"9710": [lab_row("АЛАТ(АЛТ)", "37", "од/л"), lab_row("Питома вага", "1.035", "г/мл")]}
-    connect_eskulab(settings, user_id, monkeypatch, eskulab_routes([order(9710, ready=2, total=2)], rows))
+    connect_esculab(settings, user_id, monkeypatch, esculab_routes([order(9710, ready=2, total=2)], rows))
     stub_intake(monkeypatch, settings, user_id, {})
-    labsync.sync(settings, user_id, "eskulab", inline=True)
+    labsync.sync(settings, user_id, "esculab", inline=True)
     assert observation(settings, alt)["unit_raw"] == "од/л"
     assert observation(settings, gravity)["unit_raw"] is None
     assert audit_count(settings, "observation_unit_from_lab") == 1
@@ -187,15 +187,15 @@ def test_the_cross_check_compares_reference_intervals():
 
 def test_the_profile_counts_only_values_and_units_as_differing(tmp_path: Path, monkeypatch):
     settings, user_id, client = make(tmp_path)
-    seed_doc(settings, user_id, vendor="EskuLab", order="9720", day="2026-01-10", values=[
+    seed_doc(settings, user_id, vendor="Esculab", order="9720", day="2026-01-10", values=[
         ("Ліпопротеїди високої щільності (ЛПВЩ", 1.33, "ммоль/л", None), ("Глюкоза", 5.1, "ммоль/л", None)])
     rows = {"9720": [lab_row("Ліпопротеїди високої щільності (ЛПВЩ, HDL)", "1.33", "ммоль/л"),
                      lab_row("Глюкоза", "5.1", "ммоль/л")], "9721": []}
     orders = [order(9720, ready=2, total=2), order(9721, ready=0, total=0, status="DONE"),
               {**order(9722, ready=0, total=0), "dt": None}]
-    connect_eskulab(settings, user_id, monkeypatch, eskulab_routes(orders, rows))
+    connect_esculab(settings, user_id, monkeypatch, esculab_routes(orders, rows))
     stub_intake(monkeypatch, settings, user_id, {})
-    labsync.sync(settings, user_id, "eskulab", inline=True)
+    labsync.sync(settings, user_id, "esculab", inline=True)
     card = labsync.profile_cards(settings, {"id": user_id})[0]
     assert card["orders"][0]["ordered_at"] is None  # an undated order is not buried at the end
     page = client.get("/profile?tab=connections").text
@@ -224,19 +224,19 @@ def _tasks(settings, document_id):
 def test_rows_the_reading_lacks_open_one_review_task_that_follows_the_check(tmp_path: Path, monkeypatch):
     settings, user_id, _ = make(tmp_path)
     _with_reason_columns(settings)
-    document_id = seed_doc(settings, user_id, vendor="EskuLab", order="9730", day="2026-01-10", values=[
+    document_id = seed_doc(settings, user_id, vendor="Esculab", order="9730", day="2026-01-10", values=[
         ("Креатинін", 68.3, "мкмоль/л", None)])
     rows = {"9730": [lab_row("Креатинін", "68.3", "мкмоль/л"), lab_row("Сечова кислота", "361", "мкмоль/л"),
                      lab_row("Сечовина", "5.5", "ммоль/л")]}
-    connect_eskulab(settings, user_id, monkeypatch, eskulab_routes([order(9730, ready=3, total=3)], rows))
+    connect_esculab(settings, user_id, monkeypatch, esculab_routes([order(9730, ready=3, total=3)], rows))
     stub_intake(monkeypatch, settings, user_id, {})
-    labsync.sync(settings, user_id, "eskulab", inline=True)
+    labsync.sync(settings, user_id, "esculab", inline=True)
     tasks = _tasks(settings, document_id)
     assert len(tasks) == 1 and tasks[0]["state"] == "open" and tasks[0]["reason_key"] == "labsync.review_missing"
     params = json.loads(tasks[0]["reason_params_json"])
-    assert params == {"count": 2, "lab": "EskuLab", "order": "9730", "names": "Сечова кислота; Сечовина"}
+    assert params == {"count": 2, "lab": "Esculab", "order": "9730", "names": "Сечова кислота; Сечовина"}
     assert "2 result(s)" in tasks[0]["reason"]
-    labsync.sync(settings, user_id, "eskulab", inline=True)
+    labsync.sync(settings, user_id, "esculab", inline=True)
     assert len(_tasks(settings, document_id)) == 1  # the same task, not a second one
 
     # Both added by hand (as the cross-check offers): the task closes itself.
@@ -260,14 +260,14 @@ def test_the_review_task_works_before_the_reason_columns_exist(tmp_path: Path, m
     with connect(settings) as connection:
         if "reason_key" in {r[1] for r in connection.execute("PRAGMA table_info(review_tasks)")}:
             return  # merged with F2: covered above
-    document_id = seed_doc(settings, user_id, vendor="EskuLab", order="9731", day="2026-01-10", values=[])
+    document_id = seed_doc(settings, user_id, vendor="Esculab", order="9731", day="2026-01-10", values=[])
     rows = {"9731": [lab_row("Сечовина", "5.5", "ммоль/л")]}
-    connect_eskulab(settings, user_id, monkeypatch, eskulab_routes([order(9731, ready=1, total=1)], rows))
+    connect_esculab(settings, user_id, monkeypatch, esculab_routes([order(9731, ready=1, total=1)], rows))
     stub_intake(monkeypatch, settings, user_id, {})
-    labsync.sync(settings, user_id, "eskulab", inline=True)
-    labsync.sync(settings, user_id, "eskulab", inline=True)
+    labsync.sync(settings, user_id, "esculab", inline=True)
+    labsync.sync(settings, user_id, "esculab", inline=True)
     tasks = _tasks(settings, document_id)
-    assert len(tasks) == 1 and tasks[0]["reason"].startswith("The EskuLab record of order 9731 has 1 result(s)")
+    assert len(tasks) == 1 and tasks[0]["reason"].startswith("The Esculab record of order 9731 has 1 result(s)")
 
 
 # --- DOCC-15: the order links to the document that holds its results ---------------
@@ -275,18 +275,18 @@ def test_the_review_task_works_before_the_reason_columns_exist(tmp_path: Path, m
 
 def test_an_order_printed_on_a_cover_sheet_links_to_the_document_with_its_results(tmp_path: Path, monkeypatch):
     settings, user_id, _ = make(tmp_path)
-    cover = seed_doc(settings, user_id, vendor="EskuLab", order="9000123", day="2025-08-28", values=[])
-    panel = seed_doc(settings, user_id, vendor="EskuLab", order=None, day="2025-08-31", values=[
+    cover = seed_doc(settings, user_id, vendor="Esculab", order="9000123", day="2025-08-28", values=[])
+    panel = seed_doc(settings, user_id, vendor="Esculab", order=None, day="2025-08-31", values=[
         ("Bet v 1", 0.1, "kUA/L", None), ("Phl p 1", 0.1, "kUA/L", None)])
     with connect(settings) as connection:
         connection.execute("UPDATE documents SET original_filename=? WHERE id=?",
                            ("2025-08-31__eskulab__alex2-allergy-panel__9000123.pdf", panel))
     rows = {"9000123": [lab_row("ALEX2-тест", "Ваш результат готовий і знаходиться в додатковому pdf файлі.",
                                 resulttype="info")]}
-    connect_eskulab(settings, user_id, monkeypatch,
-                    eskulab_routes([order(9000123, ready=1, total=1, dt="2025-08-28 08:38")], rows))
+    connect_esculab(settings, user_id, monkeypatch,
+                    esculab_routes([order(9000123, ready=1, total=1, dt="2025-08-28 08:38")], rows))
     stub_intake(monkeypatch, settings, user_id, {})
-    labsync.sync(settings, user_id, "eskulab", inline=True)
+    labsync.sync(settings, user_id, "esculab", inline=True)
     with connect(settings) as connection:
         tracked = connection.execute("SELECT document_id, crosscheck_json FROM lab_orders").fetchone()
     assert tracked["document_id"] == panel
@@ -312,14 +312,14 @@ def test_a_long_unfinished_order_imports_what_is_ready_and_says_so(tmp_path: Pat
     orders = [order(9750, ready=9, total=40, status="PARTLY_DONE", dt="2022-03-01 08:00"),
               order(9751, ready=1, total=2, status="PARTLY_DONE", dt="2022-03-02 08:00")]
     rows = {"9750": [lab_row("Глюкоза", "5.1", "ммоль/л")], "9751": [lab_row("Сечовина", "5.5", "ммоль/л")]}
-    routes = eskulab_routes(orders, rows)
+    routes = esculab_routes(orders, rows)
     routes[("GET", "/api/results/getResults/111/9751")] = 500  # no report for the ready part
-    connect_eskulab(settings, user_id, monkeypatch, routes)
+    connect_esculab(settings, user_id, monkeypatch, routes)
     calls = stub_intake(monkeypatch, settings, user_id, {
-        "eskulab-9750.pdf": {"vendor": "EskuLab", "order": "9750", "day": "2022-03-01",
+        "esculab-9750.pdf": {"vendor": "Esculab", "order": "9750", "day": "2022-03-01",
                              "values": [("Глюкоза", 5.1, "ммоль/л", None)]}})
-    summary = labsync.sync(settings, user_id, "eskulab", inline=True)
-    assert calls == ["eskulab-9750.pdf"] and summary["imported"] == 1 and summary["pending"] == 1
+    summary = labsync.sync(settings, user_id, "esculab", inline=True)
+    assert calls == ["esculab-9750.pdf"] and summary["imported"] == 1 and summary["pending"] == 1
     with connect(settings) as connection:
         states = {r[0]: (r[1], r[2]) for r in connection.execute("SELECT order_id, state, error_key FROM lab_orders")}
     assert states == {"9750": ("imported", "labsync.partial_imported"), "9751": ("pending", "labsync.partial_no_pdf")}
@@ -337,9 +337,9 @@ def test_a_family_profile_without_birthday_says_it_cannot_be_compared(tmp_path: 
     with connect(settings) as connection:
         connection.execute("UPDATE patients SET date_of_birth=NULL, sex_at_birth=NULL WHERE owner_user_id=?",
                            (member,))
-    monkeypatch.setattr(common, "_http", router(eskulab_routes([], {})))
-    labsync.save_credentials(settings, holder, "eskulab", {"token": TOKEN, "phone": PHONE})
-    labsync.check_account(settings, holder, "eskulab")
+    monkeypatch.setattr(common, "_http", router(esculab_routes([], {})))
+    sign_in_esculab(settings, holder)
+    labsync.check_account(settings, holder, "esculab")
     page = client.get("/profile?tab=connections").text
     assert re.search(r"member\s+-\s+cannot be compared \(date of birth or sex missing", page)
     client.cookies.set("anamna_lang", "uk")
@@ -351,37 +351,37 @@ def test_a_family_profile_without_birthday_says_it_cannot_be_compared(tmp_path: 
 
 def test_a_running_sync_updates_the_card_in_place_from_a_status_endpoint(tmp_path: Path, monkeypatch):
     settings, user_id, client = make(tmp_path)
-    monkeypatch.setattr(common, "_http", router(eskulab_routes([], {})))
-    labsync.save_credentials(settings, user_id, "eskulab", {"token": TOKEN, "phone": PHONE})
-    labsync.check_account(settings, user_id, "eskulab")
-    labsync.link_person(settings, user_id, "eskulab", "111", "self", confirmed=False)
+    monkeypatch.setattr(common, "_http", router(esculab_routes([], {})))
+    sign_in_esculab(settings, user_id)
+    labsync.check_account(settings, user_id, "esculab")
+    labsync.link_person(settings, user_id, "esculab", "111", "self", confirmed=False)
     with connect(settings) as connection:
         connection.execute("UPDATE lab_accounts SET sync_state='running', sync_started_at=? WHERE user_id=?",
                            (utc_now(), user_id))
     page = client.get("/profile?tab=connections").text
-    card = page[page.index('id="lab-eskulab"'):]
-    assert "location.replace" not in card and "/api/lab-sync/eskulab/status" in card
+    card = page[page.index('id="lab-esculab"'):]
+    assert "location.replace" not in card and "/api/lab-sync/esculab/status" in card
     assert "visibilityState" in card and 'data-lab-live="status"' in card
     assert ">\n      Connected\n" in card or "Connected" in card[:1500]  # the one word for connected
-    running = client.get("/api/lab-sync/eskulab/status").json()
+    running = client.get("/api/lab-sync/esculab/status").json()
     # The card comes back on every poll, so documents appear as they arrive.
     assert (running["state"], running["finished_at"]) == ("running", None)
     assert 'data-lab-live="status"' in running["html"] and "Syncing" in running["html"]
     with connect(settings) as connection:
         connection.execute("UPDATE lab_accounts SET sync_summary_json=? WHERE user_id=?",
                            (json.dumps({"orders": 3, "total": 7, "current": "Загальний аналіз крові"}), user_id))
-    progress = client.get("/api/lab-sync/eskulab/status").json()["html"]
+    progress = client.get("/api/lab-sync/esculab/status").json()["html"]
     assert "Fetching 3 of 7" in progress and "Загальний аналіз крові" in progress
     with connect(settings) as connection:
         connection.execute("UPDATE lab_accounts SET sync_state='done', sync_finished_at=?, sync_summary_json=? "
                            "WHERE user_id=?", (utc_now(), json.dumps({
                                "imported": 1, "linked": 0, "already": 0, "pending": 0, "unavailable": 0,
                                "failed": 0, "awaiting": 0}), user_id))
-    done = client.get("/api/lab-sync/eskulab/status").json()
+    done = client.get("/api/lab-sync/esculab/status").json()
     assert done["state"] == "done" and 'data-lab-live="status"' in done["html"] and "Imported: 1" in done["html"]
     assert client.get("/api/lab-sync/nolab/status").status_code == 404
     _, secret = create_access_token(settings, user_id, "api", "Integration")
-    assert client.get("/api/lab-sync/eskulab/status",
+    assert client.get("/api/lab-sync/esculab/status",
                       headers={"Authorization": f"Bearer {secret}"}).status_code == 404
 
 
@@ -401,16 +401,16 @@ def test_an_adopted_flag_is_read_again_once_the_profile_says_who_the_person_is(t
     """Adopted while the profile had no sex: between a woman's and a man's band
     the direction is unknown.  Filling in the profile must not leave it so."""
     settings, user_id, _ = make(tmp_path)
-    document_id = seed_doc(settings, user_id, vendor="EskuLab", order="9702", day="2026-01-10", values=[
+    document_id = seed_doc(settings, user_id, vendor="Esculab", order="9702", day="2026-01-10", values=[
         ("Гемоглобін (HGB)", 118.0, "г/л", None)])
     obs_id = f"{document_id}-0"
     set_reference(settings, obs_id, "Жінки: 120-140 Чоловіки: 130-160", None, None, None)
     rows = {"9702": [lab_row("Гемоглобін (HGB)", "118", "г/л", state="critical")]}
-    connect_eskulab(settings, user_id, monkeypatch, eskulab_routes([order(9702, ready=1, total=1)], rows))
+    connect_esculab(settings, user_id, monkeypatch, esculab_routes([order(9702, ready=1, total=1)], rows))
     stub_intake(monkeypatch, settings, user_id, {})
     with connect(settings) as connection:
         connection.execute("UPDATE patients SET sex_at_birth=NULL WHERE owner_user_id=?", (user_id,))
-    labsync.sync(settings, user_id, "eskulab", inline=True)
+    labsync.sync(settings, user_id, "esculab", inline=True)
     before = observation(settings, obs_id)["vendor_interpretation"]
     with connect(settings) as connection:
         connection.execute("UPDATE patients SET sex_at_birth='female' WHERE owner_user_id=?", (user_id,))
@@ -420,24 +420,24 @@ def test_an_adopted_flag_is_read_again_once_the_profile_says_who_the_person_is(t
 
 
 def test_a_lab_flag_the_printed_band_contradicts_is_not_adopted(tmp_path: Path, monkeypatch):
-    """EskuLab's API marked a whole 2022 order "critical"; the paper prints no
+    """Esculab's API marked a whole 2022 order "critical"; the paper prints no
     flag and each value sits well inside its band.  No "borderline" over a
     normal value, and one adopted earlier is taken back."""
     settings, user_id, _ = make(tmp_path)
-    document_id = seed_doc(settings, user_id, vendor="EskuLab", order="9703", day="2026-01-10", values=[
+    document_id = seed_doc(settings, user_id, vendor="Esculab", order="9703", day="2026-01-10", values=[
         ("Глюкоза", 5.0, "ммоль/л", "within_vendor_range")])
     obs_id = f"{document_id}-0"
     set_reference(settings, obs_id, "3.3-5.5", 3.3, 5.5)
     rows = {"9703": [lab_row("Глюкоза", "5.0", "ммоль/л", state="critical", norm="{3.3-5.5#%}")]}
-    connect_eskulab(settings, user_id, monkeypatch, eskulab_routes([order(9703, ready=1, total=1)], rows))
+    connect_esculab(settings, user_id, monkeypatch, esculab_routes([order(9703, ready=1, total=1)], rows))
     stub_intake(monkeypatch, settings, user_id, {})
     with connect(settings) as connection:  # as an earlier version left it
         connection.execute("UPDATE observations SET vendor_interpretation='borderline', "
                            "vendor_interpretation_source='lab_record' WHERE id=?", (obs_id,))
-    labsync.sync(settings, user_id, "eskulab", inline=True)
+    labsync.sync(settings, user_id, "esculab", inline=True)
     after = observation(settings, obs_id)
     assert (after["vendor_interpretation"], after["vendor_interpretation_source"]) == ("within_vendor_range", None)
-    labsync.sync(settings, user_id, "eskulab", inline=True)
+    labsync.sync(settings, user_id, "esculab", inline=True)
     assert observation(settings, obs_id)["vendor_interpretation_source"] is None
 
 
@@ -447,14 +447,14 @@ def test_a_lab_flag_over_a_row_that_prints_no_interval_is_not_adopted(tmp_path: 
     flags nothing, so no "borderline"; one adopted earlier is taken back on
     the recheck.  The lab's own record files no reading for it either."""
     settings, user_id, _ = make(tmp_path)
-    document_id = seed_doc(settings, user_id, vendor="EskuLab", order="9704", day="2022-01-10", values=[
+    document_id = seed_doc(settings, user_id, vendor="Esculab", order="9704", day="2022-01-10", values=[
         ("Сперматозоїди в мкл (SPERM)", 0.0, "кл/мкл", None)])
     obs_id = f"{document_id}-0"
     set_reference(settings, obs_id, "-", None, None, None)
     rows = {"9704": [lab_row("Сперматозоїди в мкл (SPERM)", "0.0", "кл/мкл", state="critical", norm="{-}")]}
-    connect_eskulab(settings, user_id, monkeypatch, eskulab_routes([order(9704, ready=1, total=1)], rows))
+    connect_esculab(settings, user_id, monkeypatch, esculab_routes([order(9704, ready=1, total=1)], rows))
     stub_intake(monkeypatch, settings, user_id, {})
-    labsync.sync(settings, user_id, "eskulab", inline=True)
+    labsync.sync(settings, user_id, "esculab", inline=True)
     assert observation(settings, obs_id)["vendor_interpretation_source"] is None
     with connect(settings) as connection:  # as round 3 found it
         connection.execute("UPDATE observations SET vendor_interpretation='borderline', "

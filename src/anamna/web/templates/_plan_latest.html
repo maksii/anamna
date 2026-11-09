@@ -1,0 +1,17 @@
+{% from "_components.html" import status_chip, sparkline with context %}
+{#- The latest reading of a result on the planner: value and date, the
+    verdict as the metrics pages show it, "measured N days ago" when that is
+    recent, and the trend when there are two readings or more.  Without a
+    card the record has never held this result, and the line says so. -#}
+{% macro latest_line(card, ago=none, fresh=false) -%}
+{% if card %}
+<span class="an-plan-need__meta">{{ t('plan.latest', value=(card.value_text ~ (' ' ~ card.unit|unitfmt if card.unit else '')), date=card.date_text) }}</span>
+<span class="an-plan-need__why">
+  {%- if card.verdict and card.verdict.label %}{{ status_chip(card.verdict.interpretation, card.verdict.label) }}{% endif %}
+  {%- if fresh %}<span class="pill an-pill--recent">{{ t('plan.recent_today') if ago == 0 else t_plural('plan.recent_ago', ago) }}</span>{% endif %}
+</span>
+{% if card.spark %}<span class="an-plan-need__spark">{{ sparkline(card.spark, t('plan.trend_label', name=card.name)) }}</span>{% endif %}
+{% else %}
+<span class="an-plan-need__meta">{{ t('plan.never_measured') }}</span>
+{% endif %}
+{%- endmacro %}

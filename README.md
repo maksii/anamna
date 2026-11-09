@@ -92,13 +92,13 @@ uv run anamna init --email you@example.com --name "Your name"
   (OAuth with push webhooks).
 - **OpenWearables**: a self-hosted aggregation server; linked accounts are pulled and receive
   signed webhooks.
-- **Ukrainian lab and clinic accounts**: EskuLab, Synevo, Ekspert (Expert Hospital) and the
-  Doctor ELEKS clinics St. Paraskeva and Veselka. Finished orders arrive as their official PDFs,
+- **Ukrainian lab and clinic accounts**: Esculab, Synevo, Expert Hospital and the
+  Doctor Eleks clinics St. Paraskeva and Veselka. Finished orders arrive as their official PDFs,
   and the lab's own values cross-check what was read.
 - **Telegram bot**: send documents and photos, look up results, request originals.
 - **Vaccination records**: form 063/о scans are read, and doses can be entered by hand.
 - **CLI**: `anamna ingest` (a directory of documents), `anamna devices import --vendor
-  apple_health|garmin|oura|kardia --path <export>`, `anamna lab-sync --provider eskulab|synevo`.
+  apple_health|garmin|oura|kardia --path <export>`, `anamna lab-sync --provider esculab|synevo`.
 
 Other integrations:
 

@@ -66,7 +66,7 @@ CONCEPT_DEFINITIONS: list[dict[str, object]] = [
     {"name": "Triglycerides", "category": "lipids", "unit": "mmol/L", "aliases": ["тригліцериди", "triglycerides"]},
     {"name": "Atherogenic coefficient", "category": "lipids", "unit": "ratio", "aliases": ["коефіцієнт атерогенності", "коефіцієнт атерогенності (ка)", "atherogenic coefficient", "atherogenic index"]},
     {"name": "Thyroid stimulating hormone", "category": "thyroid", "unit": "mIU/L", "aliases": ["тиреотропний гормон (tsh)", "тиреотропний гормон. високочутливий, біотин-незалежний", "тиреотропний гормон", "ттг", "tsh"]},
-    {"name": "Free triiodothyronine", "category": "thyroid", "unit": "pmol/L", "aliases": ["трийодтиронін вільний (ft3)", "ft3"]},
+    {"name": "Free triiodothyronine", "category": "thyroid", "unit": "pmol/L", "aliases": ["трийодтиронін вільний (ft3)", "ft3", "трийодтиронін вільний (t3 вільний)"]},
     {"name": "Free thyroxine", "category": "thyroid", "unit": "pmol/L", "aliases": ["тироксин вільний (ft4)", "тироксин вільний (t4 вільний)", "ft4"]},
     {"name": "Ferritin", "category": "iron", "unit": "ng/mL", "aliases": ["феритин", "ferritin"]},
     {"name": "Serum iron", "category": "iron", "unit": "µmol/L", "aliases": ["залізо", "залізо (сироватка крові)", "iron", "залізо сироваткове"]},
@@ -75,13 +75,13 @@ CONCEPT_DEFINITIONS: list[dict[str, object]] = [
     {"name": "Folate, serum", "category": "vitamins", "unit": "ng/mL", "aliases": ["фолієва кислота (сироватка)", "фолієва кислота", "folate"]},
     {"name": "Homocysteine", "category": "vitamins", "unit": "µmol/L", "aliases": ["гомоцистеїн", "homocysteine"]},
     {"name": "Magnesium", "category": "electrolytes", "unit": "mmol/L", "aliases": ["магній", "magnesium"]},
-    {"name": "Potassium", "category": "electrolytes", "unit": "mmol/L", "aliases": ["калій", "калій (іонізований) (k), сироватка крові", "калій (іонізований) (к)", "potassium", "k"]},
-    {"name": "Sodium", "category": "electrolytes", "unit": "mmol/L", "aliases": ["натрій", "натрій (іонізований) (na), сироватка крові", "натрій (іонізований) (na)", "sodium", "na"]},
+    {"name": "Potassium", "category": "electrolytes", "unit": "mmol/L", "aliases": ["калій", "калій (іонізований) (k), сироватка крові", "калій (іонізований) (к)", "калій (сироватка)", "potassium", "k"]},
+    {"name": "Sodium", "category": "electrolytes", "unit": "mmol/L", "aliases": ["натрій", "натрій (іонізований) (na), сироватка крові", "натрій (іонізований) (na)", "натрій (сироватка)", "sodium", "na"]},
     {"name": "Calcium, total", "category": "electrolytes", "unit": "mmol/L", "aliases": ["кальцій загальний (сироватка)", "кальцій загальний", "total calcium"]},
     {"name": "Calcium, ionized", "category": "electrolytes", "unit": "mmol/L", "aliases": ["кальцій іонізований (сироватка)", "кальцій іонізований", "ionized calcium"]},
     {"name": "INR", "category": "coagulation", "unit": "ratio", "aliases": ["мнг", "мнв", "inr", "international normalized ratio", "міжнародне нормалізоване відношення", "міжнародне нормалізоване відношення(мнв/inr)", "міжнародне нормалізоване відношення (мнв/inr)"]},
     {"name": "Fibrinogen", "category": "coagulation", "unit": "g/L", "aliases": ["фібриноген", "fibrinogen", "фібриноген по клаусу"]},
-    {"name": "Total immunoglobulin E", "category": "allergy", "unit": "kU/L", "aliases": ["загальний ige", "total ige", "загальний ig e"]},
+    {"name": "Total immunoglobulin E", "category": "allergy", "unit": "kU/L", "aliases": ["загальний ige", "total ige", "загальний ig e", "загальний імуноглобулін е", "імуноглобулін e (igе загальний, сироватка)"]},
     {"name": "HLA-B27", "category": "immunogenetics", "unit": None, "value_type": "mixed", "aliases": ["виявлення носійства гену hla b-27", "hla-b27"]},
     {"name": "Aerobic and facultative anaerobic microbiota growth", "category": "microbiology", "unit": None, "value_type": "text", "aliases": ["ріст аеробної та факультативно-анаеробної мікробіоти"]},
     {"name": "Yeast and mould growth", "category": "microbiology", "unit": None, "value_type": "text", "aliases": ["дріжджові та плісняві гриби"]},
@@ -123,7 +123,7 @@ CONCEPT_DEFINITIONS: list[dict[str, object]] = [
     {"name": "Meropenem susceptibility", "category": "microbiology", "unit": None, "value_type": "text", "aliases": ["меропенем"]},
     {"name": "Piperacillin-tazobactam susceptibility", "category": "microbiology", "unit": None, "value_type": "text", "aliases": ["піперацилін-тазобактам"]},
     {"name": "Tobramycin susceptibility", "category": "microbiology", "unit": None, "value_type": "text", "aliases": ["тобраміцин"]},
-    # An EskuLab throat-culture antibiogram names 33
+    # An Esculab throat-culture antibiogram names 33
     # antibiotics; every one needs a definition here or its verdict lands on a
     # learned Ukrainian-only concept.
     {"name": "Azithromycin susceptibility", "category": "microbiology", "unit": None, "value_type": "text", "aliases": ["азитроміцин"]},
@@ -155,7 +155,7 @@ CONCEPT_DEFINITIONS: list[dict[str, object]] = [
     # The analyser's differential and the one counted by eye on a stained film
     # are two measurements of the same sample, printed one under the other:
     # Synevo 50.1 % «Нейтрофіли (на 100 лейкоцитів)» above «Сегментоядерні
-    # нейтрофіли 50 %», EskuLab 45.0 % lymphocytes above a smear's 43 %.  Under
+    # нейтрофіли 50 %», Esculab 45.0 % lymphocytes above a smear's 43 %.  Under
     # one concept the two readings share a date, one is hidden by the
     # one-per-day rule and the verdict flips with whichever survives.
     #
@@ -163,7 +163,7 @@ CONCEPT_DEFINITIONS: list[dict[str, object]] = [
     # laboratory in the record: the analyser line carries «(на 100
     # лейкоцитів)» or a channel code (LYM%, GRA%, NEUT%), the smear line is
     # the bare cell name -- «Лімфоцити», «Моноцити», «Еозинофіли», «Базофіли»
-    # (Synevo, Expert Hospital, St. Paraskeva) or EskuLab's «Лімфоцити
+    # (Synevo, Expert Hospital, St. Paraskeva) or Esculab's «Лімфоцити
     # (Lymph)», «Моноцити (Mid)» under «ручна лейкоформула» -- and its
     # neutrophils are always split into segmented and band forms.  A bare
     # «Нейтрофіли» is therefore the analyser's total: a smear never prints one.
@@ -199,7 +199,7 @@ CONCEPT_DEFINITIONS: list[dict[str, object]] = [
     # «-абс.» likewise is the analyser's MID channel (the 2-15 % band printed
     # beside GRAN and LYM), the mixed monocyte/eosinophil/basophil population,
     # so it files under "Mixed white cells" with Expert Hospital's MID rows --
-    # not under Monocytes, and not under EskuLab's smear «Моноцити (Mid)»,
+    # not under Monocytes, and not under Esculab's smear «Моноцити (Mid)»,
     # which has no -%/-абс. suffix and sits under «ручна лейкоформула».
     {"name": "Granulocytes", "category": "hematology", "unit": "%", "aliases": ["відносне значення гранулоцитів (gra%)", "gra%", "granulocytes", "нейтрофіли (gran)-%"]},
     {"name": "Granulocytes, absolute", "category": "hematology", "unit": "10^9/L", "aliases": ["абсолютне значення гранулоцитів (gra#)", "gra#", "granulocytes, absolute", "нейтрофіли (gran)-абс."]},
@@ -231,16 +231,16 @@ CONCEPT_DEFINITIONS: list[dict[str, object]] = [
     # decides; a plain name whose printed reference speaks of risk tiers is
     # re-filed as hs-CRP by ``refine_definition``.
     {"name": "C-reactive protein", "category": "inflammation", "unit": "mg/L", "aliases": ["с-реактивний білок", "с-реактивний білок (срб)", "срб", "c-reactive protein", "crp"]},
-    {"name": "High-sensitivity C-reactive protein", "category": "inflammation", "unit": "mg/L", "aliases": ["high-sensitivity c-reactive protein", "hs-crp", "hscrp", "hs crp", "crp high sensitivity", "с-реактивний білок високочутливий", "с-реактивний білок (високочутливий)", "високочутливий с-реактивний білок", "с-реактивний білок ультрачутливий", "вч-срб", "hs-срб", "срб високочутливий", "срб (високочутливий)"]},
-    {"name": "Rheumatoid factor", "category": "immunology", "unit": "IU/mL", "aliases": ["ревматоїдний фактор"]},
-    {"name": "Antistreptolysin O", "category": "infection", "unit": "IU/mL", "aliases": ["антистрептолізин «о»", "антистрептолізин о", "aso"]},
+    {"name": "High-sensitivity C-reactive protein", "category": "inflammation", "unit": "mg/L", "aliases": ["high-sensitivity c-reactive protein", "hs-crp", "hscrp", "hs crp", "crp high sensitivity", "с-реактивний білок високочутливий", "с-реактивний білок (високочутливий)", "високочутливий с-реактивний білок", "с-реактивний білок ультрачутливий", "вч-срб", "hs-срб", "срб високочутливий", "срб (високочутливий)", "c-реактивний білок, високочутливий (c-reactive protein, high sensitivity)"]},
+    {"name": "Rheumatoid factor", "category": "immunology", "unit": "IU/mL", "aliases": ["ревматоїдний фактор", "ревматоїдний фактор (рф)"]},
+    {"name": "Antistreptolysin O", "category": "infection", "unit": "IU/mL", "aliases": ["антистрептолізин «о»", "антистрептолізин о", "антистрептолізин-о (асл-о)", "aso"]},
     {"name": "Alpha-amylase", "category": "pancreas", "unit": "U/L", "aliases": ["амілаза альфа", "α-амілаза", "альфа-амілаза", "амілаза"]},
     {"name": "Lipase", "category": "pancreas", "unit": "U/L", "aliases": ["ліпаза", "lipase"]},
-    {"name": "Thyroglobulin antibodies", "category": "thyroid", "unit": "IU/mL", "aliases": ["антитіла до тиреоглобуліну (attg)"]},
-    {"name": "Thyroid peroxidase antibodies", "category": "thyroid", "unit": "IU/mL", "aliases": ["антитіла до тиреопероксидази (a-tpo)", "пероксидаза щитоподібної залози, антитіла (атпо)", "атпо"]},
+    {"name": "Thyroglobulin antibodies", "category": "thyroid", "unit": "IU/mL", "aliases": ["антитіла до тиреоглобуліну (attg)", "антитіла до тиреоглобуліну (ат до тг)", "тиреоглобулін, антитіла (аттг)"]},
+    {"name": "Thyroid peroxidase antibodies", "category": "thyroid", "unit": "IU/mL", "aliases": ["антитіла до тиреопероксидази (a-tpo)", "пероксидаза щитоподібної залози, антитіла (атпо)", "атпо", "антитіла до тиреопероксидази (ат до тпо)"]},
     {"name": "Parathyroid hormone", "category": "hormones", "unit": "pg/mL", "aliases": ["паратгормон (птг 1-84).", "паратгормон (птг 1-84). високоспецифічний. біоінтактний", "паратгормон (птг 1-84)", "паратгормон", "pth"]},
     {"name": "Total testosterone", "category": "hormones", "unit": "nmol/L", "aliases": ["тестостерон загальний (т загальний", "тестостерон загальний (т загальний, сироватка)", "тестостерон загальний"]},
-    # EskuLab's analyser reports the same clarity as a turbidity level:
+    # Esculab's analyser reports the same clarity as a turbidity level:
     # «Каламутність(рівень) (C-CLOUD) - - -».
     {"name": "Urine appearance", "category": "urinalysis", "unit": None, "value_type": "text", "aliases": ["прозорість", "urine clarity", "каламутність", "каламутність(рівень) (c-cloud)"]},
     {"name": "Urine colour", "category": "urinalysis", "unit": None, "value_type": "text", "aliases": ["колір", "колір сечі (c-color)", "urine color", "urine colour"]},
@@ -277,7 +277,7 @@ CONCEPT_DEFINITIONS: list[dict[str, object]] = [
     {"name": "Urine erythrocytes", "category": "urinalysis", "unit": "cells/µL", "value_type": "mixed", "aliases": ["еритроцити в мкл (rbc)", "еритроцити", "urine erythrocytes"]},
     {"name": "Urine erythrocytes (dipstick)", "category": "urinalysis", "unit": "cells/µL", "value_type": "mixed", "aliases": ["еритроцити (за активністю пероксидази)", "еритроцити (за активністю пероксидази), кл/мкл", "еритроцити/гемоглобін (c-bld)", "еритроцити/гемоглобін (c-bld) - мг/дл приносний", "кров (c-bld)", "кров у сечі", "urine blood", "blood (dipstick)", "urine erythrocytes (dipstick)"]},
     {"name": "Urine erythrocytes per high-power field", "category": "urinalysis", "unit": "per HPF", "value_type": "mixed", "aliases": ["еритроцити (rbc), в п/з", "еритроцити, в п/з", "еритроцити в п/з", "еритроцити в полі зору", "urine erythrocytes per high-power field", "rbc/hpf", "erythrocytes per hpf"]},
-    # «Незмінені еритроцити (NL RBC)» is EskuLab's automated count of the same
+    # «Незмінені еритроцити (NL RBC)» is Esculab's automated count of the same
     # unchanged (isomorphic) cells the microscopy row counts per field -- but
     # in cells/µL, and there is no conversion between a microlitre and a
     # field.  ``refine_definition`` files a per-microlitre row under its own
@@ -286,7 +286,7 @@ CONCEPT_DEFINITIONS: list[dict[str, object]] = [
     {"name": "Urine erythrocytes, unchanged (per microlitre)", "category": "urinalysis", "unit": "cells/µL", "value_type": "mixed", "aliases": ["urine erythrocytes, unchanged (per microlitre)"]},
     {"name": "Urine erythrocytes, unchanged", "category": "urinalysis", "unit": "per HPF", "value_type": "mixed", "aliases": ["еритроцити (не змінені)", "еритроцити не змінені, в п/з", "незмінені еритроцити (nl rbc)", "незмінені еритроцити", "nl rbc", "urine erythrocytes, unchanged"]},
     {"name": "Urine bacteria", "category": "urinalysis", "unit": "cells/µL", "value_type": "mixed", "aliases": ["бактерії", "бактерії в мкл (bact)", "бактерії, в п/з", "urine bacteria"]},
-    # "mixed" across the sediment cluster: EskuLab's automated microscopy
+    # "mixed" across the sediment cluster: Esculab's automated microscopy
     # reports the same analytes as numbers per µL, and a text-typed definition
     # made concept_for_alias refuse those rows, minting a learned concept per
     # vendor spelling -- one analyte, two or three half-length trends.
@@ -306,7 +306,7 @@ CONCEPT_DEFINITIONS: list[dict[str, object]] = [
     # marker" with its id kept (CONCEPT_ID_OVERRIDES), so the old address and
     # its reference entry still resolve; the old name stays as an alias for
     # search.
-    {"name": "Hepatitis B core antibodies, total (anti-HBc)", "category": "infection", "unit": "index", "aliases": ["вірус гепатиту b (hbv), hbcorag", "вірус гепатиту b (hbv), hbcorag, антитіла сумарні", "вірус гепатиту b (hbv), anti-hbc", "антитіла до hbcorag сумарні", "антитіла до ядерного антигену вірусу гепатиту b", "анти-hbc", "anti-hbc", "anti-hbc total", "hbcab", "hepatitis b core antibodies", "hepatitis b core antigen marker"]},
+    {"name": "Hepatitis B core antibodies, total (anti-HBc)", "category": "infection", "unit": "index", "aliases": ["вірус гепатиту b (hbv), hbcorag", "вірус гепатиту b (hbv), hbcorag, антитіла сумарні", "вірус гепатиту b (hbv), anti-hbc", "антитіла до hbcorag сумарні", "hbcorag сумарні антитіла", "антитіла до ядерного антигену вірусу гепатиту b", "анти-hbc", "anti-hbc", "anti-hbc total", "hbcab", "hepatitis b core antibodies", "hepatitis b core antigen marker"]},
     {"name": "Antinuclear antibodies", "category": "autoimmune", "unit": "index", "aliases": ["антинуклеарні антитіла (ana)сироватка", "ana"]},
     # «гепатиту в» with a Cyrillic в and «гепатиту b» with a Latin b are the
     # same printed line from two labs; only the second was listed, so the
@@ -316,10 +316,10 @@ CONCEPT_DEFINITIONS: list[dict[str, object]] = [
     # unknown analyte and never joined the series it belongs to.
     {"name": "Hepatitis B surface antigen", "category": "infection", "unit": "index", "aliases": ["вірус гепатиту в (hbv), hbsag", "вірус гепатиту b (hbv), hbsag", "вірус гепатиту b (hbv), hbsag (австралійський антиген)", "вірус гепатиту в (hbv), hbsag (австралійський антиген)", "вірус гепатиту в (hbv), hbsag (кількісне визначення)", "вірус гепатиту b (hbv), hbsag (кількісне визначення)", "hbsag"]},
     # One assay, two spellings: Synevo «Вірус гепатиту C (HCV), антитіла
-    # сумарні», EskuLab «HCV антитіла сумарні».  They were two concepts, so a
+    # сумарні», Esculab «HCV антитіла сумарні».  They were two concepts, so a
     # 2025 and a 2026 result never met on one trend.
     {"name": "Hepatitis C total antibodies", "category": "infection", "unit": "index", "aliases": ["hcv антитіла сумарні", "вірус гепатиту c (hcv), антитіла сумарні", "антитіла до вірусу гепатиту c сумарні", "anti-hcv", "анти-hcv", "hcv ab", "hepatitis c antibodies", "hepatitis c total antibodies"]},
-    {"name": "Treponema pallidum total antibodies", "category": "infection", "unit": "index", "aliases": ["антитіла сумарні до treponema pallidum", "антитіла сумарні до treponema"]},
+    {"name": "Treponema pallidum total antibodies", "category": "infection", "unit": "index", "aliases": ["антитіла сумарні до treponema pallidum", "антитіла сумарні до treponema", "treponema pallidum, антитіла сумарні"]},
     {"name": "Mumps virus IgG", "category": "infection", "unit": "index", "aliases": ["вірус паротиту, антитіла igg"]},
     {"name": "Mumps virus IgM", "category": "infection", "unit": "index", "aliases": ["вірус паротиту, антитіла igm"]},
     {"name": "Blood group", "category": "hematology", "unit": None, "value_type": "text", "aliases": ["група крові", "група крові (ab0)", "blood group", "abo blood group"]},
@@ -429,7 +429,7 @@ CONCEPT_DEFINITIONS: list[dict[str, object]] = [
     {"name": "Granular casts in urine", "category": "urinalysis", "unit": None, "value_type": "text", "aliases": ["циліндри зернисті, в п/з"]},
     {"name": "Epithelial casts in urine", "category": "urinalysis", "unit": None, "value_type": "text", "aliases": ["циліндри епітеліальні , в п/з"]},
     {"name": "Waxy casts in urine", "category": "urinalysis", "unit": None, "value_type": "text", "aliases": ["циліндри воскоподібні, в п/з"]},
-    # EskuLab's automated urinalysis reports four sediment aggregates the
+    # Esculab's automated urinalysis reports four sediment aggregates the
     # manual-microscopy definitions above have no counterpart for.  Named here
     # so their readings stop minting learned Ukrainian-only concepts.
     {"name": "Non-hyaline casts in urine", "category": "urinalysis", "unit": None, "value_type": "mixed", "aliases": ["негіалінові циліндри в мкл (path.cast)"]},
@@ -455,7 +455,7 @@ CONCEPT_DEFINITIONS: list[dict[str, object]] = [
     {"name": "Ku antibodies", "category": "autoimmune", "unit": "kU/L", "aliases": ["ku"]},
     {"name": "Sm antibodies", "category": "autoimmune", "unit": "kU/L", "aliases": ["sm"]},
     {"name": "U1-snRNP antibodies", "category": "autoimmune", "unit": "kU/L", "aliases": ["u1-snrnp"]},
-    # Introduced by one EskuLab order: a protein electrophoresis, an
+    # Introduced by one Esculab order: a protein electrophoresis, an
     # apolipoprotein set, a coagulation panel and a manual differential, none
     # of which this record had a definition for.  Without one each landed on a
     # concept named after its Ukrainian label, which the English page then
@@ -472,8 +472,8 @@ CONCEPT_DEFINITIONS: list[dict[str, object]] = [
     {"name": "Cancer antigen 125 (CA 125)", "category": "tumour_markers", "unit": "U/mL", "aliases": ["онкомаркер яєчників (са-125)", "онкомаркер яєчників (са 125)", "онкомаркер яєчників (са125)", "са-125", "са 125", "са125", "cancer antigen 125"]},
     {"name": "Cancer antigen 15-3 (CA 15-3)", "category": "tumour_markers", "unit": "U/mL", "aliases": ["онкомаркер молочної залози (са 15-3)", "онкомаркер молочної залози (са15-3)", "са 15-3", "са15-3", "cancer antigen 15-3"]},
     {"name": "Human epididymis protein 4 (HE4)", "category": "tumour_markers", "unit": "pmol/L", "aliases": ["онкомаркер he4", "ранній онкомаркер раку яєчників he-4 антиген", "ранній онкомаркер раку яєчників he-4", "ранній онкомаркер раку яєчників", "he4", "he-4", "human epididymis protein 4"]},
-    {"name": "Non-HDL cholesterol", "category": "lipids", "unit": "mmol/L", "aliases": ["холестерин не-лпвщ"]},
-    {"name": "Apolipoprotein A1", "category": "lipids", "unit": "g/L", "aliases": ["аполіпопротеїн а1"]},
+    {"name": "Non-HDL cholesterol", "category": "lipids", "unit": "mmol/L", "aliases": ["холестерин не-лпвщ", "холестерин не-ліпопротеїнів високої щільності (хс не-лпвщ)"]},
+    {"name": "Apolipoprotein A1", "category": "lipids", "unit": "g/L", "aliases": ["аполіпопротеїн а1", "аполіпопротеїн а-1"]},
     {"name": "Apolipoprotein B", "category": "lipids", "unit": "g/L", "aliases": ["аполіпопротеїн в"]},
     {"name": "Lipoprotein(a)", "category": "lipids", "unit": "nmol/L", "aliases": ["ліпопротеїн (а) lp (a)", "ліпопротеїн (а)"]},
     {"name": "Beta-lipoproteins", "category": "lipids", "unit": "units", "aliases": ["β-ліпопротеїди", "бета-ліпопротеїди"]},
@@ -671,7 +671,7 @@ def label_key(label: str) -> str:
 _WRAPPED_MULTIPLIER = re.compile(r"(?<!\s)\s\s*+\d+(?:[.,]\d+)?\s*[xх×]\s*$", re.IGNORECASE)
 
 #: Lines a parser can mistake for a result label: a specimen header repeated
-#: above every row of an EskuLab urinalysis («Приносний матеріал, сеча»).  They
+#: above every row of an Esculab urinalysis («Приносний матеріал, сеча»).  They
 #: name no analyte, so they are never learned as an alias of one.
 NON_ANALYTE_LABELS = frozenset({normalized_key("Приносний матеріал, сеча"), normalized_key("Приносний матеріал")})
 
@@ -834,7 +834,7 @@ def concept_for_alias(
     printed material, its section, a blood-count unit).  It is binding, not a
     preference: a coprogram's «pH» and «Слиз» are not urine whatever the
     alias table says, so urine concepts are not candidates there.  In stool the
-    EskuLab «… (кал)» spelling of the label is tried first, which is how
+    Esculab «… (кал)» spelling of the label is tried first, which is how
     Synevo's bare «Форма» or «Слиз» reaches the stool concept.
     """
     excluded = foreign_categories(alias, specimen)

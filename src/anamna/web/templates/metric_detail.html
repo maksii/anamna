@@ -199,6 +199,44 @@
 </section>
 {% endif %}
 
+{#- Where this laboratory result can be measured again, from the stored price
+    lists (_measure_again). A guest cannot open the planner, so the link is
+    withheld from one; the prices are public either way. -#}
+{% if measure %}
+<section class="panel an-measure" id="measure-again" aria-labelledby="measure-again-heading">
+  <div class="panel-head">
+    <div><span class="eyebrow">{{ t('metric.order_eyebrow') }}</span><h2 id="measure-again-heading">{{ t('metric.order_heading') }}</h2></div>
+  </div>
+  <div class="an-measure__labs">
+    {% for offer in measure.offers %}
+    <section class="an-measure__lab" aria-labelledby="measure-lab-{{ loop.index }}">
+      <h3 id="measure-lab-{{ loop.index }}">{{ offer.lab }}</h3>
+      <ul class="an-plan-items">
+        {% for item in offer.options %}
+        <li class="an-plan-item">
+          <span class="an-measure__kind">{% if item.kind == 'single' %}{{ t('metric.order_single') }}{% elif offer.options|length > 1 %}{{ t('metric.order_panel_cheaper') }}{% else %}{{ t('metric.order_panel_only') }}{% endif %}</span>
+          <div class="an-plan-item__head">
+            {% if item.url %}<a href="{{ item.url }}" target="_blank" rel="noopener noreferrer">{{ item.name }}<span class="visually-hidden"> ({{ t('metric.order_external', lab=offer.lab) }})</span></a>{% else %}<span>{{ item.name }}</span>{% endif %}
+            <span class="an-plan-item__price">{% if item.final_price < item.price %}<s aria-label="{{ t('plan.list_price') }}">{{ item.price|uah }}</s> {% endif %}{{ item.final_price|uah }}</span>
+          </div>
+          {% set notes = [] %}
+          {% if item.code %}{% set _ = notes.append(t('plan.code', code=item.code)) %}{% endif %}
+          {% if item.kind == 'panel' %}{% set _ = notes.append(plural_t('metric.order_panel_count', item['keys']|length)) %}{% endif %}
+          {% if item.fees_cost %}{% set _ = notes.append(t('metric.order_fee', fee=item.fees_cost|uah)) %}{% endif %}
+          {% if notes %}<p class="tiny muted">{{ notes|join(' · ') }}</p>{% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+      {% if offer.fetched_at %}<p class="tiny muted">{% if offer.city %}{{ t('metric.order_read_city', city=offer.city, date=offer.fetched_at|stamp|datefmt) }}{% else %}{{ t('plan.prices_read', date=offer.fetched_at|stamp|datefmt) }}{% endif %}</p>{% endif %}
+    </section>
+    {% endfor %}
+  </div>
+  {% if not guest %}
+  <p class="an-plan-go"><a class="button primary" href="{{ measure.plan_url }}">{{ t('metric.order_plan') }}</a> <span class="tiny muted">{{ t('metric.order_plan_hint') }}</span></p>
+  {% endif %}
+</section>
+{% endif %}
+
 <div class="an-metric-more" id="reading-guidance">
 {% if panel or siblings %}
 <details class="panel an-fold an-siblings">

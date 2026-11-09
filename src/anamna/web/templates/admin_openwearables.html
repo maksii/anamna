@@ -31,8 +31,7 @@
     <div><dt>{{ t('openwearables.status_linked') }}</dt>
       <dd>{{ linked|countfmt }}</dd></div>
   </dl>
-  <form action="/admin/openwearables/test" method="post" class="inline-form"
-        onsubmit="var b=this.querySelector('button');setTimeout(function(){b.disabled=true;b.textContent=b.dataset.working;},0)">
+  <form action="/admin/openwearables/test" method="post" class="inline-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <button class="secondary" type="submit" data-working="{{ t('openwearables.working') }}">{{ t('openwearables.test_action') }}</button>
   </form>
