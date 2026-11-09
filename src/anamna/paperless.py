@@ -25,6 +25,7 @@ servers used ``related_document``, both are read); full-text search is
 
 from __future__ import annotations
 
+import functools
 import ipaddress
 import json
 import logging
@@ -361,12 +362,24 @@ def task_state(url: str, token: str, task_id: str) -> dict[str, object]:
     return {"status": str(row.get("status") or "").lower(), "document_id": document_id}
 
 
-def search_ids(url: str, token: str, query: str, limit: int = 50) -> list[int]:
-    """Paperless document ids whose full text matches the query."""
+def search_ids(url: str, token: str, query: str, among: tuple[int, ...]) -> list[int]:
+    """Which of ``among`` (Paperless ids this person's documents link to)
+    match the query's full text.
+
+    Filtered over there rather than here: the archive holds far more than
+    this record (1849 documents against 301 on 2026-11-09), so a plain
+    "top 50" let unrelated papers crowd out linked matches — 7 of 23 for
+    "гемоглобін".  Paperless applies ``id__in`` before ranking.
+    """
+    if not among:
+        return []
+    # ponytail: the ids ride in the URL, ~6 bytes each; past a few thousand
+    # linked documents this nears proxy URL limits and wants chunking.
     payload = _request(
         url,
         token,
-        f"/api/documents/?query={urllib.parse.quote(query)}&page_size={limit}&fields=id",
+        f"/api/documents/?query={urllib.parse.quote(query)}&page_size={len(among)}&fields=id"
+        f"&id__in={','.join(map(str, among))}",
         timeout=8,
     )
     results = payload.get("results") if isinstance(payload, dict) else None
@@ -381,7 +394,7 @@ def document_url(url: str, paperless_id: int) -> str:
 # 200 entries — enough to keep search-as-you-type from re-asking Paperless on
 # every keystroke, and to stop poking a server that just failed.
 _SEARCH_TTL = 60
-_search_cache: dict[tuple[str, str, str], tuple[float, list[int]]] = {}
+_search_cache: dict[tuple[str, str, str, tuple[int, ...]], tuple[float, list[int]]] = {}
 
 # When the server fails, remember the *server* rather than the query.  Search
 # runs on every keystroke, so a host that black-holes packets (rather than
@@ -397,8 +410,8 @@ def reset_caches() -> None:
     _down_until.clear()
 
 
-def cached_search_ids(url: str, token: str, query: str) -> list[int]:
-    key = (url, token, query)
+def cached_search_ids(url: str, token: str, query: str, among: tuple[int, ...]) -> list[int]:
+    key = (url, token, query, among)
     now = time.monotonic()
     hit = _search_cache.get(key)
     if hit and now - hit[0] < _SEARCH_TTL:
@@ -406,7 +419,7 @@ def cached_search_ids(url: str, token: str, query: str) -> list[int]:
     if now < _down_until.get(url, 0.0):
         return []
     try:
-        ids = search_ids(url, token, query)
+        ids = search_ids(url, token, query, among)
     except PaperlessError as exc:
         logger.warning("paperless: search failed: %s", exc)
         _down_until[url] = now + _DOWN_TTL
@@ -579,18 +592,24 @@ def clear_attempts(settings: Settings, user_id: str) -> int:
         return int(cursor.rowcount)
 
 
-def sync_documents(settings: Settings, user_id: str) -> dict[str, int]:
+def sync_documents(settings: Settings, user_id: str, *, attempted_only: bool = False) -> dict[str, int]:
     """Bring every document this person owns into Paperless: resolve uploads
     still pending, retry the ones whose consumption failed, push the ones
     never sent.  One pass repairs everything repairable — a wrong token fixed
     after the fact, a server that was down, a rejected file — so "press sync
     once" is the whole recovery story.  Sequential on purpose: a home server
-    digesting one OCR at a time is the polite pace."""
+    digesting one OCR at a time is the polite pace.
+
+    ``attempted_only`` limits the pass to documents already handed over at
+    least once (a task id, or a recorded refusal): what the scheduler runs.
+    Sending a document that predates the person's consent stays a button
+    press, because "send new uploads" is what they agreed to."""
     pushed = resolved = 0
     with connect(settings) as connection:
         rows = connection.execute(
-            """SELECT id, paperless_task_id FROM documents
+            f"""SELECT id, paperless_task_id FROM documents
                WHERE owner_user_id=? AND paperless_id IS NULL AND duplicate_of_document_id IS NULL
+               {"AND (paperless_task_id IS NOT NULL OR paperless_attempts > 0)" if attempted_only else ""}
                ORDER BY imported_at""",
             (user_id,),
         ).fetchall()
@@ -613,7 +632,7 @@ def sync_documents(settings: Settings, user_id: str) -> dict[str, int]:
     return {"pushed": pushed, "resolved": resolved}
 
 
-def sync_all_users(settings: Settings) -> dict[str, int]:
+def sync_all_users(settings: Settings, *, attempted_only: bool = False) -> dict[str, int]:
     """The same sync for every person who stored a token *and* consented to
     sending — what the admin presses when Paperless arrives mid-life and the
     record predates it.  Consent is per person and is honoured here exactly as
@@ -629,7 +648,7 @@ def sync_all_users(settings: Settings) -> dict[str, int]:
     for user_id in user_ids:
         if not upload_ready(settings, str(user_id)):
             continue  # the operator may have switched the feature off mid-run
-        outcome = sync_documents(settings, str(user_id))
+        outcome = sync_documents(settings, str(user_id), attempted_only=attempted_only)
         totals["users"] += 1
         totals["pushed"] += outcome["pushed"]
         totals["resolved"] += outcome["resolved"]
@@ -651,6 +670,36 @@ def start_sync_all(settings: Settings) -> None:
         target=_logged, args=("paperless sync-all", sync_all_users, settings),
         name="anamna-paperless-sync-all", daemon=True,
     ).start()
+
+
+#: How often the scheduler links finished uploads.  Paperless OCR takes
+#: seconds to minutes per file, so five minutes keeps a link close behind it.
+SCHEDULE_SECONDS = 300
+
+
+def start_scheduler(settings: Settings) -> threading.Event:
+    """Link uploads Paperless has finished reading, and retry ones it refused
+    or never received, for every consenting account; stop with ``.set()``.
+
+    An upload only stores a task id: the document id exists once OCR is done
+    over there.  Before this loop that id was fetched only when someone opened
+    the document's page or pressed sync, so every automatic import (lab
+    syncs) stayed "on the way" indefinitely: 243 on the sandbox on
+    2026-11-09, every one already consumed successfully by Paperless."""
+    stop = threading.Event()
+
+    def loop() -> None:
+        while not stop.wait(SCHEDULE_SECONDS):
+            try:
+                active = paperless_active(settings)
+            except Exception:  # noqa: BLE001 — a locked database must not end the loop
+                logger.warning("paperless scheduler: cannot read settings", exc_info=True)
+                continue
+            if active:
+                _logged("paperless-scheduler", functools.partial(sync_all_users, attempted_only=True), settings)
+
+    threading.Thread(target=loop, name="anamna-paperless-scheduler", daemon=True).start()
+    return stop
 
 
 def _logged(loop: str, target, *args) -> None:

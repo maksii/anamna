@@ -9477,17 +9477,15 @@ def _paperless_matches(settings, connection, owner_user_id: str, q: str) -> list
         ready = paperless.connection_for(settings, owner_user_id)
         if not ready:
             return []
-        remote_ids = paperless.cached_search_ids(*ready, q)
-        if not remote_ids:
-            return []
-        marks = ",".join("?" * len(remote_ids))
-        return [
-            str(row["id"])
+        linked = {
+            int(row["paperless_id"]): str(row["id"])
             for row in connection.execute(
-                f"SELECT id FROM documents WHERE owner_user_id=? AND paperless_id IN ({marks})",
-                [owner_user_id, *remote_ids],
+                "SELECT id, paperless_id FROM documents WHERE owner_user_id=? AND paperless_id IS NOT NULL",
+                (owner_user_id,),
             )
-        ]
+        }
+        remote_ids = paperless.cached_search_ids(*ready, q, tuple(sorted(linked)))
+        return [linked[remote] for remote in remote_ids if remote in linked]
     except Exception:
         return []
 
@@ -10001,9 +9999,8 @@ def _document_paperless(request: Request, settings, document_id: str,
     """The link to this document's Paperless copy, and whether one is still pending."""
     # A copy in Paperless is linked lazily, on the page where the link
     # would appear: consumption over there takes as long as its OCR does,
-    # and this is the first moment anyone looks.
-    # ponytail: one task lookup per view while pending (10 s worst case
-    # against a dead server); a background poller if that ever hurts.
+    # and this may be the first moment anyone looks.  paperless.start_scheduler
+    # links the rest within five minutes; this only saves the wait.
     # Someone reading a shared record is shown none of this: that the
     # patient mirrors their documents to an external archive, at which
     # address, under which id, was not part of what they shared.
@@ -14193,6 +14190,8 @@ async def _lifespan(app: FastAPI):
     # Oura: webhook events are processed on a timer (not only when the next
     # webhook arrives), and every usable account catches up once a day.
     oura_stop, oura_thread = oura.start_scheduler(settings) if workers_enabled else (None, None)
+    # Paperless: an upload stores only a task id; this links the finished ones.
+    paperless_stop = paperless.start_scheduler(settings) if workers_enabled else None
     if workers_enabled:
         telegram_service.start()
     try:
@@ -14200,6 +14199,8 @@ async def _lifespan(app: FastAPI):
     finally:
         if garmin_stop:
             garmin_stop.set()
+        if paperless_stop:
+            paperless_stop.set()
         if oura_stop:
             oura_stop.set()
             await run_in_threadpool(oura_thread.join, 10)
