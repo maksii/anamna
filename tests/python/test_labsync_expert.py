@@ -439,8 +439,10 @@ def test_conclusions_and_examinations_are_listed_beside_analyses_for_every_perso
     # «Огляд:» is the heading a consultation's finding is read under when no
     # diagnosis is written; a prescription reads as one, without its record id.
     assert "Огляд:\nСтан задовільний" in said and "Код діагнозу:\nK30" in said
-    assert ("Дексалгін саше: по 1 саше, 3 раз в 1 День (дні), 01.01.2024–07.01.2024, на курс 21 саше" in said
-            and "901 ·" not in said)
+    # Where a long line wraps depends on the font the machine has, so the
+    # prescription is compared with its soft line breaks folded away.
+    assert ("Дексалгін саше: по 1 саше, 3 раз в 1 День (дні), 01.01.2024–07.01.2024, на курс 21 саше"
+            in " ".join(said.split()) and "901 ·" not in said)
     assert client.pdfs(scan, {"id": "p41", "family_member_id": None}) == [b"%PDF-1.4 ultrasound"]
     assert seen[-1][1] == "/api/v1/medical/research/900/file"
     assert "Легеневі поля прозорі." in text_of(client.pdfs(xray, kid)[0], tmp_path)
