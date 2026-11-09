@@ -622,7 +622,10 @@ def _special(params, sex: str | None, ready: dict[str, list[dict]], cards: list[
                    for group, members in groups.items() if wanted[group]]
     return {"picked": picked, "topics": topics_view, "open": topics, "rows": rows, "found": found,
             "match": match, "keys": keys, "recent_listed": sum(1 for r in rows if r["recent"]),
-            "names": {marker.key: t(f"special.{marker.id}") for marker in testplan_special.MARKERS}}
+            "names": {marker.key: t(f"special.{marker.id}") for marker in testplan_special.MARKERS},
+            # An allergen no lab sells alone (olive, t9: only inside ALEX)
+            # has no lab row to name it; the lab's name still wins.
+            "fallback_names": {f"x:sige:{code}": t(f"special.allergen_{code}") for code in testplan_special.ALLERGENS}}
 
 
 #: Rows per page in every long list on the page.
@@ -963,6 +966,8 @@ def register_routes(app, settings, *, templates, template_context, require_user,
         if spec is not None:
             selected = spec["keys"]
             names.update(spec["names"])
+            for key, name in spec["fallback_names"].items():
+                names.setdefault(key, name)
         hits, fuzzy = _search(query, cards, ready, names, set(selected), from_labs, concepts) \
             if query and not special else ([], False)
         # One box filters the list and finds what is not on it yet: a hit
