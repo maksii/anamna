@@ -35,8 +35,7 @@
   </div>
   {% endif %}
   {% if not card.needs_new_key %}
-  <form action="/integrations/garmin/personal/sync" method="post" class="inline-form"
-        onsubmit="var b=this.querySelector('button');setTimeout(function(){b.disabled=true;b.textContent=b.dataset.working;},0)">
+  <form action="/integrations/garmin/personal/sync" method="post" class="inline-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <button class="secondary" type="submit" data-working="{{ t('integrations.working') }}">{{ t('integrations.sync_action') }}</button>
   </form>

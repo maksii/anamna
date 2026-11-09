@@ -26,6 +26,7 @@
 <section class="search-results-section" data-live-region aria-busy="false" aria-labelledby="result-title">
   <p id="search-status" class="visually-hidden" role="status" aria-live="polite"></p>
   <span id="search-pending" class="an-search-pending" hidden>{{ t('metrics.searching') }}</span>
+  <p id="search-error" class="an-search-error" role="alert" hidden>{{ t('metrics.search_unavailable') }}. {{ t('metrics.search_retry') }}</p>
   <div id="search-results">{% include "_search_results.html" %}</div>
 </section>
 
@@ -37,6 +38,7 @@
   const results = document.querySelector('#search-results');
   const announce = document.querySelector('#search-status');
   const pending = document.querySelector('#search-pending');
+  const failure = document.querySelector('#search-error');
   const i18n = globalThis.__HL_I18N__ || {};
   let controller;
 
@@ -61,7 +63,9 @@
     markChips(params);
     section.setAttribute('aria-busy', 'true');
     section.classList.add('is-pending');
+    form.setAttribute('aria-busy', 'true');
     pending.hidden = false;
+    failure.hidden = true;
     try {
       const response = await fetch(`/api/metrics/search?${query}`, {signal: controller.signal});
       if (!response.ok) throw new Error(i18n['metrics.search_failed']);
@@ -69,11 +73,15 @@
       results.innerHTML = payload.html;
       announce.textContent = `${payload.title}: ${payload.count_text}`;
     } catch (error) {
-      if (error.name !== 'AbortError') announce.textContent = i18n['metrics.search_unavailable'];
+      if (error.name !== 'AbortError') {
+        announce.textContent = i18n['metrics.search_unavailable'];
+        failure.hidden = false;
+      }
     } finally {
       if (!controller.signal.aborted) {
         section.setAttribute('aria-busy', 'false');
         section.classList.remove('is-pending');
+        form.removeAttribute('aria-busy');
         pending.hidden = true;
       }
     }

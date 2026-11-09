@@ -176,11 +176,11 @@ def test_an_applicable_adult_range_is_recovered_not_discarded():
     assert applicable_reference_bounds("від 3,89 до 5,82", adult, male) == (3.89, 5.82)
 
 
-# The reference blocks EskuLab printed on order 10000331, verbatim after the
+# The reference blocks Esculab printed on order 10000331, verbatim after the
 # column parser puts the two printed sub-columns back in reading order.  Every
 # one of these was showing "not applicable to this age or sex" to a 34-year-old
 # man who had the answer printed on the page in front of him.
-ESKULAB_BLOCKS = {
+ESCULAB_BLOCKS = {
     "ggt": (
         "Жінки: 5.0-36.0 Чоловіки: 8.0-61.0 Діти до 5 днів: <185.0 "
         "Діти 5 днів - 6 місяців: <204.0 Діти 6-12 місяців: <34.0 Діти 1-3 роки: <18.0 "
@@ -222,7 +222,7 @@ ESKULAB_BLOCKS = {
         "Жінки 12-17 років: <25.06-12 років: <47.0 Діти 0-5 днів: <97.0 "
         "5 днів - 6 місяців: <77.0 6-12 місяців: <82.0 1-3 років: <48.0 3-6 років: <36.0"
     ),
-    # ... and as the same order prints them once `ESKULAB_GLUE` separates the
+    # ... and as the same order prints them once `ESCULAB_GLUE` separates the
     # two, which is what re-parsing the source PDF now produces.
     "alt": (
         "Жінки: <35.0 Чоловіки: <50.0 Жінки 12-17 років: <24.0 Чоловіки 12-17 років: <27.0 "
@@ -256,21 +256,21 @@ def test_the_adult_band_is_found_inside_a_block_written_for_every_age_at_once():
     «Чоловіки: 8.0-61.0» sitting in the block being refused.
     """
     man, woman = (34, "male"), (34, "female")
-    assert applicable_reference_bounds(ESKULAB_BLOCKS["ggt"], *man) == (8.0, 61.0)
-    assert applicable_reference_bounds(ESKULAB_BLOCKS["ggt"], *woman) == (5.0, 36.0)
-    assert applicable_reference_bounds(ESKULAB_BLOCKS["calcium"], *man) == (2.15, 2.5)
-    assert applicable_reference_bounds(ESKULAB_BLOCKS["glucose"], *man) == (4.11, 5.89)
-    assert applicable_reference_bounds(ESKULAB_BLOCKS["neutrophils"], *man) == (40.0, 70.0)
+    assert applicable_reference_bounds(ESCULAB_BLOCKS["ggt"], *man) == (8.0, 61.0)
+    assert applicable_reference_bounds(ESCULAB_BLOCKS["ggt"], *woman) == (5.0, 36.0)
+    assert applicable_reference_bounds(ESCULAB_BLOCKS["calcium"], *man) == (2.15, 2.5)
+    assert applicable_reference_bounds(ESCULAB_BLOCKS["glucose"], *man) == (4.11, 5.89)
+    assert applicable_reference_bounds(ESCULAB_BLOCKS["neutrophils"], *man) == (40.0, 70.0)
 
 
 def test_the_short_form_of_a_sex_is_read_as_that_sex():
-    """«Дорослі (ч)» is EskuLab's men's row, printed beside «Дорослі жінки».
+    """«Дорослі (ч)» is Esculab's men's row, printed beside «Дорослі жінки».
 
     Unrecognised, the two were indistinguishable and a man's alkaline
     phosphatase was measured against the women's 35-104 rather than 40-129.
     """
-    assert applicable_reference_bounds(ESKULAB_BLOCKS["alp"], 34, "male") == (40.0, 129.0)
-    assert applicable_reference_bounds(ESKULAB_BLOCKS["alp"], 34, "female") == (35.0, 104.0)
+    assert applicable_reference_bounds(ESCULAB_BLOCKS["alp"], 34, "male") == (40.0, 129.0)
+    assert applicable_reference_bounds(ESCULAB_BLOCKS["alp"], 34, "female") == (35.0, 104.0)
 
 
 def test_a_year_abbreviated_to_one_letter_is_still_an_age():
@@ -279,9 +279,9 @@ def test_a_year_abbreviated_to_one_letter_is_still_an_age():
     Unless the «р» is read as a year, both describe a 34-year-old equally well
     and there is nothing to choose between 15 mm/h and 20.
     """
-    assert applicable_reference_bounds(ESKULAB_BLOCKS["esr"], 34, "male") == (None, 15.0)
-    assert applicable_reference_bounds(ESKULAB_BLOCKS["esr"], 34, "female") == (None, 20.0)
-    assert applicable_reference_bounds(ESKULAB_BLOCKS["esr"], 60, "male") == (None, 20.0)
+    assert applicable_reference_bounds(ESCULAB_BLOCKS["esr"], 34, "male") == (None, 15.0)
+    assert applicable_reference_bounds(ESCULAB_BLOCKS["esr"], 34, "female") == (None, 20.0)
+    assert applicable_reference_bounds(ESCULAB_BLOCKS["esr"], 60, "male") == (None, 20.0)
 
 
 def test_a_band_named_after_a_condition_is_never_the_healthy_one():
@@ -291,7 +291,7 @@ def test_a_band_named_after_a_condition_is_never_the_healthy_one():
     and «Гестаційний діабет: 5.1 - 6.9» names nothing at all -- so a woman was
     handed a pregnancy threshold and a man a diagnostic one.
     """
-    assert applicable_reference_bounds(ESKULAB_BLOCKS["glucose"], 34, "female") == (4.11, 5.89)
+    assert applicable_reference_bounds(ESCULAB_BLOCKS["glucose"], 34, "female") == (4.11, 5.89)
     assert applicable_reference_bounds(
         "Низький рівень ризику: < 75 Помірно підвищений рівень ризику: 75-125", 34, "male"
     ) == (None, None)
@@ -299,8 +299,8 @@ def test_a_band_named_after_a_condition_is_never_the_healthy_one():
 
 def test_a_child_is_not_given_the_mens_row_of_an_adult_table():
     """A block that gives the boys rows of their own means «Чоловіки» = adult men."""
-    assert applicable_reference_bounds(ESKULAB_BLOCKS["ggt"], 7, "male") == (None, 17.0)
-    assert applicable_reference_bounds(ESKULAB_BLOCKS["neutrophils"], 7, "male") == (35.0, 65.0)
+    assert applicable_reference_bounds(ESCULAB_BLOCKS["ggt"], 7, "male") == (None, 17.0)
+    assert applicable_reference_bounds(ESCULAB_BLOCKS["neutrophils"], 7, "male") == (35.0, 65.0)
 
 
 def test_a_bare_sex_row_reaches_no_child_even_when_no_child_is_named():
@@ -314,8 +314,8 @@ def test_a_bare_sex_row_reaches_no_child_even_when_no_child_is_named():
     have read as low.  Nothing paediatric was printed, and saying so is the
     answer rather than borrowing the row that was.
     """
-    assert applicable_band(ESKULAB_BLOCKS["uric_acid"], 7, "male") is None
-    assert applicable_reference_bounds(ESKULAB_BLOCKS["uric_acid"], 7, "male") == (None, None)
+    assert applicable_band(ESCULAB_BLOCKS["uric_acid"], 7, "male") is None
+    assert applicable_reference_bounds(ESCULAB_BLOCKS["uric_acid"], 7, "male") == (None, None)
     # And through the other door into the same row: `applicable_band` refuses,
     # `_sex_clause` used to re-admit it.
     two_sexes = "Чоловік: 0,04-0,54 Жінки: 0,04-0,36"
@@ -325,9 +325,9 @@ def test_a_bare_sex_row_reaches_no_child_even_when_no_child_is_named():
     # A block that carries paediatric rows must not let the adult row through
     # either: judged whole it passes for a child, because one of the age
     # windows it finds is a child's.
-    assert applicable_reference_bounds(ESKULAB_BLOCKS["alt"], 17, "female") == (None, 24.0)
+    assert applicable_reference_bounds(ESCULAB_BLOCKS["alt"], 17, "female") == (None, 24.0)
     # The adults are untouched.
-    assert applicable_reference_bounds(ESKULAB_BLOCKS["uric_acid"], 34, "male") == (202.3, 416.5)
+    assert applicable_reference_bounds(ESCULAB_BLOCKS["uric_acid"], 34, "male") == (202.3, 416.5)
     assert applicable_reference_bounds(two_sexes, 34, "male") == (0.04, 0.54)
     assert applicable_reference_bounds("Чоловіки: 8.0 - 61.0", 34, "male") == (8.0, 61.0)
 
@@ -344,30 +344,30 @@ def test_an_age_window_written_in_days_or_months_is_not_a_window_of_years():
     seven-year-old's AST was judged against <97 U/L and a two-year-old's ALT
     against <49.0.
     """
-    assert applicable_band(ESKULAB_BLOCKS["ast_glued"], 7, "male") is None
-    assert applicable_reference_bounds(ESKULAB_BLOCKS["ast_glued"], 7, "male") == (None, None)
-    assert applicable_band(ESKULAB_BLOCKS["alt_glued"], 2, "male") is None
-    assert applicable_reference_bounds(ESKULAB_BLOCKS["alt_glued"], 2, "male") == (None, None)
+    assert applicable_band(ESCULAB_BLOCKS["ast_glued"], 7, "male") is None
+    assert applicable_reference_bounds(ESCULAB_BLOCKS["ast_glued"], 7, "male") == (None, None)
+    assert applicable_band(ESCULAB_BLOCKS["alt_glued"], 2, "male") is None
+    assert applicable_reference_bounds(ESCULAB_BLOCKS["alt_glued"], 2, "male") == (None, None)
     # A band finer than a year reaches nobody whose age is a whole number of
     # years: a patient recorded as 0 is anything from a day old to eleven
     # months, and «Діти 0-5 днів: <97.0» is not a statement about the rest of
     # them -- it is nearly three times the limit printed for their own row.
-    assert applicable_band(ESKULAB_BLOCKS["ast"], 0, "male") is None
-    assert applicable_reference_bounds(ESKULAB_BLOCKS["ast"], 0, "male") == (None, None)
-    assert applicable_band(ESKULAB_BLOCKS["alt"], 0, "male") is None
-    assert applicable_band(ESKULAB_BLOCKS["ggt"], 0, "male") is None
+    assert applicable_band(ESCULAB_BLOCKS["ast"], 0, "male") is None
+    assert applicable_reference_bounds(ESCULAB_BLOCKS["ast"], 0, "male") == (None, None)
+    assert applicable_band(ESCULAB_BLOCKS["alt"], 0, "male") is None
+    assert applicable_band(ESCULAB_BLOCKS["ggt"], 0, "male") is None
     # Once the glue is separated the right year band is there and is taken.
-    assert applicable_band(ESKULAB_BLOCKS["ast"], 7, "male") == "6-12 років: <47.0"
-    assert applicable_reference_bounds(ESKULAB_BLOCKS["ast"], 7, "male") == (None, 47.0)
-    assert applicable_band(ESKULAB_BLOCKS["alt"], 2, "male") == "1-3 років: <33.0"
-    assert applicable_reference_bounds(ESKULAB_BLOCKS["alt"], 2, "male") == (None, 33.0)
+    assert applicable_band(ESCULAB_BLOCKS["ast"], 7, "male") == "6-12 років: <47.0"
+    assert applicable_reference_bounds(ESCULAB_BLOCKS["ast"], 7, "male") == (None, 47.0)
+    assert applicable_band(ESCULAB_BLOCKS["alt"], 2, "male") == "1-3 років: <33.0"
+    assert applicable_reference_bounds(ESCULAB_BLOCKS["alt"], 2, "male") == (None, 33.0)
     # Years still work, in every spelling these reports use for them.
-    assert applicable_reference_bounds(ESKULAB_BLOCKS["alt"], 14, "male") == (None, 27.0)
-    assert applicable_reference_bounds(ESKULAB_BLOCKS["ast"], 17, "female") == (None, 25.0)
-    assert applicable_reference_bounds(ESKULAB_BLOCKS["calcium"], 34, "male") == (2.15, 2.5)
-    assert applicable_reference_bounds(ESKULAB_BLOCKS["esr"], 60, "male") == (None, 20.0)
+    assert applicable_reference_bounds(ESCULAB_BLOCKS["alt"], 14, "male") == (None, 27.0)
+    assert applicable_reference_bounds(ESCULAB_BLOCKS["ast"], 17, "female") == (None, 25.0)
+    assert applicable_reference_bounds(ESCULAB_BLOCKS["calcium"], 34, "male") == (2.15, 2.5)
+    assert applicable_reference_bounds(ESCULAB_BLOCKS["esr"], 60, "male") == (None, 20.0)
     # ... and the newborn guard is unmoved.
-    assert applicable_reference_bounds(ESKULAB_BLOCKS["glucose"], 5, "male") == (3.33, 5.55)
+    assert applicable_reference_bounds(ESCULAB_BLOCKS["glucose"], 5, "male") == (3.33, 5.55)
 
 
 def test_a_risk_tier_is_not_a_reference_interval_on_either_path_into_it():
@@ -381,9 +381,9 @@ def test_a_risk_tier_is_not_a_reference_interval_on_either_path_into_it():
     below range and the curated verdict was downgraded to a conflict with a
     laboratory that had made no such claim.
     """
-    assert applicable_band(ESKULAB_BLOCKS["hdl"], 34, "male") is None
-    assert applicable_reference_bounds(ESKULAB_BLOCKS["hdl"], 34, "male") == (None, None)
-    assert applicable_reference_bounds(ESKULAB_BLOCKS["hdl"], 34, "female") == (None, None)
+    assert applicable_band(ESCULAB_BLOCKS["hdl"], 34, "male") is None
+    assert applicable_reference_bounds(ESCULAB_BLOCKS["hdl"], 34, "male") == (None, None)
+    assert applicable_reference_bounds(ESCULAB_BLOCKS["hdl"], 34, "female") == (None, None)
     # Per-sex tables that name no tier are unaffected -- these are the ones on
     # the same report.
     assert applicable_reference_bounds("Чоловіки: 62.0-106 Жінки: 44.0-80.0", 34, "male") == (
@@ -404,12 +404,12 @@ def test_the_band_keeps_the_unit_the_laboratory_printed_beside_it():
     the reader was shown a number with nothing saying millimetres per hour.
     """
     set_locale("uk")
-    assert display_reference(ESKULAB_BLOCKS["esr"], 34, "male") == "Чоловіки 17 - 50р: < 15мм/год"
+    assert display_reference(ESCULAB_BLOCKS["esr"], 34, "male") == "Чоловіки 17 - 50р: < 15мм/год"
     set_locale("en")
-    assert display_reference(ESKULAB_BLOCKS["esr"], 34, "male") == "men 17 - 50y: < 15mm/h"
-    assert display_reference(ESKULAB_BLOCKS["esr"], 60, "male") == "men over 50y: <20mm/h"
+    assert display_reference(ESCULAB_BLOCKS["esr"], 34, "male") == "men 17 - 50y: < 15mm/h"
+    assert display_reference(ESCULAB_BLOCKS["esr"], 60, "male") == "men over 50y: <20mm/h"
     # The unit rides along without disturbing the numbers read off the band.
-    assert applicable_reference_bounds(ESKULAB_BLOCKS["esr"], 34, "male") == (None, 15.0)
+    assert applicable_reference_bounds(ESCULAB_BLOCKS["esr"], 34, "male") == (None, 15.0)
 
 
 def test_the_english_page_never_shows_a_ukrainian_decimal_comma():
@@ -417,17 +417,17 @@ def test_the_english_page_never_shows_a_ukrainian_decimal_comma():
     form that already converted them: «adults 18-60 years: 2,15-2,5» reached the
     English page verbatim once the band selector started surfacing lab labels."""
     set_locale("en")
-    assert display_reference(ESKULAB_BLOCKS["calcium"], 34, "male") == "adults 18-60 years: 2.15-2.5"
+    assert display_reference(ESCULAB_BLOCKS["calcium"], 34, "male") == "adults 18-60 years: 2.15-2.5"
     assert display_reference("0,5 mg/dl") == "0.5 mg/dl"
     set_locale("uk")
     # Ukrainian keeps the comma it was printed with.
-    assert display_reference(ESKULAB_BLOCKS["calcium"], 34, "male") == "дорослі 18-60 років: 2,15-2,5"
+    assert display_reference(ESCULAB_BLOCKS["calcium"], 34, "male") == "дорослі 18-60 років: 2,15-2,5"
 
 
 def test_a_year_abbreviation_is_not_the_first_letter_of_a_birth_date():
     """«14.03.1990 р.н.» -- "року народження" -- was rendered "14.03.1990 y.н.".
 
-    The single-letter «р» is EskuLab's year, and the shared word boundaries let
+    The single-letter «р» is Esculab's year, and the shared word boundaries let
     it through here because what follows is a full stop rather than a letter.
     A year abbreviation is never followed by another word; this one always is.
     """
@@ -455,12 +455,12 @@ def test_every_population_and_age_word_a_surfaced_band_can_carry_is_translated()
     So a band whose label the catalogue does not cover is not merely untidy: the
     English reader is told no range was printed, while
     `applicable_reference_bounds` is at that moment judging the value against
-    it.  «Чоловік» -- EskuLab's singular row heading on the absolute eosinophil
+    it.  «Чоловік» -- Esculab's singular row heading on the absolute eosinophil
     count -- did exactly that.
     """
     set_locale("en")
     cyrillic = re.compile(r"[Ѐ-ӿ]")
-    for key, block in ESKULAB_BLOCKS.items():
+    for key, block in ESCULAB_BLOCKS.items():
         for age, sex in ((34, "male"), (34, "female"), (60, "male"), (14, "male"), (7, "male")):
             band = applicable_band(block, age, sex)
             if band is not None:

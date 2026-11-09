@@ -25,7 +25,7 @@ def connection(tmp_path: Path):
         yield conn
 
 
-def filed(connection, raw_name, *, vendor="EskuLab", value_type="numeric", clinical_type="laboratory", **row):
+def filed(connection, raw_name, *, vendor="Esculab", value_type="numeric", clinical_type="laboratory", **row):
     concept_id, _unit = ensure_concept(
         connection, raw_name, ensure_vendor(connection, vendor, None), value_type=value_type,
         clinical_type=clinical_type, **row,

@@ -56,6 +56,7 @@
     text.value = tr("ai.loading", "Assembling your record...");
     size.textContent = "";
     copy.disabled = true;
+    text.setAttribute("aria-busy", "true");
     /* The record-only checkboxes disappear while the excerpt is selected:
        they trim a prompt the excerpt does not build. */
     if (recordOptions) recordOptions.hidden = scope() === "page";
@@ -73,6 +74,8 @@
       if (pending !== token) return;
       text.value = "";
       say(tr("ai.error", "The prompt could not be built. Reload the page and try again."), "error");
+    } finally {
+      if (pending === token || pending === null) text.removeAttribute("aria-busy");
     }
   }
 

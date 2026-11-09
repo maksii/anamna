@@ -60,6 +60,9 @@ from ..telegram import TelegramService
 from .telegram_routes import register_telegram_routes
 from .changes import register_changes_routes, verdict_state
 from .labsync_routes import register_routes as register_labsync_routes
+from .testplan_routes import register_routes as register_testplan_routes
+from .allergy_routes import register_routes as register_allergy_routes
+from .genetics_routes import register_routes as register_genetics_routes
 from .openwearables_routes import register_routes as register_openwearables_routes
 from ..config import Settings, env, get_settings, resolve_source_path, load_integration_environment, configure_logging, _request_memo
 from ..correlation import (
@@ -1616,6 +1619,50 @@ def _patient_row(connection, owner_user_id: str):
     )
 
 
+def _measure_again(settings, connection, owner_user_id: str, concept_id: str, sex: str | None) -> dict | None:
+    """Where a laboratory result can be measured again and for how much, per
+    switched-on lab: its cheapest single test, and the cheapest panel that
+    includes it when that costs less or no single test exists.  From the labs'
+    stored price lists only (:func:`testplan_routes.stored_lab_items`); a lab
+    whose list is being read is left out rather than reported as not selling
+    it.  None for a result no laboratory reported or no lab sells."""
+    from urllib.parse import urlencode
+
+    from .. import labsync, testplan
+    from . import testplan_routes
+
+    if concept_id not in testplan.lab_concepts(connection, owner_user_id):
+        return None
+    letter = {"male": "M", "female": "F"}.get(str(sex or ""))
+
+    def cost(item):
+        return item["final_price"] + sum(fee["price"] for fee in item["fees"])
+
+    offers = []
+    for key in testplan_routes.SHOPS:
+        if not labsync.active(settings, key):
+            continue
+        items, fetched = testplan_routes.stored_lab_items(settings, connection, owner_user_id, key)
+        sold = [item for item in items or () if concept_id in item["keys"]
+                and not (letter and item.get("sex") and item["sex"] != letter)]
+        if not sold:
+            continue
+        single = min((item for item in sold if len(item["keys"]) == 1), key=cost, default=None)
+        panel = min((item for item in sold if len(item["keys"]) > 1), key=cost, default=None)
+        if single and panel and cost(panel) >= cost(single):
+            panel = None
+        city = next((region["name"] for row in connection.execute(
+            "SELECT payload_json FROM lab_catalog_cache WHERE provider=? AND cache_key='regions'", (key,))
+            for region in json.loads(row[0]) if str(region.get("id")) == testplan_routes.SHOPS[key].DEFAULT_REGION), "")
+        offers.append({"lab": testplan_routes.VENDORS[key], "city": city, "fetched_at": fetched,
+                       "options": [dict(item, kind=kind, fees_cost=cost(item) - item["final_price"])
+                                   for kind, item in (("single", single), ("panel", panel)) if item]})
+    if not offers:
+        return None
+    return {"offers": offers,
+            "plan_url": "/plan-tests?" + urlencode({"touched": 1, "need": concept_id, "plan": 1})}
+
+
 def _demographics(connection, owner_user_id: str) -> tuple[int | None, str | None]:
     row = _patient_row(connection, owner_user_id)
     if row is None:
@@ -2812,48 +2859,25 @@ def _sparkline(card: dict[str, object], span: tuple[int, int] | None) -> dict[st
 
 # --- allergy renderer -------------------------------------------------------
 #
-# Grouping is taxonomic, derived from the genus code that opens every
-# ImmunoCAP allergen name ("Bet v 1" is birch, "Der p 2" is a house-dust mite).
-# It orders 295 identical-looking rows into families a person can scan; it
-# makes no clinical claim.
-_ALLERGEN_FAMILIES: dict[str, str] = {}
-for _family, _codes in {
-    "tree_pollen": "Aln Bet Car Cry Cup Fag Fra Jun Ole Pla Pop Ulm Que Mor Pho Ail Cor_pollen Jug_pollen",
-    "grass_pollen": "Phl Lol Cyn Dac Poa Pas Ave Hor Sec Zea Ory Phr Bro Tri",
-    "weed_pollen": "Amb Art Par Pla_l Che Sal Urt Ama Mer Hel",
-    "mites": "Der Blo Lep Tyr Aca Gly Eur",
-    "animal_dander": "Fel Can Equ Bos Mus Rat Cav Ory_c Ovi Cap Sus Phod Cam Gal",
-    "moulds": "Alt Asp Cla Pen Mala Sac Cand Tri_s Epi",
-    "insect_venom": "Api Ves Pol Dol Sol Arg Bla Per",
-    "foods": (
-        "Ara Ana Pis Ber Mac Car_i Pru Mal Pyr Fra_a Vac Vit Man Act Cit Pers Cuc Sola Sol_t "
-        "Cap_a Dau Api_g Pet Ori Pim Sin Ses Gly_m Pis_s Len Cic Pha Lup Fag_e Gad Sal_s Thu "
-        "Clu Cyp Xip Sco Raj Pen_m Pan Hom Cra Lit Myt Ost Pec Rud Lol_s Ani Che_q All Fic "
-        "Mel Ten Loc Chi Tri_fo Pap Hev Cor Jug"
-    ),
-}.items():
-    for _code in _codes.split():
-        _ALLERGEN_FAMILIES.setdefault(_code, _family)
-del _family, _codes, _code
-
-_ALLERGEN_CODE_RE = re.compile(r"\b([A-Z][a-z]{2})\s+([a-z]{1,2})\b")
+# Grouping is taxonomic, read from the WHO/IUIS code that every allergen name
+# carries ("Bet v 1" is birch, "Der p 2" a house-dust mite) through the
+# allergen source table in ``anamna.allergy``, which also serves /allergy.  It
+# orders 295 identical-looking rows into families a person can scan; it makes
+# no clinical claim.  The old genus-only table put rice (Ory s) among grass
+# pollens, hemp (Can s) among animals and tomato (Sola l) among insect venoms.
+_PANEL_GROUP = {
+    "animals": "animal_dander", "insects": "insect_venom", "latex": "other",
+    **{key: "foods" for key in ("legumes", "cereals", "spices", "fruits", "vegetables", "nuts_seeds",
+                                "milk", "egg", "fish_seafood", "meat")},
+}
 
 
 def _allergen_family(name: str) -> str:
     """Which allergen family a component name belongs to."""
-    folded = name.casefold()
-    for hint, family in (
-        ("_pollen", "tree_pollen"), ("_milk", "foods"), ("_meat", "foods"),
-        ("_epithelia", "animal_dander"), ("_white", "foods"), ("_yolk", "foods"),
-        ("_flour", "foods"),
-    ):
-        if hint in folded:
-            return family
-    match = _ALLERGEN_CODE_RE.search(name)
-    if not match:
-        return "other"
-    genus, species = match.group(1), match.group(2)
-    return _ALLERGEN_FAMILIES.get(f"{genus}_{species}") or _ALLERGEN_FAMILIES.get(genus, "other")
+    from ..allergy import SOURCE_GROUP, parse_name
+
+    group = SOURCE_GROUP.get(str(parse_name(name)["source"] or ""), "other")
+    return _PANEL_GROUP.get(group, group)
 
 
 def _cap_classes(connection) -> list[dict[str, object]]:
@@ -2908,12 +2932,20 @@ _COMPONENT_CODE_RE = re.compile(r"\b([A-Z][a-z]{1,3}\s+[a-z]{1,3}(?:\s+\d{1,2})?
 
 
 def _area_row(card: dict[str, object], area_id: str, legend) -> dict[str, object]:
+    from ..allergy import ALEX_SOURCE_ID, alex_legend
+
     value = float(card["value_numeric"]) if card.get("value_numeric") is not None else None
     code = _COMPONENT_CODE_RE.search(str(card.get("name") or "")) if area_id == "allergy" else None
+    # An ALEX result is graded on the ALEX report's own five levels; the
+    # ImmunoCAP classes belong to another assay.  The class column renders
+    # ``allergy.cap_<key>``, so the ALEX key carries its prefix.
+    alex = bool(legend) and (card.get("verdict") or {}).get("source_id") == ALEX_SOURCE_ID
+    level = _cap_class(value, alex_legend() if alex else legend) if legend else None
     return {
         "card": card,
         "code": code.group(1) if code else "",
-        "cap_class": _cap_class(value, legend) if legend else None,
+        "cap_class": f"alex_{level}" if alex and level is not None else level,
+        "class_rank": level,
         # An allergen measured above the detection limit is shown even
         # below class 1: «Cyn d 1 0,12» was visible only in a panel preview.
         "attention": _attention_rank(card) <= 1 or (
@@ -2937,7 +2969,7 @@ def _area_table(connection, area_id: str, metrics: list[dict[str, object]]) -> d
     legend = _cap_classes(connection) if area_id == "allergy" else []
     rows = [_area_row(card, area_id, legend) for card in metrics]
     rows.sort(key=lambda row: (
-        not row["attention"], _attention_rank(row["card"]), -(row["cap_class"] if row["cap_class"] is not None else -1),
+        not row["attention"], _attention_rank(row["card"]), -(row["class_rank"] if row["class_rank"] is not None else -1),
         -(row["value"] or 0), str(row["card"].get("name") or ""),
     ))
     return {
@@ -2959,14 +2991,22 @@ def _highest_text(cards: list[dict[str, object]]) -> str:
     return format_measurement(highest[0], str(highest[1]["unit"])) if highest else t(_EM_DASH_KEY)
 
 
+def _is_alex(card: dict[str, object]) -> bool:
+    from ..allergy import ALEX_SOURCE_ID
+
+    return (card.get("verdict") or {}).get("source_id") == ALEX_SOURCE_ID
+
+
 def _allergy_item(card: dict[str, object], legend) -> dict[str, object]:
+    from ..allergy import alex_legend
+
+    scale = alex_legend() if _is_alex(card) else legend
+    level = _cap_class(float(card["value_numeric"]) if card["value_numeric"] is not None else None, scale)
     return {
         "name": card["name"],
         "value_text": f"{card['value_text']} {card['unit']}".strip(),
-        "cap_class": _cap_class(
-            float(card["value_numeric"]) if card["value_numeric"] is not None else None,
-            legend,
-        ),
+        "cap_class": level,
+        "class_label": next((entry["label"] for entry in scale if entry["class"] == level), t(_EM_DASH_KEY)),
         "interpretation": str((card["verdict"] or {}).get("interpretation") or "unjudged"),
         "url": card["url"],
     }
@@ -3009,9 +3049,23 @@ def _allergy_block(connection, rows: list[dict[str, object]]) -> dict[str, objec
         "highest_text": _highest_text(allergens),
         "tested_on": format_date(tested_on or None),
         "classes": legend,
+        "scales": _allergy_scales(legend, allergens),
         "groups": ordered_groups,
         "total_ige": total_ige,
     }
+
+
+def _allergy_scales(legend, allergens: list[dict[str, object]]) -> list[dict[str, object]]:
+    """The grading scale(s) the results on the page were actually graded on."""
+    from ..allergy import ALEX_CUTOFF, alex_legend
+
+    scales = []
+    if any(_is_alex(card) for card in allergens):
+        scales.append({"heading": t("allergy.page.scale_alex_title"), "classes": alex_legend(),
+                       "lead": t("allergy.alex_lead", cutoff=format_measurement(ALEX_CUTOFF, display_unit("kUA/L")))})
+    if legend and any(not _is_alex(card) for card in allergens):
+        scales.append({"heading": t("allergy.cap_heading"), "classes": legend, "lead": t("allergy.cap_lead")})
+    return scales
 
 
 # --- blood-pressure renderer ------------------------------------------------
@@ -4141,7 +4195,7 @@ def _observation_unit_source(row: dict[str, object], shown: dict[str, object], n
 def _sorted_observation_rows(rows: list) -> list:
     # In the order the document prints them: page, then where on the page
     # (`store_positions`).  Alphabetical within a page put the first row of an
-    # EskuLab report last, and a list that does not follow the page beside it
+    # Esculab report last, and a list that does not follow the page beside it
     # cannot be checked against it.  A Garmin export reads one week, then its
     # five values: the five share the week's printed line and keep the order
     # they were read in.
@@ -13072,6 +13126,7 @@ def metric_detail(request: Request, concept_id: str, offset: int = 0):
         if not values:
             raise HTTPException(404)
         age, sex = _demographics(connection, user["id"])
+        measure = _measure_again(settings, connection, user["id"], concept_id, sex)
         page_context = _clinical_context(connection, user["id"])
         patient = _patient_row(connection, user["id"])
         aliases = connection.execute(
@@ -13134,6 +13189,7 @@ def metric_detail(request: Request, concept_id: str, offset: int = 0):
             guidance=_metric_guidance(entry),
             panel=panel_card,
             siblings=siblings,
+            measure=measure,
             export_url=f"/metrics/{concept_id}/export",
             chart_band=chart_band,
             correlation=correlation,
@@ -14197,6 +14253,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app, settings, templates=templates, template_context=template_context, require_user=require_user,
         require_admin=require_admin, require_csrf=require_csrf, audit=partial(_audit, settings), invalidate=invalidate_catalog,
     )
+    register_testplan_routes(
+        app, settings, templates=templates, template_context=template_context, require_user=require_user,
+        record_user=record_user, require_csrf=require_csrf, audit=partial(_audit, settings),
+    )
+    for register in (register_allergy_routes, register_genetics_routes):
+        register(app, settings, templates=templates, template_context=template_context,
+                 require_user=require_user, record_user=record_user)
     return app
 
 

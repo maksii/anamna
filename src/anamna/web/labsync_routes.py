@@ -1,4 +1,4 @@
-"""Lab connections (EskuLab, Synevo, the mobile-app labs): admin switch, per-person connection,
+"""Lab connections (Esculab, Synevo, the mobile-app labs): admin switch, per-person connection,
 sync, and the document cross-check's verify button.  Wired by create_app."""
 
 from __future__ import annotations

@@ -46,6 +46,7 @@
   </summary>
   <div class="an-index-disclosure__body">
     <a class="an-index-disclosure__area" href="/areas/{{ group.area_id }}">{{ t('panels.open_area', area=group.area_name) }}</a>
+    {% if group.area_id == 'allergy' %}<a class="an-index-disclosure__area" href="/allergy">{{ t('special.overview_allergy') }}</a>{% endif %}
     <div class="an-panel-grid">
       {% for panel in group.panels %}{% if sort != 'attention' %}<div data-rank="{{ attention_order[panel.id] }}">{{ panel_card(panel, 3) }}</div>{% endif %}{% endfor %}
     </div>
@@ -54,6 +55,31 @@
 {% else %}
 {{ empty_state(t('panels.empty_title'), t('panels.empty_body'), 2, '/upload', t('dashboard.destination_upload_title')) }}
 {% endfor %}
+{#- Two overviews that are not one panel each: every allergen tested, and
+    every test of your own DNA, with what such tests can answer. -#}
+{% if groups %}
+<details class="an-index-disclosure">
+  <summary aria-label="{{ t('panels.overviews_aria') }}">
+    <span class="an-index-disclosure__title">
+      <strong>{{ t('panels.overviews_aria') }}</strong>
+    </span>
+  </summary>
+  <div class="an-index-disclosure__body">
+    <div class="an-panel-grid">
+      {% for url, name, lead in [('/allergy', t('nav.allergy'), t('panels.overview_allergy_lead')),
+                                 ('/genetics', t('nav.genetics'), t('panels.overview_genetics_lead'))] %}
+      <article class="an-panel-card">
+        <header class="an-panel-card__head"><div>
+          <span class="eyebrow">{{ t('panels.overviews_aria') }}</span>
+          <h3 class="an-panel-card__title"><a href="{{ url }}">{{ name }}</a></h3>
+        </div></header>
+        <p class="an-panel-card__lead">{{ lead }}</p>
+      </article>
+      {% endfor %}
+    </div>
+  </div>
+</details>
+{% endif %}
 </div>
 {% if sort != 'attention' and groups %}
 <script>

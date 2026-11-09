@@ -1,6 +1,6 @@
 from anamna.ingest.concepts import CONCEPT_DEFINITIONS
 from anamna.ingest.parsers import (
-    ESKULAB_GLUE,
+    ESCULAB_GLUE,
     NON_NORMAL_BAND_RE,
     ParsedObservation,
     parse_document,
@@ -173,7 +173,7 @@ def test_pcr_section_uses_section_heading_not_instrument_name():
     Результат не виявлено ГЄ/мл
     Дослідження виконала(-ли) Лаборант
     """
-    observations = parse_document("EskuLab", "laboratory", page(text))
+    observations = parse_document("Esculab", "laboratory", page(text))
     assert len(observations) == 1
     assert observations[0].raw_name.startswith("Виявлення ДНК Ureaplasma parvum")
     assert observations[0].value_text == "не виявлено"
@@ -467,7 +467,7 @@ def test_microbiology_narrative_no_growth_is_not_result_not_present():
     Мікробіологічне дослідження сечі
     Росту аеробної та факультативно-анаеробної мікробіоти не виявлено
     """
-    observations = parse_document("EskuLab", "microbiology", page(text))
+    observations = parse_document("Esculab", "microbiology", page(text))
     assert len(observations) == 1
     assert observations[0].value_text == "не виявлено"
 
@@ -538,7 +538,7 @@ def test_antibiogram_disk_potency_is_never_read_as_a_result():
     meaningless number and drop the resistance result entirely.
     """
     observations = parse_document(
-        "EskuLab",
+        "Esculab",
         "microbiology",
         page(
             """
@@ -655,7 +655,7 @@ def test_doses_and_dimensions_are_still_not_units():
     accepted them would ingest a kidney's length as a laboratory value.
     """
     observations = parse_document(
-        "EskuLab",
+        "Esculab",
         "laboratory",
         page(
             """
@@ -671,29 +671,29 @@ def test_doses_and_dimensions_are_still_not_units():
     assert observations == []
 
 
-#: Where EskuLab prints each column, measured off the six reports in this
+#: Where Esculab prints each column, measured off the six reports in this
 #: record.  The specimen sits in the name column but indented, which is the
 #: whole reason these tests exist: flattened to text it is indistinguishable
 #: from the analyte name it hangs under.
-#: `ref2` is the reference cell's own second printed sub-column.  EskuLab puts
+#: `ref2` is the reference cell's own second printed sub-column.  Esculab puts
 #: the paediatric table there, beside the adult one, and both are inside the
 #: single cell the page's column boundaries describe.
-ESKULAB_X = {
+ESCULAB_X = {
     "name": 28.3, "specimen": 117.1, "result": 246.0, "unit": 321.9,
     "ref": 378.4, "ref2": 472.7,
 }
-ESKULAB_STOOL_X = {"name": 28.3, "result": 200.4, "ref": 402.0}
-ESKULAB_CULTURE_X = {"name": 28.3, "result": 243.8}
+ESCULAB_STOOL_X = {"name": 28.3, "result": 200.4, "ref": 402.0}
+ESCULAB_CULTURE_X = {"name": 28.3, "result": 243.8}
 
 
-def eskulab_page(rows, columns=None):
-    """The page an EskuLab report of these rows would produce.
+def esculab_page(rows, columns=None):
+    """The page an Esculab report of these rows would produce.
 
     Each row maps a column to its text.  Tokens are laid out at 3.5pt per
     character, close enough to the printed font that a full-width analyte name
     still stops short of the result column exactly as the real one does.
     """
-    columns = columns or ESKULAB_X
+    columns = columns or ESCULAB_X
     words = []
     for index, row in enumerate(rows):
         top = 200.0 + index * 12.0
@@ -707,12 +707,12 @@ def eskulab_page(rows, columns=None):
     return [{"page_number": 1, "native_text": text, "words": words}]
 
 
-ESKULAB_HEADER = {
+ESCULAB_HEADER = {
     "name": "Показник", "result": "Результат", "unit": "Одиниці", "ref": "Референтні значення",
 }
 
-ESKULAB_ROWS = [
-    ESKULAB_HEADER,
+ESCULAB_ROWS = [
+    ESCULAB_HEADER,
     # A reference cell that wraps over the four lines below its own row.
     {"name": "Глюкоза (плазма крові)", "result": "5.95", "unit": "ммоль/л"},
     {"specimen": "плазма крові", "ref": "новонароджені (1 день): 2.22 - 3.33"},
@@ -753,27 +753,27 @@ ESKULAB_ROWS = [
 ]
 
 
-def eskulab():
+def esculab():
     return {
         item.raw_name: item
-        for item in parse_document("EskuLab", "laboratory", eskulab_page(ESKULAB_ROWS))
+        for item in parse_document("Esculab", "laboratory", esculab_page(ESCULAB_ROWS))
     }
 
 
-def test_eskulab_reference_table_rows_are_not_read_as_results():
+def test_esculab_reference_table_rows_are_not_read_as_results():
     """The wrapped reference column looks exactly like a result once flattened.
 
     «діти: 3.33 - 5.55» reached the record as an analyte named "children" worth
     3.33, and «Вагітні: < 5.1» as one named "pregnant" worth 5.1 -- six such
     rows from one order, each carrying a threshold from somebody else's band.
     """
-    names = set(eskulab())
+    names = set(esculab())
     assert not [name for name in names if name.rstrip(":") in {"діти", "Вагітні", "Чоловіки", "Жінки"}]
     assert "Глюкоза (плазма крові)" in names
-    assert eskulab()["Глюкоза (плазма крові)"].value_numeric == 5.95
+    assert esculab()["Глюкоза (плазма крові)"].value_numeric == 5.95
 
 
-def test_eskulab_specimen_never_becomes_part_of_the_analyte_name():
+def test_esculab_specimen_never_becomes_part_of_the_analyte_name():
     """The specimen is indented under the name, and wraps back to the margin.
 
     Reading the page as text glued it onto the analyte above it: thirteen of
@@ -781,13 +781,13 @@ def test_eskulab_specimen_never_becomes_part_of_the_analyte_name():
     no concept.  «сеча» is the specimen; «сечі», one letter away, is the tail of
     "К-сть клітин схожих на атипові в мкл сечі".
     """
-    parsed = eskulab()
+    parsed = esculab()
     assert "Лейкоцити в мкл (WBC)" in parsed
     assert not [name for name in parsed if "Приносний" in name or "Час відбору" in name]
     assert not [name for name in parsed if name.endswith("сеча")]
 
 
-def test_eskulab_keeps_both_sex_specific_thresholds():
+def test_esculab_keeps_both_sex_specific_thresholds():
     """This patient is male, and the male limit is the one that matters.
 
     Taking only the line beside the value kept «жінки < 28.0» and dropped
@@ -795,31 +795,31 @@ def test_eskulab_keeps_both_sex_specific_thresholds():
     urine and four times the limit.  Neither may be reduced to a number, so
     both are kept as text and `reference_bounds` refuses them.
     """
-    white_cells = eskulab()["Лейкоцити в мкл (WBC)"]
+    white_cells = esculab()["Лейкоцити в мкл (WBC)"]
     assert "жінки < 28.0" in white_cells.reference_text
     assert "чоловіки < 11.2" in white_cells.reference_text
     assert (white_cells.reference_low, white_cells.reference_high) == (None, None)
 
 
-def test_eskulab_wrapped_analyte_name_is_rejoined_from_the_line_below():
-    parsed = eskulab()
+def test_esculab_wrapped_analyte_name_is_rejoined_from_the_line_below():
+    parsed = esculab()
     assert "Скупчення лейкоцитів (WBC Clumps)" in parsed
     assert parsed["Скупчення лейкоцитів (WBC Clumps)"].value_numeric == 0.4
 
 
-def test_eskulab_empty_unit_column_still_yields_the_result():
+def test_esculab_empty_unit_column_still_yields_the_result():
     """Urine pH and relative density print a dash where the unit goes.
 
     Both were absent from every urinalysis in this record because the shared
     parser requires a unit, and a dash is not one.
     """
-    acidity = eskulab()["рН (C-PH)"]
+    acidity = esculab()["рН (C-PH)"]
     assert acidity.value_numeric == 5.5
     assert acidity.unit_raw is None
     assert (acidity.reference_low, acidity.reference_high) == (5.5, 7.0)
 
 
-def test_eskulab_negative_dipstick_pad_is_a_finding_not_a_missing_row():
+def test_esculab_negative_dipstick_pad_is_a_finding_not_a_missing_row():
     """An empty result column with a legend under it means the pad read negative.
 
     The legend defines the dash: «не виявлена (-) 250 = ++ …».  Read as text
@@ -827,17 +827,17 @@ def test_eskulab_negative_dipstick_pad_is_a_finding_not_a_missing_row():
     shared, which is how «Приносний матеріал, сеча» became an analyte three
     times over in one urinalysis.
     """
-    glucose = eskulab()["Глюкоза (C-GLU)"]
+    glucose = esculab()["Глюкоза (C-GLU)"]
     assert glucose.value_text == "не виявлена"
     assert glucose.value_numeric is None
     # A word result carries no unit (CLIN-30): «не виявлена мг/дл» is not a
     # quantity of anything.
     assert glucose.unit_raw is None
     # A heading has an empty result and no unit or legend, and is not a finding.
-    assert "Мікроскопія сечі" not in eskulab()
+    assert "Мікроскопія сечі" not in esculab()
 
 
-def test_eskulab_adult_band_wins_over_the_paediatric_one_beside_the_value():
+def test_esculab_adult_band_wins_over_the_paediatric_one_beside_the_value():
     """MCV prints the infant band on the result line and the adult band below.
 
     The parser keeps the whole printed block now rather than reducing it to the
@@ -849,18 +849,18 @@ def test_eskulab_adult_band_wins_over_the_paediatric_one_beside_the_value():
     """
     from anamna.health import applicable_reference_bounds
 
-    mcv = eskulab()["Об'єм еритроцитів (MCV)"]
+    mcv = esculab()["Об'єм еритроцитів (MCV)"]
     assert "Дорослі: 80-100" in mcv.reference_text
     assert applicable_reference_bounds(mcv.reference_text, 34, "male") == (80.0, 100.0)
 
 
-def test_eskulab_never_reads_an_age_range_as_a_reference_interval():
+def test_esculab_never_reads_an_age_range_as_a_reference_interval():
     """«дорослі 18-60 років: 2,15-2,5» names the group first, the band second.
 
     Reading the first pair gave total calcium a reference of 18-60 mmol/L, and
     every real calcium on earth is critically low against that.
     """
-    calcium = eskulab()["Кальцій загальний"]
+    calcium = esculab()["Кальцій загальний"]
     assert (calcium.reference_low, calcium.reference_high) != (18.0, 60.0)
     assert calcium.reference_low is None or calcium.reference_low < 10.0
 
@@ -886,12 +886,12 @@ def coprogram():
     return {
         item.raw_name: item
         for item in parse_document(
-            "EskuLab", "laboratory", eskulab_page(COPROGRAM_ROWS, ESKULAB_STOOL_X)
+            "Esculab", "laboratory", esculab_page(COPROGRAM_ROWS, ESCULAB_STOOL_X)
         )
     }
 
 
-def test_eskulab_coprogram_is_read_at_all():
+def test_esculab_coprogram_is_read_at_all():
     """Two pages of a stool analysis produced nothing whatsoever.
 
     The table gives its first column no heading, so every pass that looks for
@@ -904,7 +904,7 @@ def test_eskulab_coprogram_is_read_at_all():
     assert {item.specimen for item in parsed.values()} == {"кал"}
 
 
-def test_eskulab_coprogram_pairs_each_subheading_with_its_own_quantity():
+def test_esculab_coprogram_pairs_each_subheading_with_its_own_quantity():
     """«М'язові волокна» reports three sub-results in one column, alternating.
 
     Pairing them by position alone mis-pairs the moment a sub-heading wraps, so
@@ -934,7 +934,7 @@ CULTURE_ROWS = [
 ]
 
 
-def test_eskulab_culture_reads_the_count_and_the_antibiogram_verdicts():
+def test_esculab_culture_reads_the_count_and_the_antibiogram_verdicts():
     """N8 held 33 susceptibility verdicts and the record held none of them.
 
     The skip was deliberate once -- the verdicts had no concepts -- and then
@@ -946,7 +946,7 @@ def test_eskulab_culture_reads_the_count_and_the_antibiogram_verdicts():
     parsed = {
         item.raw_name: item
         for item in parse_document(
-            "EskuLab", "microbiology", eskulab_page(CULTURE_ROWS, ESKULAB_CULTURE_X)
+            "Esculab", "microbiology", esculab_page(CULTURE_ROWS, ESCULAB_CULTURE_X)
         )
     }
     assert parsed["Staphylococcus aureus"].value_numeric == 100.0
@@ -974,7 +974,7 @@ CONTINUATION_ROWS = [
 ]
 
 
-def test_eskulab_coprogram_continues_onto_a_page_with_no_header():
+def test_esculab_coprogram_continues_onto_a_page_with_no_header():
     """The second page of a coprogram announces itself in no way at all.
 
     No panel heading, no header row -- «Найпростіші | не виявлено | не
@@ -984,7 +984,7 @@ def test_eskulab_coprogram_continues_onto_a_page_with_no_header():
     parsed = {
         item.raw_name: item
         for item in parse_document(
-            "EskuLab", "laboratory", eskulab_page(CONTINUATION_ROWS, ESKULAB_STOOL_X)
+            "Esculab", "laboratory", esculab_page(CONTINUATION_ROWS, ESCULAB_STOOL_X)
         )
     }
     assert parsed["Найпростіші"].value_text == "не виявлено"
@@ -1007,7 +1007,7 @@ def test_a_page_announcing_its_own_table_is_not_a_coprogram_continuation():
     parsed = {
         item.raw_name: item
         for item in parse_document(
-            "EskuLab", "microbiology", eskulab_page(rows, ESKULAB_CULTURE_X)
+            "Esculab", "microbiology", esculab_page(rows, ESCULAB_CULTURE_X)
         )
     }
     assert not [name for name in parsed if "(кал)" in name]
@@ -1015,14 +1015,14 @@ def test_a_page_announcing_its_own_table_is_not_a_coprogram_continuation():
 
 
 MULTI_PANEL_ROWS = [
-    ESKULAB_HEADER,
+    ESCULAB_HEADER,
     {"name": "1. С-пептид", "result": "2.41", "unit": "нг/мл", "ref": "0,9-7,1"},
     {"specimen": "сироватка крові"},
     # A signature block *between* panels, not at the end of the table.
     {"name": "Дослідження виконала(-ли) : Кушнір І.."},
     {"name": "Завідувач клініко-діагностичної лабораторії"},
     {"name": "2. L0610 Пакет №375. D3+B9+B12"},
-    ESKULAB_HEADER,
+    ESCULAB_HEADER,
     {"name": "25-Гідроксивітамін D (Вітамін D", "result": "31.7", "unit": "нг/мл"},
     {"ref": "Ризик дефіциту: < 10.0 Дорослі: 30.0-50.0"},
     {"name": "загальний)"},
@@ -1031,7 +1031,7 @@ MULTI_PANEL_ROWS = [
 ]
 
 
-def test_eskulab_reads_every_panel_on_a_page_not_just_the_first():
+def test_esculab_reads_every_panel_on_a_page_not_just_the_first():
     """A report of many panels prints a signature block between each pair.
 
     Treating that as the end of the table stopped the parser at the first panel
@@ -1041,7 +1041,7 @@ def test_eskulab_reads_every_panel_on_a_page_not_just_the_first():
     """
     parsed = {
         item.raw_name: item
-        for item in parse_document("EskuLab", "laboratory", eskulab_page(MULTI_PANEL_ROWS))
+        for item in parse_document("Esculab", "laboratory", esculab_page(MULTI_PANEL_ROWS))
     }
     assert parsed["С-пептид"].value_numeric == 2.41
     assert parsed["25-Гідроксивітамін D (Вітамін D загальний)"].value_numeric == 31.7
@@ -1050,10 +1050,10 @@ def test_eskulab_reads_every_panel_on_a_page_not_just_the_first():
     assert not [name for name in parsed if "L0610" in name or name.startswith(("1.", "2."))]
 
 
-def test_eskulab_strips_the_analyte_numbering_but_keeps_a_chemical_position():
+def test_esculab_strips_the_analyte_numbering_but_keeps_a_chemical_position():
     """«1. С-пептид» is C-peptide, first in its panel. «25-Гідроксивітамін D»
     is 25-hydroxyvitamin D, and the 25 is part of the molecule."""
-    parsed = parse_document("EskuLab", "laboratory", eskulab_page(MULTI_PANEL_ROWS))
+    parsed = parse_document("Esculab", "laboratory", esculab_page(MULTI_PANEL_ROWS))
     names = {item.raw_name for item in parsed}
     assert "С-пептид" in names
     assert "25-Гідроксивітамін D (Вітамін D загальний)" in names
@@ -1067,7 +1067,7 @@ def test_a_page_that_draws_a_table_never_falls_back_to_the_text_parsers():
     «діти: 3.33 - 5.55» worth 3.33, «Вагітні: < 5.1» worth 5.1.
     """
     rows = [
-        ESKULAB_HEADER,
+        ESCULAB_HEADER,
         # Nothing here the column parser will accept as a result...
         {"name": "Фізико-хімічні властивості", "result": "-"},
         # ...and a reference block that the flat-text parser reads as results.
@@ -1075,11 +1075,11 @@ def test_a_page_that_draws_a_table_never_falls_back_to_the_text_parsers():
         {"ref": "Вагітні: < 5.1 > 90 років: 4.16 - 6.72"},
         {"ref": "Чоловіки: <50.0"},
     ]
-    parsed = parse_document("EskuLab", "laboratory", eskulab_page(rows))
+    parsed = parse_document("Esculab", "laboratory", esculab_page(rows))
     assert parsed == []
 
 
-def test_eskulab_rejoins_a_name_broken_at_its_hyphen():
+def test_esculab_rejoins_a_name_broken_at_its_hyphen():
     """«Ширина розподілу еритроцитів (RDW-» / «SD)» is (RDW-SD).
 
     The abbreviation is the only thing separating a 36.1 fL red-cell spread
@@ -1087,7 +1087,7 @@ def test_eskulab_rejoins_a_name_broken_at_its_hyphen():
     published under the wrong one it is four times the upper limit.
     """
     rows = [
-        ESKULAB_HEADER,
+        ESCULAB_HEADER,
         {"name": "Ширина розподілу еритроцитів (RDW-", "result": "36.1", "unit": "фл",
          "ref": "35,0-56,0"},
         {"name": "SD)"},
@@ -1098,7 +1098,7 @@ def test_eskulab_rejoins_a_name_broken_at_its_hyphen():
     ]
     parsed = {
         item.raw_name: item
-        for item in parse_document("EskuLab", "laboratory", eskulab_page(rows))
+        for item in parse_document("Esculab", "laboratory", esculab_page(rows))
     }
     assert parsed["Ширина розподілу еритроцитів (RDW-SD)"].unit_raw == "фл"
     assert parsed["Ширина розподілу еритроцитів по об'ємі (RDW-CV)"].unit_raw == "%"
@@ -1118,12 +1118,12 @@ def test_a_named_risk_tier_is_never_published_as_a_reference_interval():
     assert reference_bounds("Дорослі: 4.11 - 5.89") == (4.11, 5.89)
 
 
-def test_eskulab_keeps_the_two_halves_of_a_reference_block_apart():
+def test_esculab_keeps_the_two_halves_of_a_reference_block_apart():
     """The reference cell is often two printed columns, and reading order
     interleaves them: «оптимальний рівень: < 2,59» beside «Високий пороговий
     рівень: 4,14-4,89» came back as one unreadable run of both."""
     rows = [
-        ESKULAB_HEADER,
+        ESCULAB_HEADER,
         {"name": "Глюкоза (плазма крові)", "result": "5.95", "unit": "ммоль/л"},
         {"specimen": "плазма крові", "ref": "новонароджені (1 день):"},
         {"ref": "2.22 - 3.33"},
@@ -1133,7 +1133,7 @@ def test_eskulab_keeps_the_two_halves_of_a_reference_block_apart():
 
     parsed = {
         item.raw_name: item
-        for item in parse_document("EskuLab", "laboratory", eskulab_page(rows))
+        for item in parse_document("Esculab", "laboratory", esculab_page(rows))
     }
     glucose = parsed["Глюкоза (плазма крові)"]
     assert "новонароджені (1 день): 2.22 - 3.33" in glucose.reference_text
@@ -1188,11 +1188,11 @@ def test_a_renamed_concept_does_not_keep_its_old_aliases():
     assert ("stale-concept", "vendor-1") in remaining
 
 
-# The γ-GT block as EskuLab prints it: the adult rows in the left sub-column,
+# The γ-GT block as Esculab prints it: the adult rows in the left sub-column,
 # the whole paediatric table in the right one.  Three lines leave a wide gap
 # between the columns and three do not, which is the entire difficulty.
 GGT_ROWS = [
-    ESKULAB_HEADER,
+    ESCULAB_HEADER,
     {"name": "Гамма-глутамілтрансфераза", "result": "34.9", "unit": "Од/л"},
     {"ref": "Жінки: 5.0-36.0", "ref2": "Діти 1-3 роки: <18.0"},
     {"name": "(ГГТ)", "ref": "Чоловіки: 8.0-61.0", "ref2": "Діти 3-6 років: <23.0"},
@@ -1206,11 +1206,11 @@ GGT_ROWS = [
 def ggt():
     return {
         item.raw_name: item
-        for item in parse_document("EskuLab", "laboratory", eskulab_page(GGT_ROWS))
+        for item in parse_document("Esculab", "laboratory", esculab_page(GGT_ROWS))
     }["Гамма-глутамілтрансфераза (ГГТ)"]
 
 
-def test_eskulab_reference_sub_columns_are_split_where_the_page_prints_them():
+def test_esculab_reference_sub_columns_are_split_where_the_page_prints_them():
     """A wide gap finds the column boundary only on the lines that have one.
 
     «Діти до 5 днів: <185.0 Діти 6-12 років: <17.0» leaves eight points between
@@ -1231,7 +1231,7 @@ def test_eskulab_reference_sub_columns_are_split_where_the_page_prints_them():
     assert reference.index("Діти 6-12 місяців: <34.0") < reference.index("Діти 1-3 роки: <18.0")
 
 
-def test_eskulab_line_printed_only_in_the_right_sub_column_stays_there():
+def test_esculab_line_printed_only_in_the_right_sub_column_stays_there():
     """«Діти чоловіки 12-17» wraps, and its tail is alone on the next line.
 
     Read as left-column content the tail rejoined the wrong heading, which put
@@ -1240,7 +1240,7 @@ def test_eskulab_line_printed_only_in_the_right_sub_column_stays_there():
     assert "Діти чоловіки 12-17 років: <45.0" in ggt().reference_text
 
 
-def test_eskulab_centred_single_column_reference_is_not_split_in_two():
+def test_esculab_centred_single_column_reference_is_not_split_in_two():
     """A short reference is centred in its cell and can end where the second
     sub-column starts.  Split there, «Чоловік: 0,04-0,54 / Жінки: 0,04-0,36»
     became "Чоловік: Жінки: 0,04-0,36 0,04-0,54" and the men's eosinophil
@@ -1249,21 +1249,21 @@ def test_eskulab_centred_single_column_reference_is_not_split_in_two():
         {"name": "Еозинофіли (абс.)", "result": "0.10", "unit": "кл/мкл", "ref_centred": "Чоловік: 0,04-0,54"},
         {"specimen": "цільна кров", "ref_centred": "Жінки: 0,04-0,36"},
     ]
-    columns = dict(ESKULAB_X, ref_centred=439.5)
+    columns = dict(ESCULAB_X, ref_centred=439.5)
     parsed = {
         item.raw_name: item
-        for item in parse_document("EskuLab", "laboratory", eskulab_page(rows, columns))
+        for item in parse_document("Esculab", "laboratory", esculab_page(rows, columns))
     }
     assert parsed["Еозинофіли (абс.)"].reference_text == "Чоловік: 0,04-0,54 Жінки: 0,04-0,36"
 
 
-def test_eskulab_second_table_under_a_row_is_not_read_as_more_of_its_reference():
+def test_esculab_second_table_under_a_row_is_not_read_as_more_of_its_reference():
     """Order N7 prints the Панченков/Вестергрен conversion under the ESR
     result.  Its heading crosses the column boundaries and is dropped, but its
     body is two clean columns and was collected as more of the ESR reference --
     a sex-specific limit trailed by seven intervals from another method."""
     rows = [
-        ESKULAB_HEADER,
+        ESCULAB_HEADER,
         {"name": "ШОЕ за Вестергреном", "result": "2", "unit": "мм/год"},
         {"ref": "Чоловіки: <15", "ref2": "Жінки: <20"},
         {"ref": "Чол. >50р: <20", "ref2": "Жін. >50р: <30"},
@@ -1276,7 +1276,7 @@ def test_eskulab_second_table_under_a_row_is_not_read_as_more_of_its_reference()
     ]
     parsed = {
         item.raw_name: item
-        for item in parse_document("EskuLab", "laboratory", eskulab_page(rows))
+        for item in parse_document("Esculab", "laboratory", esculab_page(rows))
     }
     reference = parsed["ШОЕ за Вестергреном"].reference_text
     assert "Чоловіки: <15" in reference
@@ -1325,9 +1325,9 @@ def test_two_numbers_touching_across_a_column_boundary_are_separated():
     both, so ALT's 1-3-years band and AST's 6-12-years band were unreachable --
     which is what let «Діти 0-5 днів» win for a child of either age.
     """
-    assert [m.start() for m in ESKULAB_GLUE.finditer("5.44.7-19.7")] == [3]
-    assert [m.start() for m in ESKULAB_GLUE.finditer("<24.01-3")] == [5]
-    assert [m.start() for m in ESKULAB_GLUE.finditer("<25.06-12")] == [5]
+    assert [m.start() for m in ESCULAB_GLUE.finditer("5.44.7-19.7")] == [3]
+    assert [m.start() for m in ESCULAB_GLUE.finditer("<24.01-3")] == [5]
+    assert [m.start() for m in ESCULAB_GLUE.finditer("<25.06-12")] == [5]
     # A whole-number range only, all the way through: the trailing digit of
     # «2,59-3,34» begins a decimal, and «5.83-34.5» ends in one.  Both cross
     # this x innocently, centred in a single reference column.
@@ -1342,7 +1342,7 @@ def test_two_numbers_touching_across_a_column_boundary_are_separated():
         "32,5-42,5",
         "0.9-<1.0",
     ):
-        assert [m.start() for m in ESKULAB_GLUE.finditer(innocent)] == [], innocent
+        assert [m.start() for m in ESCULAB_GLUE.finditer(innocent)] == [], innocent
 
 
 def test_a_band_named_above_optimal_is_not_the_patients_reference():

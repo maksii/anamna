@@ -13,8 +13,8 @@ from anamna.ingest.parsers import parse_document, reference_limits
 from anamna.ingest.pipeline import interpretation
 from anamna.reference import _vendor_verdict
 
-from test_parser_eskulab_review_1107 import CULTURES, page
-from test_parser_lab_defects_1107 import ESKULAB_HEADER, layout
+from test_parser_esculab_review_1107 import CULTURES, page
+from test_parser_lab_defects_1107 import ESCULAB_HEADER, layout
 
 ALT = (
     "12-17 років (ж): до 24,0 6-12 років: до 39,0 3-6 років: до 29,0 1-3 років: до 33,0 "
@@ -139,7 +139,7 @@ def test_a_colony_count_norm_is_read_with_its_powers_written_out(reference, limi
 def test_culture_counts_are_judged_against_their_norms():
     rows = {
         (item.specimen, item.raw_name): item
-        for item in parse_document("EskuLab", "microbiology", [page(CULTURES)])
+        for item in parse_document("Esculab", "microbiology", [page(CULTURES)])
     }
     assert interpretation(rows[("кал", "Staphylococcus epidermidis")]) == "high"
     assert interpretation(rows[("кал", "Lactobacillus spp.")]) == "low"
@@ -151,11 +151,11 @@ def test_culture_counts_are_judged_against_their_norms():
 
 def test_a_unit_wrapped_onto_the_next_line_rejoins_without_a_blank():
     lines = [
-        ESKULAB_HEADER,
+        ESCULAB_HEADER,
         (220.0, "ШОЕ@28.3 за@54 Вестергреном@67 6@254 мм/год@322 Жінки@378 17-50р:@404 <20мм/@433"),
         (230.0, "год@378"),
     ]
-    (esr,) = [row for row in parse_document("EskuLab", "laboratory", [layout(lines)]) if row.raw_name.startswith("ШОЕ")]
+    (esr,) = [row for row in parse_document("Esculab", "laboratory", [layout(lines)]) if row.raw_name.startswith("ШОЕ")]
     assert esr.reference_text == "Жінки 17-50р: <20мм/год"
 
 

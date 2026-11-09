@@ -33,7 +33,9 @@
 <form id="upload-form" class="an-upload{{ ' an-upload--error' if error_text else '' }}" action="/upload" method="post" enctype="multipart/form-data"
       data-chunk-size="{{ chunk_size }}" data-chunk-threshold="{{ chunk_threshold }}"
       data-progress="{{ t('upload.progress', name='{name}', percent='{percent}') }}"
-      data-chunk-error="{{ t('upload.error_failed') }}">
+      data-chunk-error="{{ t('upload.error_failed') }}"
+      data-progress-batch="{{ t('upload.progress_batch', percent='{percent}') }}"
+      data-saving="{{ t('upload.saving') }}">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <h2 class="an-upload__label">{{ t('upload.heading') }}</h2>
 
@@ -46,6 +48,8 @@
      data-one="{{ t('upload.selected_one', count='{count}') }}"
      data-few="{{ t('upload.selected_few', count='{count}') }}"
      data-many="{{ t('upload.selected_many', count='{count}') }}">{{ t('upload.selected_none') }}</p>
+
+  <progress class="an-upload__bar" id="an-upload-bar" max="100" value="0" hidden aria-label="{{ t('upload.bar_label') }}"></progress>
 
   <div class="an-upload__source">
     <label for="an-upload-kind">{{ t('intake.source_label') }}</label>
@@ -62,6 +66,7 @@
   </div>
   <p class="an-upload__hint">{{ t('upload.formats', formats=formats_text) }} · {{ t('upload.size_limit', limit=upload_size_limit) }}</p>
   {% if error_text %}<p class="an-upload__error" role="alert">{{ error_text }}</p>{% endif %}
+  <p id="an-upload-js-error" role="alert" hidden></p>
 </form>
 
 <details class="panel an-page-disclosure" id="processing" data-upload-disclosure data-queue-active="{{ queue_active }}"{% if queue_active or queue_failed %} open{% endif %}

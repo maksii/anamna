@@ -1,0 +1,53 @@
+{% from "_components.html" import plural_t with context %}
+{% from "_plan_latest.html" import latest_line with context %}
+{#- What the search found that is not on the list yet: re-rendered as the
+    person types (/plan-tests/live).  Ticking a row moves it onto the list.
+    The first few show, the rest behind "Show all N". -#}
+{% if query and special %}
+{% from "_plan_special.html" import special_row with context %}
+{#- Special mode: the tests (kinds, not one lab's item) the box found that
+    are not on the list yet; ticking one moves it there.  The labs' own
+    packages it found follow in their own block. -#}
+{% if spec.found %}
+<fieldset class="an-plan-results" id="plan-found" data-status="{{ t_plural('special.tests', spec.found|length) }}">
+  <legend>{{ t('special.found_legend') }}</legend>
+  <ul class="an-plan-needs" id="plan-found-list" data-fold>{% for row in spec.found %}{{ special_row(row) }}{% endfor %}</ul>
+  <button type="button" class="secondary an-plan-more" aria-controls="plan-found-list" aria-expanded="false" hidden data-fold-more
+          data-more="{{ t('plan.needs_show_all', count='{count}') }}" data-less="{{ t('plan.needs_show_less') }}">
+    <span data-fold-text>{{ t('plan.needs_show_all', count=spec.found|length|countfmt) }}</span><span class="an-chevron" aria-hidden="true"></span>
+  </button>
+</fieldset>
+{% endif %}
+{% elif query %}
+{% if results.total %}
+<fieldset class="an-plan-results" id="plan-found" data-status="{{ plural_t('plan.sets_count', results.total) }}">
+  <legend>{{ t('plan.results_legend') }}</legend>
+  {% if fuzzy %}<p class="tiny muted" role="status">{{ t('plan.search_fuzzy') }}</p>{% endif %}
+  <ul class="an-plan-needs" id="plan-found-list" data-fold>
+    {% for result in results.rows %}
+    {% set ago = days.get(result['keys'][0]) if result['keys']|length == 1 else none %}
+    {% set fresh = ago is not none and ago <= recent_days %}
+    <li class="an-plan-need"{% if fresh %} data-recent{% endif %}><label class="an-plan-check">
+      <input type="checkbox" name="add" value="{{ result.value }}">
+      <span class="an-plan-need__body">
+        <span class="an-plan-need__name">{{ result.label }}</span>
+        <span class="an-plan-need__meta">{{ result.detail }}</span>
+        {% if result.card %}{{ latest_line(result.card, ago, fresh) }}{% endif %}
+        {% if result.offers %}<span class="an-plan-need__meta">{{ t('plan.search_offers', offers=result.offers) }}</span>{% endif %}
+        {% if result.kind == 'item' and result['keys']|length > 1 %}
+        <span class="tiny muted">{{ t('plan.adds', names=result.names|join(', ')) }}{% if result['keys']|length > 6 %} ...{% endif %}</span>
+        {% endif %}
+      </span>
+    </label></li>
+    {% endfor %}
+  </ul>
+  <button type="button" class="secondary an-plan-more" aria-controls="plan-found-list" aria-expanded="false" hidden data-fold-more
+          data-more="{{ t('plan.needs_show_all', count='{count}') }}" data-less="{{ t('plan.needs_show_less') }}">
+    <span data-fold-text>{{ t('plan.needs_show_all', count=results.rows|length|countfmt) }}</span><span class="an-chevron" aria-hidden="true"></span>
+  </button>
+  {% if results.total > results.rows|length %}<p class="tiny muted">{{ t('plan.results_capped', shown=results.rows|length|countfmt, total=results.total|countfmt) }}</p>{% endif %}
+</fieldset>
+{% else %}
+<p data-status="{{ t('plan.results_none', query=query) }}">{{ t('plan.results_none', query=query) }}</p>
+{% endif %}
+{% endif %}

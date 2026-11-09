@@ -75,7 +75,7 @@ def test_imaging_and_egfr_units_are_translated(printed, ukrainian, english):
 
 @pytest.mark.parametrize("printed", ["А (II)", "А(ІІ)", "A(II)", "а (ii)"])
 def test_blood_group_spellings_display_as_one_value(printed):
-    """EskuLab «А (II)» (Latin numerals) and Expert «А(ІІ)» (Cyrillic І)."""
+    """Esculab «А (II)» (Latin numerals) and Expert «А(ІІ)» (Cyrillic І)."""
     try:
         set_locale("uk")
         assert display_value(printed) == "А (II)"

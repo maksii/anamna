@@ -100,15 +100,15 @@ def test_synevo_column_caption_is_not_part_of_the_title_and_every_panel_is_named
     assert extract_order_identifier("Стать: Чоловіча 1234567890\n") == "1234567890"
 
 
-ESKULAB = (
+ESCULAB = (
     "Замовлення: 1234567 / 05.11.2026 08:13 Дата видачі: 05.11.2026 12:23\nЛ:00000\n"
     "Пацієнт: Іваненко Іван Іванович ДН: 01.01.1990 Стать: Чол.\nРезультати дослідження №1234567\n"
 )
 
 
-def test_eskulab_code_prefix_never_survives_and_a_wrapped_name_is_joined():
+def test_esculab_code_prefix_never_survives_and_a_wrapped_name_is_joined():
     urine = classify(
-        ESKULAB + "1. F6001 Загальний аналіз сечі автоматизований (ЗАС автоматизований)\n"
+        ESCULAB + "1. F6001 Загальний аналіз сечі автоматизований (ЗАС автоматизований)\n"
         "Показник Результат Одиниці Референтні значення\nрН (C-PH) 6.0 - 5.5 - 7.0\nПриносний матеріал, сеча\n"
         "Час відбору: 07:40\n"
     )
@@ -117,7 +117,7 @@ def test_eskulab_code_prefix_never_survives_and_a_wrapped_name_is_joined():
     assert urine.issued_at == "2026-11-05T12:23"
     assert urine.specimen == "сеча"
     culture = classify(
-        ESKULAB + "1. J0007 Мікробіологічне дослідження виділень із зіву із визначенням чутливості виділених\n"
+        ESCULAB + "1. J0007 Мікробіологічне дослідження виділень із зіву із визначенням чутливості виділених\n"
         "мікроорганізмів до антибіотиків (антибіотикограма) (матеріал: виділення із зіву)\n"
         "Мікроорганізм виявлено Результат\n"
     )
@@ -165,7 +165,7 @@ def test_vaccination_card_is_titled_and_its_clinic_named():
         assert result.title == "Карта профілактичних щеплень"
     else:  # the card detector wants more of the form than this snippet carries
         assert extract_title(text, "card.pdf", "immunization_record") == "Карта профілактичних щеплень"
-    assert result.vendor == "Veselka Medical Center"
+    assert result.vendor == "Veselka"
     assert result.website == "https://veselka.clinic"
 
 
@@ -217,7 +217,7 @@ def test_a_report_headed_uzd_is_an_ultrasound_from_veselka():
         "document.pdf",
     )
     assert result.clinical_type == "ultrasound"
-    assert result.vendor == "Veselka Medical Center"
+    assert result.vendor == "Veselka"
     assert result.title == "УЗД органів черевної порожнини"
     assert result.report_date == "2026-08-08"
 

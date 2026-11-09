@@ -1012,7 +1012,7 @@ def _specimen_qualified(raw_name: str, family: str | None, specimen: str | None)
     mL) and a stool culture's (per g) were one series, a smear's «Епітелій»
     took the urinalysis concept of that name, and the vaginal and cervical
     readings of one smear were one series.  Stool rows take «(кал)», which is
-    also the name EskuLab's coprogram concepts already carry; smear rows take
+    also the name Esculab's coprogram concepts already carry; smear rows take
     their sampling site («VAGINA»).  Urine and blood keep the bare label.
     """
     if family == "stool" and specimen_family(raw_name) != "stool":
@@ -3508,7 +3508,7 @@ def _expected_classification(connection, row) -> tuple[object, ...] | None:
 def lab_order_collected_at(connection, document_id: str) -> str | None:
     """When the lab's own order of this document says the sample was taken
     («2024-11-15 11:42» as ``2024-11-15T11:42``), for a report that prints only
-    its examination day: an EskuLab POLYCHECK page, an Expert Hospital blood
+    its examination day: an Esculab POLYCHECK page, an Expert Hospital blood
     count.  Never later than the report's own day."""
     row = connection.execute(
         """SELECT o.ordered_at, d.report_date FROM lab_orders o JOIN documents d ON d.id=o.document_id

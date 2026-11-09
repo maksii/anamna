@@ -32,8 +32,7 @@
         </span>
         <small class="muted">{{ t('aiassist.route_line', provider=t('aiassist.provider_' + route.provider), host=route.host, model=route.model) }}{% if route.effort %} · {{ t('aiassist.effort_label') }}: {{ t('aiassist.effort_' + route.effort) }}{% endif %} · {{ t('aiassist.route_tokens', count=route.max_tokens|countfmt) }}</small>
       </div>
-      <form action="/admin/ai/test" method="post" class="inline-form"
-            onsubmit="var b=this.querySelector('button');setTimeout(function(){b.disabled=true;b.textContent=b.dataset.working;},0)">
+      <form action="/admin/ai/test" method="post" class="inline-form">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="task" value="{{ task }}">
         <button class="secondary" type="submit" data-working="{{ t('aiassist.working') }}">{{ t('aiassist.test_action_short') }}<span class="visually-hidden"> {{ t('aiassist.task_' + task) }}</span></button>

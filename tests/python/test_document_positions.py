@@ -1,7 +1,7 @@
 """Values listed in the order the document prints them, and placed on the page.
 
 The review page shows a document's values beside its pages.  They used to be
-ordered alphabetically within a page, so the first row of an EskuLab report
+ordered alphabetically within a page, so the first row of an Esculab report
 was the last card under it, and a list that does not follow the page cannot
 be checked against it.  `positions.py` finds each value's printed row once and
 stores it; the document page sorts by it and the source viewer outlines it.
@@ -95,7 +95,7 @@ def test_a_longer_label_claims_its_row_before_a_shorter_one_can():
 
 def test_a_wrapped_label_is_followed_onto_the_next_line_and_no_further():
     page = words(
-        # EskuLab: the abbreviation wraps under the name, past the value.
+        # Esculab: the abbreviation wraps under the name, past the value.
         (100, [(40, "Аспартатамінотрансфераза"), (250, "27.8"), (320, "Од/л")]),
         (111, [(40, "(АСТ)"), (380, "Чоловіки:")]),
         # Synevo: one first line, told apart only by the tail under it.  The

@@ -1,0 +1,110 @@
+/* /allergy: the allergy overview.  Phone first; colours only through the
+   app.css tokens, so dark mode and the status palette follow automatically. */
+
+.an-al-hero { min-height: 0; grid-template-columns: 1fr; }
+.an-al-hero p { max-width: 60ch; margin-bottom: 0; }
+
+.an-al-answer { border-left: 6px solid var(--st-unjudged-fg); }
+.an-al-answer[data-tone="negative"] { border-left-color: var(--st-negative-fg); }
+.an-al-answer[data-tone="positive"] { border-left-color: var(--st-positive-fg); }
+.an-al-answer[data-tone="uncertain"] { border-left-color: var(--st-borderline-fg); }
+.an-al-answer h2 { font-size: var(--text-xl); margin-bottom: var(--space-2); }
+.an-al-meta { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-4); padding: 0; margin: 0 0 var(--space-4); list-style: none; color: var(--muted); font-size: var(--text-sm); }
+.an-al-meta b { color: var(--ink); }
+
+.an-al-actions { display: flex; flex-wrap: wrap; gap: var(--space-3); margin: var(--space-4) 0; }
+.an-al-actions a, .an-al-doc, .an-al-search .secondary { min-height: 44px; }
+
+/* search */
+.an-al-search__form label { display: block; font-weight: 700; margin-bottom: var(--space-2); }
+.an-al-search__row { display: flex; gap: var(--space-2); }
+.an-al-search__row input { flex: 1 1 auto; min-width: 0; }
+.an-al-search__row button { flex: none; min-height: 44px; }
+.an-al-search__results { margin-top: var(--space-4); }
+.an-al-clear { display: inline-flex; align-items: center; min-height: 44px; }
+
+/* one allergen source and its results */
+.an-al-source { padding: var(--space-3) 0; border-top: 1px solid var(--line); }
+.an-al-source:first-child { border-top: 0; }
+.an-al-source h3 { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); font-size: var(--text-md); margin: 0 0 var(--space-1); }
+.an-al-source h3 small { color: var(--muted); font-weight: 500; font-size: var(--text-xs); }
+.an-al-items { list-style: none; margin: 0; padding: 0; }
+.an-al-item { padding: var(--space-1) 0 var(--space-2); border-bottom: 1px solid var(--line); }
+.an-al-item:last-child { border-bottom: 0; }
+.an-al-item__link { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-1) var(--space-3); min-height: 44px; color: var(--ink); text-decoration: none; }
+.an-al-item__link:hover .an-al-item__code { text-decoration: underline; }
+.an-al-item__name { display: flex; flex-direction: column; min-width: 0; }
+.an-al-item__source { font-weight: 700; }
+.an-al-item__code { color: var(--teal-dark); font-weight: 650; overflow-wrap: anywhere; }
+.an-al-item__value { margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; text-align: right; font-variant-numeric: tabular-nums; }
+.an-al-item__value small { color: var(--muted); font-size: var(--text-xs); }
+.an-al-item__tags { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+.an-al-item__earlier { display: block; color: var(--muted); font-size: var(--text-xs); margin-top: var(--space-1); }
+.an-al-item[data-status="positive"] .an-al-item__value b { color: var(--st-positive-fg); }
+
+.an-al-tag, .an-al-pill { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: var(--radius-pill); font-size: var(--text-xs); font-weight: 650; background: var(--surface-sunken); color: var(--muted); }
+.an-al-tag--family { background: var(--mint); color: var(--teal-dark); }
+.an-al-tag--warn { background: var(--warn-bg); color: var(--warn-ink); }
+.an-al-pill[data-status="positive"] { background: var(--st-positive-bg); color: var(--st-positive-fg); }
+.an-al-pill[data-status="uncertain"] { background: var(--st-borderline-bg); color: var(--st-borderline-fg); }
+.an-al-pill[data-status="negative"] { background: var(--st-negative-bg); color: var(--st-negative-fg); }
+.an-al-pill[data-status="unjudged"] { background: var(--st-unjudged-bg); color: var(--st-unjudged-fg); }
+
+/* groups and families */
+.an-al-group, .an-al-family { margin-top: var(--space-2); }
+.an-al-group > summary, .an-al-family > summary, .an-al-cite > summary { min-height: 44px; }
+.an-al-group > summary, .an-al-family > summary { flex-wrap: wrap; }
+.an-al-group__name { color: var(--ink); font-size: var(--text-md); }
+.an-al-group__count, .an-al-family > summary > span:last-of-type { flex: 1 1 auto; text-align: right; }
+.an-al-family > summary > span:first-child { color: var(--ink); font-size: var(--text-md); font-weight: 750; }
+.an-al-codes { font-size: var(--text-sm); color: var(--muted); overflow-wrap: anywhere; }
+
+.an-al-list { padding-left: 1.2em; margin: 0 0 var(--space-3); }
+.an-al-list li { margin-bottom: var(--space-1); }
+
+.an-al-scale { list-style: none; padding: 0; margin: 0 0 var(--space-3); display: grid; gap: var(--space-1); }
+.an-al-scale li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--space-2); padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); background: var(--st-positive-bg); color: var(--st-positive-fg); }
+.an-al-scale li[data-rank="0"] { background: var(--st-negative-bg); color: var(--st-negative-fg); }
+.an-al-scale b { font-variant-numeric: tabular-nums; }
+
+/* citations */
+.an-al-cite { margin-top: var(--space-2); font-size: var(--text-sm); }
+.an-al-cite > summary { display: inline-flex; align-items: center; gap: var(--space-2); cursor: pointer; color: var(--teal-dark); font-weight: 650; }
+.an-al-cite > summary span { color: var(--muted); font-weight: 500; }
+.an-al-cite ul, .an-al-source-list { list-style: none; padding: 0; margin: var(--space-2) 0 0; display: grid; gap: var(--space-2); }
+.an-al-cite li, .an-al-source-list li { overflow-wrap: anywhere; }
+.an-al-cite small, .an-al-source-list small { display: block; color: var(--muted); }
+.an-al-region { display: inline-block; min-width: 3.2em; margin-right: var(--space-1); padding: 0 6px; border-radius: var(--radius-xs); background: var(--surface-sunken); color: var(--ink); font-size: var(--text-xs); font-weight: 750; text-align: center; text-decoration: none; }
+
+.an-al-total__head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--space-2); }
+.an-al-total__value { display: inline-flex; align-items: baseline; gap: var(--space-2); min-height: 44px; font-size: var(--text-lg); }
+.an-al-total__value span { color: var(--muted); font-size: var(--text-sm); }
+.an-al-total__verdict { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+
+/* Wide screens: two sources side by side, so a value sits near its code. */
+@media (min-width: 900px) {
+  .an-al-group > .an-disclosure__body, .an-al-search__results { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: var(--space-6); align-items: start; }
+  .an-al-group .an-al-source:nth-child(2) { border-top: 0; }
+  .an-al-search__results > p { grid-column: 1 / -1; }
+}
+
+@media (max-width: 620px) {
+  .an-al-hero { padding: var(--space-5) var(--space-4); }
+  .panel.an-al-answer, .panel.an-al-search, .panel.an-al-positives, .panel.an-al-meaning, .panel.an-al-total,
+  .panel.an-al-groups, .panel.an-al-families, .panel.an-al-read, .panel.an-al-tests, .panel.an-al-next,
+  .panel.an-al-sources, .panel.an-al-empty { padding: var(--space-4); }
+  .an-disclosure.an-al-group > .an-disclosure__body, .an-disclosure.an-al-family > .an-disclosure__body { padding: 0 var(--space-3) var(--space-3); }
+  .an-al-group__count, .an-al-family > summary > span:last-of-type { text-align: left; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .an-al-group > summary::after, .an-al-family > summary::after { transition: none; }
+}
+
+/* The way from /panels/allergy to this page. */
+.an-allergy-overview-link { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); margin: 0 0 var(--space-4); }
+.an-allergy-overview-link .button { min-height: 44px; }
+.an-allergy-overview-link span { color: var(--muted); font-size: var(--text-sm); }
+
+/* Citation links are touch targets too. */
+.an-al-cite li a, .an-al-source-list li a { display: flex; align-items: center; min-height: 44px; }

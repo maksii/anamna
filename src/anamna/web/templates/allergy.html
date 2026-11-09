@@ -1,0 +1,245 @@
+{% extends "base.html" %}
+{% from "_components.html" import empty_state, plural_t with context %}
+{% block title %}{{ t('allergy.page.title') }}{% endblock %}
+{% block page_styles %}<link rel="stylesheet" href="{{ asset('allergy.css') }}">{% endblock %}
+
+{#- Where a block's explanation comes from, closed by default: the page is
+    read on a phone, and a citation list is reference, not reading. -#}
+{% macro sources_note(items) -%}
+<details class="an-al-cite">
+  <summary>{{ t('allergy.page.sources_short') }} <span>{{ items|length }}</span></summary>
+  <ul>
+    {% for source in items %}
+    <li><abbr class="an-al-region" title="{{ t('allergy.page.sources_regions') }}">{{ source.region }}</abbr>
+      <a href="{{ source.url }}" rel="noopener noreferrer" target="_blank">{{ source.name }}</a>
+      <small>{{ source.publisher }}. {{ source.identifier }}</small></li>
+    {% endfor %}
+  </ul>
+</details>
+{%- endmacro %}
+
+{% macro status_pill(status) -%}
+<span class="an-al-pill" data-status="{{ status }}">{{ t('allergy.page.status.' ~ status) }}</span>
+{%- endmacro %}
+
+{#- One allergen result.  The code is printed exactly as the laboratory wrote
+    it (WHO/IUIS codes are never translated or reordered); the row links to
+    the result's own page, where the source document is one tap away. -#}
+{% macro item_row(item, with_source=false) -%}
+<li class="an-al-item" data-status="{{ item.status }}">
+  <a class="an-al-item__link" href="{{ item.url }}">
+    <span class="an-al-item__name">
+      {% if with_source %}<span class="an-al-item__source">{{ item.source_name }}</span>{% endif %}
+      <span class="an-al-item__code" translate="no">{{ item.code_text }}</span>
+    </span>
+    <span class="an-al-item__value"><b>{{ item.value_text }}</b>{% if item.level %}<small>{{ item.level }}</small>{% endif %}</span>
+  </a>
+  <span class="an-al-item__tags">
+    <span class="an-al-tag" title="{{ t('allergy.page.codes_body') }}">{{ t('allergy.page.component' if item.component else 'allergy.page.extract') }}</span>
+    {% for name in item.family_names %}<span class="an-al-tag an-al-tag--family">{{ name }}</span>{% endfor %}
+    {% if item.status != 'negative' %}{{ status_pill(item.status) }}{% endif %}
+    {% if item.unverified %}<span class="an-al-tag an-al-tag--warn">{{ t('allergy.page.unverified') }}</span>{% endif %}
+  </span>
+  {% for earlier in item.history %}
+  <span class="an-al-item__earlier">{{ t('allergy.page.earlier', date=earlier.date_text, value=earlier.value_text) }}</span>
+  {% endfor %}
+</li>
+{%- endmacro %}
+
+{% block content %}
+<section class="metric-detail-hero an-al-hero">
+  <div>
+    <div class="eyebrow">{{ t('allergy.page.eyebrow') }}</div>
+    <h1>{{ t('allergy.page.title') }}</h1>
+    <p>{{ t('allergy.page.lead') }}</p>
+  </div>
+</section>
+
+{% if not view.has_results %}
+<section class="panel an-al-empty">
+  {{ empty_state(t('allergy.page.empty_title'), t('allergy.page.empty_body'), 2) }}
+  <h2>{{ t('allergy.page.empty_kinds_title') }}</h2>
+  <ul class="an-al-list">
+    {% for kind in ('single', 'panel', 'molecular', 'multiplex', 'total') %}<li>{{ t('allergy.page.kind.' ~ kind) }}</li>{% endfor %}
+  </ul>
+  <div class="an-al-actions">
+    <a class="primary" href="{{ view.plan_url }}">{{ t('allergy.page.next_plan') }}</a>
+    {% if not guest %}<a class="secondary" href="/upload">{{ t('allergy.page.empty_upload') }}</a>{% endif %}
+  </div>
+  {{ sources_note(view.block_sources.codes + view.block_sources.next) }}
+</section>
+{% else %}
+
+{% if view.latest %}
+{% set test = view.latest %}
+<section class="panel an-al-answer" data-tone="{{ headline.tone }}" aria-labelledby="al-answer">
+  <h2 id="al-answer">{{ headline.title }}</h2>
+  <p>{{ headline.body }} {{ headline.highest }}</p>
+  <ul class="an-al-meta">
+    <li><b>{{ test.name }}</b></li>
+    {% if test.vendor %}<li>{{ t('allergy.page.lab', lab=test.vendor) }}</li>{% endif %}
+    <li>{{ t('allergy.page.tested_on', date=test.date_text) }}</li>
+    <li>{{ plural_t('allergy.page.allergens', test.allergens) }}</li>
+  </ul>
+  {% if test.document_url %}<a class="secondary an-al-doc" href="{{ test.document_url }}">{{ t('allergy.page.open_document') }}</a>{% endif %}
+</section>
+{% endif %}
+
+<section class="panel an-al-search" aria-labelledby="al-search">
+  <h2 id="al-search">{{ t('allergy.page.search_title') }}</h2>
+  <form method="get" action="/allergy#al-search" role="search" class="an-al-search__form">
+    <label for="al-q">{{ t('allergy.page.search_label') }}</label>
+    <div class="an-al-search__row">
+      <input id="al-q" name="q" type="search" value="{{ query }}" placeholder="{{ t('allergy.page.search_placeholder') }}" autocomplete="off" maxlength="80">
+      <button class="primary" type="submit">{{ t('allergy.page.search_submit') }}</button>
+    </div>
+  </form>
+  {% if view.search %}
+  <div class="an-al-search__results" role="status">
+    {% if view.search.results %}
+    <p><b>{{ view.search.summary }}</b></p>
+    {% for card in view.search.results %}
+    <div class="an-al-source" data-status="{{ card.status }}">
+      <h3>{{ card.name }} <small>{{ card.group }}</small> {{ status_pill(card.status) }}</h3>
+      <ul class="an-al-items">{% for item in card['items'] %}{{ item_row(item) }}{% endfor %}</ul>
+    </div>
+    {% endfor %}
+    {% else %}
+    <p>{{ t('allergy.page.search_none', query=view.search.query) }}</p>
+    <a class="secondary" href="{{ view.plan_url }}">{{ t('allergy.page.search_plan') }}</a>
+    {% endif %}
+    <p><a class="an-al-clear" href="/allergy#al-search">{{ t('allergy.page.search_clear') }}</a></p>
+  </div>
+  {% endif %}
+</section>
+
+{% if view.positives %}
+<section class="panel an-al-positives" aria-labelledby="al-positives">
+  <h2 id="al-positives">{{ t('allergy.page.positives_title') }}</h2>
+  <p>{{ t('allergy.page.positives_lead') }}</p>
+  <ul class="an-al-items">{% for item in view.positives %}{{ item_row(item, true) }}{% endfor %}</ul>
+</section>
+{% endif %}
+
+<section class="panel an-al-meaning" aria-labelledby="al-meaning">
+  <h2 id="al-meaning">{{ t('allergy.page.sensitisation_title') }}</h2>
+  <p>{{ t('allergy.page.sensitisation_body') }}</p>
+  <h3>{{ t('allergy.page.not_covered_title') }}</h3>
+  <ul class="an-al-list">
+    {% for key in ('non_ige', 'intolerance', 'drugs', 'processed', 'venom', 'absent') %}<li>{{ t('allergy.page.not_covered.' ~ key) }}</li>{% endfor %}
+  </ul>
+  {{ sources_note(view.block_sources.caveat) }}
+</section>
+
+{% if view.total_ige %}
+{% set total = view.total_ige %}
+<section class="panel an-al-total" aria-labelledby="al-total">
+  <div class="an-al-total__head">
+    <h2 id="al-total">{{ t('allergy.page.total_title') }}</h2>
+    <a class="an-al-total__value" href="{{ total.url }}"><b>{{ total.value_text }}</b> <span>{{ total.date_text }}</span></a>
+  </div>
+  <p>{{ t('allergy.page.total_what') }}</p>
+  <p class="an-al-total__verdict">
+    {% if total.label %}<span class="an-al-pill" data-status="{{ total.status }}">{{ total.label }}</span>{% endif %}
+    {% if total.reference_text %}<span>{{ t('allergy.page.total_reference', range=total.reference_text) }}</span>{% endif %}
+  </p>
+  {% for earlier in total.history %}<p class="an-al-item__earlier">{{ t('allergy.page.earlier', date=earlier.date_text, value=earlier.value_text) }}</p>{% endfor %}
+  {{ sources_note(total.sources) }}
+</section>
+{% endif %}
+
+{% if view.groups %}
+<section class="panel an-al-groups" aria-labelledby="al-groups">
+  <h2 id="al-groups">{{ t('allergy.page.groups_title') }}</h2>
+  <p>{{ t('allergy.page.groups_lead') }}</p>
+  {% for group in view.groups %}
+  <details class="an-disclosure an-al-group" {% if group.positive or group.uncertain %}open{% endif %}>
+    <summary>
+      <span class="an-al-group__name">{{ group.name }}</span>
+      <span class="an-al-group__count">{{ plural_t('allergy.page.group_results', group.tested) }} ·
+        {% if group.positive %}{{ plural_t('allergy.page.group_positive', group.positive) }}{% elif group.uncertain %}{{ plural_t('allergy.page.group_uncertain', group.uncertain) }}{% else %}{{ t('allergy.page.group_all_negative') }}{% endif %}</span>
+    </summary>
+    <div class="an-disclosure__body">
+      {% for card in group.sources %}
+      <div class="an-al-source" data-status="{{ card.status }}">
+        <h3>{{ card.name }}{% if card.status in ('positive', 'uncertain') %} {{ status_pill(card.status) }}{% endif %}</h3>
+        <ul class="an-al-items">{% for item in card['items'] %}{{ item_row(item) }}{% endfor %}</ul>
+      </div>
+      {% endfor %}
+    </div>
+  </details>
+  {% endfor %}
+</section>
+{% endif %}
+
+{% if view.families %}
+<section class="panel an-al-families" aria-labelledby="al-families">
+  <h2 id="al-families">{{ t('allergy.page.families_title') }}</h2>
+  <p>{{ t('allergy.page.families_lead') }}</p>
+  {% for family in view.families %}
+  <details class="an-disclosure an-al-family" {% if family.positive %}open{% endif %}>
+    <summary><span>{{ family.name }}</span><span>{{ t('allergy.group_summary', tested=family.tested, positive=family.positive) }}</span></summary>
+    <div class="an-disclosure__body">
+      <p>{{ family.what }}</p>
+      <p>{{ family.means }}</p>
+      {% if family.positive_codes %}<p class="an-al-codes"><b>{{ t('allergy.page.family_positive_codes', codes=family.positive_codes|join(', ')) }}</b></p>{% endif %}
+      <p class="an-al-codes" translate="no">{{ t('allergy.page.family_your_codes', codes=family.codes|join(', ')) }}</p>
+      {{ sources_note(family.sources) }}
+    </div>
+  </details>
+  {% endfor %}
+</section>
+{% endif %}
+
+<section class="panel an-al-read" aria-labelledby="al-read">
+  <h2 id="al-read">{{ t('allergy.page.scale_title') }}</h2>
+  <p>{{ t('allergy.page.scale_unit', unit=unit_text) }}</p>
+  {% for scale in view.scales %}
+  <h3>{{ t('allergy.page.scale_' ~ scale.key ~ '_title') }}</h3>
+  <p>{{ t('allergy.page.scale_' ~ scale.key ~ '_body', cutoff=view.cutoff_text) }}</p>
+  <ol class="an-al-scale" start="0">
+    {% for level in scale.levels %}
+    <li data-rank="{{ level['class'] }}"><b>{{ level.range_text }}</b><span>{{ level.label }}</span></li>
+    {% endfor %}
+  </ol>
+  {{ sources_note(scale.sources) }}
+  {% endfor %}
+  <h3>{{ t('allergy.page.codes_title') }}</h3>
+  <p>{{ t('allergy.page.codes_body') }}</p>
+  {{ sources_note(view.block_sources.codes) }}
+</section>
+
+{% if view.several_tests %}
+<section class="panel an-al-tests" aria-labelledby="al-tests">
+  <h2 id="al-tests">{{ t('allergy.page.tests_title') }}</h2>
+  <p>{{ t('allergy.page.tests_history') }}</p>
+  <ul class="an-al-list">
+    {% for test in view.tests if test.allergens %}
+    <li><a href="{{ test.document_url or '#' }}">{{ test.date_text }}: {{ test.name }}</a>{% if test.vendor %}, {{ test.vendor }}{% endif %}.
+      {{ plural_t('allergy.page.allergens', test.allergens) }}</li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+<section class="panel an-al-next" aria-labelledby="al-next">
+  <h2 id="al-next">{{ t('allergy.page.next_title') }}</h2>
+  <p>{{ t('allergy.page.next_symptoms') }}</p>
+  <p>{{ t('allergy.page.next_plan_body') }}</p>
+  <div class="an-al-actions"><a class="primary" href="{{ view.plan_url }}">{{ t('allergy.page.next_plan') }}</a></div>
+  {{ sources_note(view.block_sources.next) }}
+</section>
+{% endif %}
+
+<section class="panel an-al-sources" aria-labelledby="al-sources">
+  <h2 id="al-sources">{{ t('allergy.page.sources_title') }}</h2>
+  <p><small>{{ t('allergy.page.sources_regions') }}</small></p>
+  <ul class="an-al-source-list">
+    {% for source in view.sources %}
+    <li><span class="an-al-region">{{ source.region }}</span>
+      <a href="{{ source.url }}" rel="noopener noreferrer" target="_blank">{{ source.name }}</a>
+      <small>{{ source.publisher }}. {{ source.identifier }}</small></li>
+    {% endfor %}
+  </ul>
+</section>
+{% endblock %}

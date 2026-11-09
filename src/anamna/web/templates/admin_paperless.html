@@ -33,14 +33,12 @@
         {% if counts.pending %} · {{ t('paperless.counts_pending', count=counts.pending|countfmt) }}{% endif %}
         {% if counts.refused %}<br><small>{{ t('paperless.counts_refused', count=counts.refused|countfmt) }}</small>{% endif %}</dd></div>
   </dl>
-  <form action="/admin/paperless/test" method="post" class="inline-form"
-        onsubmit="var b=this.querySelector('button');setTimeout(function(){b.disabled=true;b.textContent=b.dataset.working;},0)">
+  <form action="/admin/paperless/test" method="post" class="inline-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <button class="secondary" type="submit" data-working="{{ t('paperless.working') }}">{{ t('paperless.test_action') }}</button>
   </form>
   {% if paperless_on %}
-  <form action="/admin/paperless/sync" method="post" class="inline-form"
-        onsubmit="var b=this.querySelector('button');setTimeout(function(){b.disabled=true;b.textContent=b.dataset.working;},0)">
+  <form action="/admin/paperless/sync" method="post" class="inline-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <button class="secondary" type="submit" data-working="{{ t('paperless.working') }}">{{ t('paperless.admin_sync_action') }}</button>
   </form>

@@ -1,0 +1,32 @@
+{% from "_plan_latest.html" import latest_line with context %}
+{#- One special test on the planner's list (or among what the search found):
+    a checkbox (``sx``), its name and what it answers, then what the record
+    already holds: the latest value for a single result, otherwise when it
+    was measured (a DNA test once done is done for good; an allergy panel is
+    covered by an allergy test that measured its allergens).  A test only
+    one lab sells says so; one no lab sells here cannot be planned. -#}
+{% macro special_row(row) -%}
+{% set card = row.card %}
+{% set ago = days.get(card.id|string) if card else none %}
+{% set fresh = ago is not none and ago <= recent_days %}
+<li class="an-plan-need{{ ' an-plan-need--unsold' if not row.labs else '' }}" data-key="{{ row.id }}" data-why="{{ row.topic }}" id="plan-sx-{{ row.id }}"{% if row.recent %} data-recent{% endif %}{% if row.skipped %} data-skipped{% endif %}>
+  <label class="an-plan-check">
+    <input type="checkbox" name="sx" value="{{ row.id }}" data-topic="{{ row.topic }}" {{ 'checked' if row.checked else '' }}{{ ' disabled' if not row.labs else '' }}>
+    <span class="an-plan-need__body">
+      <span class="an-plan-need__name">{{ row.name }}</span>
+      <span class="tiny muted">{{ row.what }}</span>
+      {% if card %}{{ latest_line(card, ago, fresh) }}
+      {% if row.once %}<span class="tiny muted">{{ t('special.once_note') }}</span>{% endif %}
+      {% elif row.done %}<span class="an-plan-need__meta">
+        {%- if row.done.count %}{{ t_plural('special.covered', row.done.count, date=row.done.date|datefmt) }}
+        {%- elif row.once %}{{ t('special.done_once', date=row.done.date|datefmt) }}
+        {%- else %}{{ t('special.done', date=row.done.date|datefmt) }}{% endif -%}
+      </span>{% endif %}
+      {% if not row.labs %}<span class="tiny muted">{{ t('plan.not_sold') }}</span>
+      {% elif not row.all_labs %}<span class="tiny muted">{{ t('special.only_at', lab=row.labs|join(', ')) }}</span>{% endif %}
+    </span>
+  </label>
+  {% if row.page %}<a class="an-plan-need__link tiny" href="{{ row.page }}">{{ t('special.open_' ~ row.topic) }}<span class="visually-hidden">: {{ row.name }}</span></a>
+  {% elif card %}<a class="an-plan-need__link tiny" href="{{ card.url }}">{{ t('plan.open_result') }}<span class="visually-hidden">: {{ card.name }}</span></a>{% endif %}
+</li>
+{%- endmacro %}

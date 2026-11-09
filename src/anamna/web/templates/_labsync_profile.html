@@ -26,8 +26,13 @@
       phone and password, or (sms) phone and a texted code. -#}
   {% set pending = lab_pending_code(user, card.key) %}
   <h3 class="an-lab-subhead">{{ t('labsync.how_heading') }}</h3>
-  {#- Which phone and which password: the one thing the fields cannot say. -#}
-  <p class="muted">{{ t('labsync.' ~ card.sign_in ~ '_what', name=card.name|phrase) }}</p>
+  {#- Which phone and which password: the one thing the fields cannot say.
+      A lab may word it its own way (labsync.<key>_<sign_in>_what); t() hands
+      back the key itself when there is no such message. -#}
+  {% set own_what, own_where = 'labsync.' ~ card.key ~ '_' ~ card.sign_in ~ '_what', 'labsync.' ~ card.key ~ '_' ~ card.sign_in ~ '_where' %}
+  {% set what_key = own_what if t(own_what) != own_what else 'labsync.' ~ card.sign_in ~ '_what' %}
+  {% set where_key = own_where if t(own_where) != own_where else 'labsync.' ~ card.sign_in ~ '_where' %}
+  <p class="muted">{{ t(what_key, name=card.name|phrase) }}</p>
   {% if pending and pending.users %}
   {#- The phone opened several accounts at the clinic, as in the app: pick one. -#}
   <form action="/profile/lab/{{ card.key }}/credentials" method="post" class="stack-form" autocomplete="off">
@@ -38,7 +43,7 @@
       <label class="an-lab-check"><input type="radio" name="patient" value="{{ choice.id }}" required {{ 'checked' if loop.first else '' }}> {{ choice.name or t('labsync.unknown') }}</label>
       {% endfor %}
     </fieldset>
-    <button class="primary" type="submit">{{ t('labsync.sms_choose_submit') }}</button>
+    <button class="primary" type="submit" data-working="{{ t('labsync.signing_in') }}">{{ t('labsync.sms_choose_submit') }}</button>
   </form>
   <form action="/profile/lab/{{ card.key }}/forget" method="post" class="inline-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -54,15 +59,14 @@
              aria-describedby="lab-code-hint-{{ card.key }}">
     </label>
     <p class="tiny muted" id="lab-code-hint-{{ card.key }}">{{ t('labsync.password_code_hint') }}</p>
-    <button class="primary" type="submit">{{ t('labsync.password_code_submit') }}</button>
+    <button class="primary" type="submit" data-working="{{ t('labsync.verifying_code') }}">{{ t('labsync.password_code_submit') }}</button>
   </form>
   <form action="/profile/lab/{{ card.key }}/forget" method="post" class="inline-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <button class="secondary" type="submit">{{ t('labsync.password_code_cancel') }}</button>
   </form>
   {% else %}
-  <form action="/profile/lab/{{ card.key }}/credentials" method="post" class="stack-form"
-        onsubmit="var b=this.querySelector('button');setTimeout(function(){b.disabled=true;b.textContent=b.dataset.working;},0)">
+  <form action="/profile/lab/{{ card.key }}/credentials" method="post" class="stack-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <label>{{ t('labsync.password_phone_label', name=card.name|phrase) }}
       <input name="phone" type="tel" inputmode="tel" autocomplete="tel" required placeholder="+380 XX XXX XX XX"
@@ -77,28 +81,14 @@
     {% endif %}
     {#- Where a credential for someone else's server goes: the one thing a
         person must know before typing it, so it stays beside the fields. -#}
-    <p class="tiny muted" id="lab-where-hint-{{ card.key }}">{{ t('labsync.' ~ card.sign_in ~ '_where', url=card.url) }}</p>
-    <button class="primary" type="submit" data-working="{{ t('labsync.working') }}">{{ t('labsync.' ~ card.sign_in ~ '_submit') }}</button>
+    <p class="tiny muted" id="lab-where-hint-{{ card.key }}">{{ t(where_key, url=card.url) }}</p>
+    <button class="primary" type="submit" data-working="{{ t('labsync.sending_code' if card.sign_in == 'sms' else 'labsync.signing_in') }}">{{ t('labsync.' ~ card.sign_in ~ '_submit') }}</button>
   </form>
   {% endif %}
 
   {% elif not card.connected %}
   {#- How to get the credential: the hard part, so it is spelled out. -#}
   <h3 class="an-lab-subhead">{{ t('labsync.how_heading') }}</h3>
-  {% if card.key == 'eskulab' %}
-  <ol class="an-lab-steps">
-    <li>{{ t('labsync.eskulab_step1') }}
-      <a class="an-lab-open" href="{{ card.url }}/result" target="_blank" rel="noopener noreferrer">{{ t('labsync.open_site', site=card.url.split('://')[-1] ~ '/result') }}</a></li>
-    <li>{{ t('labsync.eskulab_step2') }}</li>
-    <li>{{ t('labsync.eskulab_step3') }}
-      <pre class="an-lab-snippet" role="figure" aria-label="{{ t('labsync.snippet_label') }}"><code>copy(JSON.stringify({token: decodeURIComponent(document.cookie.match(/accessKey=([^;]*)/)[1]), phone: localStorage.activePatientPhone}))</code></pre>
-      <button type="button" class="secondary an-lab-copy" data-copied="{{ t('labsync.copied') }}"
-        onclick="var b=this;navigator.clipboard.writeText(b.previousElementSibling.textContent.trim()).then(function(){b.textContent=b.dataset.copied;})">{{ t('labsync.copy') }}</button>
-    </li>
-    <li>{{ t('labsync.eskulab_step4') }}</li>
-  </ol>
-  <p class="tiny muted">{{ t('labsync.eskulab_manual') }}</p>
-  {% else %}
   <ol class="an-lab-steps">
     <li>{{ t('labsync.synevo_step1') }}
       <a class="an-lab-open" href="{{ card.url }}/personal-cabinet/my-results" target="_blank" rel="noopener noreferrer">{{ t('labsync.open_site', site=card.url.split('://')[-1] ~ '/personal-cabinet/my-results') }}</a></li>
@@ -110,27 +100,14 @@
 </li>
     <li>{{ t('labsync.synevo_step4') }}</li>
   </ol>
-  {% endif %}
 
   <form action="/profile/lab/{{ card.key }}/credentials" method="post" class="stack-form" autocomplete="off">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    {% if card.key == 'eskulab' %}
-    <label>{{ t('labsync.eskulab_json_label') }}
-      <textarea name="credentials_json" rows="3" spellcheck="false" autocapitalize="off"
-                placeholder='{"token":"eyJ...","phone":"+380..."}'></textarea>
-    </label>
-    <details class="an-lab-separate">
-      <summary>{{ t('labsync.eskulab_separate') }}</summary>
-      <label>{{ t('labsync.eskulab_token_label') }}<input name="token" spellcheck="false" autocapitalize="off" autocomplete="off"></label>
-      <label>{{ t('labsync.eskulab_phone_label') }}<input name="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="+380XXXXXXXXX"></label>
-    </details>
-    {% else %}
     <label>{{ t('labsync.synevo_cookie_label') }}
       <textarea name="token" rows="3" spellcheck="false" autocapitalize="off" aria-describedby="lab-cookie-hint-{{ card.key }}"></textarea>
     </label>
     <p class="tiny muted" id="lab-cookie-hint-{{ card.key }}">{{ t('labsync.synevo_cookie_hint') }}</p>
-    {% endif %}
-    <button class="primary" type="submit">{{ t('labsync.save_credentials') }}</button>
+    <button class="primary" type="submit" data-working="{{ t('labsync.working') }}">{{ t('labsync.save_credentials') }}</button>
   </form>
 
   {% else %}
@@ -143,8 +120,7 @@
   {% if card.expired %}<div class="alert warning">{{ t('labsync.error_expired') }}</div>{% endif %}
 
   <div class="an-lab-actions">
-    <form action="/profile/lab/{{ card.key }}/check" method="post" class="inline-form"
-          onsubmit="var b=this.querySelector('button');setTimeout(function(){b.disabled=true;b.textContent=b.dataset.working;},0)">
+    <form action="/profile/lab/{{ card.key }}/check" method="post" class="inline-form">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <button class="secondary" type="submit" data-working="{{ t('labsync.working') }}">{{ t('labsync.check_action') }}</button>
     </form>
@@ -170,8 +146,7 @@
   <ul class="an-lab-people">
     {% for person in card.persons %}
     <li class="an-lab-person-card">
-      <form action="/profile/lab/{{ card.key }}/link" method="post" class="stack-form"
-            onsubmit="var b=this.querySelector('button[type=submit]');setTimeout(function(){b.disabled=true;b.textContent=b.dataset.working;},0)">
+      <form action="/profile/lab/{{ card.key }}/link" method="post" class="stack-form">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="person_id" value="{{ person.id }}">
         <div class="an-lab-person-head">
@@ -243,8 +218,7 @@
       run is going the card asks /api/lab-sync/<key>/status and swaps only
       these in place, so scroll, focus and anything half-typed elsewhere on
       the page stay as they are (PERF-06). -#}
-  <form action="/profile/lab/{{ card.key }}/sync" method="post" class="inline-form" data-lab-live="sync"
-        onsubmit="var b=this.querySelector('button');setTimeout(function(){b.disabled=true;b.textContent=b.dataset.working;},0)">
+  <form action="/profile/lab/{{ card.key }}/sync" method="post" class="inline-form" data-lab-live="sync">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <button class="primary" type="submit" data-working="{{ t('labsync.working') }}" {{ 'disabled' if card.sync_state == 'running' else '' }}>{{ t('labsync.sync_action') }}</button>
   </form>
@@ -270,17 +244,20 @@
     {% endif %}
   </div>
   {% if card.sync_state == 'running' %}
+  <p class="alert warning" role="alert" id="lab-poll-error-{{ card.key }}" hidden>{{ t('labsync.status_unreachable') }}</p>
   <script>
   (function () {
     var card = document.getElementById('lab-{{ card.key }}');
+    var lost = document.getElementById('lab-poll-error-{{ card.key }}');
     function poll() {
       if (document.visibilityState !== 'visible') {
         document.addEventListener('visibilitychange', poll, {once: true});
         return;
       }
       fetch('/api/lab-sync/{{ card.key }}/status', {headers: {Accept: 'application/json'}, credentials: 'same-origin'})
-        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (r) { if (!r.ok) { throw new Error(r.status); } return r.json(); })
         .then(function (data) {
+          lost.hidden = true;
           if (!data || !card) { return; }
           var fresh = new DOMParser().parseFromString(data.html || '', 'text/html');
           card.querySelectorAll('[data-lab-live]').forEach(function (old) {
@@ -289,7 +266,7 @@
           });
           if (data.state === 'running') { setTimeout(poll, 2500); }
         })
-        .catch(function () { setTimeout(poll, 15000); });
+        .catch(function () { lost.hidden = false; setTimeout(poll, 15000); });
     }
     setTimeout(poll, 1500);
   })();

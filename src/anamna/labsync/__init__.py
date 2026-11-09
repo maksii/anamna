@@ -1,13 +1,13 @@
 """Lab connections: sync results from laboratory customer portals.
 
-Providers (each a module with a ``Client``): :mod:`.eskulab` (esculab.com)
-and :mod:`.synevo` (synevo.ua), whose customer websites run on unofficial,
-undocumented APIs — the person supplies the credential their own signed-in
-browser holds — and :mod:`.ekspert` (Expert Hospital), which has only a mobile
-app: the person signs in once with phone and password (``SIGN_IN =
-"password"``), and only the tokens the lab returns are stored — and the
-clinics on :mod:`.doctoreleks` (St. Paraskeva, Veselka), signed in with phone
-and a texted code (``SIGN_IN = "sms"``).  Each person
+Providers (each a module with a ``Client``): :mod:`.synevo` (synevo.ua),
+whose customer website runs on an unofficial, undocumented API — the person
+supplies the credential their own signed-in browser holds — and
+:mod:`.expert` (Expert Hospital), which has only a mobile app: the person
+signs in once with phone and password (``SIGN_IN = "password"``), and only
+the tokens the lab returns are stored — and :mod:`.esculab` (esculab.com) and
+the clinics on :mod:`.doctoreleks` (St. Paraskeva, Veselka), signed in as
+their apps do with phone and a texted code (``SIGN_IN = "sms"``).  Each person
 chooses which people on that lab account feed which record.
 
 Two things come out of it, and neither ever marks anything verified:
@@ -77,7 +77,7 @@ from ..ingest.pipeline import (
 )
 from ..ingest.positions import store_positions
 from ..reference import canonical_unit, convert_value
-from . import doctoreleks, ekspert, eskulab, synevo
+from . import doctoreleks, expert, esculab, synevo
 from .common import (
     LabSyncError,
     comparator,
@@ -90,7 +90,7 @@ from .common import (
 
 logger = logging.getLogger("anamna.labsync")
 
-PROVIDERS = {eskulab.KEY: eskulab, synevo.KEY: synevo, ekspert.KEY: ekspert, **doctoreleks.CLINICS}
+PROVIDERS = {esculab.KEY: esculab, synevo.KEY: synevo, expert.KEY: expert, **doctoreleks.CLINICS}
 
 #: Pause between orders: an unofficial API is not somewhere to be in a hurry.
 ORDER_DELAY_SECONDS = 1.0
@@ -102,7 +102,7 @@ STALE_RUN = timedelta(minutes=30)
 #: Result types that are not one number or one word: section headings,
 #: microbiology (JSON with comments), coprogram arrays, cytology text and
 #: method notes.  Shown for information and never counted as a mismatch.
-#: «file»: EskuLab's result is an attachment (a coprogram, a food-allergen
+#: «file»: Esculab's result is an attachment (a coprogram, a food-allergen
 #: panel as its own PDF), so the row names a file, not a value.
 INFO_RESULT_TYPES = frozenset({"none", "json", "flora", "cytology", "info", "file"})
 #: A lab's free-text remark on the panel («Примітки (зак)»), not a measurement;
@@ -149,7 +149,7 @@ ERROR_KEYS = frozenset(
         "labsync.unavailable_esoz",
         "labsync.partial_imported",
         "labsync.partial_no_pdf",
-        "labsync.ekspert_error_forbidden",
+        "labsync.expert_error_forbidden",
         "labsync.password_error_phone",
         "labsync.password_error_invalid",
         "labsync.password_error_code",
@@ -158,6 +158,7 @@ ERROR_KEYS = frozenset(
         "labsync.sms_error_phone",
         "labsync.sms_error_person",
         "labsync.doctoreleks_error_unmapped",
+        "labsync.esculab_error_no_patient",
     }
 )
 
@@ -891,7 +892,7 @@ def _obs_view(obs: dict) -> dict:
 
 #: Lab spellings of a unit that mean exactly the unit our parser stores.
 #: Folded here, for the comparison only: «10^12 клітин/л» is a count of 10^12
-#: per litre; «AI (Індекс антитіл)» is "AI" with its own explanation; EskuLab's
+#: per litre; «AI (Індекс антитіл)» is "AI" with its own explanation; Esculab's
 #: «індекс позитивності» is the dimensionless index the PDF prints as «індекс».
 _LAB_UNIT_WORDS = re.compile(r"\([^()]*\)|клітин")
 _LAB_UNIT_FOLDS = {"індекс позитивності": "індекс"}
@@ -978,7 +979,7 @@ def _inside_printed_band(obs: dict, row: dict, age: int | None, sex: str | None)
 
 def _states_no_interval(obs: dict, row: dict) -> bool:
     """Neither the report nor the lab's record prints anything to judge by:
-    «-» or nothing at all.  EskuLab's API marks such a row "critical" (every
+    «-» or nothing at all.  Esculab's API marks such a row "critical" (every
     row of some 2022 orders) while the paper prints no flag, and a "critical"
     with no interval to point a direction is no reading of ours to adopt."""
     texts = [str(obs.get("vendor_reference_text") or ""), *(str(line) for line in row.get("norm") or [])]
@@ -1517,7 +1518,7 @@ def _content_match(connection, user_id: str, key: str, order: dict, rows: list[d
 
 
 #: An order the lab left part-done this long is not going to finish: the
-#: ready results are imported and the order says so (EskuLab 5189508 has sat
+#: ready results are imported and the order says so (Esculab 5189508 has sat
 #: at 9 of 40 since 2022).
 PARTIAL_IMPORT_AFTER = timedelta(days=30)
 
@@ -1576,7 +1577,7 @@ def _results_document(connection, user_id: str, key: str, numbers: list, documen
 # --- an order the lab reports with no file ----------------------------------------
 #
 # Some finished orders have results in the lab's record and no PDF at all:
-# Ekspert's ``has_file: false`` (a rapid antigen test entered at the desk), a
+# Expert Hospital's ``has_file: false`` (a rapid antigen test entered at the desk), a
 # Synevo in-lab order with no web id, one behind an eHealth one-time code.
 # Their rows used to stay in ``lab_orders`` and reach nothing.  They are filed
 # as a document of their own — the lab's record of the order, stored as the
@@ -1620,7 +1621,7 @@ _method_note = method_note
 #: measured only beside its test: Synevo's HPV genotyping lists fourteen of
 #: them under «ПЛР. ВПЛ ВКР (генотипування 16, 18, …)».
 _BARE_NAME_RE = re.compile(r"\d+\s+[^\W\d_]+")
-#: A packet's catalogue code (EskuLab «F9008 Кальпротектин …»).
+#: A packet's catalogue code (Esculab «F9008 Кальпротектин …»).
 _PACKET_CODE_RE = re.compile(r"^[A-ZА-ЯІЇЄ]\d{3,5}\s+")
 
 
@@ -1972,7 +1973,7 @@ class _OrderSync:
     def file_pdf(self, index: int, pdf: bytes) -> tuple[str, str | None]:
         """One report: ``("failed", None)``, ``("same", id)`` for a document
         already in the record, or ``("fresh", id)`` for a newly read one."""
-        # A clinic that names its documents (Doctor ELEKS) passes the
+        # A clinic that names its documents (Doctor Eleks) passes the
         # day and the name on in the file name, for the classifier.
         hint = " ".join(re.sub(r'[\\/:*?"<>|]+', " ", str(self.order.get("filename_hint") or "")).split())[:120]
         target = _upload_target(
@@ -2068,7 +2069,7 @@ def apply_check(connection, user_id: str, row) -> dict[str, int]:
 
 
 def _lab_comments(row: dict) -> list[str]:
-    """What the lab wrote under a descriptive result (EskuLab's culture JSON:
+    """What the lab wrote under a descriptive result (Esculab's culture JSON:
     ``comments`` and each organism's ``defaultComment``), once each."""
     try:
         result = json.loads(row["result"])
@@ -2208,7 +2209,7 @@ def _same_result(parsed: ParsedObservation, obs: dict) -> bool:
 
 def _collected_from_order(connection, user_id: str, row) -> int:
     """Give the order's document the collection time the lab's order holds,
-    when the page printed none (an EskuLab POLYCHECK sheet prints only the
+    when the page printed none (an Esculab POLYCHECK sheet prints only the
     examination day; an Expert Hospital count only the date)."""
     document_id = row["document_id"]
     moment = lab_order_collected_at(connection, str(document_id)) if document_id else None
@@ -2227,7 +2228,7 @@ def _collected_from_order(connection, user_id: str, row) -> int:
 def _unit_fits(unit: str, concept_id: str | None, preferred: str | None) -> bool:
     """A lab's unit is adopted only where it is a real unit of this measurement:
     the concept's own unit, or one convertible to it.  Specific gravity is
-    dimensionless — the «г/мл» Ekspert's record carries folds to nothing — and
+    dimensionless — the «г/мл» Expert Hospital's record carries folds to nothing — and
     a concept with no unit of its own gets none from a lab either (OPS-37)."""
     if not preferred:
         return False
@@ -2346,7 +2347,7 @@ def _flag_from_lab(connection, user_id: str, key: str, order_id: str, item: dict
             dict(person), item["lab"]):
         # The band printed for this person holds the value -- on an inclusive
         # bound too (pH 5.5 against «5.5 - 7.0», basophils 1 against «0-1»)
-        # -- and the paper prints no flag: the printed band decides.  EskuLab's
+        # -- and the paper prints no flag: the printed band decides.  Esculab's
         # API sets "critical" on such values, and on whole 2022 orders; a copy
         # of the same report with no lab order judges them in range, and one
         # result must not be judged two ways.  An adoption is taken back.
@@ -2728,12 +2729,12 @@ def _require_ready(user_id: str, key: str, row, secret: str, phone: str, stored_
                    person: dict | None, links: list, own_patient) -> None:
     """Refuse a run that cannot work: no credential, nobody linked, an expired
     credential, or a link into a record that has no profile."""
-    if not secret or (key == eskulab.KEY and not phone):
+    if not secret or (key == esculab.KEY and not phone):
         raise LabSyncError(ERROR_NO_CREDENTIALS)
     if person is None and not links:
         raise LabSyncError("labsync.error_no_patient")
     if _expired(row["secret_expires_at"] if row and secret == stored_secret else None) or (
-            key == eskulab.KEY and _expired(eskulab.token_expiry(secret))):
+            key == esculab.KEY and _expired(esculab.token_expiry(secret))):
         raise LabSyncError(ERROR_EXPIRED)
     if own_patient is None and (person is not None or any(
             str(link["target_user_id"]) == user_id for link in links)):
@@ -2827,7 +2828,7 @@ def _card_person(person: dict, link, candidates: list[dict], fed: dict, names: d
     return {
         **person,
         # What tells two profiles with the same name apart: the lab's own
-        # number for the person (Synevo's patient code, EskuLab's patient id).
+        # number for the person (Synevo's patient code, Esculab's patient id).
         "lab_id": next((str(m) for m in reversed(person.get("match_ids") or []) if str(m).isdigit()), str(person["id"])),
         "options": options,
         "selected": selected,

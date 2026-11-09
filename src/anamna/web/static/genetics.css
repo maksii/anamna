@@ -1,0 +1,78 @@
+/* /genetics: the DNA overview.  Phone first; colours only through the app.css
+   tokens, so dark mode follows automatically. */
+
+.an-gx-hero { min-height: 0; grid-template-columns: 1fr; }
+.an-gx-hero p { max-width: 60ch; margin-bottom: 0; }
+
+.an-gx-muted { color: var(--muted); font-size: var(--text-sm); }
+.an-gx-once { color: var(--teal-dark); font-size: var(--text-sm); font-weight: 650; }
+
+/* your results */
+.an-gx-results { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-4); }
+.an-gx-result { padding: var(--space-4); border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface); }
+.an-gx-result p { margin: var(--space-2) 0 0; max-width: 70ch; }
+.an-gx-result__head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--space-1) var(--space-4); }
+.an-gx-result__head h3 { margin: 0; font-size: var(--text-lg); }
+.an-gx-result__head h3 a { display: inline-flex; align-items: center; min-height: 44px; }
+.an-gx-result__value.an-gx-result__value { margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-3); }
+.an-gx-result__value b { font-size: var(--text-lg); }
+.an-gx-result__value span { color: var(--muted); font-size: var(--text-sm); }
+
+/* results that only carry DNA in their name */
+.an-gx-other h3 { font-size: var(--text-md); margin: var(--space-4) 0 var(--space-1); }
+.an-gx-other p { max-width: 70ch; }
+.an-gx-links { list-style: none; margin: 0; padding: 0; }
+.an-gx-links li { border-bottom: 1px solid var(--line); }
+.an-gx-links li:last-child { border-bottom: 0; }
+.an-gx-links a { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0 var(--space-3); min-height: 44px; padding: var(--space-1) 0; color: var(--ink); text-decoration: none; }
+.an-gx-links a > span:first-child { color: var(--teal-dark); font-weight: 650; overflow-wrap: anywhere; }
+.an-gx-links a:hover > span:first-child { text-decoration: underline; }
+.an-gx-links small { color: var(--muted); }
+
+/* what a test can answer */
+.an-gx-tests__head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: var(--space-3) var(--space-5); }
+.an-gx-tests__head h2 { margin: 0; }
+.an-gx-tests__head p { margin: var(--space-1) 0 0; }
+.an-gx-tests__head .primary { min-height: 44px; }
+.an-gx-group { font-size: var(--text-md); color: var(--muted); margin: var(--space-5) 0 var(--space-2); }
+.an-gx-list { border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface); }
+.an-gx-test + .an-gx-test { border-top: 1px solid var(--line); }
+.an-gx-test > summary { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-1) var(--space-3); align-items: baseline; min-height: 44px; padding: var(--space-3) var(--space-4); cursor: pointer; list-style: none; }
+.an-gx-test > summary::-webkit-details-marker { display: none; }
+.an-gx-test > summary:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; border-radius: var(--radius-md); }
+.an-gx-test__name { font-weight: 750; color: var(--ink); overflow-wrap: anywhere; }
+.an-gx-test__name::before { content: ""; display: inline-block; vertical-align: middle; width: 8px; height: 8px; margin: 0 var(--space-3) 5px 2px; border: solid var(--teal-dark); border-width: 0 2px 2px 0; transform: rotate(45deg); transition: transform .16s ease; }
+.an-gx-test[open] .an-gx-test__name::before { transform: translateY(4px) rotate(-135deg); }
+.an-gx-test__state { color: var(--teal-dark); font-size: var(--text-sm); font-weight: 650; text-align: right; font-variant-numeric: tabular-nums; }
+.an-gx-test__what { grid-column: 1 / -1; color: var(--muted); font-size: var(--text-sm); }
+.an-gx-test__body { padding: 0 var(--space-4) var(--space-4); }
+.an-gx-test__body h4 { margin: var(--space-3) 0 var(--space-1); font-size: var(--text-sm); }
+.an-gx-test__body p { margin: 0 0 var(--space-2); max-width: 70ch; }
+.an-gx-test__body .secondary { min-height: 44px; }
+.an-gx-test__body a:not(.secondary) { display: inline-flex; align-items: center; min-height: 44px; }
+.an-gx-offers { list-style: none; margin: 0 0 var(--space-3); padding: 0; display: grid; gap: var(--space-2); }
+.an-gx-offers small { display: block; color: var(--muted); overflow-wrap: anywhere; }
+
+/* citations */
+.an-gx-cite { margin-top: var(--space-2); font-size: var(--text-sm); }
+.an-gx-cite > summary { display: inline-flex; align-items: center; gap: var(--space-2); min-height: 44px; cursor: pointer; color: var(--teal-dark); font-weight: 650; }
+.an-gx-cite > summary span { color: var(--muted); font-weight: 500; }
+.an-gx-sources { list-style: none; padding: 0; margin: var(--space-2) 0 0; display: grid; gap: var(--space-2); }
+.an-gx-sources li { overflow-wrap: anywhere; }
+.an-gx-sources a { display: flex; align-items: center; min-height: 44px; }
+.an-gx-sources small { display: block; color: var(--muted); }
+.an-gx-region { display: inline-block; padding: 0 6px; border-radius: var(--radius-xs); background: var(--surface-sunken); color: var(--ink); font-size: var(--text-xs); font-weight: 750; }
+
+@media (max-width: 620px) {
+  .an-gx-hero { padding: var(--space-5) var(--space-4); }
+  .panel.an-gx-mine, .panel.an-gx-other, .panel.an-gx-tests, .panel.an-gx-page-sources { padding: var(--space-4); }
+  .an-gx-result { padding: var(--space-3); }
+  .an-gx-test > summary { grid-template-columns: minmax(0, 1fr); padding: var(--space-3); }
+  .an-gx-test__state { text-align: left; }
+  .an-gx-test__body { padding: 0 var(--space-3) var(--space-3); }
+  .an-gx-tests__head .primary { width: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .an-gx-test__name::before { transition: none; }
+}

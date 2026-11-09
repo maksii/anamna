@@ -58,8 +58,9 @@
       <div class="export-toolbar-actions">
         <button type="submit" class="secondary">{{ t('export.update_preview') }}</button>
         <button type="button" class="secondary" data-export-print>{{ t('export.print') }}</button>
-        <button type="submit" class="primary" formaction="/exports/health-history.pdf">{{ t('export.download_pdf') }}</button>
+        <button type="submit" class="primary" formaction="/exports/health-history.pdf" data-export-pdf data-busy="{{ t('export.pdf_building') }}">{{ t('export.download_pdf') }}</button>
       </div>
+      <p class="alert error export-no-print" role="alert" data-export-pdf-error data-failed="{{ t('export.pdf_failed') }}" hidden></p>
       <p class="export-dirty" data-export-dirty hidden>{{ t('export.preview_changed') }}</p>
     </section>
 

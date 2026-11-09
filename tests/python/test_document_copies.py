@@ -365,7 +365,7 @@ def test_the_file_linked_to_the_lab_order_is_the_suggested_keep(tmp_path: Path):
         pipeline.record_document_relations(connection, user_id, "copy")
         connection.execute(
             """INSERT INTO lab_orders(owner_user_id, provider, remote_person_id, order_id, state, document_id,
-                   first_seen_at, last_synced_at) VALUES (?, 'eskulab', 'p', '55001234', 'linked', 'copy', ?, ?)""",
+                   first_seen_at, last_synced_at) VALUES (?, 'esculab', 'p', '55001234', 'linked', 'copy', ?, ?)""",
             (user_id, utc_now(), utc_now()),
         )
         connection.commit()

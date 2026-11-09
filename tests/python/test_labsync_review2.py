@@ -22,7 +22,7 @@ from anamna.ingest.pipeline import lab_order_collected_at
 from anamna.labsync import common
 from anamna.reference import canonical_unit
 
-from test_labsync import connect_eskulab, eskulab_routes, make, order, seed_doc, stub_intake
+from test_labsync import connect_esculab, esculab_routes, make, order, seed_doc, stub_intake
 from test_labsync_crosscheck_fixes import lab_row, observation, set_reference
 from test_labsync_nofile import INDICATORS, NOFILE, connected, state, sync
 
@@ -58,18 +58,18 @@ def test_a_lab_record_takes_no_flag_its_own_interval_contradicts():
     assert on_bound.vendor_interpretation is None and beyond.vendor_interpretation == "high"
 
 
-def test_an_eskulab_flag_on_a_printed_bound_is_taken_back_on_recheck(tmp_path: Path, monkeypatch):
+def test_an_esculab_flag_on_a_printed_bound_is_taken_back_on_recheck(tmp_path: Path, monkeypatch):
     settings, user_id, _ = make(tmp_path)
-    document_id = seed_doc(settings, user_id, vendor="EskuLab", order="9810", day="2026-01-10", values=[
+    document_id = seed_doc(settings, user_id, vendor="Esculab", order="9810", day="2026-01-10", values=[
         ("Базофіли", 1.0, "%", "within_vendor_range"), ("Моноцити", 9.0, "%", "within_vendor_range")])
     basophils, monocytes = f"{document_id}-0", f"{document_id}-1"
     set_reference(settings, basophils, "0-1", 0.0, 1.0)
     set_reference(settings, monocytes, "Діти до 12 р.: 2-11 Дорослі: 3-9", None, None)
     rows = {"9810": [lab_row("Базофіли", "1", "%", state="critical", norm="{0-1#%}"),
                      lab_row("Моноцити", "9", "%", state="critical", norm="{3-9#%}")]}
-    connect_eskulab(settings, user_id, monkeypatch, eskulab_routes([order(9810, ready=2, total=2)], rows))
+    connect_esculab(settings, user_id, monkeypatch, esculab_routes([order(9810, ready=2, total=2)], rows))
     stub_intake(monkeypatch, settings, user_id, {})
-    labsync.sync(settings, user_id, "eskulab", inline=True)
+    labsync.sync(settings, user_id, "esculab", inline=True)
     with connect(settings) as connection:  # what the earlier version left behind
         connection.execute("UPDATE observations SET vendor_interpretation='high', "
                            "vendor_interpretation_source='lab_record' WHERE id IN (?, ?)", (basophils, monocytes))
@@ -87,8 +87,8 @@ def test_the_cross_check_pairs_with_the_orders_document_and_leaves_copies_out(tm
     settings, user_id, _ = make(tmp_path)
     values = [("Кальпротектин", 24.0, "мг/кг", None),
               ("Швидкість осідання еритроцитів (ШОЕ, ESR)", 4.0, "мм/год.", None)]
-    own = seed_doc(settings, user_id, vendor="EskuLab", order="9820", day="2026-01-10", values=values)
-    copies = [seed_doc(settings, user_id, vendor="EskuLab", order="9820", day="2026-01-10", values=values)
+    own = seed_doc(settings, user_id, vendor="Esculab", order="9820", day="2026-01-10", values=values)
+    copies = [seed_doc(settings, user_id, vendor="Esculab", order="9820", day="2026-01-10", values=values)
               for _ in range(2)]
     with connect(settings) as connection:
         for index, copy in enumerate(copies):  # what the pipeline records for a later re-upload
@@ -98,9 +98,9 @@ def test_the_cross_check_pairs_with_the_orders_document_and_leaves_copies_out(tm
                        confidence, notes) VALUES (?, ?, 'duplicate', 0.9, 'auto:shared_results:2')""", (copy, own))
     rows = {"9820": [lab_row("Кальпротектин", "24.0", "мг/кг"),
                      lab_row("Аналіз крові: Швидкість осідання еритроцитів (ШОЕ, ESR)", "4", "мм/год.")]}
-    connect_eskulab(settings, user_id, monkeypatch, eskulab_routes([order(9820, ready=2, total=2)], rows))
+    connect_esculab(settings, user_id, monkeypatch, esculab_routes([order(9820, ready=2, total=2)], rows))
     stub_intake(monkeypatch, settings, user_id, {})
-    labsync.sync(settings, user_id, "eskulab", inline=True)
+    labsync.sync(settings, user_id, "esculab", inline=True)
     with connect(settings) as connection:
         tracked = connection.execute("SELECT * FROM lab_orders WHERE order_id='9820'").fetchone()
         check = labsync.check_order(connection, user_id, tracked)
@@ -121,15 +121,15 @@ def test_the_cross_check_pairs_with_the_orders_document_and_leaves_copies_out(tm
 
 def test_an_order_linked_to_a_document_later_set_aside_checks_the_kept_one(tmp_path: Path):
     settings, user_id, _ = make(tmp_path)
-    kept = seed_doc(settings, user_id, vendor="EskuLab", order="9821", day="2026-01-10",
+    kept = seed_doc(settings, user_id, vendor="Esculab", order="9821", day="2026-01-10",
                     values=[("Глюкоза", 5.1, "ммоль/л", None)])
-    copy = seed_doc(settings, user_id, vendor="EskuLab", order="9821", day="2026-01-10", values=[])
+    copy = seed_doc(settings, user_id, vendor="Esculab", order="9821", day="2026-01-10", values=[])
     with connect(settings) as connection:
         connection.execute("UPDATE documents SET duplicate_of_document_id=? WHERE id=?", (kept, copy))
         connection.execute(
             """INSERT INTO lab_orders(owner_user_id, provider, remote_person_id, order_id, first_seen_at,
                    last_synced_at, state, document_id, rows_json)
-               VALUES (?, 'eskulab', '111', '9821', ?, ?, 'linked', ?, ?)""",
+               VALUES (?, 'esculab', '111', '9821', ?, ?, 'linked', ?, ?)""",
             (user_id, utc_now(), utc_now(), copy, json.dumps([common.lab_row(test="Глюкоза", result="5.1", units="ммоль/л")])))
         tracked = connection.execute("SELECT * FROM lab_orders WHERE order_id='9821'").fetchone()
         check = labsync.check_order(connection, user_id, tracked)
@@ -156,7 +156,7 @@ def culture_row(test, result, material):
 
 def test_a_culture_comment_is_kept_with_the_organism_it_is_about(tmp_path: Path, monkeypatch):
     settings, user_id, client = make(tmp_path)
-    document_id = seed_doc(settings, user_id, vendor="EskuLab", order="9830", day="2026-01-10", values=[
+    document_id = seed_doc(settings, user_id, vendor="Esculab", order="9830", day="2026-01-10", values=[
         ("Lactobacillus spp.", 1000.0, "КУО/мл", None), ("Ступінь бактеріурії", 1000.0, "КУО/мл", None),
         ("Lactobacillus spp.", 100000.0, "КУО/г", None), ("Staphylococcus epidermidis", 1e7, "КУО/г", None),
         ("Слиз", "відсутній", None, None)])
@@ -166,9 +166,9 @@ def test_a_culture_comment_is_kept_with_the_organism_it_is_about(tmp_path: Path,
         connection.execute("UPDATE observations SET specimen='кал' WHERE id IN (?, ?)", (stool_lacto, epidermidis))
     rows = {"9830": [culture_row("Посів сечі", URINE, "сеча"), culture_row("Дисбактеріоз", STOOL, "кал"),
                      culture_row("Мазок", {"comments": ["Neisseria sicca є нормою слизових оболонок"]}, "зів")]}
-    connect_eskulab(settings, user_id, monkeypatch, eskulab_routes([order(9830, ready=3, total=3)], rows))
+    connect_esculab(settings, user_id, monkeypatch, esculab_routes([order(9830, ready=3, total=3)], rows))
     stub_intake(monkeypatch, settings, user_id, {})
-    labsync.sync(settings, user_id, "eskulab", inline=True)
+    labsync.sync(settings, user_id, "esculab", inline=True)
     notes = {value_id: observation(settings, value_id)["note"]
              for value_id in (urine_lacto, degree, stool_lacto, epidermidis, mucus)}
     assert notes == {urine_lacto: "Виявлений збудник Lactobacillus spp. є контамінантом зразка.",
@@ -189,17 +189,17 @@ def test_a_culture_comment_is_kept_with_the_organism_it_is_about(tmp_path: Path,
 
 def test_the_orders_sampling_time_fills_a_document_that_prints_none(tmp_path: Path, monkeypatch):
     settings, user_id, _ = make(tmp_path)
-    bare = seed_doc(settings, user_id, vendor="EskuLab", order="9840", day="2026-01-12",
+    bare = seed_doc(settings, user_id, vendor="Esculab", order="9840", day="2026-01-12",
                     values=[("Глюкоза", 5.1, "ммоль/л", None)])
-    dated = seed_doc(settings, user_id, vendor="EskuLab", order="9841", day="2026-01-12",
+    dated = seed_doc(settings, user_id, vendor="Esculab", order="9841", day="2026-01-12",
                      values=[("Сечовина", 5.5, "ммоль/л", None)])
     with connect(settings) as connection:
         connection.execute("UPDATE documents SET collected_at='2026-01-12T08:30' WHERE id=?", (dated,))
     rows = {"9840": [lab_row("Глюкоза", "5.1", "ммоль/л")], "9841": [lab_row("Сечовина", "5.5", "ммоль/л")]}
     orders = [order(9840, ready=1, total=1, dt="2026-01-09 11:42"), order(9841, ready=1, total=1, dt="2026-01-09 10:00")]
-    connect_eskulab(settings, user_id, monkeypatch, eskulab_routes(orders, rows))
+    connect_esculab(settings, user_id, monkeypatch, esculab_routes(orders, rows))
     stub_intake(monkeypatch, settings, user_id, {})
-    labsync.sync(settings, user_id, "eskulab", inline=True)
+    labsync.sync(settings, user_id, "esculab", inline=True)
     with connect(settings) as connection:
         collected = dict(connection.execute("SELECT id, collected_at FROM documents").fetchall())
         assert lab_order_collected_at(connection, bare) == "2026-01-09T11:42"
@@ -235,7 +235,7 @@ def test_a_report_taking_an_order_over_keeps_the_value_it_did_not_read(tmp_path:
     settings, user_id, _ = connected(tmp_path, monkeypatch)
     indicators = [*INDICATORS, HCG]
     stub_intake(monkeypatch, settings, user_id, {
-        "ekspert-100169.pdf": {"vendor": "Expert Hospital", "order": "100169", "day": "2025-09-18",
+        "expert-100169.pdf": {"vendor": "Expert Hospital", "order": "100169", "day": "2025-09-18",
                                "values": [("Антиген SARS-CoV-2", "не виявлено", None, "within_vendor_range")]},
     })
     sync(settings, user_id, monkeypatch, NOFILE, indicators)
@@ -286,7 +286,7 @@ def test_a_sampling_time_from_the_lab_order_is_not_read_as_classification_drift(
     from anamna.ingest import pipeline
 
     settings, user_id, _ = make(tmp_path)
-    document_id = seed_doc(settings, user_id, vendor="EskuLab", order="9842", day="2026-01-12", values=[])
+    document_id = seed_doc(settings, user_id, vendor="Esculab", order="9842", day="2026-01-12", values=[])
     text = "ЕСКУЛАБ\nДата дослідження: 12.01.2026\nГлюкоза 5.1 ммоль/л 3.3-5.5\n"
     with connect(settings) as connection:
         connection.execute(
@@ -303,7 +303,7 @@ def test_a_sampling_time_from_the_lab_order_is_not_read_as_classification_drift(
         connection.execute(
             """INSERT INTO lab_orders(owner_user_id, provider, remote_person_id, order_id, first_seen_at,
                    last_synced_at, state, document_id, ordered_at)
-               VALUES (?, 'eskulab', '111', '9842', ?, ?, 'linked', ?, '2026-01-09 11:42')""",
+               VALUES (?, 'esculab', '111', '9842', ?, ?, 'linked', ?, '2026-01-09 11:42')""",
             (user_id, utc_now(), utc_now(), document_id))
         assert document_id not in pipeline.classification_drift_ids(connection, user_id)
         connection.execute("DELETE FROM lab_orders")

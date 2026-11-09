@@ -81,6 +81,12 @@
     {% if allergy.tested_on %}<span>{{ t('allergy.tested_on', date=allergy.tested_on) }}</span>{% endif %}
   </p>
 
+  <link rel="stylesheet" href="{{ asset('allergy.css') }}">
+  <p class="an-allergy-overview-link">
+    <a class="button secondary" href="/allergy">{{ t('allergy.page.panel_link') }}</a>
+    <span>{{ t('allergy.page.panel_link_body') }}</span>
+  </p>
+
   <div class="alert neutral an-allergy-caveat">
     <strong>{{ t('allergy.caveat_title') }}</strong>
     <p>{{ t('allergy.caveat_body') }}</p>
@@ -93,11 +99,14 @@
   </section>
   {% endif %}
 
+  {#- The scale the results were graded on: an ALEX result on the ALEX
+      report's five levels, anything else on the ImmunoCAP classes. -#}
+  {% for scale in allergy.scales %}
   <section>
-    <h3>{{ t('allergy.cap_heading') }}</h3>
-    <p>{{ t('allergy.cap_lead') }}</p>
+    <h3>{{ scale.heading }}</h3>
+    <p>{{ scale.lead }}</p>
     <ul class="an-cap-legend">
-      {% for item in allergy.classes %}
+      {% for item in scale.classes %}
       <li data-interpretation="{{ 'negative' if item['class'] == 0 else 'positive' }}">
         <b>{{ item.label }}</b>
         <span>{{ item.range_text }}</span>
@@ -105,6 +114,7 @@
       {% endfor %}
     </ul>
   </section>
+  {% endfor %}
 
   {% if not allergy.positive %}
   {{ empty_state(t('allergy.no_positives_title'), t('allergy.no_positives_body')) }}
@@ -126,7 +136,7 @@
         <a class="an-allergen-item" href="{{ item.url }}" data-interpretation="{{ item.interpretation }}">
           <span>{{ item.name }}</span>
           <b>{{ item.value_text }}</b>
-          <span>{{ t('allergy.cap_' ~ item.cap_class) }}</span>
+          <span>{{ item.class_label }}</span>
         </a>
         {% endfor %}
         {% if negatives %}
@@ -137,7 +147,7 @@
             <a class="an-allergen-item" href="{{ item.url }}" data-interpretation="{{ item.interpretation }}">
               <span>{{ item.name }}</span>
               <b>{{ item.value_text }}</b>
-              <span>{{ t('allergy.cap_' ~ item.cap_class) }}</span>
+              <span>{{ item.class_label }}</span>
             </a>
             {% endfor %}
           </div>

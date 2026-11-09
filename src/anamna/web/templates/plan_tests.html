@@ -1,0 +1,660 @@
+{% extends "base.html" %}
+{% from "_components.html" import plural_t, empty_state with context %}
+{% from "_plan_latest.html" import latest_line with context %}
+{% block title %}{{ t('plan.title') }}{% endblock %}
+
+{#- One result on the list: a checkbox, the latest value with its date and
+    verdict, a small trend when there are two readings or more, and why it is
+    listed.  Suggested rows (`flagged`, `due`) and rows the person added (a
+    preset, the search: `added`) look the same; a result the record has never
+    held says so.  `sold` False means no catalogue we keep sells a test for it.
+    `data-why` feeds the reason chips, `data-key` the search; `data-recent`
+    marks a result measured in the last `recent_days`, which the "skip
+    recent" switch unticks. -#}
+{% macro need_row(need) -%}
+{% set card = need.card %}
+{% set ago = days.get(need.key) %}
+{% set fresh = ago is not none and ago <= recent_days %}
+<li class="an-plan-need{{ ' an-plan-need--unsold' if not need.sold else '' }}" data-key="{{ need.key }}" data-why="{{ ['flagged' if need.flagged else '', 'due' if need.due else '', 'added' if need.added else '']|select|join(' ') }}"{% if fresh %} data-recent{% endif %}{% if need.preselected and fresh and need.key not in selected %} data-skipped{% endif %}>
+  <label class="an-plan-check">
+    <input type="checkbox" name="need" value="{{ need.key }}" {{ 'checked' if need.key in selected else '' }}>
+    <span class="an-plan-need__body">
+      <span class="an-plan-need__name">{{ card.name if card else need.name }}</span>
+      {{ latest_line(card, ago, fresh) }}
+      {% if not need.sold %}<span class="tiny muted">{{ t('plan.not_sold') }}</span>{% endif %}
+      {% if need.due %}<span class="an-plan-need__why"><span class="pill">{{ card.staleness.label }}</span></span>{% endif %}
+    </span>
+  </label>
+  {% if card %}<a class="an-plan-need__link tiny" href="{{ card.url }}">{{ t('plan.open_result') }}<span class="visually-hidden">: {{ card.name }}</span></a>{% endif %}
+</li>
+{%- endmacro %}
+
+{% from "_plan_special.html" import special_row with context %}
+
+
+{% block content %}
+<section class="an-plan-head" aria-labelledby="plan-heading">
+  <h1 id="plan-heading">{{ t('plan.heading') }}</h1>
+  {#- Two ways in: routine checks built from the record (off), or special
+      tests started from a question (on).  Switching starts that mode fresh;
+      the city and the lab are remembered either way. -#}
+  {% if labs_on %}
+  <form class="an-plan-mode" action="/plan-tests" method="get" data-mode-form>
+    <label class="button secondary an-plan-switch">
+      <input type="checkbox" role="switch" name="special" value="1" {{ 'checked' if special else '' }} aria-describedby="plan-mode-lead" data-mode-switch>
+      <span>{{ t('special.switch') }}</span>
+    </label>
+    <button class="secondary" type="submit" data-mode-apply>{{ t('special.switch_apply') }}</button>
+  </form>
+  <p class="muted an-plan-mode__lead" id="plan-mode-lead">{{ t('special.lead_on' if special else 'special.lead_off') }}</p>
+  {% endif %}
+</section>
+
+{% if notice %}
+<div class="alert {{ 'warning' if notice in ('prices_changed', 'items_gone') else 'error' }}" role="alert">{{ t('plan.notice_' ~ notice) }}</div>
+{% endif %}
+
+{% if not labs_on %}
+{{ empty_state(t('plan.no_labs_title'), t('plan.no_labs_body'), level=2,
+               next_url='/admin/lab-connections' if user.role == 'admin' else '', next_label=t('plan.no_labs_admin')) }}
+{% else %}
+
+{% for key in crawling %}
+<div class="alert" role="status">{{ t('plan.crawling', lab=lab_names[key]) }}</div>
+{% endfor %}
+
+{#- Every submit returns to the block it came from (`data-return`), so a
+    filter or a search never drops the reader back at the top. -#}
+<form class="an-plan-form" action="/plan-tests" method="get" data-plan-form>
+  <input type="hidden" name="touched" value="1">
+  <p class="visually-hidden" role="status" data-live-status data-failed="{{ t('plan.search_failed') }}"></p>
+
+  {% if special %}
+  {#- Special tests: topics (allergy, your DNA, infections, long-term
+      conditions, feeling unwell now) list their tests and tick the core
+      ones; the box finds a test by question, disease or gene, and the labs'
+      own packages below it.  Each row is a kind of test; the plan picks the
+      cheapest lab item that answers it. -#}
+  <section class="panel an-plan-needs-panel" aria-labelledby="plan-needs-heading" id="plan-needs" data-return>
+    <h2 class="visually-hidden" id="plan-needs-heading">{{ t('special.list_label') }}</h2>
+    <input type="hidden" name="special" value="1">
+    {% for topic in spec.open %}<input type="hidden" name="topic" value="{{ topic }}">{% endfor %}
+    <div class="an-plan-tools">
+      {% set ns_on = namespace(n=0) %}{% for topic in spec.topics if topic.chosen == topic.count %}{% set ns_on.n = ns_on.n + 1 %}{% endfor %}
+      <button type="button" class="secondary" aria-expanded="false" aria-controls="plan-presets" hidden data-presets-toggle>
+        {{ t('special.topics') }}<span class="an-plan-tools__n" data-presets-on{{ ' hidden' if not ns_on.n else '' }}>{{ ns_on.n }}</span><span class="an-chevron" aria-hidden="true"></span></button>
+      {% if spec.recent_listed %}
+      <label class="button secondary an-plan-switch">
+        <input type="checkbox" role="switch" name="recent" value="1" {{ 'checked' if skip_recent else '' }} data-recent-switch
+               aria-describedby="plan-recent-hint">
+        <span>{{ t('plan.recent_switch', days=recent_days) }}</span>
+        <span class="an-plan-tools__n" aria-hidden="true">{{ spec.recent_listed|countfmt }}</span>
+      </label>
+      <span class="visually-hidden" id="plan-recent-hint">{{ t_plural('plan.recent_hint', spec.recent_listed, days=recent_days) }}</span>
+      {% elif skip_recent %}<input type="hidden" name="recent" value="1">{% endif %}
+      <button type="button" class="secondary" hidden data-untick-all>{{ t('plan.untick_all') }}</button>
+      <a class="button secondary" href="/plan-tests?special=1">{{ t('plan.reset') }}</a>
+    </div>
+    <fieldset class="an-plan-presets" id="plan-presets" data-presets{{ ' data-open' if presets_open or not spec.open else '' }}>
+      <legend class="visually-hidden">{{ t('special.topics') }}</legend>
+      <div class="an-plan-presets__grid">
+        {#- The routine presets' toggle, over tests: pressed while every test
+            in it is ticked, it unticks them; otherwise it ticks what is
+            missing.  The state follows the ticks (`data-preset-keys`). -#}
+        {% for topic in spec.topics %}
+        {% set on = topic.chosen == topic.count %}
+        {% set label = ('special.std_' if topic.standard else 'special.topic_') ~ topic.value %}
+        {% if topic.standard and not loop.previtem.standard %}<p class="an-plan-presets__label">{{ t('special.standards') }}</p>{% endif %}
+        <button type="submit" class="an-plan-preset" name="{{ 'drop' if on else 'preset' }}" value="{{ topic.value }}"
+                aria-pressed="{{ 'true' if on else 'false' }}" data-preset-keys="{{ topic['keys']|join(' ') }}"
+                data-off="{{ plural_t('special.tests', topic.count) }}" data-on="{{ t('plan.preset_on', total=topic.count|countfmt) }}"
+                data-part="{{ t('plan.preset_part', n='{n}', total=topic.count|countfmt) }}">
+          <span class="an-plan-preset__head"><strong>{{ t(label) }}</strong><span class="an-plan-preset__mark" aria-hidden="true"></span></span>
+          <span class="tiny muted">{{ t(label ~ '_hint') }}</span>
+          <span class="tiny an-plan-preset__n" data-preset-state>
+            {%- if on %}{{ t('plan.preset_on', total=topic.count|countfmt) }}{% elif topic.chosen %}{{ t('plan.preset_part', n=topic.chosen|countfmt, total=topic.count|countfmt) }}{% else %}{{ plural_t('special.tests', topic.count) }}{% endif -%}
+          </span>
+          {% if topic.recent %}<span class="tiny muted">{{ t_plural('plan.preset_recent', topic.recent, days=recent_days) }}</span>{% endif %}
+        </button>
+        {% endfor %}
+      </div>
+    </fieldset>
+    {% set topics_listed = spec.rows|map(attribute='topic')|unique|list %}
+    <div class="an-plan-why" role="group" aria-label="{{ t('special.topics') }}" data-why-filter hidden>
+      <button type="button" aria-pressed="true" data-why="">{{ t('plan.why_all') }} <span class="an-plan-why__n">{{ spec.rows|length|countfmt }}</span></button>
+      {% for topic in topics_listed %}
+      <button type="button" aria-pressed="false" data-why="{{ topic }}">{{ t('special.topic_' ~ topic) }} <span class="an-plan-why__n">{{ spec.rows|selectattr('topic', 'equalto', topic)|list|length|countfmt }}</span></button>
+      {% endfor %}
+    </div>
+    <div class="an-plan-search" id="plan-add" data-return>
+      <label for="plan-q">{{ t('special.search_label') }}</label>
+      <div class="an-plan-search__row">
+        <input id="plan-q" name="q" type="search" value="{{ query }}" autocomplete="off" enterkeyhint="search" aria-describedby="plan-q-hint" aria-controls="plan-needs-list" data-live-field>
+        <button class="secondary" type="submit" data-js-hide>{{ t('plan.search_submit') }}</button>
+      </div>
+      <p class="tiny muted" id="plan-q-hint">{{ t('special.search_hint') }}</p>
+    </div>
+    <ul class="an-plan-needs" id="plan-needs-list" data-needs-list data-match='{{ (match|tojson) if query else '' }}'>
+      {% for row in spec.rows %}{{ special_row(row) }}{% endfor %}
+      {% for row in include_rows %}
+      <li class="an-plan-need" data-key="{{ row.value }}" data-why="added"><label class="an-plan-check">
+        <input type="checkbox" name="include" value="{{ row.value }}" checked>
+        <span class="an-plan-need__body">
+          <span class="an-plan-need__name" lang="{{ row.label_lang }}">{{ row.label }}</span>
+          <span class="an-plan-need__meta">{{ row.vendor }} · {{ row.final_price|uah }} · {{ plural_t('plan.analytes', row.analytes|length) }}</span>
+        </span>
+      </label></li>
+      {% endfor %}
+      {% for value in include_gone %}
+      <li class="an-plan-need an-plan-need--unsold" data-why="added"><span class="an-plan-need__body">{{ t('plan.include_gone', value=value) }}</span></li>
+      {% endfor %}
+    </ul>
+    <p class="tiny muted" role="status" data-list-none hidden>{{ t('plan.list_none') }}</p>
+    <button type="button" class="secondary an-plan-more" aria-controls="plan-needs-list" aria-expanded="false" hidden data-needs-more
+            data-more="{{ t('plan.needs_show_all', count='{count}') }}" data-less="{{ t('plan.needs_show_less') }}">
+      <span data-fold-text>{{ t('plan.needs_show_all', count=(spec.rows|length + include_rows|length)|countfmt) }}</span><span class="an-chevron" aria-hidden="true"></span>
+    </button>
+    {% if not (spec.rows or include_rows or include_gone) %}<p class="an-plan-empty" data-list-empty>{{ t('special.list_empty') }}</p>{% endif %}
+    <div data-live="found">{% include "_plan_found.html" %}</div>
+    {#- The labs' own packages and named tests: what the box found, or a
+        section of a lab's shelf; filters narrow either. -#}
+    {% set narrowed = set_filters.lab or set_filters.kind or set_filters.max or set_filters.sort == 'price' %}
+    <div class="an-plan-browse" id="plan-sets" data-return>
+      <div data-live="sets">{% include "_plan_sets.html" %}</div>
+      <details class="an-plan-narrow"{{ ' open' if set_group or narrowed else '' }}>
+        <summary>{{ t('special.packages_legend') }}</summary>
+        <p class="tiny muted">{{ t('plan.sets_lead') }}</p>
+        {% if shelves %}
+        <label class="an-plan-filter an-plan-filter--section">{{ t('plan.filter_section') }}
+          <input type="search" name="sg" list="plan-shelves" autocomplete="off" data-live-field
+                 value="{% for shelf in shelves if shelf.value == set_group %}{{ shelf.vendor }}: {{ shelf.name }}{% endfor %}"
+                 placeholder="{{ t('plan.filter_section_placeholder') }}">
+          <datalist id="plan-shelves">
+            {% for shelf in shelves %}<option value="{{ shelf.vendor }}: {{ shelf.name }}">{{ plural_t('plan.shelf_count', shelf.count) }}</option>{% endfor %}
+          </datalist>
+        </label>
+        {% endif %}
+        <fieldset class="an-plan-filters">
+          <legend class="visually-hidden">{{ t('plan.filters_legend') }}</legend>
+          {% if labs_on|length > 1 %}
+          <label class="an-plan-filter">{{ t('plan.filter_lab') }}
+            <select name="slab" data-live-field>
+              <option value="">{{ t('plan.filter_any_lab') }}</option>
+              {% for key in labs_on %}<option value="{{ key }}" {{ 'selected' if set_filters.lab == key else '' }}>{{ lab_names[key] }}</option>{% endfor %}
+            </select>
+          </label>
+          {% endif %}
+          <label class="an-plan-filter">{{ t('plan.filter_kind') }}
+            <select name="skind" data-live-field>
+              <option value="">{{ t('plan.filter_any_kind') }}</option>
+              <option value="genetic" {{ 'selected' if set_filters.kind == 'genetic' else '' }}>{{ t('plan.filter_kind_genetic') }}</option>
+              <option value="set" {{ 'selected' if set_filters.kind == 'set' else '' }}>{{ t('plan.filter_kind_set') }}</option>
+            </select>
+          </label>
+          <label class="an-plan-filter">{{ t('plan.filter_max') }}
+            <input type="number" name="smax" min="1" step="1" inputmode="numeric" data-live-field value="{{ set_filters.max|int if set_filters.max else '' }}">
+          </label>
+          <label class="an-plan-filter">{{ t('plan.filter_sort') }}
+            <select name="ssort" data-live-field>
+              <option value="relevance">{{ t('plan.sort_relevance') }}</option>
+              <option value="price" {{ 'selected' if set_filters.sort == 'price' else '' }}>{{ t('plan.sort_price') }}</option>
+            </select>
+          </label>
+          <div class="an-plan-filters__go" data-js-hide>
+            <button class="secondary" type="submit">{{ t('plan.filter_apply') }}</button>
+          </div>
+        </fieldset>
+      </details>
+    </div>
+    <p class="tiny an-plan-pages">
+      <a href="/allergy">{{ t('special.overview_allergy') }}</a> · <a href="/genetics">{{ t('special.overview_genetics') }}</a>
+    </p>
+  </section>
+  {% else %}
+  <section class="panel an-plan-needs-panel" aria-labelledby="plan-needs-heading" id="plan-needs" data-return>
+    <h2 class="visually-hidden" id="plan-needs-heading">{{ t('plan.needs_heading') }}</h2>
+    {% set main = needs|selectattr('preselected')|list %}
+    {% set optional = needs|rejectattr('preselected')|rejectattr('key', 'in', selected)|list %}
+    {#- Ready-made sets for the usual reasons to come (a doctor's request,
+        feeling unwell), the "skip recent" switch (on by default: a result
+        measured days ago is not repeated yet, however it read), "untick all"
+        for starting from a preset alone, and a way back to the page as it
+        first opened. -#}
+    <div class="an-plan-tools">
+      {% if presets %}
+      {% set ns_on = namespace(n=0) %}{% for p in presets if p.chosen == p.count %}{% set ns_on.n = ns_on.n + 1 %}{% endfor %}{% set on_count = ns_on.n %}
+      <button type="button" class="secondary" aria-expanded="false" aria-controls="plan-presets" hidden data-presets-toggle>
+        {{ t('plan.presets_toggle') }}<span class="an-plan-tools__n" data-presets-on{{ ' hidden' if not on_count else '' }}>{{ on_count }}</span><span class="an-chevron" aria-hidden="true"></span></button>
+      {% endif %}
+      {% if recent_listed %}
+      <label class="button secondary an-plan-switch">
+        <input type="checkbox" role="switch" name="recent" value="1" {{ 'checked' if skip_recent else '' }} data-recent-switch
+               aria-describedby="plan-recent-hint">
+        <span>{{ t('plan.recent_switch', days=recent_days) }}</span>
+        <span class="an-plan-tools__n" aria-hidden="true">{{ recent_listed|countfmt }}</span>
+      </label>
+      <span class="visually-hidden" id="plan-recent-hint">{{ t_plural('plan.recent_hint', recent_listed, days=recent_days) }}</span>
+      {% elif skip_recent %}<input type="hidden" name="recent" value="1">{% endif %}
+      <button type="button" class="secondary" hidden data-untick-all>{{ t('plan.untick_all') }}</button>
+      <a class="button secondary" href="/plan-tests">{{ t('plan.reset') }}</a>
+    </div>
+    {% if presets %}
+    <fieldset class="an-plan-presets" id="plan-presets" data-presets{{ ' data-open' if presets_open else '' }}>
+      <legend class="visually-hidden">{{ t('plan.presets_toggle') }}</legend>
+      <div class="an-plan-presets__grid">
+        {#- A toggle: pressed while every result in it is ticked, it takes them
+            away; otherwise it adds what is missing.  The state follows the
+            ticks as they change (`data-preset-keys`). -#}
+        {% for preset in presets %}
+        {% set on = preset.chosen == preset.count %}
+        <button type="submit" class="an-plan-preset" name="{{ 'drop' if on else 'preset' }}" value="{{ preset.value }}"
+                aria-pressed="{{ 'true' if on else 'false' }}" data-preset-keys="{{ preset['keys']|join(' ') }}"
+                data-off="{{ plural_t('plan.analytes', preset.count) }}" data-on="{{ t('plan.preset_on', total=preset.count|countfmt) }}"
+                data-part="{{ t('plan.preset_part', n='{n}', total=preset.count|countfmt) }}">
+          <span class="an-plan-preset__head"><strong>{{ t('plan.preset_' ~ preset.value) }}</strong><span class="an-plan-preset__mark" aria-hidden="true"></span></span>
+          <span class="tiny muted">{{ t('plan.preset_' ~ preset.value ~ '_hint') }}</span>
+          <span class="tiny an-plan-preset__n" data-preset-state>
+            {%- if on %}{{ t('plan.preset_on', total=preset.count|countfmt) }}{% elif preset.chosen %}{{ t('plan.preset_part', n=preset.chosen|countfmt, total=preset.count|countfmt) }}{% else %}{{ plural_t('plan.analytes', preset.count) }}{% endif -%}
+          </span>
+          {% if preset.recent %}<span class="tiny muted">{{ t_plural('plan.preset_recent', preset.recent, days=recent_days) }}</span>{% endif %}
+        </button>
+        {% endfor %}
+      </div>
+    </fieldset>
+    {% endif %}
+    {#- One list: what the page suggests, then what the person added (a
+        preset, the search, a panel).  The chips split it by why a row is
+        there; the box filters it and, below it, finds what is not on it yet.
+        The first few rows show, the rest behind "Show all N". -#}
+    {% set main_rows = needs|selectattr('preselected')|list %}
+    {% set n_added = extra|length + include_rows|length + include_gone|length %}
+    <div class="an-plan-why" role="group" aria-label="{{ t('plan.why_label') }}" data-why-filter hidden>
+      <button type="button" aria-pressed="true" data-why="">{{ t('plan.why_all') }} <span class="an-plan-why__n">{{ (main_rows|length + n_added)|countfmt }}</span></button>
+      <button type="button" aria-pressed="false" data-why="flagged">{{ t('plan.why_flagged') }} <span class="an-plan-why__n">{{ main_rows|selectattr('flagged')|list|length|countfmt }}</span></button>
+      <button type="button" aria-pressed="false" data-why="due">{{ t('plan.why_due') }} <span class="an-plan-why__n">{{ main_rows|selectattr('due')|list|length|countfmt }}</span></button>
+      <button type="button" aria-pressed="false" data-why="added">{{ t('plan.added_heading') }} <span class="an-plan-why__n">{{ n_added|countfmt }}</span></button>
+    </div>
+    <div class="an-plan-search" id="plan-add" data-return>
+      <label for="plan-q">{{ t('plan.search_label') }}</label>
+      <div class="an-plan-search__row">
+        <input id="plan-q" name="q" type="search" value="{{ query }}" autocomplete="off" enterkeyhint="search" aria-describedby="plan-q-hint" aria-controls="plan-needs-list" data-live-field>
+        <button class="secondary" type="submit" data-js-hide>{{ t('plan.search_submit') }}</button>
+      </div>
+      <p class="tiny muted" id="plan-q-hint">{{ t('plan.search_hint') }}</p>
+    </div>
+    <ul class="an-plan-needs" id="plan-needs-list" data-needs-list data-match='{{ (match|tojson) if query else '' }}'>
+      {% for need in main_rows %}{{ need_row(need) }}{% endfor %}
+      {% for row in extra %}{{ need_row(row) }}{% endfor %}
+      {% for row in include_rows %}
+      <li class="an-plan-need" data-key="{{ row.value }}" data-why="added"><label class="an-plan-check">
+        <input type="checkbox" name="include" value="{{ row.value }}" checked>
+        <span class="an-plan-need__body">
+          <span class="an-plan-need__name" lang="{{ row.label_lang }}">{{ row.label }}</span>
+          <span class="an-plan-need__meta">{{ row.vendor }} · {{ row.final_price|uah }} · {{ plural_t('plan.analytes', row.analytes|length) }}</span>
+        </span>
+      </label></li>
+      {% endfor %}
+      {% for value in include_gone %}
+      <li class="an-plan-need an-plan-need--unsold" data-why="added"><span class="an-plan-need__body">{{ t('plan.include_gone', value=value) }}</span></li>
+      {% endfor %}
+    </ul>
+    <p class="tiny muted" role="status" data-list-none hidden>{{ t('plan.list_none') }}</p>
+    <button type="button" class="secondary an-plan-more" aria-controls="plan-needs-list" aria-expanded="false" hidden data-needs-more
+            data-more="{{ t('plan.needs_show_all', count='{count}') }}" data-less="{{ t('plan.needs_show_less') }}">
+      <span data-fold-text>{{ t('plan.needs_show_all', count=(main_rows|length + n_added)|countfmt) }}</span><span class="an-chevron" aria-hidden="true"></span>
+    </button>
+    {% if not (main_rows or n_added) %}<p class="an-plan-empty" data-list-empty>{{ t('plan.needs_none') }}</p>{% endif %}
+    <div data-live="found">{% include "_plan_found.html" %}</div>
+    {% if optional %}
+    <details class="an-plan-optional">
+      <summary>{{ plural_t('plan.optional', optional|length) }}</summary>
+      <p class="tiny muted">{{ t('plan.optional_lead') }}</p>
+      <ul class="an-plan-needs">{% for need in optional %}{{ need_row(need) }}{% endfor %}</ul>
+    </details>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  {#- City, labs and mode fold into one line that says what is set
+      («Львів · спершу найдешевше · усі лабораторії»); the controls open only
+      when something needs a choice (no city yet, or a lab has no point there). -#}
+  <section class="panel an-plan-where" aria-labelledby="plan-where-heading" id="plan-where" data-return>
+    <details{{ ' open' if no_city or not city else '' }}>
+      <summary>
+        <h2 id="plan-where-heading">{{ t('plan.where_heading') }}</h2>
+        <span class="an-plan-where__sum" data-where-sum data-no-city="{{ t('plan.sum_no_city') }}">
+          {{- city or t('plan.sum_no_city') }} · {{ t('plan.sum_' ~ prefs.mode) -}}
+          {%- if labs_on|length > 1 %} · {{ t('plan.sum_only', lab=lab_names[prefs.lab]) if prefs.lab else t('plan.sum_all_labs') }}{% endif -%}
+        </span>
+      </summary>
+      {% for key in no_city %}<p class="alert warning" role="status">{{ t('plan.no_city', lab=lab_names[key], city=city) }}</p>{% endfor %}
+      <div class="an-plan-cities">
+        <label>{{ t('plan.city_one_label') }}
+          <input type="search" name="city" list="plan-cities" value="{{ city }}" autocomplete="off"
+                 aria-describedby="plan-city-hint">
+          <datalist id="plan-cities">{% for name in city_names %}<option value="{{ name }}">{% endfor %}</datalist>
+        </label>
+        {% if labs_on|length > 1 %}
+        <label>{{ t('plan.pref_label') }}
+          <select name="pref">
+            <option value="" data-sum="{{ t('plan.sum_all_labs') }}">{{ t('plan.pref_any') }}</option>
+            {% for key in labs_on %}<option value="{{ key }}" data-sum="{{ t('plan.sum_only', lab=lab_names[key]) }}" {{ 'selected' if prefs.lab == key else '' }}>{{ t('plan.pref_only', lab=lab_names[key]) }}</option>{% endfor %}
+          </select></label>
+        {% endif %}
+      </div>
+      <p class="tiny muted" id="plan-city-hint">{{ t('plan.where_lead') }}</p>
+      <fieldset class="an-plan-prefs">
+        <legend>{{ t('plan.prefs_legend') }}</legend>
+        <label class="an-plan-check"><input type="radio" name="mode" value="cheapest" data-sum="{{ t('plan.sum_cheapest') }}" {{ 'checked' if prefs.mode == 'cheapest' else '' }}>
+          <span><strong>{{ t('plan.mode_cheapest') }}</strong><span class="tiny muted">{{ t('plan.mode_cheapest_hint') }}</span></span></label>
+        <label class="an-plan-check"><input type="radio" name="mode" value="complete" data-sum="{{ t('plan.sum_complete') }}" {{ 'checked' if prefs.mode == 'complete' else '' }}>
+          <span><strong>{{ t('plan.mode_complete') }}</strong><span class="tiny muted">{{ t('plan.mode_complete_hint') }}</span></span></label>
+      </fieldset>
+    </details>
+  </section>
+
+  {% if request.query_params.get('plan') %}<input type="hidden" name="plan" value="1">{% endif %}
+  <div class="an-plan-go">
+    <button class="primary" type="submit" name="plan" value="1" formaction="/plan-tests#plan-result" data-busy="{{ t('plan.building') }}">{{ t('plan.submit') }}</button>
+    <p class="tiny muted" aria-live="polite">{{ t('plan.selected_label') }} <span data-selected-count>{{ (spec.picked|length if special else selected|length)|countfmt }}</span></p>
+  </div>
+</form>
+
+{% include "_plan_result.html" %}
+{% endif %}
+<script>
+(function () {
+  // The mode switch answers on its own; its button is for script-off pages.
+  var modeForm = document.querySelector('[data-mode-form]');
+  if (modeForm) {
+    modeForm.querySelector('[data-mode-apply]').remove();
+    modeForm.querySelector('[data-mode-switch]').addEventListener('change', function () { modeForm.submit(); });
+  }
+  var form = document.querySelector('[data-plan-form]');
+  if (!form) { return; }
+  var lang = document.documentElement.lang || undefined;
+  // The search and filter buttons are for script-off pages; here every field answers on its own.
+  form.querySelectorAll('[data-js-hide]').forEach(function (el) { el.remove(); });
+
+  // Land back on the block the submit came from: the focused field (Enter
+  // with script off), else the button pressed.
+  form.addEventListener('submit', function (event) {
+    var active = document.activeElement;
+    var origin = active && form.contains(active) && active.matches('input, select') ? active : event.submitter;
+    // Building the plan is the only submit that plans; a preset or any other
+    // change returns the list at once, and the plan below (built for the old
+    // list) is dropped rather than recomputed for seconds on every press.
+    if (event.submitter && event.submitter.hasAttribute('formaction')) { return; }
+    var carried = form.querySelector('input[type=hidden][name=plan]');
+    if (carried) { carried.remove(); }
+    // A preset answers the press before the page does.
+    if (event.submitter && event.submitter.matches('.an-plan-preset')) {
+      event.submitter.setAttribute('aria-pressed', String(event.submitter.getAttribute('aria-pressed') !== 'true'));
+    }
+    var block = origin && origin.closest('[data-return]');
+    form.action = '/plan-tests' + (block ? '#' + block.id : '');
+  });
+
+  // A long list shows its first few rows and "Show all N"; `keep` filters
+  // rows out entirely (the reason chips above the needs list).
+  var FIRST = 5;
+  function fold(list, more, keep) {
+    var expanded = false;
+    function render() {
+      var rows = Array.prototype.slice.call(list.children);
+      var match = rows.filter(function (row) { return !keep || keep(row); });
+      var folds = match.length > FIRST + 2;
+      rows.forEach(function (row) { row.hidden = true; });
+      match.forEach(function (row, index) { row.hidden = folds && !expanded && index >= FIRST; });
+      more.hidden = !folds;
+      more.setAttribute('aria-expanded', String(expanded));
+      more.querySelector('[data-fold-text]').textContent = expanded ? more.dataset.less
+        : more.dataset.more.replace('{count}', match.length.toLocaleString(lang));
+    }
+    more.addEventListener('click', function () {
+      expanded = !expanded;
+      render();
+      // Collapsing pulls the rows above the button away; keep it in view.
+      if (!expanded) { more.scrollIntoView({ block: 'nearest' }); }
+    });
+    render();
+    return render;
+  }
+
+  // The list: a chip keeps the rows listed for that reason, the search box
+  // the rows it matched (`match`, the keys the server found on the list).
+  var needs = form.querySelector('[data-needs-list]');
+  var filter = form.querySelector('[data-why-filter]');
+  var none = form.querySelector('[data-list-none]');
+  var why = '';
+  var match = needs.dataset.match ? JSON.parse(needs.dataset.match) : null;
+  function reasons(row) { return (row.dataset.why || '').split(' '); }
+  var refoldList = fold(needs, form.querySelector('[data-needs-more]'), function (row) {
+    return (!why || reasons(row).indexOf(why) >= 0) && (!match || match.indexOf(row.dataset.key) >= 0);
+  });
+  function refold() {
+    refoldList();
+    none.hidden = !match || !!needs.querySelector(':scope > li:not([hidden])');
+  }
+  // Each chip counts its rows; one that would show all of them or none hides.
+  function chips() {
+    var rows = Array.prototype.slice.call(needs.children);
+    var split = false;
+    filter.querySelectorAll('button').forEach(function (chip) {
+      var n = rows.filter(function (row) { return !chip.dataset.why || reasons(row).indexOf(chip.dataset.why) >= 0; }).length;
+      chip.querySelector('.an-plan-why__n').textContent = n.toLocaleString(lang);
+      chip.hidden = !!chip.dataset.why && (!n || n === rows.length);
+      if (!chip.hidden && chip.dataset.why) { split = true; }
+    });
+    filter.hidden = !split;
+    // A chip that went away takes its filter with it.
+    var pressed = filter.querySelector('[aria-pressed=true]');
+    if (pressed && pressed.hidden) { filter.querySelector('[data-why=""]').click(); }
+  }
+  filter.addEventListener('click', function (event) {
+    var chip = event.target.closest('button');
+    if (!chip) { return; }
+    why = chip.dataset.why;
+    filter.querySelectorAll('button').forEach(function (b) { b.setAttribute('aria-pressed', String(b === chip)); });
+    refold();
+  });
+  chips();
+  refold();
+
+  // The count beside "Build the plan" follows the ticks, and so does each
+  // preset: on when every result in it is ticked, "n of N" when some are.
+  var count = form.querySelector('[data-selected-count]');
+  var presetsOn = form.querySelector('[data-presets-on]');
+  function recount() {
+    var boxes = form.querySelectorAll('input[name=need]:checked, input[name=add]:checked');
+    var picked = form.querySelectorAll('input[name=sx]:checked');
+    count.textContent = (boxes.length + picked.length).toLocaleString(lang);
+    // A special-tests topic is a preset over tests (`sx`), not results.
+    var have = {};
+    boxes.forEach(function (box) { box.value.split('|').forEach(function (key) { have[key] = true; }); });
+    picked.forEach(function (box) { have[box.value] = true; });
+    var active = 0;
+    form.querySelectorAll('[data-preset-keys]').forEach(function (button) {
+      var keys = button.dataset.presetKeys.split(' ');
+      var n = keys.filter(function (key) { return have[key]; }).length;
+      var on = n === keys.length;
+      if (on) { active += 1; }
+      button.setAttribute('aria-pressed', String(on));
+      button.name = on ? 'drop' : 'preset';
+      button.querySelector('[data-preset-state]').textContent = on ? button.dataset.on
+        : n ? button.dataset.part.replace('{n}', n.toLocaleString(lang)) : button.dataset.off;
+    });
+    if (presetsOn) {
+      presetsOn.textContent = active.toLocaleString(lang);
+      presetsOn.hidden = !active;
+    }
+  }
+
+  // Ticking something found adds it there and then: a test moves onto the
+  // list as "added" (and the search, asked again, now finds it there); a
+  // panel is copied onto the list and stays ticked where it was found.
+  function adopt(box) {
+    var row = box.closest('li');
+    var empty = form.querySelector('[data-list-empty]');
+    if (empty) { empty.remove(); }
+    if (box.name === 'add' || box.name === 'sx') {
+      row.dataset.why = box.name === 'sx' ? box.dataset.topic : 'added';
+      row.dataset.key = box.value;
+      needs.appendChild(row);
+      if (match) { match.push(box.value); }
+      chips();
+      refold();
+      refresh();
+      return;
+    }
+    var copy = row.cloneNode(true);
+    copy.hidden = false;
+    copy.dataset.why = 'added';
+    copy.dataset.key = box.value;
+    copy.querySelector('input').checked = true;
+    needs.appendChild(copy);
+    box.removeAttribute('name');
+    box.disabled = true;
+    chips();
+    refold();
+  }
+
+  // Both searches and the panel filters answer as the person types:
+  // /plan-tests/live re-renders the two result blocks for the form as it
+  // stands.  Enter does not reload the page.
+  var status = form.querySelector('[data-live-status]');
+  var controller = null, timer = null;
+  function refresh(page) {
+    clearTimeout(timer);
+    if (controller) { controller.abort(); }
+    var mine = controller = new AbortController();
+    var params = new URLSearchParams(new FormData(form));
+    if (page) { params.set('sp', page); }
+    var blocks = form.querySelectorAll('[data-live]');
+    blocks.forEach(function (block) { block.setAttribute('aria-busy', 'true'); });
+    var request = fetch('/plan-tests/live?' + params.toString(), { signal: mine.signal, headers: { Accept: 'application/json' } });
+    if (globalThis.anamnaBusy) { anamnaBusy.track(null, request).catch(function () {}); }
+    return request
+      .then(function (response) { if (!response.ok) { throw new Error(String(response.status)); } return response.json(); })
+      .then(function (parts) {
+        var said = [];
+        blocks.forEach(function (block) {
+          var before = block.innerHTML;
+          block.innerHTML = parts[block.dataset.live];
+          block.setAttribute('aria-busy', 'false');
+          var list = block.querySelector('[data-fold]');
+          if (list) { fold(list, block.querySelector('[data-fold-more]')); }
+          var note = block.querySelector('[data-status]');
+          if (note && block.innerHTML !== before) { said.push(note.dataset.status); }
+        });
+        status.textContent = said.join('. ');
+        match = parts.match;
+        refold();
+      })
+      .catch(function (error) {
+        if (error.name === 'AbortError') { return; }
+        blocks.forEach(function (block) { block.setAttribute('aria-busy', 'false'); });
+        status.textContent = status.dataset.failed;
+      });
+  }
+  var result = document.querySelector('.an-plan-result[data-stale-text]');
+  function stale() {
+    if (!result || result.hasAttribute('data-stale')) { return; }
+    result.setAttribute('data-stale', '');
+    var note = document.createElement('p');
+    note.className = 'alert warning an-plan-stale';
+    note.setAttribute('role', 'status');
+    note.textContent = result.dataset.staleText;
+    result.querySelector('h2').after(note);
+  }
+  form.addEventListener('change', function (event) {
+    var box = event.target;
+    if (!box.matches('[data-live-field]')) { stale(); }
+    if (box.checked && box.closest('[data-live]') && ['add', 'include', 'sx'].indexOf(box.name) >= 0) { adopt(box); }
+    // Lists and the section picker answer on change; typed fields on input.
+    if (box.matches('[data-live-field]') && (box.tagName === 'SELECT' || box.name === 'sg')) { refresh(); }
+    recount();
+  });
+  form.querySelectorAll('[data-live-field]').forEach(function (field) {
+    if (field.tagName === 'SELECT' || field.name === 'sg') { return; }
+    field.addEventListener('input', function () { clearTimeout(timer); timer = setTimeout(refresh, 250); });
+  });
+  // Enter in any of them searches in place rather than reloading the page.
+  form.addEventListener('keydown', function (event) {
+    if (event.key === 'Enter' && event.target.matches('[data-live-field]')) { event.preventDefault(); refresh(); }
+  });
+  form.querySelectorAll('[data-live] [data-fold]').forEach(function (list) {
+    fold(list, list.parentNode.querySelector('[data-fold-more]'));
+  });
+  // The panels' pages turn in place too.
+  form.addEventListener('click', function (event) {
+    var link = event.target.closest('[data-live="sets"] .an-plan-pager a');
+    if (!link) { return; }
+    event.preventDefault();
+    refresh(new URL(link.href, location.href).searchParams.get('sp') || '1').then(function () {
+      form.querySelector('[data-live="sets"]').scrollIntoView({ block: 'start' });
+    });
+  });
+
+  // Presets open below the tools row; "untick all" clears every tick so a
+  // preset can stand alone.
+  var toggle = form.querySelector('[data-presets-toggle]');
+  var presets = form.querySelector('[data-presets]');
+  if (toggle) {
+    toggle.hidden = false;
+    presets.hidden = !presets.hasAttribute('data-open');
+    toggle.setAttribute('aria-expanded', String(!presets.hidden));
+    toggle.addEventListener('click', function () {
+      presets.hidden = !presets.hidden;
+      toggle.setAttribute('aria-expanded', String(!presets.hidden));
+    });
+  }
+  var untick = form.querySelector('[data-untick-all]');
+  untick.hidden = false;
+  untick.addEventListener('click', function () {
+    form.querySelectorAll(':is(input[name=need], input[name=add], input[name=include], input[name=sx]):checked:not(:disabled)')
+      .forEach(function (box) { box.checked = false; });
+    recount();
+    stale();
+  });
+
+  // "Skip recent": on, every result measured in the last two weeks is
+  // unticked; off, those come back (and the ones the page left unticked for
+  // that reason on arrival).
+  var recentSwitch = form.querySelector('[data-recent-switch]');
+  if (recentSwitch) {
+    var held = [];
+    recentSwitch.addEventListener('change', function () {
+      if (recentSwitch.checked) {
+        held = [];
+        form.querySelectorAll('[data-recent] :is(input[name=need], input[name=add], input[name=sx]):checked:not(:disabled)').forEach(function (box) {
+          box.checked = false;
+          held.push(box);
+        });
+      } else {
+        form.querySelectorAll('[data-skipped] :is(input[name=need], input[name=sx])').forEach(function (box) { box.checked = true; });
+        held.forEach(function (box) { box.checked = true; });
+        held = [];
+      }
+      recount();
+    });
+  }
+
+  // The one-line summary of city, mode and labs follows the controls.
+  var sum = form.querySelector('[data-where-sum]');
+  function summarise() {
+    var city = form.elements.city.value.trim();
+    var mode = form.querySelector('input[name=mode]:checked');
+    var parts = [city || sum.dataset.noCity];
+    if (mode) { parts.push(mode.dataset.sum); }
+    var pref = form.elements.pref;
+    if (pref) { parts.push(pref.options[pref.selectedIndex].dataset.sum); }
+    sum.textContent = parts.join(' · ');
+  }
+  if (sum) {
+    form.querySelector('#plan-where').addEventListener('input', summarise);
+    form.querySelector('#plan-where').addEventListener('change', summarise);
+  }
+})();
+</script>
+{% endblock %}

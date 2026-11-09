@@ -159,7 +159,7 @@ def test_same_twins_are_judged_by_one_library_entry(tmp_path: Path):
 
 def test_merged_page_shows_both_sources_with_labels(tmp_path: Path):
     settings, user_id, client = _build(tmp_path)
-    _document(settings, user_id, "visit-1", "Veselka Medical Center", "consultation", "2025-03-01")
+    _document(settings, user_id, "visit-1", "Veselka", "consultation", "2025-03-01")
     _observation(settings, user_id, "obs-w1", "visit-1", "body-weight", 108.0, "kg", "2025-03-01")
     for day, value in (("2025-02-28", 108.4), ("2025-03-01", 108.2), ("2025-03-02", 107.9)):
         _device_day(settings, user_id, "body_weight", day, value, "kg")
@@ -215,7 +215,7 @@ def test_home_pdf_duplicate_is_shown_once_and_clinic_reading_is_kept(tmp_path: P
     the same morning is a different reading and stays."""
     settings, user_id, client = _build(tmp_path)
     _document(settings, user_id, "garmin-pdf", "Garmin Connect", "blood_pressure", "2025-08-01")
-    _document(settings, user_id, "visit-1", "Veselka Medical Center", "consultation", "2025-08-01")
+    _document(settings, user_id, "visit-1", "Veselka", "consultation", "2025-08-01")
     _observation(settings, user_id, "obs-sys-dup", "garmin-pdf", "systolic-blood-pressure", 122.0, "mmHg", "2025-08-01T07:10:00")
     _observation(settings, user_id, "obs-sys-only", "garmin-pdf", "systolic-blood-pressure", 125.0, "mmHg", "2025-07-20T07:10:00")
     _observation(settings, user_id, "obs-pulse-dup", "garmin-pdf", "pulse-rate", 70.0, "bpm", "2025-08-01T07:10:00")
@@ -239,7 +239,7 @@ def test_home_pdf_duplicate_is_shown_once_and_clinic_reading_is_kept(tmp_path: P
 
 def test_twins_link_both_ways_and_related_ones_say_why(tmp_path: Path):
     settings, user_id, client = _build(tmp_path)
-    _document(settings, user_id, "visit-1", "Veselka Medical Center", "consultation", "2025-08-01")
+    _document(settings, user_id, "visit-1", "Veselka", "consultation", "2025-08-01")
     _observation(settings, user_id, "obs-pulse", "visit-1", "pulse-rate", 76.0, "уд/хв", "2025-08-01")
     _device_day(settings, user_id, "body_weight", "2025-08-01", 108.0, "kg")
     _device_day(settings, user_id, "resting_heart_rate", "2025-08-01", 55.0, "bpm", vendor="Apple Health", name="Apple Watch")
@@ -314,7 +314,7 @@ def test_twin_strings_exist_in_both_locales(tmp_path: Path):
         for text in MESSAGES[key].values():
             assert not re.search("[—→“”]", text), key
     settings, user_id, client = _build(tmp_path)
-    _document(settings, user_id, "visit-1", "Veselka Medical Center", "consultation", "2025-03-01")
+    _document(settings, user_id, "visit-1", "Veselka", "consultation", "2025-03-01")
     _observation(settings, user_id, "obs-w1", "visit-1", "body-weight", 108.0, "kg", "2025-03-01")
     _device_day(settings, user_id, "body_weight", "2025-03-02", 107.9, "kg")
     client.cookies.set("anamna_lang", "uk")

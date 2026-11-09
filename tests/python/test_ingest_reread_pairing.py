@@ -1,10 +1,10 @@
 """A re-read pairs its rows with the ones a person already checked.
 
 Shapes are taken from the sandbox audit (2026-11-06), anonymised:
-- EskuLab urinalysis (n16) and STI PCR (n15): labels the old parser cut short
+- Esculab urinalysis (n16) and STI PCR (n15): labels the old parser cut short
   («Скупчення лейкоцитів (WBC», «Виявлення ДНК Trichomonas vaginalis») and a
   specimen line filed as three analytes («Приносний матеріал, сеча»);
-- EskuLab sediment (n70): a sex-split reference cut to its first half;
+- Esculab sediment (n70): a sex-split reference cut to its first half;
 - Expert urinalysis (n79): labels carrying «, <unit>» that the parser dropped;
 - Garmin blood pressure: a category read wrongly on a checked reading.
 

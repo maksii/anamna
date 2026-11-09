@@ -1546,7 +1546,7 @@ def doses_for(connection, owner_user_id: str) -> list[dict[str, object]]:
 
 def visit_notes(connection, owner_user_id: str, doses: list[dict[str, object]]) -> dict[str, list[dict[str, object]]]:
     """Each dose's other written record: the clinic's note of the visit at
-    which it was given («Вакцинації» in a Veselka/Doctor ELEKS note), beside
+    which it was given («Вакцинації» in a Veselka/Doctor Eleks note), beside
     the card the row was read from or the person who typed it in.
 
     The same injection is the same day plus the same vial -- `dose_identity`'s

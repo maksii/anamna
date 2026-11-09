@@ -10,10 +10,14 @@ from .locales.phrases import PHRASES
 from .locales.source_policy import MESSAGES as SOURCE_POLICY_MESSAGES
 from .locales.openwearables_webhooks import MESSAGES as OW_HOOK_MESSAGES
 from .locales.telegram import MESSAGES as TELEGRAM_MESSAGES
+from .locales.messages_allergy import MESSAGES as ALLERGY_MESSAGES
+from .locales.messages_genetics import MESSAGES as GENETICS_MESSAGES
 
 MESSAGES.update(SOURCE_POLICY_MESSAGES)
 MESSAGES.update(OW_HOOK_MESSAGES)
 MESSAGES.update(TELEGRAM_MESSAGES)
+MESSAGES.update(ALLERGY_MESSAGES)
+MESSAGES.update(GENETICS_MESSAGES)
 
 
 SUPPORTED_LOCALES = ("en", "uk")
@@ -249,6 +253,8 @@ def format_date_localized(value: str | None, fallback_key: str = "date.unknown")
 # and filled the slots it remembered. Search results are server-rendered now, so
 # a string needed by a card belongs in the template, not in this payload.
 JS_KEYS = (
+    # The site-wide progress bar (busy.js).
+    "busy.loading",
     # /metrics type-ahead chrome (the results themselves arrive as HTML).
     "metrics.matches_for",
     "metrics.recent",

@@ -126,7 +126,7 @@ def test_veselka_abdominal_template_lands_on_the_same_concepts():
 товщиною 17,1 мм ехогенність паренхіми: звичайна;
 Сечовий міхур: наповнений: достатньо; об'ємом до 350,0 мл форма: діжкоподібна; стінка: гомогенна,
 товщиною 3,0 мм; контур: чіткий та рівний;"""
-    rows = rows_of("Veselka Medical Center", "ultrasound", [page(text)])
+    rows = rows_of("Veselka", "ultrasound", [page(text)])
     for expected in [
         ("Liver left lobe size", None, 66.5, "мм", "ліва частка"),
         ("Gallbladder length", None, 70.4, "мм", None),
@@ -262,7 +262,7 @@ def test_soft_tissue_lesion_two_diameters_under_the_named_site():
 В ділянці 'інтересу' ﴾верхня третина правого стегна﴿ візуалізується гіперехогенне утворення розмірами
 12,3х5,2мм,відстань від поверхні шкіри становить 2,1 м,контури утворення чіткі"""
     # The depth is printed with a unit no depth can have, and is never read.
-    assert rows_of("Veselka Medical Center", "ultrasound", [page(veselka)]) == [
+    assert rows_of("Veselka", "ultrasound", [page(veselka)]) == [
         ("Soft tissue lesion largest diameter", None, 12.3, "мм", "верхня третина правого стегна"),
         ("Soft tissue lesion smaller diameter", None, 5.2, "мм", "верхня третина правого стегна"),
     ]

@@ -664,18 +664,20 @@ PHRASES: dict[str, str] = {
 
     # Vendor display names that are English descriptions
     "Center of Medical 3D Diagnostics": "Центр медичної 3D-діагностики",
-    "St. Paraskeva Medical Center": "Медичний центр св. Параскеви",
-    "Veselka Medical Center": "Медичний центр «Веселка»",
+    "St. Paraskeva Medical Center": "Медичний центр Святої Параскеви",
+    "Veselka": "Веселка",
+    "Expert Hospital": "Лікарня «Експерт»",
+    "Ultramed": "УльтраМед",
     "MD Clinics": "Медичний центр «Мати та дитина»",
     "LONO Clinic": "Клініка «ЛОНО»",
     "Lviv Medical Center": "Львів Медікал Центр",
     "Lviv Regional Clinical Perinatal Center": "Львівський обласний клінічний перинатальний центр",
     "Lviv Territorial Medical Association": "КНП «Львівське територіальне медичне об'єднання»",
     "Second Clinical Territorial Medical Association of Lviv": (
-        "КНП «Друге клінічне територіальне медичне об'єднання м. Львова»"
+        "КНТ «Друге клінічне територіальне медичне об'єднання м. Львова»"
     ),
-    "First Territorial Medical Association of Lviv, St. Luke's Hospital": (
-        "КНП «1 ТМО м. Львова», ВП «Лікарня Святого Луки»"
+    "First Clinical Territorial Medical Association of Lviv, St. Luke's Hospital": (
+        "КНТ «Перше клінічне територіальне медичне об'єднання м. Львова», лікарня Святого Луки"
     ),
 
     # Document type fallbacks

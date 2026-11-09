@@ -65,7 +65,7 @@
     {% endif %}
   </div>
 
-  <aside class="review-bench-side" data-document-id="{{ document.id }}" data-row-error="{{ t('doc.row_error') }}">
+  <aside class="review-bench-side" data-document-id="{{ document.id }}" data-row-error="{{ t('doc.row_error') }}" data-rows-error="{{ t('doc.rows_error') }}" data-rows-loading="{{ t('doc.rows_loading') }}">
     {#- `role="tab"` is a promise: it tells assistive technology that arrow keys
         move between the tabs and that each one controls a named panel. Neither
         was true here, so the roles announced a widget that did not exist. These
@@ -625,16 +625,27 @@
     if (!trigger) return;
     const group = trigger.closest("[data-lazy-rows]");
     const target = group && group.querySelector("[data-rows-target]");
-    if (!target || target.dataset.loaded) return;
-    trigger.disabled = true;
-    const response = await fetch(`/documents/${root.dataset.documentId}/rows?ids=${encodeURIComponent(group.dataset.lazyRows)}`);
-    if (response.ok) {
-      target.innerHTML = await response.text();
-      target.dataset.loaded = "1";
-      if (trigger.tagName !== "SUMMARY") trigger.hidden = true;
-    } else {
-      trigger.disabled = false;
-    }
+    if (!target || target.dataset.loaded || target.getAttribute("aria-busy") === "true") return;
+    target.setAttribute("aria-busy", "true");
+    target.replaceChildren(Object.assign(document.createElement("p"), { className: "muted", textContent: root.dataset.rowsLoading }));
+    const failed = () => {
+      target.replaceChildren(Object.assign(document.createElement("p"), { className: "an-row-error alert error", textContent: root.dataset.rowsError }));
+      target.firstChild.setAttribute("role", "alert");
+    };
+    const load = async () => {
+      try {
+        const response = await fetch(`/documents/${root.dataset.documentId}/rows?ids=${encodeURIComponent(group.dataset.lazyRows)}`);
+        if (!response.ok) return failed();
+        target.innerHTML = await response.text();
+        target.dataset.loaded = "1";
+        if (trigger.tagName !== "SUMMARY") trigger.hidden = true;
+      } catch {
+        failed();
+      } finally {
+        target.removeAttribute("aria-busy");
+      }
+    };
+    await (globalThis.anamnaBusy ? globalThis.anamnaBusy.track(trigger, load) : load());
   });
 
   /* Verify, set aside, restore or correct one value without reloading the
@@ -647,7 +658,11 @@
     event.preventDefault();
     const data = new FormData(form);
     if (event.submitter && event.submitter.name) data.append(event.submitter.name, event.submitter.value);
-    form.querySelectorAll("button").forEach((button) => { button.disabled = true; });
+    if (form.dataset.busy) return;
+    form.dataset.busy = "1";
+    const submitter = event.submitter;
+    form.querySelectorAll("button").forEach((button) => { if (button !== submitter) button.disabled = true; });
+    const work = async () => {
     try {
       // getAttribute, not form.action: the state form has buttons named
       // "action", which shadow the property with a RadioNodeList.
@@ -673,7 +688,11 @@
         form.append(note);
       }
       note.textContent = error_?.detail || root.dataset.rowError;
+    } finally {
+      delete form.dataset.busy;
     }
+    };
+    await (globalThis.anamnaBusy ? globalThis.anamnaBusy.track(submitter, work) : (submitter && (submitter.disabled = true), work()));
   });
   /* Re-read proposals: apply the page's value, set aside, or keep -- the
      panel, the rows it touched and the review line update in place. */
@@ -684,7 +703,13 @@
     const panel = form.closest("#reread-proposals");
     const data = new FormData(form);
     if (event.submitter && event.submitter.name) data.append(event.submitter.name, event.submitter.value);
-    form.querySelectorAll("button").forEach((button) => { button.disabled = true; });
+    if (form.dataset.busy) return;
+    form.dataset.busy = "1";
+    const submitter = event.submitter;
+    form.querySelectorAll("button").forEach((button) => { if (button !== submitter) button.disabled = true; });
+    const note = panel && panel.querySelector("[data-reread-error]");
+    if (note) note.hidden = true;
+    const work = async () => {
     try {
       const response = await fetch(form.getAttribute("action"), { method: "POST", body: data, headers: { Accept: "application/json" } });
       const payload = await response.json();
@@ -707,9 +732,12 @@
     } catch (error_) {
       console.error(error_);
       form.querySelectorAll("button").forEach((button) => { button.disabled = false; });
-      const note = panel && panel.querySelector("[data-reread-error]");
       if (note) note.hidden = false;
+    } finally {
+      delete form.dataset.busy;
     }
+    };
+    await (globalThis.anamnaBusy ? globalThis.anamnaBusy.track(submitter, work) : work());
   });
   document.addEventListener("click", (event) => {
     const pageLink = event.target.closest('a[href^="#page-"]');
@@ -751,9 +779,9 @@
     const button = aiForm.querySelector('button[type="submit"]');
     const status = document.querySelector('#ai-review-status');
     const original = button.textContent;
-    button.disabled = true;
     button.textContent = button.dataset.working;
     status.textContent = button.dataset.working;
+    const work = async () => {
     try {
       const response = await fetch(aiForm.action, {
         method: 'POST', body: new FormData(aiForm), headers: {'Accept': 'application/json'}
@@ -771,9 +799,10 @@
       status.textContent = aiForm.dataset.errorNetwork;
     } finally {
       delete aiForm.dataset.busy;
-      button.disabled = false;
       button.textContent = original;
     }
+    };
+    await (globalThis.anamnaBusy ? globalThis.anamnaBusy.track(button, work) : work());
   });
 })();
 </script>

@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% from "_components.html" import empty_state with context %}
+{% block title %}{{ t('genetics.page.title') }}{% endblock %}
+{% block page_styles %}<link rel="stylesheet" href="{{ asset('genetics.css') }}">{% endblock %}
+
+{% macro source_list(items) -%}
+<ul class="an-gx-sources">
+  {% for source in items %}
+  <li><span class="an-gx-region">{{ t('genetics.region.' ~ source.region) }}</span>
+    <a href="{{ source.url }}" rel="noopener noreferrer" target="_blank" lang="{{ 'uk' if source.region == 'UA' else 'en' }}">{{ source.name }}</a>
+    <small>{{ source.publisher }}{% if source.identifier %}. {{ source.identifier }}{% endif %}{% if source.duodecim %}. {{ t('genetics.sources.duodecim') }}{% endif %}</small></li>
+  {% endfor %}
+</ul>
+{%- endmacro %}
+
+{#- Closed by default: on a phone a citation list is reference, not reading. -#}
+{% macro sources_note(items) -%}
+<details class="an-gx-cite">
+  <summary>{{ t('genetics.sources.title') }} <span>{{ items|length }}</span></summary>
+  {{ source_list(items) }}
+</details>
+{%- endmacro %}
+
+{% block content %}
+<section class="metric-detail-hero an-gx-hero">
+  <div>
+    <div class="eyebrow">{{ t('genetics.page.eyebrow') }}</div>
+    <h1>{{ t('genetics.page.title') }}</h1>
+    <p>{{ t('genetics.page.lead') }}</p>
+  </div>
+</section>
+
+<section class="panel an-gx-mine" aria-labelledby="gx-mine">
+  <h2 id="gx-mine">{{ t('genetics.mine.title') }}</h2>
+  {% if view.genes %}
+  <ul class="an-gx-results">
+    {% for item in view.genes %}{% set card = item.card %}
+    <li class="an-gx-result">
+      <div class="an-gx-result__head">
+        <h3><a href="{{ card.url }}">{{ card.name }}</a></h3>
+        <p class="an-gx-result__value"><b>{{ card.value_text }}</b>{% if card.unit %} {{ card.unit|unitfmt }}{% endif %}
+          <span>{{ card.date_text }}{% if card.vendor %} · {{ card.vendor }}{% endif %}</span></p>
+      </div>
+      {% if item.outcome %}
+      <p>{{ t('genetics.result.' ~ item.entry ~ '.' ~ item.outcome) }}</p>
+      <p class="an-gx-muted">{{ t('genetics.result.' ~ item.entry ~ '.context') }}</p>
+      {% elif item.entry %}
+      <p>{{ t('special.' ~ item.entry ~ '_what') }}</p>
+      {% endif %}
+      <p class="an-gx-once">{{ t('genetics.result.once') }}</p>
+      {{ sources_note(item.sources) }}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  {{ empty_state(t('genetics.mine.empty_title'), t('genetics.mine.empty_body'), 3) }}
+  {% endif %}
+</section>
+
+{% if view.germs or view.antibodies %}
+<section class="panel an-gx-other" aria-labelledby="gx-other">
+  <h2 id="gx-other">{{ t('genetics.other.title') }}</h2>
+  <p>{{ t('genetics.other.lead') }}</p>
+  {% for cards, kind in ((view.germs, 'germ'), (view.antibodies, 'antibody')) if cards %}
+  <h3>{{ t('genetics.other.' ~ kind ~ '_title') }}</h3>
+  <p class="an-gx-muted">{{ t('genetics.other.' ~ kind ~ '_body') }}</p>
+  <ul class="an-gx-links">
+    {% for card in cards %}
+    <li><a href="{{ card.url }}"><span>{{ card.name }}</span>
+      <span><b>{{ card.value_text }}</b>{% if card.unit and card.value_numeric is not none %} {{ card.unit|unitfmt }}{% endif %} <small>{{ card.date_text }}</small></span></a></li>
+    {% endfor %}
+  </ul>
+  {% endfor %}
+</section>
+{% endif %}
+
+<section class="panel an-gx-tests" aria-labelledby="gx-tests">
+  <div class="an-gx-tests__head">
+    <div>
+      <h2 id="gx-tests">{{ t('genetics.tests.title') }}</h2>
+      <p class="an-gx-muted">{{ t('genetics.tests.lead') }}</p>
+    </div>
+    <a class="primary" href="{{ view.topic_url }}">{{ t('genetics.tests.plan_all') }}</a>
+  </div>
+  {% for group in view.groups %}
+  <h3 class="an-gx-group">{{ t('genetics.group.' ~ group.id) }}</h3>
+  <div class="an-gx-list">
+    {% for test in group.tests %}
+    <details class="an-gx-test" id="{{ test.id }}">
+      <summary>
+        <span class="an-gx-test__name">{{ t('special.' ~ test.id) }}</span>
+        <span class="an-gx-test__state">
+          {%- if test.done %}<span class="pill">{{ t('genetics.test.done', date=test.done.date_text) }}</span>
+          {%- elif test.cheapest %}{{ t('genetics.test.price_from', price=uah(test.cheapest.cost), lab=test.cheapest.vendor) }}
+          {%- elif view.priced %}{{ t('genetics.test.not_sold') }}
+          {%- else %}{{ t('genetics.test.prices_pending') }}{% endif -%}
+        </span>
+        <span class="an-gx-test__what">{{ t('special.' ~ test.id ~ '_what') }}</span>
+      </summary>
+      <div class="an-gx-test__body">
+        {% if test.done %}
+        <p><b>{{ t('genetics.test.your_result') }}:</b> <a href="{{ test.done.url }}">{{ test.done.value_text }}, {{ test.done.date_text }}</a></p>
+        {% endif %}
+        <h4>{{ t('genetics.test.for') }}</h4>
+        <p>{{ t('genetics.entry.' ~ test.id ~ '.for') }}</p>
+        <h4>{{ t('genetics.test.limits') }}</h4>
+        <p>{{ t('genetics.entry.' ~ test.id ~ '.limits') }}</p>
+        {% if test.differs %}
+        <h4>{{ t('genetics.test.differs') }}</h4>
+        <p>{{ t('genetics.entry.' ~ test.id ~ '.differs') }}</p>
+        {% endif %}
+        {% if test.offers %}
+        <h4>{{ t('genetics.test.prices') }}</h4>
+        <ul class="an-gx-offers">
+          {% for offer in test.offers %}
+          <li><b>{{ offer.vendor }}: {{ uah(offer.cost) }}</b>
+            <small>{{ t('genetics.test.includes', items=offer['items']|join('; ')) }}</small></li>
+          {% endfor %}
+        </ul>
+        {% endif %}
+        {% if not test.done %}
+        <p><a class="secondary" href="{{ test.plan_url }}">{{ t('genetics.test.plan') }}<span class="visually-hidden">: {{ t('special.' ~ test.id) }}</span></a></p>
+        {% endif %}
+        {{ sources_note(test.sources) }}
+      </div>
+    </details>
+    {% endfor %}
+  </div>
+  {% endfor %}
+</section>
+
+<section class="panel an-gx-page-sources">
+  <details class="an-gx-cite">
+    <summary>{{ t('genetics.sources.page') }} <span>{{ view.general_sources|length }}</span></summary>
+    {{ source_list(view.general_sources) }}
+  </details>
+</section>
+{% endblock %}

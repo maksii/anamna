@@ -3,7 +3,7 @@
 The review page lists extracted values beside the page they came from, and a
 list that does not follow the page is one the reviewer cannot check: the
 values used to arrive alphabetically within a page, so the first row printed
-on an EskuLab report was the last card under it.  This finds each value's row
+on an Esculab report was the last card under it.  This finds each value's row
 on the page once and stores it in ``observations.evidence_bbox_json``:
 
 * ``{"v": 1, "box": [x0, y0, x1, y1]}`` -- fractions of the page width and
@@ -82,7 +82,7 @@ def _match_at(words: list[dict], start: int, key: str) -> list[int] | None:
 
     Consecutive on one line, or -- once the line stops spelling the name --
     continued by the first word in the name's column just under it.  That is
-    how a wrapped label prints: EskuLab puts «Аспартатамінотрансфераза 27.8
+    how a wrapped label prints: Esculab puts «Аспартатамінотрансфераза 27.8
     Од/л ...» on one line and «(АСТ)» under the name, and a value centred in a
     two-line cell sits between the halves.  Only that one word, and only
     within one line's height, so that Synevo's «...еритроцитів 36.6 фл» /
@@ -188,7 +188,7 @@ def locate_page(rows: list[dict], words: list[dict] | None, size: tuple[float, f
     # the page prints only once, in the section heading.
     bare_words = [_QUALIFIER.sub("", str(row.get("raw_name") or "")).split() for row in rows]
     bare = [fold(" ".join(words)) for words in bare_words]
-    # A grouped row prints its group once and each member under it: EskuLab's
+    # A grouped row prints its group once and each member under it: Esculab's
     # stool table has «Крохмаль» in the first column and «позаклітинний» in
     # the next, which the parser joins into one label.  The member alone is
     # what can be found, the shortest tail that still says something.

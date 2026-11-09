@@ -36,6 +36,7 @@
     if (!source || (series[id] && !needAll)) return Promise.resolve();
     pending = id;
     C.note(host, host.dataset.msgLoading);
+    host.setAttribute('aria-busy', 'true');
     return fetch(source.url, {credentials: 'same-origin', headers: {Accept: 'application/json'}})
       .then(response => {
         if (!response.ok) throw new Error(String(response.status));
@@ -46,7 +47,7 @@
         if (needAll) complete = true;
       })
       .catch(() => { C.note(host, host.dataset.msgFailed); throw new Error('load'); })
-      .finally(() => { pending = ''; });
+      .finally(() => { pending = ''; host.removeAttribute('aria-busy'); });
   };
 
   const bound = value => (value ?? null) === null ? null : Number(value);
@@ -178,15 +179,17 @@
   };
 
   const repaint = C.responsive(svg, host, draw);
+  // A switch that needs the server marks its button busy until the data arrives.
+  const track = (button, work) => globalThis.anamnaBusy ? globalThis.anamnaBusy.track(button, work) : work;
   document.querySelectorAll('[data-days]').forEach(button => button.addEventListener('click', () => {
     document.querySelectorAll('[data-days]').forEach(node => node.classList.remove('active'));
     button.classList.add('active'); days = Number(button.dataset.days); tip.hidden = true;
-    load(activeSource).then(repaint, () => {});
+    track(button, load(activeSource)).then(repaint, () => {});
   }));
   document.querySelectorAll('[data-chart-source]').forEach(button => button.addEventListener('click', () => {
     document.querySelectorAll('[data-chart-source]').forEach(node => node.classList.remove('active'));
     button.classList.add('active'); activeSource = button.dataset.chartSource; tip.hidden = true;
-    load(activeSource).then(repaint, () => {});
+    track(button, load(activeSource)).then(repaint, () => {});
   }));
   document.addEventListener('click', event => { if (!host.contains(event.target)) tip.hidden = true; });
   document.addEventListener('keydown', event => { if (event.key === 'Escape') tip.hidden = true; });

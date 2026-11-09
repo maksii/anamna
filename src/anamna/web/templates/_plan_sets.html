@@ -1,0 +1,51 @@
+{% from "_components.html" import plural_t with context %}
+{#- Panels and special tests found by name or section, re-rendered as the
+    person types or narrows (/plan-tests/live).  Ticking one includes it. -#}
+{#- "21-40 of 218" with Previous and Next: plain links that keep every other
+    choice on the page, so the back button and a shared link land here too. -#}
+{% macro pager(p, key, anchor) -%}
+{% if p.pages > 1 %}
+<nav class="an-plan-pager" aria-label="{{ t('plan.pager_label') }}">
+  {% if p.page > 1 %}<a class="button secondary" rel="prev" href="{{ page_url(request.query_params, key, p.page - 1, anchor) }}">{{ t('plan.pager_prev') }}</a>{% endif %}
+  <span class="an-plan-pager__range" aria-current="page">{{ t('plan.pager_range', start=p.start|countfmt, end=p.end|countfmt, total=p.total|countfmt) }}</span>
+  {% if p.page < p.pages %}<a class="button secondary" rel="next" href="{{ page_url(request.query_params, key, p.page + 1, anchor) }}">{{ t('plan.pager_next') }}</a>{% endif %}
+</nav>
+{% endif %}
+{%- endmacro %}
+
+{% if set_query or set_group %}<p class="an-plan-filters__count" data-status="{{ plural_t('plan.sets_count', sets.total) }}">{{ plural_t('plan.sets_count', sets.total) }}</p>{% endif %}
+{% if not (set_query or set_group) %}
+{% if not special %}<p class="tiny muted">{{ t('plan.sets_prompt') }}</p>{% endif %}
+{% elif sets.total %}
+<fieldset class="an-plan-results" id="plan-sets-found">
+  <legend>{% if set_group and not set_query %}{{ t('plan.sets_in_shelf', shelf=shelf_name or set_group.partition(':')[2]) }}{% else %}{{ t('plan.results_legend', query=set_query) }}{% endif %}</legend>
+  {% if sets_fuzzy %}<p class="tiny muted" role="status">{{ t('plan.search_fuzzy') }}</p>{% endif %}
+  <ul class="an-plan-needs">
+    {% for row in sets.rows %}
+    <li class="an-plan-need an-plan-set">
+      <label class="an-plan-check">
+        {% if row.included %}<input type="checkbox" checked disabled aria-describedby="plan-set-{{ loop.index }}">
+        {% else %}<input type="checkbox" name="include" value="{{ row.value }}">{% endif %}
+        <span class="an-plan-need__body">
+          <span class="an-plan-need__name" lang="{{ row.label_lang }}">{{ row.label }}</span>
+          <span class="an-plan-need__meta">{{ row.vendor }} ·
+            {% if row.final_price < row.price %}<s aria-label="{{ t('plan.list_price') }}">{{ row.price|uah }}</s> {% endif %}{{ row.final_price|uah }}</span>
+          {% if row.included %}<span class="tiny muted" id="plan-set-{{ loop.index }}">{{ t('plan.included_already') }}</span>{% endif %}
+        </span>
+      </label>
+      {#- Everything past name, lab and price waits behind one disclosure,
+          so a phone shows a short row per item. -#}
+      <details class="an-plan-set__more">
+        <summary>{{ plural_t('plan.analytes', row.analytes|length) }}</summary>
+        <p class="tiny"><span class="pill">{{ t('plan.kind_' ~ row.kind) }}</span>{% if row.code %} {{ t('plan.code', code=row.code) }}{% endif %}</p>
+        {% if row.analytes %}<ul lang="uk">{% for name in row.analytes %}<li>{{ name }}</li>{% endfor %}</ul>{% endif %}
+        {% if row.url %}<a class="an-plan-need__link tiny" href="{{ row.url }}" target="_blank" rel="noopener noreferrer">{{ t('plan.lab_page', lab=row.vendor) }}<span class="visually-hidden">: {{ row.name }}</span></a>{% endif %}
+      </details>
+    </li>
+    {% endfor %}
+  </ul>
+  {{ pager(sets, 'sp', 'plan-sets-found') }}
+</fieldset>
+{% else %}
+{% set none_text = t("plan.sets_none", query=set_query or set_group.partition(":")[2]) %}<p data-status="{{ none_text }}">{{ none_text }}</p>
+{% endif %}

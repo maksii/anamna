@@ -102,10 +102,9 @@ def _environment_credential(key: str) -> tuple[str | None, str | None]:
 
     from . import labsync
 
-    form = (
-        {"token": os.getenv("ESCULAB_TOKEN", ""), "phone": os.getenv("ESCULAB_PHONE", "")}
-        if key == "eskulab" else {"token": os.getenv("SYNEVO_SESSION", "")}
-    )
+    # Esculab signs in with a texted code on the profile; it has no
+    # credential that could be pasted into the environment.
+    form = {"token": os.getenv("SYNEVO_SESSION", "") if key == "synevo" else ""}
     if not form["token"]:
         return None, None
     try:
@@ -140,9 +139,10 @@ def _chosen_person(settings, user_id: str, key: str, secret, phone, args: argpar
 
 def command_lab_sync(args: argparse.Namespace) -> None:
     """Sync one person's orders from a lab connection, as the profile's
-    "Sync now" does, on this thread.  The credential comes from the
-    environment (ESCULAB_TOKEN + ESCULAB_PHONE, or SYNEVO_SESSION) or from the
-    stored connection; it is never printed."""
+    "Sync now" does, on this thread.  The credential comes from the stored
+    connection (Esculab signs in on the profile with phone and a texted code)
+    or, for Synevo, from SYNEVO_SESSION in the environment; it is never
+    printed."""
     from . import labsync
 
     settings = get_settings()
@@ -189,8 +189,8 @@ def build_parser() -> argparse.ArgumentParser:
     device_import.add_argument("--vendor", required=True, choices=["apple_health", "oura", "garmin", "kardia"])
     device_import.add_argument("--path", required=True)
     device_import.set_defaults(func=command_device_import)
-    lab = subparsers.add_parser("lab-sync", help="Sync results from a lab connection (EskuLab, Synevo)")
-    lab.add_argument("--provider", required=True, choices=["eskulab", "synevo"])
+    lab = subparsers.add_parser("lab-sync", help="Sync results from a lab connection (Esculab, Synevo)")
+    lab.add_argument("--provider", required=True, choices=["esculab", "synevo"])
     lab.add_argument("--email", required=True)
     lab.add_argument("--patient-id", help="The lab's person id; defaults to the one chosen on the profile")
     lab.add_argument("--confirm-person-mismatch", action="store_true")

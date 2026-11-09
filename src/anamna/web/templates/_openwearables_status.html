@@ -27,13 +27,15 @@
       if (!box.open || box.dataset.loaded) return;
       box.dataset.loaded = "1";
       var status = box.querySelector("[data-status]");
+      box.setAttribute("aria-busy", "true");
       fetch(box.dataset.owJobs, { headers: { Accept: "text/html" }, credentials: "same-origin" })
         .then(function (response) {
           if (!response.ok) throw new Error(response.status);
           return response.text();
         })
         .then(function (rows) { box.querySelector("tbody").innerHTML = rows; status.hidden = true; })
-        .catch(function () { status.textContent = status.dataset.error; delete box.dataset.loaded; });
+        .catch(function () { status.textContent = status.dataset.error; status.setAttribute("role", "alert"); delete box.dataset.loaded; })
+        .then(function () { box.removeAttribute("aria-busy"); });
     });
   });
   </script>

@@ -37,4 +37,36 @@
   options.forEach(option => option.querySelector('input').addEventListener('change', changed));
   form.querySelector('[name="aggregation"]')?.addEventListener('change', changed);
   form.querySelector('[data-export-print]')?.addEventListener('click', () => globalThis.print());
+
+  // The PDF is rendered on the server and can take a while: fetched here so
+  // the button stays busy for exactly as long as that takes, then saved under
+  // the server's file name.  A refusal (nothing selected) shows the server's
+  // own words; anything else, a retry hint.
+  const pdfError = form.querySelector('[data-export-pdf-error]');
+  form.addEventListener('submit', (event) => {
+    const button = event.submitter;
+    if (!button || !button.hasAttribute('data-export-pdf') || !globalThis.fetch || !globalThis.anamnaBusy) return;
+    event.preventDefault();
+    if (pdfError) pdfError.hidden = true;
+    const url = `${button.getAttribute('formaction')}?${new URLSearchParams(new FormData(form))}`;
+    anamnaBusy.track(button, async () => {
+      const response = await fetch(url, {credentials: 'same-origin'});
+      if (!response.ok) {
+        const reason = response.status === 400 ? (await response.text()).trim() : '';
+        throw new Error(reason);
+      }
+      const name = /filename="([^"]+)"/.exec(response.headers.get('Content-Disposition') || '')?.[1] || 'health-history.pdf';
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(await response.blob());
+      link.download = name;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(link.href), 10000);
+    }).catch((error) => {
+      if (!pdfError) return;
+      pdfError.textContent = error.message || pdfError.dataset.failed;
+      pdfError.hidden = false;
+    });
+  });
 })();

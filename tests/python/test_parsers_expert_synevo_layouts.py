@@ -3,7 +3,7 @@
 Every fixture is a real printed line, or the real word geometry of a real page,
 transcribed from the source file the finding names (documents are referred to
 by the audit's 1-based ``n``).  Word positions are written as «text@x0» per
-printed line; widths are 3.5 pt a character, as in ``test_parsers.eskulab_page``.
+printed line; widths are 3.5 pt a character, as in ``test_parsers.esculab_page``.
 """
 
 import pytest
@@ -282,7 +282,7 @@ def test_bound_inclusivity_follows_the_printed_comparator(reference, expected):
 
 
 def test_a_value_on_a_strict_limit_is_outside_it():
-    """n16, EskuLab YLC 0.2 against the men's «< 0.2»: shown green before."""
+    """n16, Esculab YLC 0.2 against the men's «< 0.2»: shown green before."""
     row = next(
         item for item in parse_document(
             "Synevo", "laboratory",
@@ -305,7 +305,7 @@ def test_dipstick_scales_state_their_first_positive_tier():
 
 
 def test_positive_leukocyte_pad_is_flagged():
-    """n16, EskuLab order N11: «Лейкоцити (C-LEU) 25 кл/мкл», the scale's «+»."""
+    """n16, Esculab order N11: «Лейкоцити (C-LEU) 25 кл/мкл», the scale's «+»."""
     row = next(iter(parse_document(
         "Synevo", "laboratory",
         [text_page("Показник Результат\nЛейкоцити (C-LEU) 25 кл/мкл не виявлені 25 = + 75 = ++ 500 = +++")],
@@ -440,7 +440,7 @@ def test_alex_wrapped_common_name_and_wrapped_code_are_rejoined():
 
 def test_blood_group_answer_list_is_not_a_reference_and_its_value_is_one_spelling():
     """n71 prints «А (II)» over every possible answer; n75 prints «А(ІІ)»."""
-    eskulab_style = parse_document(
+    esculab_style = parse_document(
         "Synevo", "laboratory",
         [text_page("Показник Результат\nГрупа крові А (II) III - (B-) II -(A-) I - (0-) IV + (AB+)")],
     )
@@ -449,21 +449,21 @@ def test_blood_group_answer_list_is_not_a_reference_and_its_value_is_one_spellin
         [layout([(171.3, "ПОКАЗНИК@143 РЕЗУЛЬТАТ@355 НОРМА@494"), (183.3, "Група@17 крові@44 А(ІІ)@355"),
                  (195.3, "Резус-фактор@17 (+)@355 позитивний@368"), (245.1, "Результати@24 досліджень@72")])],
     )
-    groups = [row for row in eskulab_style + expert if row.raw_name == "Група крові"]
+    groups = [row for row in esculab_style + expert if row.raw_name == "Група крові"]
     assert {row.value_text for row in groups} == {"A(II)"}
     assert all(row.reference_text is None for row in groups)
     assert any(row.raw_name == "Резус-фактор" and row.value_text == "(+) позитивний" for row in expert)
 
 
-def test_eskulab_specimen_line_becomes_the_rows_specimen():
-    """Doc 97, EskuLab N15: «цільна кров ЗАК» printed under every blood-count row."""
+def test_esculab_specimen_line_becomes_the_rows_specimen():
+    """Doc 97, Esculab N15: «цільна кров ЗАК» printed under every blood-count row."""
     page = layout([
         (212.5, "Показник@28 Результат@231 Одиниці@316 Референтні@417 значення@481"),
         (234.7, "Гемоглобін@28 (HGB)@84 155@249 г/л@331 Жінки:@378 120-150@406"),
         (238.1, "цільна@111 кров@134 ЗАК@150"),
         (245.7, "Чоловіки:@378 130-170@416"),
     ])
-    (row,) = parse_document("EskuLab", "laboratory", [page])
+    (row,) = parse_document("Esculab", "laboratory", [page])
     assert row.raw_name == "Гемоглобін (HGB)"
     assert row.specimen == "цільна кров"
     assert row.reference_text == "Жінки: 120-150 Чоловіки: 130-170"
@@ -487,7 +487,7 @@ def test_a_reference_block_over_a_page_break_is_read_whole():
         (271.1, "1-20@153 1-20@422"),
         (379.9, "Лімфоцити@28 (на@84 100@101 лейкоцитів)@121 42.8@247 %@334 Дорослі:@378 19-37@412"),
     ], page_number=6)
-    rows = parse_document("EskuLab", "laboratory", [page5, page6])
+    rows = parse_document("Esculab", "laboratory", [page5, page6])
     esr = next(row for row in rows if row.raw_name.startswith("ШОЕ"))
     assert esr.reference_text == (
         "Діти до 17р: <10мм/год Чоловіки 17 - 50р: < 15мм/год Чоловіки старші 50р: <20мм/год "

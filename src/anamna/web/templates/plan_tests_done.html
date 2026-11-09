@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}{{ t('plan.done_title', lab=lab) }}{% endblock %}
+{% block content %}
+<section class="panel an-plan-done" aria-labelledby="plan-done-heading">
+  <div class="panel-head">
+    <div><span class="eyebrow">{{ lab }}</span>
+      <h1 id="plan-done-heading">{{ t('plan.done_order_heading', number=number) if number else t('plan.done_cart_heading') }}</h1></div>
+  </div>
+  {% if number %}
+  <p>{{ t('plan.done_order_lead', lab=lab) }}</p>
+  {% else %}
+  <p>{{ t('plan.done_cart_lead', lab=lab) }}</p>
+  {% endif %}
+  <ul class="an-plan-items">
+    {% for item in items %}
+    <li class="an-plan-item"><div class="an-plan-item__head"><span>{{ item.name }}</span><span class="an-plan-item__price">{{ item.final_price|uah }}</span></div></li>
+    {% endfor %}
+    {% for fee in fees or [] %}
+    <li class="an-plan-item an-plan-item--fee"><div class="an-plan-item__head"><span>{{ fee.name }}</span><span class="an-plan-item__price">{{ fee.price|uah }}</span></div></li>
+    {% endfor %}
+  </ul>
+  <p><strong>{{ t('plan.done_total', total=total|uah) }}</strong> <span class="tiny muted">{{ t('plan.done_total_note') }}</span></p>
+  {% if failed %}
+  <div class="alert warning">
+    <p>{{ t('plan.done_failed_lead') }}</p>
+    <ul>{% for row in failed %}<li><strong>{{ row.name }}</strong>: {{ t(row.reason) if row.reason in cart_reasons else t('synevo_cart.refused') }}</li>{% endfor %}</ul>
+  </div>
+  {% endif %}
+  <div class="an-plan-done__actions">
+    {% if payment_url %}
+    <a class="button primary" href="{{ payment_url }}" target="_blank" rel="noopener noreferrer">{{ t('plan.done_pay', lab=lab) }}</a>
+    {% endif %}
+    {% if cart_url %}
+    <a class="button primary" href="{{ cart_url }}" target="_blank" rel="noopener noreferrer">{{ t('plan.done_open_cart', lab=lab) }}</a>
+    {% endif %}
+    <a class="button secondary" href="{{ site }}" target="_blank" rel="noopener noreferrer">{{ t('plan.done_open_site', lab=lab) }}</a>
+    <a class="button secondary" href="/plan-tests?{{ plan_query }}">{{ t('plan.done_back') }}</a>
+  </div>
+  {% if number and not payment_url %}
+  <p class="tiny muted">{{ t('plan.done_pay_later', lab=lab) }}</p>
+  {% endif %}
+</section>
+{% endblock %}
