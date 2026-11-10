@@ -261,10 +261,11 @@
   /* The entries that overlap the drawn time [from, to]. */
   const factorsIn = (list, from, to) => list.filter(item => {
     const start = asDate(item.start).getTime();
-    let end = Infinity;
-    if (item.point) end = start;
-    else if (item.end) end = asDate(item.end).getTime() + DAY_MS;
-    return start <= to && end >= from;
+    if (item.point) return start >= from && start <= to;
+    /* The end day counts in full, so `end` is the midnight after it: an entry
+       that ended the day before `from` only touches the span and is left out. */
+    const end = item.end ? asDate(item.end).getTime() + DAY_MS : Infinity;
+    return start <= to && end > from;
   });
   const factorRoom = count => count ? Math.min(count, LANES) * LANE + 6 : 0;
   /* Draws the lanes from `lanes` (their top) down, and returns the note for
