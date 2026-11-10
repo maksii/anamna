@@ -17,7 +17,9 @@ import json
 import math
 import re
 from collections import Counter
+from collections.abc import Callable
 from datetime import date
+from typing import Any, NamedTuple
 
 from fastapi import HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -53,6 +55,8 @@ _BLANK = {
     "monitoring": "", "cautions": "", "reference_name": "", "reference_code": "", "reference_url": "",
     "ai_fields": (), "dose_amount": None, "dose_unit": "", "regimen": None,
 }
+
+_MEDICINES = "/medicines"
 
 
 def _writable(user, owner) -> bool:
@@ -237,310 +241,383 @@ def _suggestion_view(suggestion: dict, kind: str, locale: str, metric_ids, names
     return {"fields": fields, "effects": effects, "atc_code": atc, "source": source_view, "regimen": regimen_view}
 
 
+class _Wiring(NamedTuple):
+    """What the Medicines routes take from ``create_app``: settings, rendering, the account checks and the audit trail."""
+
+    settings: Any
+    templates: Any
+    template_context: Callable[..., Any]
+    require_user: Callable[..., Any]
+    record_user: Callable[..., Any]
+    require_csrf: Callable[..., Any]
+    audit: Callable[..., Any]
+    document_row: Callable[..., Any]
+
+
+def _owned_factor(connection, user_id: str, factor_id: str, today: date) -> dict:
+    row = factors.get(connection, user_id, factor_id, today=today)
+    if row is None:
+        raise HTTPException(404)
+    return row
+
+
+def _form_response(request: Request, w: _Wiring, connection, owner_id: str, *, is_new: bool, factor: dict,
+                   action: str, back_url: str, back_label: str, autostart: bool = False,
+                   error: str | None = None, status_code: int = 200):
+    linked_document = None
+    if factor.get("document_id"):
+        found = factor_documents.one(
+            connection, owner_id, factor["document_id"],
+            name=factor.get("name") or "", substance=factor.get("substance") or "",
+        )
+        linked_document = _document_view(connection, owner_id, w.document_row, found) if found else None
+    return w.templates.TemplateResponse(request, "medicine_form.html", w.template_context(
+        request, active="medicines", is_new=is_new, factor=factor, kinds=_kinds(),
+        statuses=factors.STATUSES, documents=_documents(connection, owner_id, w.document_row),
+        linked_document=linked_document,
+        lookup_on=drugref.enabled(connection), ai_ready=ai.ai_active(w.settings, factor_research.FEATURE),
+        action=action, back_url=back_url, back_label=back_label,
+        dose_units=factors.DOSE_UNITS, repeats=factors.REPEATS, day_parts=factors.DAY_PARTS,
+        meals=factors.MEALS, autostart=autostart,
+        error=error if error is not None else _error(request.query_params.get("error", "")),
+    ), status_code=status_code)
+
+
+def _medicine_groups(cards: list[dict]) -> list[dict]:
+    groups = []
+    for key in ("current", "prescribed", "past"):
+        entries = [item for item in cards if item["status"] == key]
+        if entries:
+            groups.append({"key": key, "label": t(f"med.group.{key}"), "entries": entries})
+    return groups
+
+
+def _medicine_filters(rows, counts: Counter, chosen: str) -> list[dict]:
+    filters = [{"label": t("med.filter_all"), "url": _MEDICINES, "count": len(rows), "active": not chosen}]
+    for key in factors.KINDS:
+        if counts[key]:
+            filters.append({
+                "label": t(f"med.kinds.{key}"), "url": f"/medicines?kind={key}",
+                "count": counts[key], "active": chosen == key,
+            })
+    return filters
+
+
+def _medicines_page(request: Request, w: _Wiring, kind: str, saved: str, error: str):
+    user = w.require_user(request)
+    owner = w.record_user(request, user)
+    today = date.today()
+    locale = get_locale()
+    writable = _writable(user, owner)
+    with connect(w.settings) as connection:
+        rows = factors.listing(connection, owner["id"], today=today)
+        metric_ids = _metric_ids(connection, owner["id"])
+        names = _concept_names(connection)
+        found_count = factor_candidates.count(connection, owner["id"]) if writable else 0
+        can_find = writable and factor_scan.has_documents(connection, owner["id"])
+    axis = factors_view.scale(rows, today, locale)
+    counts = Counter(row["kind"] for row in rows)
+    # A filter that matches nothing is ignored rather than showing an empty page.
+    chosen = kind if kind in factors.KINDS and counts[kind] else ""
+    shown = [row for row in rows if not chosen or row["kind"] == chosen]
+    cards = [
+        factors_view.card(row, locale=locale, today=today, scale=axis, metric_ids=metric_ids,
+                          concept_names=names)
+        for row in shown
+    ]
+    return w.templates.TemplateResponse(request, "medicines.html", w.template_context(
+        request, active="medicines", groups=_medicine_groups(cards), filters=_medicine_filters(rows, counts, chosen),
+        scale=axis, kinds=_kinds(),
+        saved=_saved(saved), error=_error(error), found_count=found_count, can_find=can_find,
+    ))
+
+
+def _new_page(request: Request, w: _Wiring, kind: str):
+    user = w.require_user(request)
+    owner = w.record_user(request, user)
+    if not _writable(user, owner):
+        return _redirect(_MEDICINES)
+    factor = {**_BLANK, "kind": _kind(kind), "status": "current"}
+    with connect(w.settings) as connection:
+        return _form_response(request, w, connection, user["id"], is_new=True, factor=factor,
+                              action=_MEDICINES, back_url=_MEDICINES, back_label=t("med.title"))
+
+
+def _create(request: Request, w: _Wiring, user, form):
+    today = date.today()
+    values, problem = factors.clean(form, today=today)
+    if problem:
+        with connect(w.settings) as connection:
+            return _form_response(
+                request, w, connection, user["id"], is_new=True, factor=_draft(form, today=today),
+                action=_MEDICINES, back_url=_MEDICINES, back_label=t("med.title"),
+                error=_error(problem), status_code=400,
+            )
+    with connect(w.settings) as connection:
+        patient = connection.execute(
+            "SELECT id FROM patients WHERE owner_user_id = ? ORDER BY created_at LIMIT 1", (user["id"],),
+        ).fetchone()
+        if patient is None:
+            return _redirect(_MEDICINES)
+        factor_id = factors.create(connection, user["id"], patient["id"], values)
+        w.audit(user["id"], user["id"], "factor.create", "factor", factor_id, {"kind": values["kind"]},
+                connection=connection)
+        connection.commit()
+    return _redirect(f"/medicines/{factor_id}?saved=created")
+
+
+async def _create_page(request: Request, w: _Wiring):
+    user = w.require_user(request)
+    form = await request.form()
+    owner = await run_in_threadpool(w.record_user, request, user)
+    if not _writable(user, owner):
+        raise HTTPException(403)
+    w.require_csrf(user, str(form.get("csrf_token") or ""))
+    return await run_in_threadpool(_create, request, w, user, form)
+
+
+def _lookup(request: Request, w: _Wiring, q: str):
+    user = w.require_user(request)
+    owner = w.record_user(request, user)
+    if not _writable(user, owner):
+        raise HTTPException(403)
+    with connect(w.settings) as connection:
+        if not drugref.enabled(connection):
+            return JSONResponse({"items": [], "error": "off"})
+    locale = get_locale()
+    try:
+        items = drugref.suggest(q[:200])
+    except drugref.DrugRefPaused as exc:
+        return JSONResponse({"items": [], "error": "paused", "minutes": max(1, math.ceil(exc.seconds / 60))})
+    except drugref.DrugRefError:
+        return JSONResponse({"items": [], "error": "unavailable"})
+    for item in items:
+        item["strength"] = drugref.localize_strength(item.get("strength") or "", locale)
+    return JSONResponse({"items": items})
+
+
+def _start_research(settings, user, form) -> JSONResponse:
+    """Start the AI research for the posted draft as a job; the form polls for the answer."""
+    if not ai.ai_active(settings, factor_research.FEATURE):
+        return JSONResponse({"error": "disabled"})
+    today = date.today()
+    draft = _draft(form, today=today)
+    if not draft["name"]:
+        return JSONResponse({"error": "lost"}, status_code=400)
+    factor_id = str(form.get("factor_id") or "")
+    have: list[dict] = []
+    with connect(settings) as connection:
+        if factor_id and factors.get(connection, user["id"], factor_id, today=today) is None:
+            factor_id = ""  # never research against another person's entry
+        if factor_id:
+            have = [
+                {"concept_id": row["concept_id"], "label": " ".join(str(row["label"] or "").split()).casefold()}
+                for row in connection.execute(
+                    "SELECT concept_id, label FROM factor_effects WHERE factor_id = ? AND owner_user_id = ?",
+                    (factor_id, user["id"]),
+                )
+            ]
+    entry = {**draft, "id": factor_id, "owner_user_id": user["id"], "how_taken": factors.regimen_text(draft, "en")}
+    locale = get_locale()
+    kind = entry["kind"]
+
+    def work() -> dict:
+        token = activate_locale(locale)
+        try:
+            with connect(settings) as connection:
+                suggestion = factor_research.research(settings, connection, entry, locale=locale)
+                connection.commit()
+                metric_ids = _metric_ids(connection, user["id"])
+                names = _concept_names(connection)
+            return _suggestion_view(suggestion, kind, locale, metric_ids, names, have)
+        finally:
+            reset_locale(token)
+
+    # The job answers for exactly this request: a press for another name must not get this answer.
+    asked = [kind, entry["name"], entry["substance"], entry["strength"], entry["reference_name"],
+             entry["reference_code"], factor_id, locale]
+    key = hashlib.sha256(json.dumps(asked, ensure_ascii=False).encode("utf-8")).hexdigest()
+    return JSONResponse({"job": factor_jobs.start(user["id"], work, key=key)})
+
+
+async def _suggest_page(request: Request, w: _Wiring):
+    user = w.require_user(request)
+    form = await request.form()
+    owner = await run_in_threadpool(w.record_user, request, user)
+    if not _writable(user, owner):
+        raise HTTPException(403)
+    w.require_csrf(user, str(form.get("csrf_token") or ""))
+    return await run_in_threadpool(_start_research, w.settings, user, form)
+
+
+def _suggest_status(request: Request, w: _Wiring, job_id: str):
+    user = w.require_user(request)
+    owner = w.record_user(request, user)
+    if not _writable(user, owner):
+        raise HTTPException(403)
+    job = factor_jobs.get(user["id"], job_id)
+    if job is None or job["kind"] != "research":
+        return JSONResponse({"state": "failed", "error": "lost"})
+    if job["state"] == "done":
+        return JSONResponse({"state": "done", "suggestion": job["result"]})
+    if job["state"] == "failed":
+        return JSONResponse({"state": "failed", "error": job["error"] or "provider_error"})
+    return JSONResponse({"state": "running"})
+
+
+def _document_search(request: Request, w: _Wiring, q: str, name: str, substance: str):
+    user = w.require_user(request)
+    owner = w.record_user(request, user)
+    if not _writable(user, owner):
+        raise HTTPException(403)
+    with connect(w.settings) as connection:
+        found = factor_documents.search(
+            connection, user["id"], name=name[:200], substance=substance[:200], text=q[:200],
+        )
+        views = [_document_view(connection, user["id"], w.document_row, item) for item in found]
+    return JSONResponse({"items": [view for view in views if view is not None]})
+
+
+def _detail_page(request: Request, w: _Wiring, factor_id: str, saved: str, error: str):
+    user = w.require_user(request)
+    owner = w.record_user(request, user)
+    today = date.today()
+    locale = get_locale()
+    with connect(w.settings) as connection:
+        row = _owned_factor(connection, owner["id"], factor_id, today)
+        metric_ids = _metric_ids(connection, owner["id"])
+        names = _concept_names(connection)
+        document_id = row["document_id"]
+        documents = _documents(connection, owner["id"], w.document_row, document_id) if document_id else []
+        effect_options = sorted({
+            concept_display_name(names[concept]) for concept in metric_ids if concept in names
+        })
+    entry = factors_view.card(row, locale=locale, today=today, metric_ids=metric_ids, concept_names=names)
+    entry["document"] = documents[0] if documents else None
+    entry["fact_notes"] = _fact_notes(row)
+    return w.templates.TemplateResponse(request, "medicine_detail.html", w.template_context(
+        request, active="medicines", factor=entry,
+        effect_options=effect_options, ai_ready=ai.ai_active(w.settings, factor_research.FEATURE),
+        saved=_saved(saved), error=_error(error),
+    ))
+
+
+def _edit_page(request: Request, w: _Wiring, factor_id: str, suggest: str):
+    user = w.require_user(request)
+    owner = w.record_user(request, user)
+    if not _writable(user, owner):
+        return _redirect(f"/medicines/{factor_id}")
+    with connect(w.settings) as connection:
+        row = _owned_factor(connection, user["id"], factor_id, date.today())
+        return _form_response(
+            request, w, connection, user["id"], is_new=False, factor=row,
+            action=f"/medicines/{factor_id}", back_url=f"/medicines/{factor_id}",
+            back_label=row["name"],
+            autostart=suggest == "1" and ai.ai_active(w.settings, factor_research.FEATURE),
+        )
+
+
+def _add_effect(connection, user_id: str, factor_id: str, form) -> RedirectResponse:
+    base = f"/medicines/{factor_id}"
+    label = " ".join(str(form.get("label") or "").split())[:200]
+    concept = _concept_for_label(connection, label)
+    added = factors.add_effect(
+        connection, user_id, factor_id, concept_id=concept, label=label,
+        direction=str(form.get("direction") or ""), note=str(form.get("note") or ""),
+    )
+    connection.commit()
+    return _redirect(f"{base}?error=effect" if added is None else f"{base}?saved=effect_added")
+
+
+def _act(request: Request, w: _Wiring, user, factor_id: str, form) -> RedirectResponse:
+    today = date.today()
+    base = f"/medicines/{factor_id}"
+    action = str(form.get("action") or "")
+    with connect(w.settings) as connection:
+        stored = _owned_factor(connection, user["id"], factor_id, today)
+        if action == "save":
+            values, problem = factors.clean(form, today=today)
+            if problem:
+                return _form_response(
+                    request, w, connection, user["id"], is_new=False,
+                    factor={**_draft(form, today=today), "id": factor_id},
+                    action=base, back_url=base, back_label=stored["name"],
+                    error=_error(problem), status_code=400,
+                )
+            factors.update(connection, user["id"], factor_id, values)
+            w.audit(user["id"], user["id"], "factor.update", "factor", factor_id, {"kind": values["kind"]},
+                    connection=connection)
+            connection.commit()
+            return _redirect(f"{base}?saved=saved")
+        if action == "stop":
+            factors.stop(connection, user["id"], factor_id, today)
+            connection.commit()
+            return _redirect(f"{base}?saved=stopped")
+        if action == "remove":
+            factors.delete(connection, user["id"], factor_id)
+            w.audit(user["id"], user["id"], "factor.delete", "factor", factor_id, {}, connection=connection)
+            connection.commit()
+            return _redirect("/medicines?saved=removed")
+        if action == "effect_add":
+            return _add_effect(connection, user["id"], factor_id, form)
+        if action == "effect_remove":
+            factors.remove_effect(connection, user["id"], str(form.get("effect_id") or ""))
+            connection.commit()
+            return _redirect(f"{base}?saved=effect_removed")
+    raise HTTPException(400)
+
+
+async def _factor_action(request: Request, w: _Wiring, factor_id: str):
+    user = w.require_user(request)
+    form = await request.form()
+    owner = await run_in_threadpool(w.record_user, request, user)
+    if not _writable(user, owner):
+        raise HTTPException(403)
+    w.require_csrf(user, str(form.get("csrf_token") or ""))
+    return await run_in_threadpool(_act, request, w, user, factor_id, form)
+
+
 def register_routes(app, settings, *, templates, template_context, require_user, record_user, require_csrf,
                     audit, document_row) -> None:
     """``audit`` is ``partial(_audit, settings)``; ``document_row`` renders a documents row as the record search does."""
+    w = _Wiring(settings, templates, template_context, require_user, record_user, require_csrf, audit, document_row)
 
-    def form_response(request: Request, connection, owner_id: str, *, is_new: bool, factor: dict,
-                      action: str, back_url: str, back_label: str, autostart: bool = False,
-                      error: str | None = None, status_code: int = 200):
-        linked_document = None
-        if factor.get("document_id"):
-            found = factor_documents.one(
-                connection, owner_id, factor["document_id"],
-                name=factor.get("name") or "", substance=factor.get("substance") or "",
-            )
-            linked_document = _document_view(connection, owner_id, document_row, found) if found else None
-        return templates.TemplateResponse(request, "medicine_form.html", template_context(
-            request, active="medicines", is_new=is_new, factor=factor, kinds=_kinds(),
-            statuses=factors.STATUSES, documents=_documents(connection, owner_id, document_row),
-            linked_document=linked_document,
-            lookup_on=drugref.enabled(connection), ai_ready=ai.ai_active(settings, factor_research.FEATURE),
-            action=action, back_url=back_url, back_label=back_label,
-            dose_units=factors.DOSE_UNITS, repeats=factors.REPEATS, day_parts=factors.DAY_PARTS,
-            meals=factors.MEALS, autostart=autostart,
-            error=error if error is not None else _error(request.query_params.get("error", "")),
-        ), status_code=status_code)
-
-    def owned_factor(connection, user_id: str, factor_id: str, today: date) -> dict:
-        row = factors.get(connection, user_id, factor_id, today=today)
-        if row is None:
-            raise HTTPException(404)
-        return row
-
-    @app.get("/medicines", response_class=HTMLResponse)
+    @app.get(_MEDICINES, response_class=HTMLResponse)
     def medicines_page(request: Request, kind: str = "", saved: str = "", error: str = ""):
-        user = require_user(request)
-        owner = record_user(request, user)
-        today = date.today()
-        locale = get_locale()
-        writable = _writable(user, owner)
-        with connect(settings) as connection:
-            rows = factors.listing(connection, owner["id"], today=today)
-            metric_ids = _metric_ids(connection, owner["id"])
-            names = _concept_names(connection)
-            found_count = factor_candidates.count(connection, owner["id"]) if writable else 0
-            can_find = writable and factor_scan.has_documents(connection, owner["id"])
-        axis = factors_view.scale(rows, today, locale)
-        counts = Counter(row["kind"] for row in rows)
-        # A filter that matches nothing is ignored rather than showing an empty page.
-        chosen = kind if kind in factors.KINDS and counts[kind] else ""
-        shown = [row for row in rows if not chosen or row["kind"] == chosen]
-        cards = [
-            factors_view.card(row, locale=locale, today=today, scale=axis, metric_ids=metric_ids,
-                              concept_names=names)
-            for row in shown
-        ]
-        groups = []
-        for key in ("current", "prescribed", "past"):
-            entries = [item for item in cards if item["status"] == key]
-            if entries:
-                groups.append({"key": key, "label": t(f"med.group.{key}"), "entries": entries})
-        filters = [{"label": t("med.filter_all"), "url": "/medicines", "count": len(rows), "active": not chosen}]
-        for key in factors.KINDS:
-            if counts[key]:
-                filters.append({
-                    "label": t(f"med.kinds.{key}"), "url": f"/medicines?kind={key}",
-                    "count": counts[key], "active": chosen == key,
-                })
-        return templates.TemplateResponse(request, "medicines.html", template_context(
-            request, active="medicines", groups=groups, filters=filters, scale=axis, kinds=_kinds(),
-            saved=_saved(saved), error=_error(error), found_count=found_count, can_find=can_find,
-        ))
+        return _medicines_page(request, w, kind, saved, error)
 
     @app.get("/medicines/new", response_class=HTMLResponse)
     def new_page(request: Request, kind: str = ""):
-        user = require_user(request)
-        owner = record_user(request, user)
-        if not _writable(user, owner):
-            return _redirect("/medicines")
-        factor = {**_BLANK, "kind": _kind(kind), "status": "current"}
-        with connect(settings) as connection:
-            return form_response(request, connection, user["id"], is_new=True, factor=factor,
-                                 action="/medicines", back_url="/medicines", back_label=t("med.title"))
+        return _new_page(request, w, kind)
 
-    def create(request: Request, user, form):
-        today = date.today()
-        values, problem = factors.clean(form, today=today)
-        if problem:
-            with connect(settings) as connection:
-                return form_response(
-                    request, connection, user["id"], is_new=True, factor=_draft(form, today=today),
-                    action="/medicines", back_url="/medicines", back_label=t("med.title"),
-                    error=_error(problem), status_code=400,
-                )
-        with connect(settings) as connection:
-            patient = connection.execute(
-                "SELECT id FROM patients WHERE owner_user_id = ? ORDER BY created_at LIMIT 1", (user["id"],),
-            ).fetchone()
-            if patient is None:
-                return _redirect("/medicines")
-            factor_id = factors.create(connection, user["id"], patient["id"], values)
-            audit(user["id"], user["id"], "factor.create", "factor", factor_id, {"kind": values["kind"]},
-                  connection=connection)
-            connection.commit()
-        return _redirect(f"/medicines/{factor_id}?saved=created")
-
-    @app.post("/medicines")
+    @app.post(_MEDICINES)
     async def create_page(request: Request):
-        user = require_user(request)
-        form = await request.form()
-        owner = await run_in_threadpool(record_user, request, user)
-        if not _writable(user, owner):
-            raise HTTPException(403)
-        require_csrf(user, str(form.get("csrf_token") or ""))
-        return await run_in_threadpool(create, request, user, form)
+        return await _create_page(request, w)
 
     @app.get("/medicines/lookup")
     def lookup(request: Request, q: str = ""):
-        user = require_user(request)
-        owner = record_user(request, user)
-        if not _writable(user, owner):
-            raise HTTPException(403)
-        with connect(settings) as connection:
-            if not drugref.enabled(connection):
-                return JSONResponse({"items": [], "error": "off"})
-        locale = get_locale()
-        try:
-            items = drugref.suggest(q[:200])
-        except drugref.DrugRefPaused as exc:
-            return JSONResponse({"items": [], "error": "paused", "minutes": max(1, math.ceil(exc.seconds / 60))})
-        except drugref.DrugRefError:
-            return JSONResponse({"items": [], "error": "unavailable"})
-        for item in items:
-            item["strength"] = drugref.localize_strength(item.get("strength") or "", locale)
-        return JSONResponse({"items": items})
-
-    def start_research(user, form) -> JSONResponse:
-        """Start the AI research for the posted draft as a job; the form polls for the answer."""
-        if not ai.ai_active(settings, factor_research.FEATURE):
-            return JSONResponse({"error": "disabled"})
-        today = date.today()
-        draft = _draft(form, today=today)
-        if not draft["name"]:
-            return JSONResponse({"error": "lost"}, status_code=400)
-        factor_id = str(form.get("factor_id") or "")
-        have: list[dict] = []
-        with connect(settings) as connection:
-            if factor_id and factors.get(connection, user["id"], factor_id, today=today) is None:
-                factor_id = ""  # never research against another person's entry
-            if factor_id:
-                have = [
-                    {"concept_id": row["concept_id"], "label": " ".join(str(row["label"] or "").split()).casefold()}
-                    for row in connection.execute(
-                        "SELECT concept_id, label FROM factor_effects WHERE factor_id = ? AND owner_user_id = ?",
-                        (factor_id, user["id"]),
-                    )
-                ]
-        entry = {**draft, "id": factor_id, "owner_user_id": user["id"], "how_taken": factors.regimen_text(draft, "en")}
-        locale = get_locale()
-        kind = entry["kind"]
-
-        def work() -> dict:
-            token = activate_locale(locale)
-            try:
-                with connect(settings) as connection:
-                    suggestion = factor_research.research(settings, connection, entry, locale=locale)
-                    connection.commit()
-                    metric_ids = _metric_ids(connection, user["id"])
-                    names = _concept_names(connection)
-                return _suggestion_view(suggestion, kind, locale, metric_ids, names, have)
-            finally:
-                reset_locale(token)
-
-        # The job answers for exactly this request: a press for another name must not get this answer.
-        asked = [kind, entry["name"], entry["substance"], entry["strength"], entry["reference_name"],
-                 entry["reference_code"], factor_id, locale]
-        key = hashlib.sha256(json.dumps(asked, ensure_ascii=False).encode("utf-8")).hexdigest()
-        return JSONResponse({"job": factor_jobs.start(user["id"], work, key=key)})
+        return _lookup(request, w, q)
 
     @app.post("/medicines/suggest")
     async def suggest_page(request: Request):
-        user = require_user(request)
-        form = await request.form()
-        owner = await run_in_threadpool(record_user, request, user)
-        if not _writable(user, owner):
-            raise HTTPException(403)
-        require_csrf(user, str(form.get("csrf_token") or ""))
-        return await run_in_threadpool(start_research, user, form)
+        return await _suggest_page(request, w)
 
     @app.get("/medicines/suggest/{job_id}")
     def suggest_status(request: Request, job_id: str):
-        user = require_user(request)
-        owner = record_user(request, user)
-        if not _writable(user, owner):
-            raise HTTPException(403)
-        job = factor_jobs.get(user["id"], job_id)
-        if job is None or job["kind"] != "research":
-            return JSONResponse({"state": "failed", "error": "lost"})
-        if job["state"] == "done":
-            return JSONResponse({"state": "done", "suggestion": job["result"]})
-        if job["state"] == "failed":
-            return JSONResponse({"state": "failed", "error": job["error"] or "provider_error"})
-        return JSONResponse({"state": "running"})
+        return _suggest_status(request, w, job_id)
 
     @app.get("/medicines/documents")
     def document_search(request: Request, q: str = "", name: str = "", substance: str = ""):
-        user = require_user(request)
-        owner = record_user(request, user)
-        if not _writable(user, owner):
-            raise HTTPException(403)
-        with connect(settings) as connection:
-            found = factor_documents.search(
-                connection, user["id"], name=name[:200], substance=substance[:200], text=q[:200],
-            )
-            views = [_document_view(connection, user["id"], document_row, item) for item in found]
-        return JSONResponse({"items": [view for view in views if view is not None]})
+        return _document_search(request, w, q, name, substance)
 
     @app.get("/medicines/{factor_id}", response_class=HTMLResponse)
     def detail_page(request: Request, factor_id: str, saved: str = "", error: str = ""):
-        user = require_user(request)
-        owner = record_user(request, user)
-        today = date.today()
-        locale = get_locale()
-        with connect(settings) as connection:
-            row = owned_factor(connection, owner["id"], factor_id, today)
-            metric_ids = _metric_ids(connection, owner["id"])
-            names = _concept_names(connection)
-            document_id = row["document_id"]
-            documents = _documents(connection, owner["id"], document_row, document_id) if document_id else []
-            effect_options = sorted({
-                concept_display_name(names[concept]) for concept in metric_ids if concept in names
-            })
-        entry = factors_view.card(row, locale=locale, today=today, metric_ids=metric_ids, concept_names=names)
-        entry["document"] = documents[0] if documents else None
-        entry["fact_notes"] = _fact_notes(row)
-        return templates.TemplateResponse(request, "medicine_detail.html", template_context(
-            request, active="medicines", factor=entry,
-            effect_options=effect_options, ai_ready=ai.ai_active(settings, factor_research.FEATURE),
-            saved=_saved(saved), error=_error(error),
-        ))
+        return _detail_page(request, w, factor_id, saved, error)
 
     @app.get("/medicines/{factor_id}/edit", response_class=HTMLResponse)
     def edit_page(request: Request, factor_id: str, suggest: str = ""):
-        user = require_user(request)
-        owner = record_user(request, user)
-        if not _writable(user, owner):
-            return _redirect(f"/medicines/{factor_id}")
-        with connect(settings) as connection:
-            row = owned_factor(connection, user["id"], factor_id, date.today())
-            return form_response(
-                request, connection, user["id"], is_new=False, factor=row,
-                action=f"/medicines/{factor_id}", back_url=f"/medicines/{factor_id}",
-                back_label=row["name"],
-                autostart=suggest == "1" and ai.ai_active(settings, factor_research.FEATURE),
-            )
-
-    def act(request: Request, user, factor_id: str, form) -> RedirectResponse:
-        today = date.today()
-        base = f"/medicines/{factor_id}"
-        action = str(form.get("action") or "")
-        with connect(settings) as connection:
-            stored = owned_factor(connection, user["id"], factor_id, today)
-            if action == "save":
-                values, problem = factors.clean(form, today=today)
-                if problem:
-                    return form_response(
-                        request, connection, user["id"], is_new=False,
-                        factor={**_draft(form, today=today), "id": factor_id},
-                        action=base, back_url=base, back_label=stored["name"],
-                        error=_error(problem), status_code=400,
-                    )
-                factors.update(connection, user["id"], factor_id, values)
-                audit(user["id"], user["id"], "factor.update", "factor", factor_id, {"kind": values["kind"]},
-                      connection=connection)
-                connection.commit()
-                return _redirect(f"{base}?saved=saved")
-            if action == "stop":
-                factors.stop(connection, user["id"], factor_id, today)
-                connection.commit()
-                return _redirect(f"{base}?saved=stopped")
-            if action == "remove":
-                factors.delete(connection, user["id"], factor_id)
-                audit(user["id"], user["id"], "factor.delete", "factor", factor_id, {}, connection=connection)
-                connection.commit()
-                return _redirect("/medicines?saved=removed")
-            if action == "effect_add":
-                label = " ".join(str(form.get("label") or "").split())[:200]
-                concept = _concept_for_label(connection, label)
-                added = factors.add_effect(
-                    connection, user["id"], factor_id, concept_id=concept, label=label,
-                    direction=str(form.get("direction") or ""), note=str(form.get("note") or ""),
-                )
-                connection.commit()
-                return _redirect(f"{base}?error=effect" if added is None else f"{base}?saved=effect_added")
-            if action == "effect_remove":
-                factors.remove_effect(connection, user["id"], str(form.get("effect_id") or ""))
-                connection.commit()
-                return _redirect(f"{base}?saved=effect_removed")
-        raise HTTPException(400)
+        return _edit_page(request, w, factor_id, suggest)
 
     @app.post("/medicines/{factor_id}")
     async def factor_action(request: Request, factor_id: str):
-        user = require_user(request)
-        form = await request.form()
-        owner = await run_in_threadpool(record_user, request, user)
-        if not _writable(user, owner):
-            raise HTTPException(403)
-        require_csrf(user, str(form.get("csrf_token") or ""))
-        return await run_in_threadpool(act, request, user, factor_id, form)
+        return await _factor_action(request, w, factor_id)

@@ -497,7 +497,7 @@
   var match = needs.dataset.match ? JSON.parse(needs.dataset.match) : null;
   function reasons(row) { return (row.dataset.why || '').split(' '); }
   var refoldList = fold(needs, form.querySelector('[data-needs-more]'), function (row) {
-    return (!why || reasons(row).indexOf(why) >= 0) && (!match || match.indexOf(row.dataset.key) >= 0);
+    return (!why || reasons(row).includes(why)) && (!match || match.includes(row.dataset.key));
   });
   function refold() {
     refoldList();
@@ -508,7 +508,7 @@
     var rows = Array.prototype.slice.call(needs.children);
     var split = false;
     filter.querySelectorAll('button').forEach(function (chip) {
-      var n = rows.filter(function (row) { return !chip.dataset.why || reasons(row).indexOf(chip.dataset.why) >= 0; }).length;
+      var n = rows.filter(function (row) { return !chip.dataset.why || reasons(row).includes(chip.dataset.why); }).length;
       chip.querySelector('.an-plan-why__n').textContent = n.toLocaleString(lang);
       chip.hidden = !!chip.dataset.why && (!n || n === rows.length);
       if (!chip.hidden && chip.dataset.why) { split = true; }
@@ -548,8 +548,10 @@
       if (on) { active += 1; }
       button.setAttribute('aria-pressed', String(on));
       button.name = on ? 'drop' : 'preset';
-      button.querySelector('[data-preset-state]').textContent = on ? button.dataset.on
-        : n ? button.dataset.part.replace('{n}', n.toLocaleString(lang)) : button.dataset.off;
+      var state = button.dataset.off;
+      if (on) { state = button.dataset.on; }
+      else if (n) { state = button.dataset.part.replace('{n}', n.toLocaleString(lang)); }
+      button.querySelector('[data-preset-state]').textContent = state;
     });
     if (presetsOn) {
       presetsOn.textContent = active.toLocaleString(lang);
@@ -626,8 +628,8 @@
   }
   var result = document.querySelector('.an-plan-result[data-stale-text]');
   function stale() {
-    if (!result || result.hasAttribute('data-stale')) { return; }
-    result.setAttribute('data-stale', '');
+    if (!result || 'stale' in result.dataset) { return; }
+    result.dataset.stale = '';
     var note = document.createElement('p');
     note.className = 'alert warning an-plan-stale';
     note.setAttribute('role', 'status');
@@ -637,7 +639,7 @@
   form.addEventListener('change', function (event) {
     var box = event.target;
     if (!box.matches('[data-live-field]')) { stale(); }
-    if (box.checked && box.closest('[data-live]') && ['add', 'include', 'sx'].indexOf(box.name) >= 0) { adopt(box); }
+    if (box.checked && box.closest('[data-live]') && ['add', 'include', 'sx'].includes(box.name)) { adopt(box); }
     // Lists and the section picker answer on change; typed fields on input.
     if (box.matches('[data-live-field]') && (box.tagName === 'SELECT' || box.name === 'sg')) { refresh(); }
     // A sample left out (or back) changes the list itself: the page re-reads it.
@@ -671,7 +673,7 @@
   var presets = form.querySelector('[data-presets]');
   if (toggle) {
     toggle.hidden = false;
-    presets.hidden = !presets.hasAttribute('data-open');
+    presets.hidden = !('open' in presets.dataset);
     toggle.setAttribute('aria-expanded', String(!presets.hidden));
     toggle.addEventListener('click', function () {
       presets.hidden = !presets.hidden;

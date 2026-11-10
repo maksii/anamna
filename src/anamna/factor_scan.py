@@ -221,7 +221,9 @@ def _event_date(value: object, timing: str) -> tuple[str | None, int]:
 
 def _times(value: object) -> list[str]:
     """The parts of the day the document names, in DAY_PARTS order and without repeats."""
-    named = {part for part in value if isinstance(part, str)} if isinstance(value, list) else set()
+    if not isinstance(value, list):
+        return []
+    named = {part for part in value if isinstance(part, str)}
     return [part for part in factors.DAY_PARTS if part in named]
 
 
@@ -298,6 +300,65 @@ def _item(raw: object, haystack: str) -> dict | None:
     return item
 
 
+def _chunk_messages(document: dict, chunk: str, number: int, count: int, locale: str) -> list[dict]:
+    document_part = {"type": document["clinical_type"], "date": document["date"], "text": chunk}
+    if count > 1:
+        document_part["part"] = f"{number} of {count}"
+    payload = {
+        "document": document_part,
+        "language": "Ukrainian" if locale == "uk" else "English",
+        "output_contract": RESPONSE_FORMAT["json_schema"]["schema"],
+    }
+    return [
+        {"role": "system", "content": SYSTEM},
+        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+    ]
+
+
+def _complete_chunk(settings, connection: sqlite3.Connection, messages: list[dict]) -> ai.AIResult:
+    # ai.complete records usage on its own connection with BEGIN IMMEDIATE.
+    connection.commit()
+    try:
+        return ai.complete(
+            settings, FEATURE, messages,
+            max_tokens=MAX_TOKENS, timeout=TIMEOUT, response_format=RESPONSE_FORMAT,
+        )
+    except ai.AIUnavailable as exc:
+        if exc.reason == "truncated":
+            raise UnreadableReply("truncated", exc.detail) from exc
+        raise
+
+
+def _parse_chunk_reply(settings, result: ai.AIResult) -> dict:
+    try:
+        reply = ai.parse_json_reply(result.content)
+        if not isinstance(reply.get("items"), list):
+            raise ai.AIUnavailable("provider_error", "reply has no items list")
+    except ai.AIUnavailable as exc:
+        # HTTP 200 with unusable output is a failed result; keep no excerpt.
+        ai.settle_usage(
+            settings, result.usage_id, ok=False, model=result.model,
+            prompt_tokens=result.prompt_tokens, completion_tokens=result.completion_tokens,
+            duration_ms=result.duration_ms, error=exc.detail or "unparseable reply",
+        )
+        raise UnreadableReply("provider_error", exc.detail or "unparseable reply") from exc
+    return reply
+
+
+def _add_items(items: list[dict], seen: set[tuple[str, str]], raw_items: list, haystack: str) -> None:
+    for raw in raw_items:
+        if len(items) == MAX_DOCUMENT_ITEMS:
+            break
+        item = _item(raw, haystack)
+        if item is None:
+            continue
+        key = (item["kind"], item["name"].casefold())
+        if key in seen:
+            continue
+        seen.add(key)
+        items.append(item)
+
+
 def read_document(settings, connection: sqlite3.Connection, document: dict, *, locale: str) -> tuple[list[dict], str]:
     """The items the model finds in one document, and the model's name.
 
@@ -317,53 +378,11 @@ def read_document(settings, connection: sqlite3.Connection, document: dict, *, l
     for number, chunk in enumerate(chunks, start=1):
         if len(items) >= MAX_DOCUMENT_ITEMS:
             break
-        document_part = {"type": document["clinical_type"], "date": document["date"], "text": chunk}
-        if len(chunks) > 1:
-            document_part["part"] = f"{number} of {len(chunks)}"
-        payload = {
-            "document": document_part,
-            "language": "Ukrainian" if locale == "uk" else "English",
-            "output_contract": RESPONSE_FORMAT["json_schema"]["schema"],
-        }
-        messages = [
-            {"role": "system", "content": SYSTEM},
-            {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-        ]
-        # ai.complete records usage on its own connection with BEGIN IMMEDIATE.
-        connection.commit()
-        try:
-            result = ai.complete(
-                settings, FEATURE, messages,
-                max_tokens=MAX_TOKENS, timeout=TIMEOUT, response_format=RESPONSE_FORMAT,
-            )
-        except ai.AIUnavailable as exc:
-            if exc.reason == "truncated":
-                raise UnreadableReply("truncated", exc.detail) from exc
-            raise
-        try:
-            reply = ai.parse_json_reply(result.content)
-            if not isinstance(reply.get("items"), list):
-                raise ai.AIUnavailable("provider_error", "reply has no items list")
-        except ai.AIUnavailable as exc:
-            # HTTP 200 with unusable output is a failed result; keep no excerpt.
-            ai.settle_usage(
-                settings, result.usage_id, ok=False, model=result.model,
-                prompt_tokens=result.prompt_tokens, completion_tokens=result.completion_tokens,
-                duration_ms=result.duration_ms, error=exc.detail or "unparseable reply",
-            )
-            raise UnreadableReply("provider_error", exc.detail or "unparseable reply") from exc
+        messages = _chunk_messages(document, chunk, number, len(chunks), locale)
+        result = _complete_chunk(settings, connection, messages)
+        reply = _parse_chunk_reply(settings, result)
         model = result.model or ""
-        for raw in reply["items"]:
-            if len(items) == MAX_DOCUMENT_ITEMS:
-                break
-            item = _item(raw, haystack)
-            if item is None:
-                continue
-            key = (item["kind"], item["name"].casefold())
-            if key in seen:
-                continue
-            seen.add(key)
-            items.append(item)
+        _add_items(items, seen, reply["items"], haystack)
     return items, model
 
 

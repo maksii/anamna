@@ -493,6 +493,15 @@ def reclaim(settings: Settings) -> dict:
     return result | {"file_bytes_after": after["file_bytes"], "free_bytes_after": after["free_bytes"]}
 
 
+def _convert_all(settings: Settings, out) -> dict:
+    cursor = convert_step(settings, budget=5.0)
+    while cursor:
+        with connect(settings) as db:
+            print(json.dumps({"cursor_day": cursor[3], "totals": totals(db)}), file=out, flush=True)
+        cursor = convert_step(settings, budget=5.0, cursor=cursor)
+    return {"done": True}
+
+
 def main(argv: list[str]) -> int:
     command = argv[0] if argv else "status"
     settings = get_settings()
@@ -500,12 +509,7 @@ def main(argv: list[str]) -> int:
         settings = replace(settings, database_path=Path(argv[argv.index("--db") + 1]))
     out = sys.stdout
     if command == "convert":
-        cursor = convert_step(settings, budget=5.0)
-        while cursor:
-            with connect(settings) as db:
-                print(json.dumps({"cursor_day": cursor[3], "totals": totals(db)}), file=out, flush=True)
-            cursor = convert_step(settings, budget=5.0, cursor=cursor)
-        result = {"done": True}
+        result = _convert_all(settings, out)
     elif command == "reclaim":
         if "--yes" not in argv:
             # Reclaim drops a table and vacuums the live file: a backup comes first.

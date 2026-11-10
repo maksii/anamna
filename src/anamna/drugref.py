@@ -220,6 +220,27 @@ def _open(url: str, data: bytes | None = None, headers: dict | None = None) -> s
     return body.decode("utf-8", errors="replace")
 
 
+def _unit_word(folded: str) -> str:
+    unit, earliest = "", None
+    for stems, word in _UNIT_STEMS:
+        for stem in stems:
+            at = folded.find(stem)
+            if at != -1 and (earliest is None or at < earliest):
+                unit, earliest = word, at
+    return unit
+
+
+def _dose_strength(head: str, unit: str) -> str:
+    for found in _STRENGTH.finditer(head):
+        text = found.group(0)
+        if "/" not in text:
+            first = _STRENGTH_UNIT.search(text).group(0)
+            if first == "мл" or (first == "г" and unit == "application"):
+                continue
+        return re.sub(r"\s+", " ", text).strip()
+    return ""
+
+
 def parse_product(name: str) -> tuple[str, str]:
     """The dosage form and the strength of a product name, read from its text.
 
@@ -227,23 +248,8 @@ def parse_product(name: str) -> tuple[str, str]:
     dose that is not a bottle volume or a tube weight.
     """
     head = name.split("№", 1)[0]
-    folded = head.casefold()
-    unit, earliest = "", None
-    for stems, word in _UNIT_STEMS:
-        for stem in stems:
-            at = folded.find(stem)
-            if at != -1 and (earliest is None or at < earliest):
-                unit, earliest = word, at
-    strength = ""
-    for found in _STRENGTH.finditer(head):
-        text = found.group(0)
-        if "/" not in text:
-            first = _STRENGTH_UNIT.search(text).group(0)
-            if first == "мл" or (first == "г" and unit == "application"):
-                continue
-        strength = re.sub(r"\s+", " ", text).strip()
-        break
-    return unit, strength
+    unit = _unit_word(head.casefold())
+    return unit, _dose_strength(head, unit)
 
 
 def localize_strength(text: str, locale: str) -> str:
@@ -266,13 +272,7 @@ def _shared_values(values: list[tuple[str, str]]) -> tuple[str, str]:
     return (units.pop() if len(units) == 1 else "", "")
 
 
-def _parse_suggest(reply: str) -> list[dict]:
-    try:
-        payload = json.loads(reply)
-    except ValueError as exc:
-        raise DrugRefError("suggest reply is not JSON") from exc
-    if not isinstance(payload, dict):
-        raise DrugRefError("suggest reply is not an object")
+def _suggest_entries(payload: dict) -> list:
     groups = payload.get("group")
     if groups is None:
         groups = []
@@ -288,6 +288,10 @@ def _parse_suggest(reply: str) -> list[dict]:
         if not isinstance(items, list):
             raise DrugRefError("suggest search items are not a list")
         entries.extend(items)
+    return entries
+
+
+def _suggest_usable(entries: list) -> tuple[list, dict[str, list[tuple[str, str]]]]:
     usable = []
     products: dict[str, list[tuple[str, str]]] = {}
     for item in entries:
@@ -302,6 +306,17 @@ def _parse_suggest(reply: str) -> list[dict]:
         if values is not None:
             products.setdefault(url, []).append(values)
         usable.append((kind, item, url, name, values))
+    return usable, products
+
+
+def _parse_suggest(reply: str) -> list[dict]:
+    try:
+        payload = json.loads(reply)
+    except ValueError as exc:
+        raise DrugRefError("suggest reply is not JSON") from exc
+    if not isinstance(payload, dict):
+        raise DrugRefError("suggest reply is not an object")
+    usable, products = _suggest_usable(_suggest_entries(payload))
     found: list[dict] = []
     for kind, item, url, name, values in usable:
         if kind == "product":

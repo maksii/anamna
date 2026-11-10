@@ -364,9 +364,14 @@
     const forms = JSON.parse(multi.dataset.plural || '{}');
     multi.addEventListener('change', () => {
       const n = multi.querySelectorAll('input:checked').length;
-      const form = document.documentElement.lang === 'uk'
-        ? (n % 10 === 1 && n % 100 !== 11 ? 'one' : (n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? 'few' : 'many'))
-        : (n === 1 ? 'one' : 'many');
+      let form = 'many';
+      if (document.documentElement.lang !== 'uk') {
+        form = n === 1 ? 'one' : 'many';
+      } else if (n % 10 === 1 && n % 100 !== 11) {
+        form = 'one';
+      } else if (n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14)) {
+        form = 'few';
+      }
       count.textContent = (forms[form] || forms.many || '{count}').replace('{count}', n);
     });
   });

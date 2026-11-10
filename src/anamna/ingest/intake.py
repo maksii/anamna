@@ -56,6 +56,8 @@ MAX_ARCHIVE_EXPANDED_BYTES = 32 * 1024**3
 MAX_ARCHIVE_DEPTH = 3
 
 DONE_DEVICE = "intake.done_device"
+DONE_DUPLICATE = "intake.done_duplicate"
+FAILED_ERROR = "intake.failed_error"
 FAILED_MISSING = "intake.failed_missing"
 
 #: Every value `upload_jobs.detail_key` may hold.  Job detail is rendered into
@@ -68,7 +70,7 @@ DETAIL_KEYS = (
     "intake.step_reading",
     "intake.done_imported",
     "intake.done_no_values",
-    "intake.done_duplicate",
+    DONE_DUPLICATE,
     "intake.done_unchanged",
     "intake.done_expanded",
     DONE_DEVICE,
@@ -78,7 +80,7 @@ DETAIL_KEYS = (
     "intake.failed_unsupported",
     "intake.failed_empty",
     "intake.failed_too_big",
-    "intake.failed_error",
+    FAILED_ERROR,
     "intake.failed_device_archive_member",
     "intake.failed_reread_empty",
     "intake.failed_reread_ocr",
@@ -588,7 +590,7 @@ def _run_document(settings: Settings, job) -> None:
     # which also covers a retried job whose import had already committed.
     if held:
         _discard_upload_copy(settings, path)
-        _finish(settings, job["id"], "skipped", "intake.done_duplicate", document_id=str(held["id"]))
+        _finish(settings, job["id"], "skipped", DONE_DUPLICATE, document_id=str(held["id"]))
         return
     result = ingest_file(settings, job["owner_user_id"], job["patient_id"], path)
     action = str(result.get("action"))
@@ -596,7 +598,7 @@ def _run_document(settings: Settings, job) -> None:
     if action == "unchanged":
         _discard_upload_copy(settings, path)
     detail = {
-        "duplicate": "intake.done_duplicate",
+        "duplicate": DONE_DUPLICATE,
         "unchanged": "intake.done_unchanged",
     }.get(action, "intake.done_imported" if count else "intake.done_no_values")
     _finish(
@@ -711,13 +713,8 @@ def _hand_on_device_export(
     _finish(settings, job["id"], "done", DONE_DEVICE)
 
 
-def _run_archive(settings: Settings, job) -> None:
-    archive = Path(str(job["source_path"]))
-    if not archive.is_file():
-        _finish(settings, job["id"], "failed", FAILED_MISSING)
-        return
-    _mark(settings, job["id"], "intake.step_unpacking")
-    target = archive.with_name(f"{archive.stem}-{str(job['id'])[:8]}")
+def _unpack_for_job(settings: Settings, job, archive: Path, target: Path) -> tuple[str | None, str, list[Path]] | None:
+    """Unpack the archive into `target`; None when the job has already been finished as failed."""
     named = str(job["adapter_key"] or "")
     try:
         # A reader who chose the vendor on the form has said something detection
@@ -731,26 +728,43 @@ def _run_archive(settings: Settings, job) -> None:
     except zipfile.BadZipFile:
         discard_upload_tree(settings, target)
         _finish(settings, job["id"], "failed", "intake.failed_unreadable")
-        return
+        return None
     except ValueError:
         discard_upload_tree(settings, target)
         _finish(settings, job["id"], "failed", "intake.failed_too_big")
-        return
+        return None
     except Exception:
         # Anything else escaping expansion (an encrypted member, an unsupported
         # compression method, a full disk) would leave the partial tree on disk
         # for good. run_job's handler still records the job as failed.
         discard_upload_tree(settings, target)
         raise
+    return adapter, relative_root, produced
 
+
+def _export_root(target: Path, relative_root: str) -> Path:
+    # The root comes from names inside the archive and must never leave the
+    # directory it was unpacked into; anything that resolves outside falls
+    # back to the whole expansion.
+    root = target / relative_root if relative_root else target
+    if not root.resolve().is_relative_to(target.resolve()):
+        root = target
+    return root
+
+
+def _run_archive(settings: Settings, job) -> None:
+    archive = Path(str(job["source_path"]))
+    if not archive.is_file():
+        _finish(settings, job["id"], "failed", FAILED_MISSING)
+        return
+    _mark(settings, job["id"], "intake.step_unpacking")
+    target = archive.with_name(f"{archive.stem}-{str(job['id'])[:8]}")
+    unpacked = _unpack_for_job(settings, job, archive, target)
+    if unpacked is None:
+        return
+    adapter, relative_root, produced = unpacked
     if adapter:
-        # The root comes from names inside the archive and must never leave the
-        # directory it was unpacked into; anything that resolves outside falls
-        # back to the whole expansion.
-        root = target / relative_root if relative_root else target
-        if not root.resolve().is_relative_to(target.resolve()):
-            root = target
-        _hand_on_device_export(settings, job, archive, root, adapter, produced)
+        _hand_on_device_export(settings, job, archive, _export_root(target, relative_root), adapter, produced)
         return
 
     documents = sorted(
@@ -840,7 +854,7 @@ def run_job(settings: Settings, job) -> None:
         # id is the reference, as in the line above.
         logger.error("intake: job %s failed (%s)", job["id"], type(exc).__name__)
         logger.debug("intake: job %s traceback", job["id"], exc_info=True)
-        _finish(settings, job["id"], "failed", "intake.failed_error")
+        _finish(settings, job["id"], "failed", FAILED_ERROR)
 
 
 # --- the worker -------------------------------------------------------------
@@ -848,6 +862,27 @@ def run_job(settings: Settings, job) -> None:
 
 _WORKERS: dict[str, threading.Thread] = {}
 _LOCK = threading.Lock()
+
+
+def _retire_when_idle(settings: Settings, key: str) -> bool:
+    """True when the queue is empty and this worker has been removed from `_WORKERS`."""
+    # Deciding to stop happens under the same lock that starts a
+    # worker, so a job enqueued at this instant either is seen here or
+    # starts a replacement thread; it cannot fall between the two.
+    with _LOCK:
+        if _pending(settings):
+            return False
+        _WORKERS.pop(key, None)
+        return True
+
+
+def _fail_crashed_job(settings: Settings, job) -> None:
+    """Mark a claimed job failed after its iteration crashed; an unclaimed one is left alone."""
+    if job is not None and job is not False:
+        try:
+            _finish(settings, job["id"], "failed", FAILED_ERROR)
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def _drain(settings: Settings, key: str) -> None:
@@ -861,23 +896,14 @@ def _drain(settings: Settings, key: str) -> None:
             if job is False:  # another worker took it first
                 continue
             if job is None:
-                # Deciding to stop happens under the same lock that starts a
-                # worker, so a job enqueued at this instant either is seen here or
-                # starts a replacement thread; it cannot fall between the two.
-                with _LOCK:
-                    if _pending(settings):
-                        continue
-                    _WORKERS.pop(key, None)
+                if _retire_when_idle(settings, key):
                     return
+                continue
             run_job(settings, job)
         except Exception as exc:  # noqa: BLE001
             # The class name only: a message or traceback can carry a file name, and file names carry patients' names.
             logger.error("intake: worker iteration failed: %s", type(exc).__name__)
-            if job is not None and job is not False:
-                try:
-                    _finish(settings, job["id"], "failed", "intake.failed_error")
-                except Exception:  # noqa: BLE001
-                    pass
+            _fail_crashed_job(settings, job)
             time.sleep(1)
 
 

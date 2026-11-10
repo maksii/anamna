@@ -144,6 +144,12 @@ def _regimen_view(mention: dict) -> dict:
     }
 
 
+def _stopped(first: str, day: str) -> tuple[str, str, str]:
+    # The document says when it was stopped, not when it was started.
+    started = first if first and first < day else ""
+    return "past", started, day
+
+
 def _status(kind: str, latest: dict, first: str, today: date) -> tuple[str, str, str]:
     """The status, start and end the latest mention suggests, as (status, started_on, ended_on).
 
@@ -159,9 +165,7 @@ def _status(kind: str, latest: dict, first: str, today: date) -> tuple[str, str,
     if latest["timing"] == "planned":
         return "prescribed", day, ""
     if latest["stopped"]:
-        # The document says when it was stopped, not when it was started.
-        started = first if first and first < day else ""
-        return "past", started, day
+        return _stopped(first, day)
     when = _day(day)
     if latest["duration_days"] > 0 and when is not None:
         ended = when + timedelta(days=latest["duration_days"])

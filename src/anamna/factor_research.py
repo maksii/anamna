@@ -66,7 +66,7 @@ DROPPED_SECTIONS = (
 _QUOTE_EDGE = " \t\n\"«»“”„'…"
 _WHITESPACE = re.compile(r"\s+")
 # A substance is a name, so a sentence's closing full stop is not part of it.
-_SUBSTANCE_TAIL = re.compile(r"[\s.]+\Z")
+_SUBSTANCE_TAIL = re.compile(r"(?<![\s.])[\s.]++\Z")
 
 _TEXT_OBJECT = {
     "type": "object",
@@ -104,7 +104,7 @@ REGIMEN_REPEATS = ("daily", "days", "weekly", "monthly")
 RESPONSE_FORMAT = ai._json_schema(
     "medicine_research",
     {
-        **{name: _TEXT_OBJECT for name in TEXT_FIELDS},
+        **{field: dict(_TEXT_OBJECT) for field in TEXT_FIELDS},
         "effects": {"type": "array", "maxItems": MAX_EFFECTS, "items": _EFFECT_OBJECT},
         "usual_regimen": _REGIMEN_OBJECT,
     },
@@ -170,6 +170,26 @@ def _fields(reply: dict, haystack: str) -> dict:
     return fields
 
 
+def _effect(item: dict, haystack: str, known: dict[str, str]) -> tuple[tuple[str, str], dict] | None:
+    """One effect from a reply item with the key that de-duplicates it; None when it has no label."""
+    analyte_id = str(item.get("analyte_id") or "").strip()
+    concept_id = analyte_id if analyte_id in known else None
+    label = str(item.get("label") or "").strip()[:LABEL_CHARS]
+    if not label and concept_id:
+        label = known[concept_id][:LABEL_CHARS]
+    if not label:
+        return None
+    key = ("concept", concept_id) if concept_id else ("label", label.casefold())
+    direction = item.get("direction")
+    return key, {
+        "concept_id": concept_id,
+        "label": label,
+        "direction": direction if direction in DIRECTIONS else "changes",
+        "note": str(item.get("note") or "").strip()[:NOTE_CHARS],
+        "quote": _checked(item.get("quote"), haystack),
+    }
+
+
 def _effects(reply: dict, haystack: str, known: dict[str, str]) -> list[dict]:
     effects: list[dict] = []
     seen: set[tuple[str, str]] = set()
@@ -178,25 +198,14 @@ def _effects(reply: dict, haystack: str, known: dict[str, str]) -> list[dict]:
             break
         if not isinstance(item, dict):
             continue
-        analyte_id = str(item.get("analyte_id") or "").strip()
-        concept_id = analyte_id if analyte_id in known else None
-        label = str(item.get("label") or "").strip()[:LABEL_CHARS]
-        if not label and concept_id:
-            label = known[concept_id][:LABEL_CHARS]
-        if not label:
+        found = _effect(item, haystack, known)
+        if found is None:
             continue
-        key = ("concept", concept_id) if concept_id else ("label", label.casefold())
+        key, effect = found
         if key in seen:
             continue
         seen.add(key)
-        direction = item.get("direction")
-        effects.append({
-            "concept_id": concept_id,
-            "label": label,
-            "direction": direction if direction in DIRECTIONS else "changes",
-            "note": str(item.get("note") or "").strip()[:NOTE_CHARS],
-            "quote": _checked(item.get("quote"), haystack),
-        })
+        effects.append(effect)
     return effects
 
 

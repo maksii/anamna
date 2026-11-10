@@ -56,6 +56,7 @@ REGIONS_TTL = timedelta(days=7)
 DEFAULT_REGION = "3201"  # Lviv
 _CATALOG_LIMIT = 64 * 1024 * 1024
 _TAG_RE = re.compile(r"<[^>]+>")
+_ERROR_REPLY = "labsync.error_reply"
 
 
 def _get(base_url: str, path: str, *, limit: int | None = None, timeout: int | None = None):
@@ -87,12 +88,64 @@ def regions(settings: Settings, base_url: str = SITE) -> list[dict]:
     def fetch():
         reply = _get(base_url, "/api/customers/getRegions")
         if not isinstance(reply, list):
-            raise LabSyncError("labsync.error_reply")
+            raise LabSyncError(_ERROR_REPLY)
         return sorted(({"id": str(row["idReg"]), "name": str(row.get("name") or "").strip()}
                        for row in reply if isinstance(row, dict) and row.get("idReg")),
                       key=lambda row: row["name"])
 
     return cached(settings, KEY, "", "regions", REGIONS_TTL, fetch)
+
+
+def _good_configs(good: dict) -> list[dict]:
+    return [c for c in good.get("configs") or [] if isinstance(c, dict) and c.get("id")]
+
+
+def _good_parameters(good: dict) -> list[dict]:
+    seen, parameters = set(), []
+    for parameter in good["parameters"]:
+        key = str(parameter.get("id"))
+        if key not in seen:
+            seen.add(key)
+            parameters.append({"id": key, "name": str(parameter.get("name") or "").strip()})
+    return parameters
+
+
+def _good_fees(good: dict) -> list[dict]:
+    return [{"id": str(take["id"]), "name": " ".join(str(take.get("name") or "").split()),
+             "price": _discounted(float(take.get("price") or 0), float(take.get("discount") or 0))}
+            for take in good.get("takes") or [] if isinstance(take, dict) and take.get("id")]
+
+
+def _good_sex(opts: set) -> str | None:
+    men, women = "forman" in opts, "forwoman" in opts
+    if men and not women:
+        return "M"
+    if women and not men:
+        return "F"
+    return None
+
+
+def _good_url(good: dict) -> str | None:
+    return SITE + good["path"] if str(good.get("path") or "").startswith("/") else None
+
+
+def _good_synonyms(info: dict) -> list[str]:
+    return [part.strip() for part in _plain(info.get("ua_synonyms")).split(",") if part.strip()]
+
+
+def _good_search_names(info: dict, good: dict) -> list[str]:
+    # Search-only names: the site's synonym line («Сироватковий феритин (Serum
+    # ferritin); Білок депо заліза») and the Russian name.  Kept apart from
+    # ``synonyms``, which testplan.keyed also resolves concepts by.
+    aka = [part.strip(" .") for part in re.split(r"[;,]", _plain(info.get("ua_synonyms_site"))) if len(part.strip(" .")) > 1]
+    aka += [" ".join(str(good.get("nameRu") or "").split())]
+    return list(dict.fromkeys(part for part in aka if part))[:30]
+
+
+def _good_materials(configs: list[dict]) -> list[str]:
+    materials = [" ".join(str(m.get("name") or "").split()) for m in configs[0].get("materials") or []
+                 if isinstance(m, dict) and str(m.get("name") or "").strip()]
+    return list(dict.fromkeys(materials))
 
 
 def item(good: dict) -> dict | None:
@@ -102,46 +155,33 @@ def item(good: dict) -> dict | None:
     price = float(good.get("price") or 0)
     if "notsale" in opts or price <= 0 or not good.get("parameters"):
         return None
-    configs = [c for c in good.get("configs") or [] if isinstance(c, dict) and c.get("id")]
+    configs = _good_configs(good)
     if not configs:
         return None
-    seen, parameters = set(), []
-    for parameter in good["parameters"]:
-        key = str(parameter.get("id"))
-        if key not in seen:
-            seen.add(key)
-            parameters.append({"id": key, "name": str(parameter.get("name") or "").strip()})
+    parameters = _good_parameters(good)
     discount = float(good.get("discount") or 0)
-    men, women = "forman" in opts, "forwoman" in opts
     info = good.get("info") or {}
-    synonyms = [part.strip() for part in _plain(info.get("ua_synonyms")).split(",") if part.strip()]
-    # Search-only names: the site's synonym line («Сироватковий феритин (Serum
-    # ferritin); Білок депо заліза») and the Russian name.  Kept apart from
-    # ``synonyms``, which testplan.keyed also resolves concepts by.
-    aka = [part.strip(" .") for part in re.split(r"[;,]", _plain(info.get("ua_synonyms_site"))) if len(part.strip(" .")) > 1]
-    aka += [" ".join(str(good.get("nameRu") or "").split())]
-    materials = [" ".join(str(m.get("name") or "").split()) for m in configs[0].get("materials") or []
-                 if isinstance(m, dict) and str(m.get("name") or "").strip()]
+    synonyms = _good_synonyms(info)
+    aka = _good_search_names(info, good)
+    materials = _good_materials(configs)
     return {
         "id": str(good["id"]),
         "code": str(good.get("code") or ""),
         "name": " ".join(str(good.get("name") or "").split()),
-        "url": SITE + good["path"] if str(good.get("path") or "").startswith("/") else None,
+        "url": _good_url(good),
         "price": _money(price),
         "final_price": _discounted(price, discount),
         "discount_pct": discount,
-        "fees": [{"id": str(take["id"]), "name": " ".join(str(take.get("name") or "").split()),
-                  "price": _discounted(float(take.get("price") or 0), float(take.get("discount") or 0))}
-                 for take in good.get("takes") or [] if isinstance(take, dict) and take.get("id")],
+        "fees": _good_fees(good),
         "parameters": parameters,
         "synonyms": synonyms[:30],
-        "aka": list(dict.fromkeys(part for part in aka if part))[:30],
-        "sex": "M" if men and not women else ("F" if women and not men else None),
+        "aka": aka,
+        "sex": _good_sex(opts),
         # Turnaround as the app prints it ("1 дн"); express tests give minutes.
         "days": int(good.get("duritionDay") or 0) or None,
         "minutes": int(good.get("durationMin") or 0) or None,
         # The sample the ordered variant (``configs[0]``) is taken from.
-        "material": list(dict.fromkeys(materials)),
+        "material": materials,
         "prep": prep(info, good.get("note")),
         "order": {"confId": str(configs[0]["id"])},
     }
@@ -261,6 +301,26 @@ def _details(settings: Settings, ids: list[str], base_url: str, *, fetch: bool) 
     return out
 
 
+def _catalog_items(reply: list) -> list[dict]:
+    items = []
+    for group in reply:
+        if isinstance(group, dict):
+            items.extend(_group_items(group))
+    return items
+
+
+def _group_items(group: dict) -> list[dict]:
+    # The lab's own shelves («Генетичні дослідження», «Пакетні
+    # пропозиції»): what testplan.item_kind tells sets from single tests by.
+    groups = [" ".join(str(name).split()) for name in (group.get("superGroupName"), group.get("name")) if name]
+    items = []
+    for good in group.get("goods") or []:
+        found = item(good) if isinstance(good, dict) else None
+        if found:
+            items.append({**found, "groups": groups})
+    return items
+
+
 def catalog(settings: Settings, region: str, base_url: str = SITE) -> list[dict]:
     """The whole price list of one city, as items; one request a day."""
     from ..testplan import cached
@@ -268,19 +328,8 @@ def catalog(settings: Settings, region: str, base_url: str = SITE) -> list[dict]
     def fetch():
         reply = _get(base_url, f"/api/site/price/get?regionId={digits(region)}", limit=_CATALOG_LIMIT, timeout=120)
         if not isinstance(reply, list):
-            raise LabSyncError("labsync.error_reply")
-        items = []
-        for group in reply:
-            if not isinstance(group, dict):
-                continue
-            # The lab's own shelves («Генетичні дослідження», «Пакетні
-            # пропозиції»): what testplan.item_kind tells sets from single tests by.
-            groups = [" ".join(str(name).split()) for name in (group.get("superGroupName"), group.get("name")) if name]
-            for good in group.get("goods") or []:
-                found = item(good) if isinstance(good, dict) else None
-                if found:
-                    items.append({**found, "groups": groups})
-        return items
+            raise LabSyncError(_ERROR_REPLY)
+        return _catalog_items(reply)
 
     return cached(settings, KEY, str(region), "catalog", CATALOG_TTL, fetch)
 
@@ -315,7 +364,7 @@ def points(settings: Settings, region: str, base_url: str = SITE) -> list[dict]:
     def fetch():
         reply = _get(base_url, "/api/customers/getPunkts")
         if not isinstance(reply, list):
-            raise LabSyncError("labsync.error_reply")
+            raise LabSyncError(_ERROR_REPLY)
         return [{"id": str(row.get("idPunkt") or row.get("id")), "city": str(row.get("idCity") or ""),
                  "address": " ".join(str(row.get("address") or "").split()),
                  "hours": " ".join(str(row.get("hWork") or "").split())}
@@ -369,7 +418,7 @@ def create_order(client, person_id: str, point_id: str, items: list[dict], *, on
     try:
         number = digits(number)
     except LabSyncError:
-        raise LabSyncError("labsync.error_reply") from None
+        raise LabSyncError(_ERROR_REPLY) from None
     return {"number": number, "payment_url": payment_link(client, number) if online else None}
 
 

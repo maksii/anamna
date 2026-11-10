@@ -565,6 +565,35 @@ class _Anthropic:
         self.messages.append({"role": "user", "content": blocks})
 
 
+def _function_calls(response) -> list[tuple[str, str, dict]]:
+    """The function calls a Responses API reply asks for, as (call id, name, arguments)."""
+    calls = []
+    for item in response.output or []:
+        if getattr(item, "type", "") == "function_call":
+            try:
+                arguments = json.loads(item.arguments or "{}")
+            except ValueError:
+                arguments = {}
+            calls.append((item.call_id, item.name, arguments))
+    return calls
+
+
+def _responses_finish(response) -> str:
+    """Why a Responses API reply stopped, in the words the rest of the chat uses."""
+    finish = "stop"
+    if getattr(response, "status", "") == "incomplete":
+        reason = str(getattr(getattr(response, "incomplete_details", None), "reason", "") or "")
+        finish = "length" if reason == "max_output_tokens" else (reason or "incomplete")
+    if getattr(response, "error", None):
+        finish = "error"
+    # A refusal arrives as a content part, not as an error; ai.py reads it the same way.
+    if any(getattr(part, "type", "") == "refusal"
+           for item in response.output or []
+           for part in getattr(item, "content", None) or []):
+        finish = "refusal"
+    return finish
+
+
 class _OpenAI:
     """Responses API.  ``store=False`` as everywhere else in this app, so a
     function call is replayed without the reasoning item it came with."""
@@ -574,7 +603,7 @@ class _OpenAI:
         self.system = system
         self.items: list[dict] = [dict(turn) for turn in turns]
 
-    def round(self, tools: list[Tool], emit: Callable[[str], None], final: bool, timeout: int) -> _Round:
+    def _request(self, tools: list[Tool], final: bool) -> dict:
         request: dict = {
             "model": self.route["model"],
             "instructions": self.system,
@@ -593,20 +622,17 @@ class _OpenAI:
             request["reasoning"] = {"effort": self.route["effort"]}
         if final:
             request["tool_choice"] = "none"
+        return request
+
+    def round(self, tools: list[Tool], emit: Callable[[str], None], final: bool, timeout: int) -> _Round:
+        request = self._request(tools, final)
         client = _openai_client(self.route["api_key"], timeout)
         with client.responses.stream(**request) as stream:
             for event in stream:
                 if event.type == "response.output_text.delta":
                     emit(event.delta)
             response = stream.get_final_response()
-        calls = []
-        for item in response.output or []:
-            if getattr(item, "type", "") == "function_call":
-                try:
-                    arguments = json.loads(item.arguments or "{}")
-                except ValueError:
-                    arguments = {}
-                calls.append((item.call_id, item.name, arguments))
+        calls = _function_calls(response)
         text = str(getattr(response, "output_text", "") or "")
         if text:
             self.items.append({"role": "assistant", "content": text})
@@ -615,17 +641,7 @@ class _OpenAI:
                 "type": "function_call", "call_id": call_id, "name": name,
                 "arguments": json.dumps(arguments, ensure_ascii=False),
             })
-        finish = "stop"
-        if getattr(response, "status", "") == "incomplete":
-            reason = str(getattr(getattr(response, "incomplete_details", None), "reason", "") or "")
-            finish = "length" if reason == "max_output_tokens" else (reason or "incomplete")
-        if getattr(response, "error", None):
-            finish = "error"
-        # A refusal arrives as a content part, not as an error; ai.py reads it the same way.
-        if any(getattr(part, "type", "") == "refusal"
-               for item in response.output or []
-               for part in getattr(item, "content", None) or []):
-            finish = "refusal"
+        finish = _responses_finish(response)
         usage = getattr(response, "usage", None)
         return _Round(
             text=text,
@@ -730,19 +746,28 @@ class _OpenRouter:
             result.prompt_tokens = int(usage.get("prompt_tokens") or 0)
             result.completion_tokens = int(usage.get("completion_tokens") or 0)
         for choice in chunk.get("choices") or []:
-            delta = choice.get("delta") or {}
-            if delta.get("content"):
-                result.text += delta["content"]
-                emit(delta["content"])
-            for part in delta.get("tool_calls") or []:
-                slot = pending.setdefault(int(part.get("index") or 0), {"id": "", "name": "", "arguments": ""})
-                slot["id"] = part.get("id") or slot["id"]
-                function = part.get("function") or {}
-                slot["name"] += function.get("name") or ""
-                slot["arguments"] += function.get("arguments") or ""
-            if choice.get("finish_reason"):
-                reason = str(choice["finish_reason"])
-                result.finish = "stop" if reason == "tool_calls" else reason
+            _OpenRouter._choice(choice, result, pending, emit)
+
+    @staticmethod
+    def _choice(choice: dict, result: _Round, pending: dict[int, dict], emit: Callable[[str], None]) -> None:
+        delta = choice.get("delta") or {}
+        if delta.get("content"):
+            result.text += delta["content"]
+            emit(delta["content"])
+        _OpenRouter._tool_deltas(delta, pending)
+        if choice.get("finish_reason"):
+            reason = str(choice["finish_reason"])
+            result.finish = "stop" if reason == "tool_calls" else reason
+
+    @staticmethod
+    def _tool_deltas(delta: dict, pending: dict[int, dict]) -> None:
+        """Add one streamed chunk's pieces of each tool call to its slot."""
+        for part in delta.get("tool_calls") or []:
+            slot = pending.setdefault(int(part.get("index") or 0), {"id": "", "name": "", "arguments": ""})
+            slot["id"] = part.get("id") or slot["id"]
+            function = part.get("function") or {}
+            slot["name"] += function.get("name") or ""
+            slot["arguments"] += function.get("arguments") or ""
 
     def add_results(self, results: list[tuple[str, str, str]]) -> None:
         self.messages += [
@@ -776,6 +801,95 @@ class ChatFailed(AIUnavailable):
         self.tokens = tokens
 
 
+class _Turn:
+    """One answer under way: its model rounds, what it has written and what it has spent."""
+
+    def __init__(self, settings: Settings, route: dict, adapter, tools: dict[str, Tool],
+                 on_text: Callable[[str], None], on_tool: Callable[[dict], None], timeout: int):
+        self.settings = settings
+        self.route = route
+        self.adapter = adapter
+        self.tools = tools
+        self.on_text = on_text
+        self.on_tool = on_tool
+        self.timeout = timeout
+        self.written: list[str] = []
+        self.used: list[dict] = []
+        self.model: str = route["model"]
+        self.lookups = 0
+        self.tool_chars = 0
+        self.tokens = [0, 0, 0]
+        self.exhausted = False
+
+    def emit(self, text: str) -> None:
+        self.written.append(text)
+        self.on_text(text)
+
+    def run(self) -> Answer:
+        for index in range(MAX_ROUNDS):
+            final = self.exhausted or index == MAX_ROUNDS - 1
+            if self.written and not "".join(self.written).endswith("\n"):
+                self.emit("\n\n")  # text from two rounds must not run together
+            result = self._round(final)
+            if not result.calls:
+                if not "".join(self.written).strip():
+                    raise _failure(AIUnavailable("provider_error", "empty answer"), self.written, self.model,
+                                   self.used, self.tokens)
+                return Answer("".join(self.written).strip(), self.model, self.used, tuple(self.tokens))
+            self._run_calls(result.calls)
+        # The final round is sent with tools off; a model that still asked for one
+        # answered with whatever text it wrote.
+        return Answer("".join(self.written).strip(), self.model, self.used, tuple(self.tokens))
+
+    def _round(self, final: bool) -> _Round:
+        """One provider round, with its usage settled; a stopped round raises."""
+        route = self.route
+        try:
+            usage_id = reserve_usage(self.settings, FEATURE, route["provider"], route["model"],
+                                     daily_cap=route["daily_cap"])
+        except AIUnavailable as exc:
+            raise _failure(exc, self.written, self.model, self.used, self.tokens) from exc
+        started = time.monotonic()
+        try:
+            result = self.adapter.round(list(self.tools.values()), self.emit, final, self.timeout)
+        except Exception as exc:
+            cause = exc if isinstance(exc, AIUnavailable) else _sdk_error(exc)
+            settle_usage(self.settings, usage_id, ok=False, duration_ms=_ms(started), error=cause.detail or cause.reason)
+            raise _failure(cause, self.written, self.model, self.used, self.tokens) from exc
+        self.model = result.model or self.model
+        self.tokens = [self.tokens[0] + result.prompt_tokens, self.tokens[1] + result.completion_tokens,
+                       result.prompt_tokens]
+        stopped = result.finish in _STOPPED
+        settle_usage(
+            self.settings, usage_id, ok=not stopped, model=result.model,
+            prompt_tokens=result.prompt_tokens, completion_tokens=result.completion_tokens,
+            duration_ms=_ms(started), error=f"generation stopped with finish_reason={result.finish}" if stopped else "",
+        )
+        if stopped:
+            reason = "truncated" if result.finish == "length" else "provider_error"
+            raise _failure(AIUnavailable(reason, result.finish), self.written, self.model, self.used, self.tokens)
+        return result
+
+    def _run_calls(self, calls: list[tuple[str, str, dict]]) -> None:
+        """Run the tools a round asked for, within this answer's lookup budget."""
+        outputs = []
+        for call_id, name, arguments in calls:
+            if self.lookups >= MAX_LOOKUPS or self.tool_chars >= TURN_TOOL_CHARS:
+                self.exhausted = True
+                outputs.append((call_id, name, _NOT_RUN))
+                continue
+            tool = self.tools.get(name)
+            event = {"name": name, "detail": tool.detail(arguments) if tool else ""}
+            self.on_tool(event)
+            self.used.append(event)
+            text = run_tool(self.tools, name, arguments)
+            self.lookups += 1
+            self.tool_chars += len(text)
+            outputs.append((call_id, name, text))
+        self.exhausted = self.exhausted or self.lookups >= MAX_LOOKUPS or self.tool_chars >= TURN_TOOL_CHARS
+        self.adapter.add_results(outputs)
+
+
 def respond(
     settings: Settings,
     *,
@@ -800,66 +914,7 @@ def respond(
         raise AIUnavailable("provider_error", f"unknown provider {route['provider']!r}")
     timeout = 120 if route["provider"] in PAID_PROVIDERS else 90
     adapter = adapter_class(route, system, turns)
-    written: list[str] = []
-    used: list[dict] = []
-    model = route["model"]
-
-    def emit(text: str) -> None:
-        written.append(text)
-        on_text(text)
-
-    lookups = tool_chars = 0
-    tokens = [0, 0, 0]
-    exhausted = False
-    for index in range(MAX_ROUNDS):
-        final = exhausted or index == MAX_ROUNDS - 1
-        if written and not "".join(written).endswith("\n"):
-            emit("\n\n")  # text from two rounds must not run together
-        try:
-            usage_id = reserve_usage(settings, FEATURE, route["provider"], route["model"], daily_cap=route["daily_cap"])
-        except AIUnavailable as exc:
-            raise _failure(exc, written, model, used, tokens) from exc
-        started = time.monotonic()
-        try:
-            result = adapter.round(list(tools.values()), emit, final, timeout)
-        except Exception as exc:
-            cause = exc if isinstance(exc, AIUnavailable) else _sdk_error(exc)
-            settle_usage(settings, usage_id, ok=False, duration_ms=_ms(started), error=cause.detail or cause.reason)
-            raise _failure(cause, written, model, used, tokens) from exc
-        model = result.model or model
-        tokens = [tokens[0] + result.prompt_tokens, tokens[1] + result.completion_tokens, result.prompt_tokens]
-        stopped = result.finish in _STOPPED
-        settle_usage(
-            settings, usage_id, ok=not stopped, model=result.model,
-            prompt_tokens=result.prompt_tokens, completion_tokens=result.completion_tokens,
-            duration_ms=_ms(started), error=f"generation stopped with finish_reason={result.finish}" if stopped else "",
-        )
-        if stopped:
-            reason = "truncated" if result.finish == "length" else "provider_error"
-            raise _failure(AIUnavailable(reason, result.finish), written, model, used, tokens)
-        if not result.calls:
-            if not "".join(written).strip():
-                raise _failure(AIUnavailable("provider_error", "empty answer"), written, model, used, tokens)
-            return Answer("".join(written).strip(), model, used, tuple(tokens))
-        outputs = []
-        for call_id, name, arguments in result.calls:
-            if lookups >= MAX_LOOKUPS or tool_chars >= TURN_TOOL_CHARS:
-                exhausted = True
-                outputs.append((call_id, name, _NOT_RUN))
-                continue
-            tool = tools.get(name)
-            event = {"name": name, "detail": tool.detail(arguments) if tool else ""}
-            on_tool(event)
-            used.append(event)
-            text = run_tool(tools, name, arguments)
-            lookups += 1
-            tool_chars += len(text)
-            outputs.append((call_id, name, text))
-        exhausted = exhausted or lookups >= MAX_LOOKUPS or tool_chars >= TURN_TOOL_CHARS
-        adapter.add_results(outputs)
-    # The final round is sent with tools off; a model that still asked for one
-    # answered with whatever text it wrote.
-    return Answer("".join(written).strip(), model, used, tuple(tokens))
+    return _Turn(settings, route, adapter, tools, on_text, on_tool, timeout).run()
 
 
 _NOT_RUN = ("Not run: this answer has used its lookups. Answer with what you have read, "

@@ -51,7 +51,7 @@ _FALLBACK = "{http://schemas.openxmlformats.org/markup-compatibility/2006}Fallba
 
 def _number(text: object) -> str:
     """«1.0000 саше» as the clinic means it: «1 саше» (its system pads to four places)."""
-    return re.sub(r"(\d+)\.(\d*?)0+(?!\d)", lambda m: m[1] + ("." + m[2] if m[2] else ""), str(text or "").strip())
+    return re.sub(r"(?<!\d)(\d\d*+)\.((?:0*+[1-9])*+)0++(?!\d)", lambda m: m[1] + ("." + m[2] if m[2] else ""), str(text or "").strip())
 
 
 def _medication(item: dict) -> str:
@@ -152,31 +152,33 @@ def is_docx(data: bytes) -> bool:
         return False
 
 
+def _collect_paragraphs(node, inside: list | None, lines: list[str]) -> None:
+    """Walk ``node``: its text goes into ``inside``, and each paragraph is
+    appended to ``lines`` once its text is complete."""
+    if node.tag == _FALLBACK:
+        return
+    if node.tag == f"{_W}p":
+        parts: list[str] = []
+        for child in node:
+            _collect_paragraphs(child, parts, lines)
+        lines.append("".join(parts))
+        return
+    if inside is not None:
+        if node.tag == f"{_W}t":
+            inside.append(node.text or "")
+        elif node.tag == f"{_W}tab":
+            inside.append(" ")
+        elif node.tag in (f"{_W}br", f"{_W}cr"):
+            inside.append("\n")
+    for child in node:
+        _collect_paragraphs(child, inside, lines)
+
+
 def _paragraphs(element) -> list[str]:
     """Each paragraph's text in reading order.  A text box is stored twice
     (the drawing and its legacy fallback); the fallback is skipped."""
     lines: list[str] = []
-
-    def walk(node, inside: list | None):
-        if node.tag == _FALLBACK:
-            return
-        if node.tag == f"{_W}p":
-            parts: list[str] = []
-            for child in node:
-                walk(child, parts)
-            lines.append("".join(parts))
-            return
-        if inside is not None:
-            if node.tag == f"{_W}t":
-                inside.append(node.text or "")
-            elif node.tag == f"{_W}tab":
-                inside.append(" ")
-            elif node.tag in (f"{_W}br", f"{_W}cr"):
-                inside.append("\n")
-        for child in node:
-            walk(child, inside)
-
-    walk(element, None)
+    _collect_paragraphs(element, None, lines)
     return lines
 
 

@@ -230,11 +230,13 @@ ORDER_PATTERNS = [
     # client's name, which OCR reads as «WK».
     r"(?<!\w)(?:ШК|WK)\s+(\d{10})\b",
 ]
+#: What OCR leaves around a spoilt heading: marks, and at most one scrap of up to three letters.
+_OCR_DEBRIS = r"\W*(?:\w{1,3}\W*)?"
 #: BD FocalPoint's cytology passport printed beside a PAP test: micrographs
 #: and method text, no result of its own.  Its heading reaches OCR spoilt
 #: («ui итологічний паспо ee»); the line naming the images does not.
 CYTOLOGY_PASSPORT_RE = re.compile(
-    r"індивідуальні цифрові зображення|^\W*\w{0,3}\W*\w?итологічний\s+паспо\w*\W*\w{0,3}\W*$", re.I | re.M)
+    rf"індивідуальні цифрові зображення|^{_OCR_DEBRIS}\w?итологічний\s+паспо\w*{_OCR_DEBRIS}$", re.I | re.M)
 #: How lab sync names a laboratory's download: «esculab-<order>.pdf»,
 #: «synevo-<barcode>-1.pdf», «expert-<order>.pdf».  The number is the lab's
 #: own order id, the one to fall back on when the page prints none.  Files
@@ -718,7 +720,7 @@ def _with_wrapped_tail(heading: str, following_lines: list[str]) -> str:
 #: the result starts.
 ESCULAB_TEST_RE = re.compile(r"^\d+\.\s+(?![A-Z]\d{4}\s)(\S.*)$")
 ESCULAB_RESULT_START_RE = re.compile(
-    r"\s+(?:[<>≤≥]?\s?\d|не виявлено|виявлено|від`ємна|негативний|позитивний)", re.I
+    r"(?<!\s)\s++(?:(?:[<>≤≥]\s?)?\d|не виявлено|виявлено|від`ємна|негативний|позитивний)", re.I
 )
 #: The next line may finish the name: «(СА-125)», «(АМГ, AMH Advanced) сироватка
 #: крові …», «трансглютамінази (t-TG), ELiA …» -- a bracket, after at most one
@@ -752,6 +754,32 @@ def _esculab_test_name(line: str, following: str) -> str | None:
     return name or None
 
 
+def _esculab_heading_match(lines: list[str], index: int) -> re.Match[str] | None:
+    match = ESCULAB_HEADING_RE.match(lines[index])
+    if not match and index and lines[index - 1].startswith(ESCULAB_FORM_HEADER):
+        match = ESCULAB_FORM_HEADING_RE.match(lines[index])
+    return match
+
+
+def _esculab_bare_test(line: str, following: list[str], numbered_tests: bool) -> str | None:
+    if not numbered_tests:
+        return None
+    return _esculab_test_name(line, following[0] if following else "")
+
+
+def _esculab_result_elsewhere(lines: list[str], index: int) -> bool:
+    return any(ESCULAB_RESULT_ELSEWHERE_RE.search(item) for item in lines[index + 1:index + 4])
+
+
+def _esculab_names(headings: list[str], tests: list[str]) -> list[str]:
+    names: list[str] = []
+    for heading in headings:
+        name = re.sub(r"^Пакет\s*№\s*[\d.]+\.?\s*", "", heading).strip(" .")
+        if name and name not in names:
+            names.append(name)
+    return names + [test for test in tests if test not in names]
+
+
 def _esculab_title(lines: list[str]) -> str | None:
     # An Esculab order prints one coded heading per panel («2. F2005 Пакет №6.
     # Ліпідограма», «1. F5000 Коагулограма»).  The first "Пакет" line named a
@@ -764,28 +792,21 @@ def _esculab_title(lines: list[str]) -> str | None:
     tests: list[str] = []
     numbered_tests = any(line.startswith("Результати дослідження №") for line in lines)
     for index, line in enumerate(lines):
-        match = ESCULAB_HEADING_RE.match(line)
-        if not match and index and lines[index - 1].startswith(ESCULAB_FORM_HEADER):
-            match = ESCULAB_FORM_HEADING_RE.match(line)
+        match = _esculab_heading_match(lines, index)
         following = lines[index + 1:index + 3]
         if not match:
-            name = _esculab_test_name(line, following[0] if following else "") if numbered_tests else None
+            name = _esculab_bare_test(line, following, numbered_tests)
             if name and name not in tests:
                 tests.append(name)
             continue
-        if any(ESCULAB_RESULT_ELSEWHERE_RE.search(item) for item in lines[index + 1:index + 4]):
+        if _esculab_result_elsewhere(lines, index):
             continue
         heading = _with_wrapped_tail(match.group(1), following)
         if heading not in headings:
             headings.append(heading)
     if len(headings) + len(tests) <= 1:
         return (headings or tests or [None])[0]
-    names: list[str] = []
-    for heading in headings:
-        name = re.sub(r"^Пакет\s*№\s*[\d.]+\.?\s*", "", heading).strip(" .")
-        if name and name not in names:
-            names.append(name)
-    return joined_title(names + [test for test in tests if test not in names])
+    return joined_title(_esculab_names(headings, tests))
 
 
 def _heading_block_title(lines: list[str]) -> str | None:
@@ -858,6 +879,29 @@ def _synevo_row_names(lines: list[str]) -> list[str]:
     return list(dict.fromkeys(row.raw_name for row in parse_unit_rows("\n".join(lines), 1)))
 
 
+def _synevo_header_section(lines: list[str], index: int) -> tuple[str, list[str] | None, bool]:
+    """The section named under the table header on line `index`.
+
+    A department gives the test heading under it instead, and the third item
+    says so.  Results printed straight under a department come back as the
+    second item, as the names of those results.
+    """
+    section = _strip_synevo_city(_synevo_heading(lines, index + 1))
+    if section in SYNEVO_DEPARTMENTS and index + 2 < len(lines):
+        test = _synevo_test_heading(lines, index + 2)
+        if test is None:
+            # Results straight under the department: the paper holds those
+            # tests, and «Імунохімія» named none of them.
+            return section, _synevo_row_names(lines[index + 2 :]) or [section], False
+        return test, None, True
+    return section, None, False
+
+
+def _synevo_add_section(sections: list[str], section: str) -> None:
+    if section and section not in sections:
+        sections.append(section)
+
+
 def _synevo_sections(lines: list[str]) -> list[str]:
     """The section under the first table header, or the tests under a department.
 
@@ -876,16 +920,11 @@ def _synevo_sections(lines: list[str]) -> list[str]:
             if department:
                 continue
             break
-        section = _strip_synevo_city(_synevo_heading(lines, index + 1))
-        if section in SYNEVO_DEPARTMENTS and index + 2 < len(lines):
-            test = _synevo_test_heading(lines, index + 2)
-            if test is None:
-                # Results straight under the department: the paper holds those
-                # tests, and «Імунохімія» named none of them.
-                return _synevo_row_names(lines[index + 2 :]) or [section]
-            department, section = True, test
-        if section and section not in sections:
-            sections.append(section)
+        section, rows, under_department = _synevo_header_section(lines, index)
+        if rows is not None:
+            return rows
+        department = department or under_department
+        _synevo_add_section(sections, section)
         if not department:
             break
     return sections
@@ -943,7 +982,7 @@ def _synevo_companion_title(text: str) -> str | None:
 
 #: A POLYCHECK chip prints its panel beside the patient's surname: «<surname>
 #: Харчова 20-I».  The labels are images; the panel name is the last two words.
-POLYCHECK_PANEL_RE = re.compile(r"(\S+\s+\d+-[IVX]+)$")
+POLYCHECK_PANEL_RE = re.compile(r"(?<!\S)(\S++\s++\d++-[IVX]++)$")
 #: Latin letters POLYCHECK's software writes inside Cyrillic words («Харчовa»).
 LATIN_HOMOGLYPHS = str.maketrans("aceiopxyABCEHIKMOPTX", "асеіорхуАВСЕНІКМОРТХ")
 
@@ -1008,7 +1047,7 @@ XRAY_HEADING_RE = re.compile(r"^(?:рентгенологічне дослідж
 BODY_REGION_RE = re.compile(r"^(?:Ділянка (?:обстеження|тіла):|Область(?= Рентген))\s*+(.+)$")
 #: The same line from a phone photo, the label behind debris and its first
 #: word garbled («сен Область Pentre: нографія ОГК (дві проекції)»).
-XRAY_AREA_RE = re.compile(r"\bОбласть\s+\S{0,8}?:?\s*нографія\s+(.+)$")
+XRAY_AREA_RE = re.compile(r"\bОбласть\s++\S{0,8}?:?\s*+нографія\s++(.+)$")
 
 
 def _without_ocr_echo(value: str) -> str:
@@ -1027,7 +1066,9 @@ def _without_ocr_echo(value: str) -> str:
 #: The clinic's addresses and phone, which Expert's vessel protocol prints in
 #: a column beside its heading: «Ультразвукове обстеження вул. Кульпарківська,
 #: 64 А» / «гілок дуги аорти Тел: 097 …».
-LETTERHEAD_COLUMN_RE = re.compile(r"вул\.\s*[^,\n]+,\s*\d+(?:\s*[А-ЯA-Z](?![^\W\d_]))?|\bТел\s*:.*$")
+_LETTERHEAD_STREET = r"вул\.\s*+[^,\n]+,\s*\d+(?:\s*[А-ЯA-Z](?![^\W\d_]))?"
+_LETTERHEAD_PHONE = r"\bТел\s*:.*$"
+LETTERHEAD_COLUMN_RE = re.compile(rf"(?:{_LETTERHEAD_STREET})|(?:{_LETTERHEAD_PHONE})")
 
 
 def _ultrasound_subject(match: re.Match[str], tail: list[str]) -> str:
@@ -1042,8 +1083,8 @@ def _ultrasound_subject(match: re.Match[str], tail: list[str]) -> str:
         # The vessel protocol's heading wraps among the address lines; its
         # tail is the next lower-case remainder («аорти», «гілок дуги аорти»).
         parts = [LETTERHEAD_COLUMN_RE.sub("", parts[0]).strip()]
-        for following in tail:
-            rest = LETTERHEAD_COLUMN_RE.sub("", following).strip()
+        for line in tail:
+            rest = LETTERHEAD_COLUMN_RE.sub("", line).strip()
             if rest:
                 if re.match(r"[а-яіїєґ][^:\d]*$", rest) and len(rest.split()) <= 4:
                     parts.append(rest)
@@ -1092,7 +1133,11 @@ INMED_HEADING_RE = re.compile(
 #: Ultramed's subject line under «Протокол ультразвукового обстеження»:
 #: «Обстеження шлунково кишкового тракту (ШКТ)», «Ультрасонографічне
 #: обстеження скронево-нижньощелепних суглобів» / «та жувальних м'язів».
-STUDY_SUBJECT_RE = re.compile(r"^(?:ультрасонографічне\s+)?обстеження\s+([а-яіїєґ'’ -]{6,}?)\s*(?:\(.*)?$", re.I)
+#: The subject is the shortest run of at least six letters, spaces and hyphens
+#: that leaves only spaces and an optional bracket after it, so a five-letter
+#: word keeps the space after it («серця (ЕхоКГ)»).  The text is one heading line.
+_STUDY_SUBJECT = r"([а-яіїєґ'’ -]{6,}?)"
+STUDY_SUBJECT_RE = re.compile(rf"^(?:ультрасонографічне\s+)?обстеження\s+{_STUDY_SUBJECT}\s*+(?:\(.*)?$", re.I)
 
 
 def _study_subject_title(lines: list[str]) -> str | None:
@@ -1105,7 +1150,7 @@ def _study_subject_title(lines: list[str]) -> str | None:
             words = subject.split()
             while len(words) > 1 and len(words[-1]) == 1:
                 words.pop()  # «та жувальних м'язів i»: a mark read as a letter
-            subject = re.sub(r"шлунково\s*-?\s*кишков", "шлунково-кишков", " ".join(words))
+            subject = re.sub(r"шлунково\s*(?:-\s*)?кишков", "шлунково-кишков", " ".join(words))
             return f"УЗД {subject}"
     return None
 
@@ -1147,17 +1192,23 @@ def _mri_title(lines: list[str]) -> str | None:
     return None
 
 
+def _xray_line_region(line: str) -> str | None:
+    match = BODY_REGION_RE.match(line)
+    garbled = None if match else XRAY_AREA_RE.search(line)
+    if match or garbled:
+        return _without_ocr_echo(
+            _strip_truncated_tail(match.group(1) if match else f"Рентгенографія {garbled.group(1)}")
+        )
+    return None
+
+
 def _xray_title(lines: list[str]) -> str | None:
     heading = None
     for line in lines:
         if XRAY_HEADING_RE.match(line):
             heading = heading or line
-        match = BODY_REGION_RE.match(line)
-        garbled = None if match else XRAY_AREA_RE.search(line)
-        if match or garbled:
-            region = _without_ocr_echo(
-                _strip_truncated_tail(match.group(1) if match else f"Рентгенографія {garbled.group(1)}")
-            )
+        region = _xray_line_region(line)
+        if region is not None:
             if "рентген" in region.casefold() or not heading:
                 return region
             return f"{heading} - {region}"
@@ -1255,7 +1306,7 @@ BREATH_REPORT_HEADING_RE = re.compile(r"^Консультативний висн
 SIBO_RE = re.compile(r"надмірного\s+(?:\S{1,6}\s+){0,2}бактерійного\s+росту", re.I)
 SIBO_TITLE = "Дихальний тест на визначення надмірного бактерійного росту у кишківнику"
 #: An eHealth diagnostic report: «ДІАГНОСТИЧНИЙ ЗВІТ за послугою» over the service.
-SERVICE_REPORT_RE = re.compile(r"^діагностичний звіт за послугою:?\s*(.*)$", re.I)
+SERVICE_REPORT_RE = re.compile(r"^діагностичний звіт за послугою:?\s*+(.*)$", re.I)
 
 
 def _breath_test_title(text: str, lines: list[str]) -> str | None:
@@ -1263,7 +1314,7 @@ def _breath_test_title(text: str, lines: list[str]) -> str | None:
         if BREATH_REPORT_HEADING_RE.match(line):
             heading = _with_wrapped_tail(line, lines[index + 1 : index + 2])
             # «тесту Ha» is «на» read in Latin letters.
-            return re.sub(r"\s+Ha(?=\s)", " на", heading).rstrip(" .")
+            return re.sub(r"(?<!\s)\s\s*+Ha(?=\s)", " на", heading).rstrip(" .")
     return SIBO_TITLE if SIBO_RE.search(text) else None
 
 
@@ -1280,11 +1331,23 @@ def _questionnaire_title(text: str, lines: list[str]) -> str | None:
     """The scale by its own name: OCR reads the quoted «NICHQ» as «ХІСНО»."""
     folded = text.casefold()
     if "vanderbilt" in folded:
-        form = re.search(r"vanderbilt\W{0,4}\s*-?\s*форма\s+([AАBВ])\b", text, re.I)
+        form = re.search(r"vanderbilt\W{0,4}\s*(?:-\s*)?форма\s+([AАBВ])\b", text, re.I)
         return "Опитувальник NICHQ Vanderbilt" + (f" (форма {form.group(1)})" if form else "")
     if re.search(r"\basrs\b", folded):
         return "Опитувальник ASRS"
     return next((line for line in lines[:10] if re.match(r"опитувальник\b", line, re.I)), None)
+
+
+def _immunization_title(text: str) -> str | None:
+    if re.search(r"карта профілактичних щеплень", text, re.I):
+        return "Карта профілактичних щеплень"
+    return RABIES_CARD_TITLE if _is_rabies_card(text.casefold()) else None
+
+
+def _report_title(text: str, lines: list[str]) -> str | None:
+    if DISCHARGE_027_RE.search(text.casefold()):
+        return DISCHARGE_027_TITLE
+    return _breath_test_title(text, lines) or _service_report_title(lines)
 
 
 def _typed_title(text: str, lines: list[str], clinical_type: str) -> str | None:
@@ -1296,18 +1359,14 @@ def _typed_title(text: str, lines: list[str], clinical_type: str) -> str | None:
     if clinical_type == "allergy":
         return _allergy_title(text)
     if clinical_type == "immunization_record":
-        if re.search(r"карта профілактичних щеплень", text, re.I):
-            return "Карта профілактичних щеплень"
-        return RABIES_CARD_TITLE if _is_rabies_card(text.casefold()) else None
+        return _immunization_title(text)
     if clinical_type == "questionnaire":
         return _questionnaire_title(text, lines)
     if clinical_type == "administrative":
         consent = CONSENT_TITLE_RE.search(text)
         return consent.group(0) if consent else None
     if clinical_type == "clinical_report":
-        if DISCHARGE_027_RE.search(text.casefold()):
-            return DISCHARGE_027_TITLE
-        return _breath_test_title(text, lines) or _service_report_title(lines)
+        return _report_title(text, lines)
     if clinical_type == "ultrasound":
         return _ultrasound_title(lines)
     if clinical_type in {"radiology_mri", "radiology_xray"}:
@@ -1315,15 +1374,20 @@ def _typed_title(text: str, lines: list[str], clinical_type: str) -> str | None:
     return None
 
 
-def extract_title(text: str, filename: str, clinical_type: str) -> str:
+def _clinic_title(text: str, clinic: re.Match[str]) -> str:
+    # The clinic's own name for the document outranks a heading guessed
+    # from its text («Консультація лікаря-кардіолога», not the first
+    # finding line of the ultrasound it quotes) -- except a study the
+    # report prints at its head: the clinic filed an EEG as «Огляд лікаря».
+    study = next((line for line in text.splitlines()[:5] if STUDY_CONCLUSION_RE.match(line.strip())), None)
+    return clean_title(study) if study else clinic["title"][:240]
+
+
+def _named_title(text: str, filename: str, clinical_type: str) -> str | None:
+    """The title that the file name or the kind of document settles before any heading is read."""
     clinic = CLINIC_FILENAME_RE.match(Path(filename).stem)
     if clinic:
-        # The clinic's own name for the document outranks a heading guessed
-        # from its text («Консультація лікаря-кардіолога», not the first
-        # finding line of the ultrasound it quotes) -- except a study the
-        # report prints at its head: the clinic filed an EEG as «Огляд лікаря».
-        study = next((line for line in text.splitlines()[:5] if STUDY_CONCLUSION_RE.match(line.strip())), None)
-        return clean_title(study) if study else clinic["title"][:240]
+        return _clinic_title(text, clinic)
     if clinical_type == "diagnostic_image":
         # A photo of a results print the reader leaves as an image still
         # names its tests («ПАП-тест методом рідинної цитології»).
@@ -1333,6 +1397,13 @@ def extract_title(text: str, filename: str, clinical_type: str) -> str:
         return "Kardia 6-lead ECG recording" if "6l recording" in text.casefold() else "Kardia ECG recording"
     if clinical_type == "pathology" and CYTOLOGY_PASSPORT_RE.search(text):
         return "Цитологічний паспорт"
+    return None
+
+
+def extract_title(text: str, filename: str, clinical_type: str) -> str:
+    named = _named_title(text, filename, clinical_type)
+    if named is not None:
+        return named
     lines = [line for line in (collapse_space(raw) for raw in text.splitlines()) if line]
     candidates = (
         lambda: _esculab_title(lines),
@@ -1375,6 +1446,7 @@ def _without_patient_name(stem: str, text: str) -> str:
 
 
 UNKNOWN_VENDOR = "Unknown vendor"
+_SILAB_SYSTEM = "інформаційної системи silab"
 
 #: (text tokens, filename tokens, PDF producer tokens, vendor, website), in
 #: order: the first rule any token of which is present names the vendor.
@@ -1389,7 +1461,7 @@ _VENDOR_RULES: tuple[tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], st
     # уваги» of its result table, and the footer naming its information
     # system, SILAB, on the printouts that print one.
     (
-        ("сінево", "synevo", "індикатор зони підвищеної уваги", "інформаційної системи silab"),
+        ("сінево", "synevo", "індикатор зони підвищеної уваги", _SILAB_SYSTEM),
         ("__synevo__", "synevo-"), (), "Synevo", "https://www.synevo.ua",
     ),
     (("esculab.com", "елаб"), ("__eskulab__", "esculab-", "eskulab-"), ("Apache FOP",), "Esculab", "https://esculab.com"),
@@ -1457,7 +1529,7 @@ LABORATORY_TOKENS = (
     # The partner clinic «Мати та дитина» prints its results out of SILAB, its
     # laboratory information system, which every page's footer names; read
     # from a scan, the heading and the table header are often lost to OCR.
-    "інформаційної системи silab",
+    _SILAB_SYSTEM,
     "видача результатів аналізів",
     "референтний інтервал",
 )
@@ -1471,7 +1543,7 @@ RESULT_PRESENT_TOKENS = (
     "антитіла відсутні",
     # A SILAB print's table header, a smear's closing grade, and the footer
     # of a print that is the results themselves.
-    "референтний інтервал", "ступінь чистоти", "інформаційної системи silab",
+    "референтний інтервал", "ступінь чистоти", _SILAB_SYSTEM,
 )
 RESULT_TYPES = frozenset({"laboratory", "microbiology", "allergy"})
 
@@ -1568,7 +1640,7 @@ ORGAN_SECTION_RE = re.compile(
     re.M,
 )
 #: A questionnaire someone filled in: the screening scale's own heading or name.
-QUESTIONNAIRE_RE = re.compile(r"^[^\w\n]{0,3}опитувальник\b|vanderbilt|\basrs\b", re.M)
+QUESTIONNAIRE_RE = re.compile(r"vanderbilt|^[^\w\n]{0,3}опитувальник\b|\basrs\b", re.M)
 #: Consent forms («Згода на обробку персональних даних», form 003-6/о
 #: «Інформована добровільна згода пацієнта»): paperwork, not a finding.
 CONSENT_RE = re.compile(
@@ -1657,6 +1729,11 @@ def _clinical_type(filename: str, mime_type: str, text: str, folded: str) -> str
     return clinical_type
 
 
+_BREATH_TEST = r"дихальн\w*\s+(?:\w{1,3}\s+)?(?:уреазн\w*\s+)?тест"
+_TEST_DATE = r"дата\s+проведення\s+тесту"
+_BREATH_TEST_RE = re.compile(rf"{_BREATH_TEST}|{_TEST_DATE}")
+
+
 def _content_type(filename: str, mime_type: str, folded: str) -> str:
     if QUESTIONNAIRE_RE.search(folded):
         clinical_type = "questionnaire"
@@ -1678,7 +1755,7 @@ def _content_type(filename: str, mime_type: str, folded: str) -> str:
         clinical_type = "clinical_report"
     elif _any_in(folded, LABORATORY_TOKENS):
         clinical_type = "laboratory"
-    elif re.search(r"дихальн\w*\s+(?:\w{1,3}\s+)?(?:уреазн\w*\s+)?тест|дата\s+проведення\s+тесту", folded):
+    elif _BREATH_TEST_RE.search(folded):
         # A breath test's written result, photographed or not (a visit note
         # quoting one was taken as a consultation above).
         clinical_type = "clinical_report"

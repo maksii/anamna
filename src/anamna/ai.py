@@ -206,6 +206,15 @@ def _int_between(value: object, low: int, high: int, default: int) -> int:
     return max(low, min(high, number))
 
 
+def _route_model(raw: dict, stored: dict[str, str], provider: str, legacy_provider: str) -> str:
+    """The model a route names, or the single-provider model that came before it."""
+    model = str(raw.get("model") or "").strip()
+    if model:
+        return model
+    legacy_model = (stored.get("ai_model") or "").strip()
+    return legacy_model if legacy_model and provider == legacy_provider else DEFAULT_MODELS[provider]
+
+
 def _route(stored: dict[str, str], task: str) -> dict:
     """The effective route for a task.
 
@@ -228,10 +237,7 @@ def _route(stored: dict[str, str], task: str) -> dict:
     if not isinstance(raw, dict):
         raw = {}
     provider = raw.get("provider") if raw.get("provider") in PROVIDER_NAMES else legacy_provider
-    model = str(raw.get("model") or "").strip()
-    if not model:
-        legacy_model = (stored.get("ai_model") or "").strip()
-        model = legacy_model if legacy_model and provider == legacy_provider else DEFAULT_MODELS[provider]
+    model = _route_model(raw, stored, provider, legacy_provider)
     effort = str(raw.get("effort", DEFAULT_EFFORT.get(provider, "")) or "")
     if effort not in EFFORTS[provider]:
         effort = ""
@@ -369,6 +375,22 @@ def parse_admin_form(form) -> tuple[dict[str, str], dict[str, object]] | str:
 
     values: dict[str, str] = {"ai_enabled": "1" if field("enabled") == "1" else "0"}
     audit: dict[str, object] = {"enabled": values["ai_enabled"], "keys_changed": [], "tasks": {}}
+    _parse_keys(field, values, audit)
+    cap_error = _parse_caps(field, values)
+    if cap_error:
+        return cap_error
+    route_error = _parse_routes(field, values, audit)
+    if route_error is not None:
+        return route_error
+    if "chat_models_present" in form:
+        chat_error = _parse_chat_models(form, values, audit)
+        if chat_error is not None:
+            return chat_error
+    return values, audit
+
+
+def _parse_keys(field, values: dict[str, str], audit: dict[str, object]) -> None:
+    """Store, clear or keep each provider's key, and record which ones changed."""
     for provider, setting in KEY_SETTINGS.items():
         if field(f"clear_key_{provider}") == "1":
             values[setting] = ""
@@ -376,24 +398,29 @@ def parse_admin_form(form) -> tuple[dict[str, str], dict[str, object]] | str:
             values[setting] = field(f"key_{provider}")
         if setting in values:
             audit["keys_changed"].append(provider)  # type: ignore[union-attr]
-    cap_error = _parse_caps(field, values)
-    if cap_error:
-        return cap_error
+
+
+def _parse_routes(field, values: dict[str, str], audit: dict[str, object]) -> str | None:
+    """Store every task's route; the error message key for the first bad one."""
     for task in TASKS:
         route = _parse_task_route(field, task)
         if isinstance(route, str):
             return route
         values[f"ai_task_{task}"] = json.dumps(route)
         audit["tasks"][task] = route  # type: ignore[index]
-    if "chat_models_present" in form:
-        # One checkbox per model, each `provider:model`; none ticked submits none.
-        ticked = form.getlist("chat_model") if hasattr(form, "getlist") else form.get("chat_model") or []
-        chat_models = parse_chat_models("\n".join([ticked] if isinstance(ticked, str) else ticked))
-        if chat_models is None:
-            return "aiassist.error_chat_models"
-        values[CHAT_MODELS_SETTING] = json.dumps(chat_models)
-        audit["chat_models"] = chat_models
-    return values, audit
+    return None
+
+
+def _parse_chat_models(form, values: dict[str, str], audit: dict[str, object]) -> str | None:
+    """Store the ticked chat models; the error message key when the list is refused."""
+    # One checkbox per model, each `provider:model`; none ticked submits none.
+    ticked = form.getlist("chat_model") if hasattr(form, "getlist") else form.get("chat_model") or []
+    chat_models = parse_chat_models("\n".join([ticked] if isinstance(ticked, str) else ticked))
+    if chat_models is None:
+        return "aiassist.error_chat_models"
+    values[CHAT_MODELS_SETTING] = json.dumps(chat_models)
+    audit["chat_models"] = chat_models
+    return None
 
 
 def _parse_caps(field, values: dict[str, str]) -> str | None:

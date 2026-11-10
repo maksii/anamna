@@ -40,7 +40,7 @@
   function scrollToEnd(smooth) {
     const last = log.lastElementChild;
     if (!last) return;
-    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const reduced = globalThis.matchMedia("(prefers-reduced-motion: reduce)").matches;
     last.scrollIntoView({ block: "end", behavior: smooth && !reduced ? "smooth" : "auto" });
   }
 
@@ -52,7 +52,7 @@
   }
 
   function addTools(item, labels, summary) {
-    if (!labels || !labels.length) return;
+    if (!labels?.length) return;
     const details = document.createElement("details");
     details.className = "an-chat-msg__tools";
     const title = document.createElement("summary");
@@ -83,7 +83,7 @@
 
   function remember(conversation) {
     composer.querySelector("[data-chat-conversation]").value = conversation.id;
-    if (window.location.pathname !== conversation.url) window.history.replaceState(null, "", conversation.url);
+    if (globalThis.location.pathname !== conversation.url) globalThis.history.replaceState(null, "", conversation.url);
     const heading = document.getElementById("chat-current");
     if (heading && conversation.title) heading.textContent = conversation.title;
   }
@@ -92,7 +92,7 @@
   // summarised; the wording comes from the server in the page's language.
   function showContext(context) {
     const box = composer.querySelector("[data-chat-context]");
-    if (!box || !context || !context.tokens) return;
+    if (!box || !context?.tokens) return;
     box.hidden = false;
     box.title = context.label;
     box.querySelector("[data-chat-context-label]").textContent = context.label;
@@ -113,9 +113,51 @@
     after.after(mark);
   }
 
+  // Applies one server-sent event to the answer; `outcome` records how it ended.
+  function _applyEvent(event, answer, body, outcome) {
+    if (event.type === "conversation") remember(event);
+    else if (event.type === "status") status.textContent = event.label;
+    else if (event.type === "compacted") markCompacted(event);
+    else if (event.type === "text") {
+      body.textContent += event.text;
+      status.textContent = say("chat.writing");
+    } else if (event.type === "tool") {
+      status.textContent = say("chat.reading", { label: event.label });
+    } else if (event.type === "done") {
+      body.innerHTML = event.html;
+      addTools(answer, event.tools, event.tools_summary);
+      showContext(event.context);
+      outcome.finished = true;
+      outcome.answered = true;
+    } else if (event.type === "error") {
+      showError(answer, event.message, event.html);
+      outcome.finished = true;
+    }
+  }
+
+  // Reads the answer's events until the stream closes.
+  async function _readStream(response, answer, body, outcome) {
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let cut;
+      while ((cut = buffer.indexOf("\n\n")) >= 0) {
+        const chunk = buffer.slice(0, cut);
+        buffer = buffer.slice(cut + 2);
+        if (chunk.startsWith("data:")) _applyEvent(JSON.parse(chunk.slice(5)), answer, body, outcome);
+      }
+    }
+  }
+
   async function send() {
     const data = new FormData(composer);
-    const question = String(data.get("message") || "").trim();
+    // Only a typed message can be the question; anything else reads as empty.
+    const entry = data.get("message");
+    const question = (typeof entry === "string" ? entry : "").trim();
     if (!question || busy) return;
     bubble("user", question);
     const answer = bubble("assistant", "");
@@ -124,54 +166,23 @@
     textarea.value = "";
     resize();
     scrollToEnd(true);
-    let finished = false;
-    let answered = false;
+    const outcome = { finished: false, answered: false };
     try {
       const response = await fetch(composer.action, {
         method: "POST", body: data, headers: { Accept: "text/event-stream" }, credentials: "same-origin",
       });
       if (!response.ok || !response.body) throw new Error(String(response.status));
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      for (;;) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        let cut;
-        while ((cut = buffer.indexOf("\n\n")) >= 0) {
-          const chunk = buffer.slice(0, cut);
-          buffer = buffer.slice(cut + 2);
-          if (!chunk.startsWith("data:")) continue;
-          const event = JSON.parse(chunk.slice(5));
-          if (event.type === "conversation") remember(event);
-          else if (event.type === "status") status.textContent = event.label;
-          else if (event.type === "compacted") markCompacted(event);
-          else if (event.type === "text") {
-            body.textContent += event.text;
-            status.textContent = say("chat.writing");
-          } else if (event.type === "tool") {
-            status.textContent = say("chat.reading", { label: event.label });
-          } else if (event.type === "done") {
-            body.innerHTML = event.html;
-            addTools(answer, event.tools, event.tools_summary);
-            showContext(event.context);
-            finished = true;
-            answered = true;
-          } else if (event.type === "error") {
-            showError(answer, event.message, event.html);
-            finished = true;
-          }
-        }
-      }
-      if (!finished) throw new Error("stream ended early");
-    } catch (_error) {
+      await _readStream(response, answer, body, outcome);
+      if (!outcome.finished) throw new Error("stream ended early");
+    } catch {
+      // Whatever failed, the person gets the same message; the cause is not shown.
       showError(answer, say("chat.error_network"), "");
       if (!textarea.value) textarea.value = question;
       resize();
     } finally {
       // The status line is the only thing a screen reader hears about the
       // answer, so a finished answer is named there rather than cleared.
+      const { answered } = outcome;
       setBusy(false, answered ? say("chat.answer_ready") : "");
       scrollToEnd(true);
       textarea.focus();
@@ -187,9 +198,10 @@
   }
 
   composer.addEventListener("submit", (event) => {
-    if (!window.fetch || !window.TextDecoder) return; // let the form post
+    if (!globalThis.fetch || !globalThis.TextDecoder) return; // let the form post
     event.preventDefault();
-    send();
+    // send() reports its own failures in the answer bubble, so nothing waits on it.
+    void send();
   });
   textarea.addEventListener("input", resize);
   // Enter makes a new line (a phone keyboard has no other way to); Ctrl or

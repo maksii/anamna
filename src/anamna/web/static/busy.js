@@ -29,7 +29,7 @@
       bar = document.createElement('div');
       bar.className = 'an-progress';
       bar.setAttribute('role', 'progressbar');
-      bar.setAttribute('aria-label', (globalThis.__HL_I18N__ || {})['busy.loading'] || 'Loading');
+      bar.setAttribute('aria-label', globalThis.__HL_I18N__?.['busy.loading'] || 'Loading');
       document.body.append(bar);
     }
     bar.hidden = false;
@@ -46,7 +46,7 @@
   }
 
   function mark(control) {
-    if (!control || control.nodeType !== 1) return;
+    if (control?.nodeType !== 1) return;
     control.setAttribute('aria-busy', 'true');
     // `data-working` is the older spelling of the same thing.
     const saying = control.dataset.busy || control.dataset.working;
@@ -94,9 +94,9 @@
     setTimeout(() => {
       if (event.defaultPrevented) return;
       const submitter = event.submitter;
-      const target = (submitter && submitter.getAttribute('formtarget')) || form.getAttribute('target') || '_self';
+      const target = submitter?.getAttribute('formtarget') || form.getAttribute('target') || '_self';
       if (target !== '_self') return;
-      const action = (submitter && submitter.getAttribute('formaction')) || form.getAttribute('action') || '';
+      const action = submitter?.getAttribute('formaction') || form.getAttribute('action') || '';
       form.dataset.submitting = '1';
       navigating(submitter || form.querySelector('[type=submit]'), FILE.test(action.split(/[?#]/)[0]) ? DOWNLOAD_RELEASE : RELEASE);
     });
@@ -104,7 +104,7 @@
 
   document.addEventListener('click', (event) => {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-    const link = event.target.closest && event.target.closest('a[href]');
+    const link = event.target.closest?.('a[href]');
     if (!link || (link.target && link.target !== '_self')) return;
     const url = new URL(link.href, location.href);
     if (url.origin !== location.origin || !/^https?:$/.test(url.protocol)) return;
@@ -122,7 +122,7 @@
 
   async function track(control, work) {
     const was = control && 'disabled' in control ? control.disabled : null;
-    if (control && control.nodeType === 1) {
+    if (control?.nodeType === 1) {
       mark(control);
       marked.delete(control);
       if (was === false) control.disabled = true;
@@ -134,7 +134,7 @@
     } finally {
       pending -= 1;
       if (!pending) hideBar();
-      if (control && control.nodeType === 1) {
+      if (control?.nodeType === 1) {
         unmark(control);
         if (was === false) control.disabled = false;
       }
@@ -166,7 +166,7 @@
     yes.className = 'primary';
     // The button repeats the word the person pressed ("Delete"), so the two
     // answers cannot be mixed up the way "OK" and "Cancel" are.
-    yes.textContent = (submitter && submitter.textContent.trim()) || words['confirm.yes'] || 'Yes, continue';
+    yes.textContent = submitter?.textContent.trim() || words['confirm.yes'] || 'Yes, continue';
     yes.addEventListener('click', () => dialog.close('yes'));
     actions.append(no, yes);
     dialog.append(text, actions);
@@ -192,8 +192,7 @@
     // On the pressed button when only one of a form's actions needs the
     // question; on the form when every way of sending it does.
     const pressed = event.submitter;
-    const message = (pressed && pressed.getAttribute && pressed.getAttribute('data-confirm'))
-      || (form && form.getAttribute && form.getAttribute('data-confirm'));
+    const message = pressed?.dataset.confirm || form?.dataset.confirm;
     if (!message) return;
     if (form.dataset.confirmed) {
       delete form.dataset.confirmed;
@@ -203,7 +202,7 @@
     event.stopPropagation();
     if (typeof HTMLDialogElement === 'function' && typeof form.requestSubmit === 'function') {
       ask(form, event.submitter, message);
-    } else if (window.confirm(message)) {
+    } else if (globalThis.confirm(message)) {
       // A browser too old for <dialog>: its own box is all there is.
       form.submit();
     }
@@ -213,11 +212,11 @@
   // Focus does not bubble, so the focus listener captures.
   document.addEventListener('focus', (event) => {
     const node = event.target;
-    if (node && node.dataset && node.dataset.action === 'select-all') node.select();
+    if (node?.dataset?.action === 'select-all') node.select();
   }, true);
   document.addEventListener('change', (event) => {
     const node = event.target;
-    if (node && node.dataset && node.dataset.action === 'token-kind' && node.form) {
+    if (node?.dataset?.action === 'token-kind' && node.form) {
       node.form.expires_on.required = node.value === 'guest';
     }
   });

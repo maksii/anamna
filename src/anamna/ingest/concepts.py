@@ -756,7 +756,9 @@ _SPECIMEN_BOUND = frozenset({"urinalysis", "stool"})
 #: A count per litre is a blood count: «Лейкоцити (WBC) 6.84 10^9 клітин/л»
 #: printed in a urinalysis order is the white cell count, not urine.  Urine
 #: counts are per microlitre or per field.  «Г/л» is giga-per-litre.
-_BLOOD_COUNT_UNIT = re.compile(r"10\s*(?:\^|\*\*?)?\s*(?:9|12|⁹|¹²)(?!\d)|^\s*Г/[лЛ]\s*$")
+_TEN_POWER_UNIT = r"10\s*(?:(?:\^|\*\*?)\s*)?(?:9|12|⁹|¹²)(?!\d)"
+_GIGA_PER_LITRE_UNIT = r"^\s*Г/[лЛ]\s*$"
+_BLOOD_COUNT_UNIT = re.compile(rf"{_TEN_POWER_UNIT}|{_GIGA_PER_LITRE_UNIT}")
 
 
 def specimen_family(*texts: str | None) -> str | None:

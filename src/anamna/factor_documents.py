@@ -17,7 +17,7 @@ _DOSAGE_FORMS = (
     "tablet", "capsule", "drops", "solution",
 )
 _DOCTOR_LABEL = re.compile(
-    r"^\s*(?:лікар(?:[-\s][^\s:_]+){0,2}|doctor|physician|п\.і\.б\. лікаря|піб лікаря)\s*[:_]+(.*)$",
+    r"^\s*(?:лікар(?:[-\s][^\s:_]++){0,2}|doctor|physician|п\.і\.б\. лікаря|піб лікаря)\s*[:_]++(.*)$",
     re.IGNORECASE,
 )
 _INITIAL = re.compile(r"[^\W\d_]\.(?:[^\W\d_]\.)*")
@@ -62,7 +62,7 @@ def _doctor_name(rest: str) -> str:
     rest = re.split(r" {2,}|\t|[(,\d]", rest, maxsplit=1)[0]
     rest = rest.strip(" _\t").rstrip(" _;:,-")
     # An initial keeps its dot ("О.П."); a surname with a dot after it does not.
-    if re.search(r"[^\W\d_]{3,}\.$", rest):
+    if re.search(r"(?<![^\W\d_])[^\W\d_]{3,}+\.$", rest):
         rest = rest[:-1]
     return rest.strip()
 

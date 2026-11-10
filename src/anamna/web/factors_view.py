@@ -227,7 +227,7 @@ def card(
     return data
 
 
-def _item(row: Mapping[str, Any], locale: str) -> dict:
+def _item(row: Mapping[str, Any]) -> dict:
     related = bool(row["related"])
     direction = row["direction"] if related else ""
     this = t(f"med.dir_this.{direction}") if related else ""
@@ -260,13 +260,13 @@ def chart_periods(connection, owner_id: str, concept_ids, *, locale: str, today:
     if not rows:
         return None
     with _in(locale):
-        related = [_item(row, locale) for row in rows if row["related"]]
+        related = [_item(row) for row in rows if row["related"]]
         others_rows = sorted(
             (row for row in rows if not row["related"]),
             key=lambda row: (row["start"] or "", row["name"]),
             reverse=True,
         )[:OTHERS_LIMIT]
-        others = [_item(row, locale) for row in others_rows]
+        others = [_item(row) for row in others_rows]
     keys = ("id", "name", "start", "end", "point", "approximate", "related", "direction", "title")
     return {
         "related": related,

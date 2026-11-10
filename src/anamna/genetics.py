@@ -40,13 +40,15 @@ _MP = "U.S. National Library of Medicine, MedlinePlus Genetics"
 _MOZ = "Міністерство охорони здоров’я України"
 _DUO = "МОЗ України / Duodecim Medical Publications"
 _DPWG = "Dutch Pharmacogenetics Working Group (KNMP)"
+_FDA = "U.S. Food and Drug Administration"
+_ACMG = "American College of Medical Genetics and Genomics"
 
 SOURCES: dict[str, Source] = {
     # general
     "medlineplus-dna": Source("US", _MP, "What is DNA?", "https://medlineplus.gov/genetics/understanding/basics/dna/"),
     "cdc-genetic-testing": Source("US", "Centers for Disease Control and Prevention", "Genetic Testing",
                                   "https://www.cdc.gov/genomics-and-health/counseling-testing/genetic-testing.html"),
-    "fda-dtc-tests": Source("US", "U.S. Food and Drug Administration", "Direct-to-Consumer Tests",
+    "fda-dtc-tests": Source("US", _FDA, "Direct-to-Consumer Tests",
                             "https://www.fda.gov/medical-devices/in-vitro-diagnostics/direct-consumer-tests"),
     "eshg-dtc-2010": Source("EU", "European Society of Human Genetics",
                             "Statement of the ESHG on direct-to-consumer genetic testing for health-related purposes",
@@ -107,11 +109,11 @@ SOURCES: dict[str, Source] = {
     "moz-nastanova-00107": Source("UA", _DUO, "Настанова 00107. Лабораторна оцінка тромбофілії",
                                   "https://guidelines.moz.gov.ua/documents/3010", "ebm00107, 2017", duodecim=True),
     # MTHFR
-    "acmg-mthfr-2013": Source("US", "American College of Medical Genetics and Genomics",
+    "acmg-mthfr-2013": Source("US", _ACMG,
                               "ACMG Practice Guideline: lack of evidence for MTHFR polymorphism testing",
                               "https://pubmed.ncbi.nlm.nih.gov/23288205/",
                               "Genet Med 2013;15:153-6, doi:10.1038/gim.2012.165"),
-    "acmg-mthfr-2020": Source("US", "American College of Medical Genetics and Genomics",
+    "acmg-mthfr-2020": Source("US", _ACMG,
                               "Addendum: ACMG Practice Guideline: lack of evidence for MTHFR polymorphism testing",
                               "https://pubmed.ncbi.nlm.nih.gov/32533132/",
                               "Genet Med 2020;22:2125, doi:10.1038/s41436-020-0843-0"),
@@ -123,7 +125,7 @@ SOURCES: dict[str, Source] = {
     "dpwg-irinotecan": Source("EU", _DPWG, "DPWG guideline for the gene-drug interaction between UGT1A1 and irinotecan",
                               "https://www.clinpgx.org/guidelineAnnotation/PA166104951",
                               "Eur J Hum Genet 2023;31:982-987, doi:10.1038/s41431-022-01243-2"),
-    "fda-pgx-table": Source("US", "U.S. Food and Drug Administration",
+    "fda-pgx-table": Source("US", _FDA,
                             "Table of Pharmacogenomic Biomarkers in Drug Labeling",
                             "https://www.fda.gov/drugs/science-and-research-drugs/table-pharmacogenomic-biomarkers-drug-labeling"),
     "moz-nastanova-00214": Source("UA", _DUO, "Настанова 00214. Синдром Жильбера",
@@ -174,7 +176,7 @@ SOURCES: dict[str, Source] = {
     # CFTR
     "medlineplus-cf": Source("US", _MP, "Cystic fibrosis", "https://medlineplus.gov/genetics/condition/cystic-fibrosis/"),
     "medlineplus-cftr": Source("US", _MP, "CFTR gene", "https://medlineplus.gov/genetics/gene/cftr/"),
-    "acmg-carrier-2021": Source("US", "American College of Medical Genetics and Genomics",
+    "acmg-carrier-2021": Source("US", _ACMG,
                                 "Screening for autosomal recessive and X-linked conditions during pregnancy and "
                                 "preconception", "https://pmc.ncbi.nlm.nih.gov/articles/PMC8488021/",
                                 "Genet Med 2021;23:1793-1806, doi:10.1038/s41436-021-01203-z"),
@@ -187,7 +189,7 @@ SOURCES: dict[str, Source] = {
     "moz-kn-723-2016": Source("UA", _MOZ, "Адаптована клінічна настанова «Муковісцидоз»",
                               "https://www.dec.gov.ua/wp-content/uploads/2019/11/2016_723_akn_mkvsz.pdf", "КН 2016-723"),
     # warfarin
-    "fda-coumadin": Source("US", "U.S. Food and Drug Administration", "COUMADIN (warfarin sodium) prescribing information",
+    "fda-coumadin": Source("US", _FDA, "COUMADIN (warfarin sodium) prescribing information",
                            "https://www.accessdata.fda.gov/drugsatfda_docs/label/2017/009218s118lbl.pdf",
                            "NDA 009218/S-118, 2017"),
     "cpic-warfarin-2017": Source("INT", "Clinical Pharmacogenetics Implementation Consortium (CPIC)",
@@ -320,11 +322,7 @@ def sources(ids) -> list[Source]:
     return [SOURCES[i] for i in ids]
 
 
-def overview(connection, owner_id: str, cards: list[dict], offers: dict[str, list[dict]]) -> dict:
-    """Everything the page shows.  ``cards`` are the record's metric cards
-    (one per concept, already judged); ``offers`` is the planner's
-    ``special_offers`` for :data:`ENTRIES`."""
-    by_id = {str(card["id"]): card for card in cards if not card.get("is_device")}
+def _seen_kinds(connection, owner_id: str, by_id: dict[str, dict]) -> dict[str, dict]:
     rows = connection.execute(
         """SELECT o.concept_id, c.category, o.raw_name, o.value_text FROM observations o
            JOIN concepts c ON c.id = o.concept_id
@@ -338,25 +336,34 @@ def overview(connection, owner_id: str, cards: list[dict], offers: dict[str, lis
         found = kind(concept_id, str(category or ""), raw_name)
         if found:
             seen[concept_id] = {"kind": found, "raw_name": raw_name, "value_text": value_text}
-    genes, germs, antibodies, done = [], [], [], {}
+    return seen
+
+
+def _gene_item(concept_id: str, card: dict, row: dict, done: dict[str, dict]) -> dict[str, object]:
+    entries = entry_for(concept_id, row["raw_name"])
+    entry = entries[0] if entries else None
+    result = outcome(row["value_text"])
+    item = {"card": card, "entry": entry, "outcome": result if entry in RESULT_TEXTS else None,
+            "once": _once_only(entry, row["raw_name"]),
+            "sources": sources(ENTRY_SOURCES.get(entry) or GENERAL)}
+    for entry_id in entries:
+        done.setdefault(entry_id, card)
+    return item
+
+
+def _split_cards(seen: dict[str, dict], by_id: dict[str, dict],
+                 done: dict[str, dict]) -> tuple[list, list, list]:
+    genes, germs, antibodies = [], [], []
     for concept_id, row in seen.items():
         card = by_id[concept_id]
         if row["kind"] == "gene":
-            entries = entry_for(concept_id, row["raw_name"])
-            entry = entries[0] if entries else None
-            result = outcome(row["value_text"])
-            genes.append({"card": card, "entry": entry, "outcome": result if entry in RESULT_TEXTS else None,
-                          "once": _once_only(entry, row["raw_name"]),
-                          "sources": sources(ENTRY_SOURCES.get(entry) or GENERAL)})
-            for entry_id in entries:
-                done.setdefault(entry_id, card)
+            genes.append(_gene_item(concept_id, card, row, done))
         else:
             (germs if row["kind"] == "germ" else antibodies).append(card)
-    genes.sort(key=lambda item: str(item["card"].get("latest_date") or ""), reverse=True)
-    for group in (germs, antibodies):  # newest first, A to Z within a day
-        group.sort(key=lambda card: testplan.alphabetical(str(card["name"])))
-        group.sort(key=lambda card: str(card.get("latest_date") or ""), reverse=True)
-    priced = any(offers.values())
+    return genes, germs, antibodies
+
+
+def _plan_groups(offers: dict[str, list[dict]], done: dict[str, dict]) -> list[dict]:
     groups = []
     for group_id, entry_ids in GROUPS:
         tests = []
@@ -367,5 +374,22 @@ def overview(connection, owner_id: str, cards: list[dict], offers: dict[str, lis
                           "sources": sources(ENTRY_SOURCES[entry_id]),
                           "plan_url": f"/plan-tests?special=1&touched=1&sx={entry_id}"})
         groups.append({"id": group_id, "tests": tests})
+    return groups
+
+
+def overview(connection, owner_id: str, cards: list[dict], offers: dict[str, list[dict]]) -> dict:
+    """Everything the page shows.  ``cards`` are the record's metric cards
+    (one per concept, already judged); ``offers`` is the planner's
+    ``special_offers`` for :data:`ENTRIES`."""
+    by_id = {str(card["id"]): card for card in cards if not card.get("is_device")}
+    seen = _seen_kinds(connection, owner_id, by_id)
+    done: dict[str, dict] = {}
+    genes, germs, antibodies = _split_cards(seen, by_id, done)
+    genes.sort(key=lambda item: str(item["card"].get("latest_date") or ""), reverse=True)
+    for group in (germs, antibodies):  # newest first, A to Z within a day
+        group.sort(key=lambda card: testplan.alphabetical(str(card["name"])))
+        group.sort(key=lambda card: str(card.get("latest_date") or ""), reverse=True)
+    priced = any(offers.values())
+    groups = _plan_groups(offers, done)
     return {"genes": genes, "germs": germs, "antibodies": antibodies, "groups": groups, "priced": priced,
             "general_sources": sources(GENERAL), "topic_url": "/plan-tests?special=1&preset=genetics"}

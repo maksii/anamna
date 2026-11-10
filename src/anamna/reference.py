@@ -230,18 +230,24 @@ _MMOL_L_TO_MG_DL = {
 
 #: The canonical (casefolded) spelling of mg/dL, the key every conversion uses.
 _MG_DL = "mg/dl"
+#: Other canonical unit spellings that the conversion tables repeat.
+_UNIT_UMOL_L = "umol/l"
+_UNIT_MMOL_L = "mmol/l"
+_UNIT_NG_ML = "ng/ml"
+_UNIT_PG_ML = "pg/ml"
+_UNIT_PMOL_L = "pmol/l"
 
 #: (concept_id, from_unit, to_unit) -> multiplier.  Units are canonicalised.
 UNIT_CONVERSIONS: dict[tuple[str, str, str], float] = {}
 for _concept, _factor in _MMOL_L_TO_MG_DL.items():
-    UNIT_CONVERSIONS[(_concept, "mmol/l", _MG_DL)] = _factor
-    UNIT_CONVERSIONS[(_concept, _MG_DL, "mmol/l")] = 1.0 / _factor
+    UNIT_CONVERSIONS[(_concept, _UNIT_MMOL_L, _MG_DL)] = _factor
+    UNIT_CONVERSIONS[(_concept, _MG_DL, _UNIT_MMOL_L)] = 1.0 / _factor
 # 25-OH vitamin D, molar mass 400.6 g/mol
-UNIT_CONVERSIONS[("25-hydroxyvitamin-d", "ng/ml", "nmol/l")] = 2.496
-UNIT_CONVERSIONS[("25-hydroxyvitamin-d", "nmol/l", "ng/ml")] = 1.0 / 2.496
+UNIT_CONVERSIONS[("25-hydroxyvitamin-d", _UNIT_NG_ML, "nmol/l")] = 2.496
+UNIT_CONVERSIONS[("25-hydroxyvitamin-d", "nmol/l", _UNIT_NG_ML)] = 1.0 / 2.496
 # Cyanocobalamin, molar mass 1355.4 g/mol
-UNIT_CONVERSIONS[("vitamin-b12", "pg/ml", "pmol/l")] = 0.7378
-UNIT_CONVERSIONS[("vitamin-b12", "pmol/l", "pg/ml")] = 1.0 / 0.7378
+UNIT_CONVERSIONS[("vitamin-b12", _UNIT_PG_ML, _UNIT_PMOL_L)] = 0.7378
+UNIT_CONVERSIONS[("vitamin-b12", _UNIT_PMOL_L, _UNIT_PG_ML)] = 1.0 / 0.7378
 # MCHC is printed in g/dL by Synevo and in g/L by Expert Hospital, so one
 # patient's own series carries both: 36 g/dL and 340 g/L are the same order of
 # magnitude apart by exactly 10, and read together they look like a collapse.
@@ -251,21 +257,21 @@ UNIT_CONVERSIONS[("mean-corpuscular-hemoglobin-concentration", "g/l", "g/dl")] =
 # prints its own strip tiers in µmol/L («+- = 8,5; + = 17; ++ = 50») exactly
 # where the Multistix mg/dL scale prints 0.5 / 1 / 3 — the same ordinal steps
 # a factor of 16.9 apart, which corroborates the molar-mass figure.
-UNIT_CONVERSIONS[("urine-urobilinogen", _MG_DL, "umol/l")] = 16.9
-UNIT_CONVERSIONS[("urine-urobilinogen", "umol/l", _MG_DL)] = 1.0 / 16.9
+UNIT_CONVERSIONS[("urine-urobilinogen", _MG_DL, _UNIT_UMOL_L)] = 16.9
+UNIT_CONVERSIONS[("urine-urobilinogen", _UNIT_UMOL_L, _MG_DL)] = 1.0 / 16.9
 # Free thyroxine: Synevo prints ng/dL on one panel and pmol/L on another.
 # Thyroxine C15H11I4NO4, molar mass 776.87 g/mol (PubChem CID 5819), so
 # 1 ng/dL = 10 ng/L / 776.87 g/mol = 12.87 pmol/L -- the factor of the
 # AMA Manual of Style SI conversion table ("Thyroxine, free: ng/dL x 12.87").
-UNIT_CONVERSIONS[("free-thyroxine", "ng/dl", "pmol/l")] = 12.87
-UNIT_CONVERSIONS[("free-thyroxine", "pmol/l", "ng/dl")] = 1.0 / 12.87
+UNIT_CONVERSIONS[("free-thyroxine", "ng/dl", _UNIT_PMOL_L)] = 12.87
+UNIT_CONVERSIONS[("free-thyroxine", _UNIT_PMOL_L, "ng/dl")] = 1.0 / 12.87
 # Free triiodothyronine: Synevo prints pg/mL where the library band is pmol/L.
 # Liothyronine C15H12I3NO4, molar mass 650.97 g/mol (PubChem CID 5920), so
 # 1 pg/mL = 1 ng/L / 650.97 g/mol = 1.536 pmol/L -- the AMA Manual of Style SI
 # conversion table's factor ("Triiodothyronine, free: pg/dL x 0.01536 =
 # pmol/L", and 1 pg/mL = 100 pg/dL).
-UNIT_CONVERSIONS[("free-triiodothyronine", "pg/ml", "pmol/l")] = 1.536
-UNIT_CONVERSIONS[("free-triiodothyronine", "pmol/l", "pg/ml")] = 1.0 / 1.536
+UNIT_CONVERSIONS[("free-triiodothyronine", _UNIT_PG_ML, _UNIT_PMOL_L)] = 1.536
+UNIT_CONVERSIONS[("free-triiodothyronine", _UNIT_PMOL_L, _UNIT_PG_ML)] = 1.0 / 1.536
 # Total IgE «МО/мл» (IU/mL) against the library's kU/L: by prefix arithmetic
 # 1 IU/mL = 1 kIU/L, and the kU/L of total-IgE immunoassays is the
 # international unit of the WHO IgE reference preparation (75/502, 1 IU =
@@ -276,12 +282,12 @@ UNIT_CONVERSIONS[("total-immunoglobulin-e", "ku/l", "iu/ml")] = 1.0
 # Mass per volume to molar: factor = 10 mg/L over the molar mass in g/mol
 # (magnesium 24.305, creatinine 113.12, uric acid 168.11, bilirubin 584.66).
 _MG_DL_TO_MOLAR = {
-    ("magnesium", "mmol/l"): 0.4114,
-    ("creatinine", "umol/l"): 88.4,
-    ("uric-acid", "umol/l"): 59.48,
-    ("total-bilirubin", "umol/l"): 17.1,
-    ("direct-bilirubin", "umol/l"): 17.1,
-    ("indirect-bilirubin", "umol/l"): 17.1,
+    ("magnesium", _UNIT_MMOL_L): 0.4114,
+    ("creatinine", _UNIT_UMOL_L): 88.4,
+    ("uric-acid", _UNIT_UMOL_L): 59.48,
+    ("total-bilirubin", _UNIT_UMOL_L): 17.1,
+    ("direct-bilirubin", _UNIT_UMOL_L): 17.1,
+    ("indirect-bilirubin", _UNIT_UMOL_L): 17.1,
 }
 for (_concept, _target), _molar_factor in _MG_DL_TO_MOLAR.items():
     UNIT_CONVERSIONS[(_concept, _MG_DL, _target)] = _molar_factor
@@ -292,12 +298,12 @@ for _concept in ("hemoglobin", "albumin", "total-protein"):
     UNIT_CONVERSIONS[(_concept, "g/l", "g/dl")] = 0.1
 # 1 µg/L is exactly 1 ng/mL (both 10^-6 g/L): one quantity printed two ways,
 # registered per concept like the other same-number pairs in CONCEPT_UNIT_ALIASES.
-UNIT_CONVERSIONS[("ferritin", "ng/ml", "ug/l")] = 1.0
-UNIT_CONVERSIONS[("ferritin", "ug/l", "ng/ml")] = 1.0
+UNIT_CONVERSIONS[("ferritin", _UNIT_NG_ML, "ug/l")] = 1.0
+UNIT_CONVERSIONS[("ferritin", "ug/l", _UNIT_NG_ML)] = 1.0
 # Monovalent ions: 1 mEq/L is exactly 1 mmol/L, so both labels carry one number.
 for _concept in ("sodium", "potassium"):
-    UNIT_CONVERSIONS[(_concept, "meq/l", "mmol/l")] = 1.0
-    UNIT_CONVERSIONS[(_concept, "mmol/l", "meq/l")] = 1.0
+    UNIT_CONVERSIONS[(_concept, "meq/l", _UNIT_MMOL_L)] = 1.0
+    UNIT_CONVERSIONS[(_concept, _UNIT_MMOL_L, "meq/l")] = 1.0
 
 # Same number, different label: the per-concept table lives beside the unit
 # synonyms in health.py, which also folds the stored unit on the way in.
@@ -1121,6 +1127,29 @@ def _record_vendor_claim(
         verdict["label"] = t(f"verdict.lab_{side}_official_within")
 
 
+def _censored_below_side(
+    value: float, comparator: str | None, vendor_low: float | None, vendor_high: float | None,
+) -> str | None:
+    # The true value lies at or below the printed number.
+    if vendor_low is not None and (value < vendor_low or (value == vendor_low and comparator == "<")):
+        return "low"
+    # A range that starts at zero has no lower side to fall below.
+    if (vendor_low is None or vendor_low <= 0) and vendor_high is not None and value <= vendor_high:
+        return "within_vendor_range"
+    return None
+
+
+def _censored_above_side(
+    value: float, comparator: str | None, vendor_low: float | None, vendor_high: float | None,
+) -> str | None:
+    # The true value lies at or above the printed number.
+    if vendor_high is not None and (value > vendor_high or (value == vendor_high and comparator == ">")):
+        return "high"
+    if vendor_high is None and vendor_low is not None and value >= vendor_low:
+        return "within_vendor_range"
+    return None
+
+
 def _vendor_side(
     value: float,
     vendor_low: float | None,
@@ -1133,18 +1162,9 @@ def _vendor_side(
     certain; otherwise ``None``, meaning the laboratory's range says nothing.
     """
     if comparator in ("<", "<="):
-        if vendor_low is not None and (value < vendor_low or (value == vendor_low and comparator == "<")):
-            return "low"
-        # A range that starts at zero has no lower side to fall below.
-        if (vendor_low is None or vendor_low <= 0) and vendor_high is not None and value <= vendor_high:
-            return "within_vendor_range"
-        return None
+        return _censored_below_side(value, comparator, vendor_low, vendor_high)
     if comparator in (">", ">="):
-        if vendor_high is not None and (value > vendor_high or (value == vendor_high and comparator == ">")):
-            return "high"
-        if vendor_high is None and vendor_low is not None and value >= vendor_low:
-            return "within_vendor_range"
-        return None
+        return _censored_above_side(value, comparator, vendor_low, vendor_high)
     if vendor_high is not None and value > vendor_high:
         return "high"
     if vendor_low is not None and value < vendor_low:
@@ -1383,6 +1403,49 @@ def _curated_verdict(
     return _numeric_verdict(candidates, declining, risk, comparator), blocked
 
 
+def _containing_bands(numeric_rules: list, comparator: str | None) -> list:
+    """The numeric bands that contain the value, judged on the side the laboratory stated."""
+    # A strict censored result is judged just inside the side the laboratory
+    # stated: "<1.0" lands in the band below 1.0, not in the band that starts at it.
+    judged = {
+        "<": lambda value: math.nextafter(value, -math.inf),
+        ">": lambda value: math.nextafter(value, math.inf),
+    }.get(comparator, lambda value: value)
+    return [
+        item
+        for item in numeric_rules
+        if _contains(
+            judged(item[2]),
+            item[0]["lower_bound"],
+            item[0]["upper_bound"],
+            bool(item[0]["lower_inclusive"]),
+            bool(item[0]["upper_inclusive"]),
+        )
+    ]
+
+
+def _censored_unjudged(match, comparator: str | None) -> bool:
+    """True when a censored result has no band open on the side it was stated."""
+    if comparator not in _CENSORED:
+        return False
+    # The true value lies anywhere on the stated side of the printed number,
+    # so only a band that is open on that side can judge it.
+    open_side = "lower_bound" if comparator in ("<", "<=") else "upper_bound"
+    return match is None or match[0][open_side] is not None
+
+
+def _benign_side(numeric_rules: list) -> tuple[str, tuple] | None:
+    """The side of normal a value lies on, judged by the bands that state what is normal."""
+    benign = [item for item in numeric_rules if item[0]["interpretation"] in BENIGN_INTERPRETATIONS]
+    if not benign:
+        return None
+    if all(item[0]["lower_bound"] is not None and item[2] <= item[0]["lower_bound"] for item in benign):
+        return "low", min(benign, key=lambda item: item[0]["lower_bound"])
+    if all(item[0]["upper_bound"] is not None and item[2] >= item[0]["upper_bound"] for item in benign):
+        return "high", max(benign, key=lambda item: item[0]["upper_bound"])
+    return None
+
+
 def _numeric_verdict(
     candidates, declining, risk: dict[str, object] | None, comparator: str | None = None,
 ) -> dict[str, object] | None:
@@ -1398,30 +1461,10 @@ def _numeric_verdict(
     ]
     if not numeric_rules:
         return None
-    # A strict censored result is judged just inside the side the laboratory
-    # stated: "<1.0" lands in the band below 1.0, not in the band that starts at it.
-    judged = {
-        "<": lambda value: math.nextafter(value, -math.inf),
-        ">": lambda value: math.nextafter(value, math.inf),
-    }.get(comparator, lambda value: value)
-    containing = [
-        item
-        for item in numeric_rules
-        if _contains(
-            judged(item[2]),
-            item[0]["lower_bound"],
-            item[0]["upper_bound"],
-            bool(item[0]["lower_inclusive"]),
-            bool(item[0]["upper_inclusive"]),
-        )
-    ]
+    containing = _containing_bands(numeric_rules, comparator)
     match = min(containing, key=_band_rank) if containing else None
-    if comparator in _CENSORED:
-        # The true value lies anywhere on the stated side of the printed number,
-        # so only a band that is open on that side can judge it.
-        open_side = "lower_bound" if comparator in ("<", "<=") else "upper_bound"
-        if match is None or match[0][open_side] is not None:
-            return None
+    if _censored_unjudged(match, comparator):
+        return None
     if match is not None:
         rule, _context, converted = match
         interpretation = rule["interpretation"]
@@ -1430,17 +1473,10 @@ def _numeric_verdict(
         # value lies on.  Without one that contains the value, the bands that do
         # state normal judge it, and only when every one of them puts it on the
         # same side; otherwise the laboratory's own range governs.
-        benign = [item for item in numeric_rules if item[0]["interpretation"] in BENIGN_INTERPRETATIONS]
-        if not benign:
+        side = _benign_side(numeric_rules)
+        if side is None:
             return None
-        if all(item[0]["lower_bound"] is not None and item[2] <= item[0]["lower_bound"] for item in benign):
-            interpretation = "low"
-            rule, _context, converted = min(benign, key=lambda item: item[0]["lower_bound"])
-        elif all(item[0]["upper_bound"] is not None and item[2] >= item[0]["upper_bound"] for item in benign):
-            interpretation = "high"
-            rule, _context, converted = max(benign, key=lambda item: item[0]["upper_bound"])
-        else:
-            return None
+        interpretation, (rule, _context, converted) = side
     low, high = rule["lower_bound"], rule["upper_bound"]
     positions = _authority_positions(containing + declining)
     return _verdict(
@@ -1596,6 +1632,44 @@ def _text_verdict(candidates, value_text: str | None) -> dict[str, object] | Non
     )
 
 
+def _below_printed_number(
+    value: float, comparator: str | None, vendor_low: float | None, vendor_high: float | None
+) -> str:
+    # The true value lies at or below the printed number.
+    if vendor_low is not None and (value < vendor_low or (value == vendor_low and comparator == "<")):
+        return "low"
+    # A range that starts at zero has no lower side to fall below.
+    if (vendor_low is None or vendor_low <= 0) and vendor_high is not None and value <= vendor_high:
+        return "normal"
+    return "unjudged"
+
+
+def _above_printed_number(
+    value: float, comparator: str | None, vendor_low: float | None, vendor_high: float | None
+) -> str:
+    # The true value lies at or above the printed number.
+    if vendor_high is not None and (value > vendor_high or (value == vendor_high and comparator == ">")):
+        return "high"
+    if vendor_high is None and vendor_low is not None and value >= vendor_low:
+        return "normal"
+    return "unjudged"
+
+
+def _vendor_interval_interpretation(
+    value: float, comparator: str | None, vendor_low: float | None, vendor_high: float | None
+) -> str:
+    """Which side of the laboratory's printed interval a value is on."""
+    if comparator in ("<", "<="):
+        return _below_printed_number(value, comparator, vendor_low, vendor_high)
+    if comparator in (">", ">="):
+        return _above_printed_number(value, comparator, vendor_low, vendor_high)
+    if vendor_high is not None and value > vendor_high:
+        return "high"
+    if vendor_low is not None and value < vendor_low:
+        return "low"
+    return "normal"
+
+
 def _vendor_verdict(
     value_numeric: float | None,
     unit: str | None,
@@ -1618,30 +1692,7 @@ def _vendor_verdict(
         # sat beside its own printed limit of 11.2 and reported "no comparison
         # available".  A censored result ("<5") is only a limit, so it is judged
         # only where its side is certain; otherwise it stays "unjudged".
-        value = float(value_numeric)
-        if comparator in ("<", "<="):
-            # The true value lies at or below the printed number.
-            if vendor_low is not None and (value < vendor_low or (value == vendor_low and comparator == "<")):
-                interpretation = "low"
-            # A range that starts at zero has no lower side to fall below.
-            elif (vendor_low is None or vendor_low <= 0) and vendor_high is not None and value <= vendor_high:
-                interpretation = "normal"
-            else:
-                interpretation = "unjudged"
-        elif comparator in (">", ">="):
-            # The true value lies at or above the printed number.
-            if vendor_high is not None and (value > vendor_high or (value == vendor_high and comparator == ">")):
-                interpretation = "high"
-            elif vendor_high is None and vendor_low is not None and value >= vendor_low:
-                interpretation = "normal"
-            else:
-                interpretation = "unjudged"
-        elif vendor_high is not None and value > vendor_high:
-            interpretation = "high"
-        elif vendor_low is not None and value < vendor_low:
-            interpretation = "low"
-        else:
-            interpretation = "normal"
+        interpretation = _vendor_interval_interpretation(float(value_numeric), comparator, vendor_low, vendor_high)
     if interpretation is None:
         interpretation = "unjudged"
     return _verdict(

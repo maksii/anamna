@@ -118,6 +118,43 @@ def _specimen_key(label: str, context: str) -> str:
 _ROW_ID_IS_PARAMETER = frozenset({"esculab"})
 
 
+def _value_concepts(observations) -> dict[float, list[str]]:
+    by_value: dict[float, list[str]] = {}
+    for row in observations:
+        if row["value_numeric"] is not None:
+            by_value.setdefault(round(float(row["value_numeric"]), 6), []).append(row["concept_id"])
+    return by_value
+
+
+def _row_concept(label: str, result, by_name: dict, by_value: dict) -> str | None:
+    """The concept a lab row names: the report's observation of that name, else the one with the same value."""
+    from .ingest.text import normalized_key
+    from .labsync.common import parse_result
+
+    concept = by_name.get(normalized_key(label))
+    if concept:
+        return concept
+    _, number = parse_result(result)
+    matches = set(by_value.get(round(number, 6), [])) if number is not None else set()
+    return matches.pop() if len(matches) == 1 else None
+
+
+def _learn_row(learned: dict[str, str], lab_row: dict, lab: str, by_name: dict, by_value: dict) -> None:
+    """Teach ``learned`` what one lab row means, unless it already knows that."""
+    from .ingest.concepts import clean_label
+
+    label = clean_label(str(lab_row.get("test") or ""))
+    name = _specimen_key(label, str(lab_row.get("packet") or ""))
+    row_id = f"id:{lab_row['idtest']}" if lab in _ROW_ID_IS_PARAMETER and lab_row.get("idtest") else None
+    if not label or (name in learned and (row_id is None or row_id in learned)):
+        return
+    concept = _row_concept(label, lab_row.get("result"), by_name, by_value)
+    if concept:
+        learned.setdefault(name, concept)
+        if row_id:
+            learned.setdefault(row_id, concept)
+
+
 def learned_names(connection, owner_user_id: str, lab: str) -> dict[str, str]:
     """What this lab's own analyte names meant in this person's record:
     ``normalized name -> concept`` from every synced order whose report was
@@ -129,7 +166,6 @@ def learned_names(connection, owner_user_id: str, lab: str) -> dict[str, str]:
     spells it."""
     from .ingest.concepts import clean_label
     from .ingest.text import normalized_key
-    from .labsync.common import parse_result
 
     learned: dict[str, str] = {}
     for order in connection.execute(
@@ -142,33 +178,19 @@ def learned_names(connection, owner_user_id: str, lab: str) -> dict[str, str]:
             (order["document_id"],),
         ).fetchall()
         by_name = {normalized_key(clean_label(row["raw_name"] or "")): row["concept_id"] for row in observations}
-        by_value: dict[float, list[str]] = {}
-        for row in observations:
-            if row["value_numeric"] is not None:
-                by_value.setdefault(round(float(row["value_numeric"]), 6), []).append(row["concept_id"])
+        by_value = _value_concepts(observations)
         for lab_row in json.loads(order["rows_json"]):
-            label = clean_label(str(lab_row.get("test") or ""))
-            name = _specimen_key(label, str(lab_row.get("packet") or ""))
-            row_id = f"id:{lab_row['idtest']}" if lab in _ROW_ID_IS_PARAMETER and lab_row.get("idtest") else None
-            if not label or (name in learned and (row_id is None or row_id in learned)):
-                continue
-            concept = by_name.get(normalized_key(label))
-            if not concept:
-                _, number = parse_result(lab_row.get("result"))
-                matches = set(by_value.get(round(number, 6), [])) if number is not None else set()
-                concept = matches.pop() if len(matches) == 1 else None
-            if concept:
-                learned.setdefault(name, concept)
-                if row_id:
-                    learned.setdefault(row_id, concept)
+            _learn_row(learned, lab_row, lab, by_name, by_value)
     return learned
 
 
 #: A blood specimen named in the label: «Калій (сироватка)», «Глюкоза (плазма
 #: крові)», «Залізо в сироватці крові».  Serum and plasma are what a bare
 #: name already means; whole blood («цільна кров») is not, and stays.
-_SERUM = re.compile(r"\s*\(\s*(?:сироватк\w*|плазм\w*)(?:\s+крові)?\s*\)|\s+(?:в|у)\s+(?:сироватці|плазмі)(?:\s+крові)?\b",
-                    re.IGNORECASE)
+_SERUM_NAME = r"(?:сироватк\w*|плазм\w*)"
+_OPTIONAL_BLOOD = r"(?:\s+крові)?"
+_SERUM = re.compile(rf"(?<!\s)\s*(?:\(\s*{_SERUM_NAME}{_OPTIONAL_BLOOD}\s*\)"
+                    rf"|(?<=\s)[ву]\s+(?:сироватці|плазмі){_OPTIONAL_BLOOD}\b)", re.IGNORECASE)
 _BRACKET = re.compile(r"\(([^()]*)\)")
 #: An antibody named in the label.  Its own bracketed code can be a code of
 #: something else entirely: anti-MCV («Цитрульований віментин (MCV)») is not
@@ -206,7 +228,7 @@ def _initialism(part: str, base: str) -> bool:
     the part's letters run through the base in order, from its first letter."""
     letters = [ch for ch in part.casefold() if ch.isalpha()]
     text = base.casefold()
-    if not 2 <= len(letters) <= 6 or letters[0] != text[:1]:
+    if not 2 <= len(letters) <= 6 or not text.startswith(letters[0]):
         return False
     position = 0
     for letter in letters:
@@ -214,6 +236,32 @@ def _initialism(part: str, base: str) -> bool:
         if not position:
             return False
     return True
+
+
+def _look(text: str, label: str, urine: bool) -> dict | None:
+    from .ingest.concepts import concept_for_alias
+
+    category = "urinalysis" if urine else None
+    definition = concept_for_alias(text, None, category=category) if text else None
+    if definition is None or not _fits(definition, label) or (definition["category"] == "urinalysis") != urine:
+        return None
+    return definition
+
+
+def _slashed_parts(groups: list[list[str]], found: dict, label: str, urine: bool) -> dict[str, dict]:
+    # «МНВ / INR» beside «ПЧ» names a second analyte; one side of a slash
+    # never names the analyte on its own («тестостерон загальний/SHBG» is
+    # the free androgen index, not testosterone), it only rules one out.
+    return {str(d["name"]): d for parts in groups for part in parts if "/" in part
+            for side in part.split("/") if found and (d := _look(side.strip(), label, urine))}
+
+
+def _outside_verdict(outside: dict, found: dict, groups: list[list[str]], base: str) -> dict | None:
+    if found and set(found) != {str(outside["name"])}:
+        return None
+    if found or all(any(_initialism(part, base) for part in parts) for parts in groups):
+        return outside
+    return None
 
 
 def _by_parts(label: str, urine: bool, context: str) -> dict | None:
@@ -228,37 +276,20 @@ def _by_parts(label: str, urine: bool, context: str) -> dict | None:
     Protein, High Sensitivity)») name none.  Never for a specimen other than
     blood and urine or a genetic test, and a urine label only ever finds a
     urine concept."""
-    from .ingest.concepts import concept_for_alias
-
     if _OTHER_SPECIMEN.search(f"{label} {context}") or _GENETIC.search(label) or _DERIVED.search(label):
         return None
-
-    def look(text: str) -> dict | None:
-        definition = concept_for_alias(text, None, category="urinalysis" if urine else None) if text else None
-        if definition is None or not _fits(definition, label) or (definition["category"] == "urinalysis") != urine:
-            return None
-        return definition
-
     bare = " ".join(_SERUM.sub(" ", label).split())
-    if bare != label and (definition := look(bare)):
+    if bare != label and (definition := _look(bare, label, urine)):
         return definition
     groups = [[part.strip() for part in re.split(r"[,;]", group) if part.strip()] for group in _BRACKET.findall(bare)]
     if not groups or any(len(parts) > _MAX_PARTS for parts in groups):
         return None
     base = " ".join(_BRACKET.sub(" ", bare).split())
-    found = {str(d["name"]): d for parts in groups for part in parts if (d := look(part))}
-    # «МНВ / INR» beside «ПЧ» names a second analyte; one side of a slash
-    # never names the analyte on its own («тестостерон загальний/SHBG» is
-    # the free androgen index, not testosterone), it only rules one out.
-    found.update({str(d["name"]): d for parts in groups for part in parts if "/" in part
-                  for side in part.split("/") if found and (d := look(side.strip()))})
-    outside = look(base)
+    found = {str(d["name"]): d for parts in groups for part in parts if (d := _look(part, label, urine))}
+    found.update(_slashed_parts(groups, found, label, urine))
+    outside = _look(base, label, urine)
     if outside is not None:
-        if found and set(found) != {str(outside["name"])}:
-            return None
-        if found or all(any(_initialism(part, base) for part in parts) for parts in groups):
-            return outside
-        return None
+        return _outside_verdict(outside, found, groups, base)
     return next(iter(found.values())) if len(found) == 1 else None
 
 
@@ -371,6 +402,61 @@ def _folded(aliases: dict) -> dict:
     return out
 
 
+def _smallest_items(items: list[dict]) -> dict[str, dict]:
+    """The smallest item listing each parameter id: the one its specimen is read from."""
+    smallest: dict[str, dict] = {}
+    for item in items:
+        for parameter in item["parameters"]:
+            held = smallest.get(parameter["id"])
+            if held is None or len(item["parameters"]) < len(held["parameters"]):
+                smallest[parameter["id"]] = item
+    return smallest
+
+
+def _parameter_keys(parameter: dict, own: dict, lab: str, vendor: str, aliases: dict,
+                    learned: dict | None) -> list[str]:
+    """Keys for one parameter id, the same in every item that lists it."""
+    from . import testplan_aliases
+    from .ingest.text import normalized_key
+
+    chosen = testplan_aliases.curated(lab, parameter["id"])
+    if chosen is not None:
+        return list(chosen) or [f"{lab}:{parameter['id']}"]
+    single = len(own["parameters"]) == 1
+    allergen = testplan_aliases.allergen_key(f"{parameter['name']} {own['name']}" if single else parameter["name"])
+    if allergen:
+        return [allergen]
+    whole = WHOLE_TESTS.get(normalized_key(parameter["name"]))
+    if whole:
+        return list(whole)
+    key = (learned or {}).get(f"id:{parameter['id']}") or resolve(
+        parameter["name"], own["name"], vendor, aliases, learned)
+    if not key and single:
+        key = resolve(own["name"], own["name"], vendor, aliases, learned)
+    key = key or f"{lab}:{parameter['id']}"
+    return [key, *testplan_aliases.IMPLIED.get(key, ())]
+
+
+def _item_keys(item: dict, daily: bool, by_id: dict[str, list[str]], analyte, spot_urine: set,
+               lab: str) -> list[list[str]]:
+    """The keys of each parameter of one item, aligned with its ``parameters``."""
+    from . import testplan_aliases
+    from .ingest.text import normalized_key
+
+    per_parameter = []
+    for parameter in item["parameters"]:
+        if testplan_aliases.is_note(normalized_key(parameter["name"])) and len(item["parameters"]) > 1:
+            per_parameter.append([])
+            continue
+        if parameter["id"] not in by_id:
+            by_id[parameter["id"]] = analyte(parameter)
+        found = by_id[parameter["id"]]
+        if daily:
+            found = [f"{lab}:24h:{parameter['id']}" if key in spot_urine else key for key in found]
+        per_parameter.append(found)
+    return per_parameter
+
+
 def keyed(items: list[dict], lab: str, vendor: str, aliases: dict, learned: dict | None = None,
           categories: dict[str, list[str]] | None = None) -> list[dict]:
     """Items with ``keys``: the requirement keys their analytes stand for,
@@ -402,55 +488,20 @@ def keyed(items: list[dict], lab: str, vendor: str, aliases: dict, learned: dict
     protein.  Fee ids get the lab's prefix unless they carry it already, so
     two labs' blood draws are two fees.  ``categories`` is unused (whole
     examinations list their concepts) and kept for callers."""
-    from . import testplan_aliases
     from .ingest.concepts import CONCEPT_DEFINITIONS, stable_concept_id
-    from .ingest.text import normalized_key
 
     aliases = _folded(aliases)
-    smallest: dict[str, dict] = {}
-    for item in items:
-        for parameter in item["parameters"]:
-            held = smallest.get(parameter["id"])
-            if held is None or len(item["parameters"]) < len(held["parameters"]):
-                smallest[parameter["id"]] = item
+    smallest = _smallest_items(items)
 
     def analyte(parameter: dict) -> list[str]:
-        """Keys for one parameter id, the same in every item that lists it."""
-        chosen = testplan_aliases.curated(lab, parameter["id"])
-        if chosen is not None:
-            return list(chosen) or [f"{lab}:{parameter['id']}"]
-        own = smallest[parameter["id"]]
-        single = len(own["parameters"]) == 1
-        allergen = testplan_aliases.allergen_key(f"{parameter['name']} {own['name']}" if single else parameter["name"])
-        if allergen:
-            return [allergen]
-        whole = WHOLE_TESTS.get(normalized_key(parameter["name"]))
-        if whole:
-            return list(whole)
-        key = (learned or {}).get(f"id:{parameter['id']}") or resolve(
-            parameter["name"], own["name"], vendor, aliases, learned)
-        if not key and single:
-            key = resolve(own["name"], own["name"], vendor, aliases, learned)
-        key = key or f"{lab}:{parameter['id']}"
-        return [key, *testplan_aliases.IMPLIED.get(key, ())]
+        return _parameter_keys(parameter, smallest[parameter["id"]], lab, vendor, aliases, learned)
 
     by_id: dict[str, list[str]] = {}
     spot_urine = {stable_concept_id(str(definition["name"])) for definition in CONCEPT_DEFINITIONS
                   if definition["category"] == "urinalysis"}
     out = []
     for item in items:
-        daily = _daily_urine(item)
-        per_parameter = []
-        for parameter in item["parameters"]:
-            if testplan_aliases.is_note(normalized_key(parameter["name"])) and len(item["parameters"]) > 1:
-                per_parameter.append([])
-                continue
-            if parameter["id"] not in by_id:
-                by_id[parameter["id"]] = analyte(parameter)
-            found = by_id[parameter["id"]]
-            if daily:
-                found = [f"{lab}:24h:{parameter['id']}" if key in spot_urine else key for key in found]
-            per_parameter.append(found)
+        per_parameter = _item_keys(item, _daily_urine(item), by_id, analyte, spot_urine, lab)
         keys = [key for found in per_parameter for key in found]
         out.append({**item, "lab": lab, "keys": list(dict.fromkeys(keys)), "parameter_keys": per_parameter,
                     "fees": [{**fee, "id": fee["id"] if str(fee["id"]).startswith(f"{lab}:") else f"{lab}:{fee['id']}"}
@@ -465,6 +516,99 @@ NODE_LIMIT = 200_000
 #: Seconds one search may take, for the same reason: a full check-up asks for
 #: over a hundred results and an exact search would run for minutes.
 TIME_LIMIT = 0.25
+
+
+def _candidates(items: list[dict], forced_ids: set, open_keys: set) -> list[tuple]:
+    cands = []
+    for item in items:
+        if (item.get("lab"), item["id"]) in forced_ids:
+            continue
+        cover = frozenset(item["keys"]) & open_keys
+        if cover:
+            cands.append((item, cover, float(item["final_price"]),
+                          {fee["id"]: float(fee["price"]) for fee in item["fees"]}))
+    return cands
+
+
+def _unique_fees(items: list[dict]) -> dict[str, dict]:
+    fees: dict[str, dict] = {}
+    for item in items:
+        for fee in item["fees"]:
+            fees.setdefault(fee["id"], fee)
+    return fees
+
+
+def _picked(forced: list[dict], chosen: list[tuple], required: set[str]) -> list[dict]:
+    return [{**item, "forced": True} for item in forced] + sorted(
+        ({**cand[0], "forced": False} for cand in chosen), key=lambda item: -len(set(item["keys"]) & required))
+
+
+def _marginal(cand: tuple, fees_paid) -> float:
+    return cand[2] + sum(price for fee, price in cand[3].items() if fee not in fees_paid)
+
+
+def _undominated(cands: list[tuple]) -> list[tuple]:
+    # Dominated: another item covers at least as much, costs no more and adds
+    # no fee this one does not.  Exact ties keep the earlier item.
+    kept = []
+    for index, (item, cover, price, fees) in enumerate(cands):
+        if not any(o_cover >= cover and o_price <= price and o_fees.keys() <= fees.keys()
+                   and (o_cover != cover or o_price < price or len(o_fees) < len(fees) or other < index)
+                   for other, (_, o_cover, o_price, o_fees) in enumerate(cands) if other != index):
+            kept.append((item, cover, price, fees))
+    return kept
+
+
+def _greedy(kept: list[tuple], coverable: frozenset, forced_fees: dict) -> tuple[list, float]:
+    # Greedy start: the best price per newly covered key, repeatedly.
+    chosen, covered, fees_paid, cost = [], frozenset(), set(forced_fees), 0.0
+    while covered != coverable:
+        cand = min((c for c in kept if c[1] - covered),
+                   key=lambda c, covered=covered, fees_paid=fees_paid: (
+                       _marginal(c, fees_paid) / len(c[1] - covered), -len(c[1] - covered)))
+        chosen.append(cand)
+        cost += _marginal(cand, fees_paid)
+        covered |= cand[1]
+        fees_paid |= cand[3].keys()
+    return chosen, cost
+
+
+def _lower_bound(missing: set, by_key: dict, fees_paid) -> float:
+    return max(min(_marginal(c, fees_paid) for c in by_key[key]) for key in missing)
+
+
+class _Search:
+    """Branch and bound behind :func:`optimise`: ``best`` receives every plan cheaper than ``bound``."""
+
+    def __init__(self, coverable: frozenset, by_key: dict, best: dict, bound: float,
+                 node_limit: int, time_limit: float) -> None:
+        self.coverable = coverable
+        self.by_key = by_key
+        self.best = best
+        self.bound = bound
+        self.node_limit = node_limit
+        self.deadline = time.monotonic() + time_limit
+        self.nodes = 0
+
+    def run(self, chosen: list, covered: frozenset, fees_paid: set, cost: float) -> None:
+        self.nodes += 1
+        if not self.nodes & 255 and time.monotonic() > self.deadline:
+            self.nodes = self.node_limit + 1
+        if self.nodes > self.node_limit:
+            return
+        missing = self.coverable - covered
+        if not missing:
+            if cost < self.bound - 1e-6:
+                self.best.update(cost=cost, chosen=list(chosen))
+                self.bound = cost
+            return
+        if cost + _lower_bound(missing, self.by_key, fees_paid) >= self.bound - 1e-6:
+            return
+        key = min(missing, key=lambda k: len(self.by_key[k]))
+        for cand in sorted(self.by_key[key], key=lambda c: _marginal(c, fees_paid) / len(c[1] & missing)):
+            chosen.append(cand)
+            self.run(chosen, covered | cand[1], fees_paid | cand[3].keys(), cost + _marginal(cand, fees_paid))
+            chosen.pop()
 
 
 def optimise(items: list[dict], required: set[str], *, forced: list[dict] = (),
@@ -494,74 +638,19 @@ def optimise(items: list[dict], required: set[str], *, forced: list[dict] = (),
     forced_cover = frozenset(k for item in forced for k in item["keys"]) & required
     forced_cost = sum(float(item["final_price"]) for item in forced) + sum(forced_fees.values())
     open_keys = required - forced_cover
-    cands = []
-    for item in items:
-        if (item.get("lab"), item["id"]) in forced_ids:
-            continue
-        cover = frozenset(item["keys"]) & open_keys
-        if cover:
-            cands.append((item, cover, float(item["final_price"]),
-                          {fee["id"]: float(fee["price"]) for fee in item["fees"]}))
-    # Dominated: another item covers at least as much, costs no more and adds
-    # no fee this one does not.  Exact ties keep the earlier item.
-    kept = []
-    for index, (item, cover, price, fees) in enumerate(cands):
-        if not any(o_cover >= cover and o_price <= price and o_fees.keys() <= fees.keys()
-                   and (o_cover != cover or o_price < price or len(o_fees) < len(fees) or other < index)
-                   for other, (_, o_cover, o_price, o_fees) in enumerate(cands) if other != index):
-            kept.append((item, cover, price, fees))
+    kept = _undominated(_candidates(items, forced_ids, open_keys))
     coverable = frozenset().union(*(cand[1] for cand in kept))
     by_key = {key: [cand for cand in kept if key in cand[1]] for key in coverable}
-
-    def marginal(cand, fees_paid):
-        return cand[2] + sum(price for fee, price in cand[3].items() if fee not in fees_paid)
-
-    # Greedy start: the best price per newly covered key, repeatedly.
-    chosen, covered, fees_paid, cost = [], frozenset(), set(forced_fees), 0.0
-    while covered != coverable:
-        cand = min((c for c in kept if c[1] - covered),
-                   key=lambda c: (marginal(c, fees_paid) / len(c[1] - covered), -len(c[1] - covered)))
-        chosen.append(cand)
-        cost += marginal(cand, fees_paid)
-        covered |= cand[1]
-        fees_paid |= cand[3].keys()
+    chosen, cost = _greedy(kept, coverable, forced_fees)
     best = {"cost": cost, "chosen": list(chosen)}
     # Pruning bound: the cheaper of the greedy plan and the outside offer.
     # The plan returned is still a real cover (the greedy one if nothing
     # under the ceiling exists), never the outside offer itself.
-    bound_cost = [min(cost, ceiling - forced_cost) if ceiling is not None else cost]
-    nodes = 0
-    deadline = time.monotonic() + time_limit
-
-    def search(chosen, covered, fees_paid, cost):
-        nonlocal nodes
-        nodes += 1
-        if not nodes & 255 and time.monotonic() > deadline:
-            nodes = node_limit + 1
-        if nodes > node_limit:
-            return
-        missing = coverable - covered
-        if not missing:
-            if cost < bound_cost[0] - 1e-6:
-                best.update(cost=cost, chosen=list(chosen))
-                bound_cost[0] = cost
-            return
-        bound = max(min(marginal(c, fees_paid) for c in by_key[key]) for key in missing)
-        if cost + bound >= bound_cost[0] - 1e-6:
-            return
-        key = min(missing, key=lambda k: len(by_key[k]))
-        for cand in sorted(by_key[key], key=lambda c: marginal(c, fees_paid) / len(c[1] & missing)):
-            chosen.append(cand)
-            search(chosen, covered | cand[1], fees_paid | cand[3].keys(), cost + marginal(cand, fees_paid))
-            chosen.pop()
-
-    search([], frozenset(), set(forced_fees), 0.0)
-    fees: dict[str, dict] = {}
-    for item in [*forced, *(cand[0] for cand in best["chosen"])]:
-        for fee in item["fees"]:
-            fees.setdefault(fee["id"], fee)
-    picked = [{**item, "forced": True} for item in forced] + sorted(
-        ({**cand[0], "forced": False} for cand in best["chosen"]), key=lambda item: -len(set(item["keys"]) & required))
+    bound_cost = min(cost, ceiling - forced_cost) if ceiling is not None else cost
+    search = _Search(coverable, by_key, best, bound_cost, node_limit, time_limit)
+    search.run([], frozenset(), set(forced_fees), 0.0)
+    fees = _unique_fees([*forced, *(cand[0] for cand in best["chosen"])])
+    picked = _picked(forced, best["chosen"], required)
     fee_total = sum(float(fee["price"]) for fee in fees.values())
     return {
         "items": picked,
@@ -572,7 +661,7 @@ def optimise(items: list[dict], required: set[str], *, forced: list[dict] = (),
         "list_cost": round(sum(float(item["price"]) for item in picked) + fee_total, 2),
         "covered": sorted(coverable | forced_cover),
         "missing": sorted(required - coverable - forced_cover),
-        "exact": nodes <= node_limit,
+        "exact": search.nodes <= node_limit,
         "beats_ceiling": ceiling is None or best["cost"] + forced_cost < ceiling - 1e-6,
     }
 

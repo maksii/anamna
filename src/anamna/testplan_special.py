@@ -286,6 +286,26 @@ def _said(pattern, exclude, text: str) -> bool:
         and not (exclude and (exclude.search(text) or exclude.search(folded)))
 
 
+def _holds(marker, pattern, exclude, name: str, rows: list[str], kind: str, listed: set, described: str,
+           about: str, variants: bool) -> bool:
+    """Whether one marker holds for an item (see :func:`matches`)."""
+    if exclude and _said(exclude, None, name):
+        return False
+    # A row is a test of its own, whatever kind of item holds it.
+    if any(_said(pattern, exclude, row) for row in rows if row != name):
+        return True
+    if kind not in marker.kinds:
+        return False
+    if _said(pattern, exclude, name):
+        return True
+    if marker.genes and marker.genes <= listed \
+            and (not marker.purpose or re.search(marker.purpose, about, re.IGNORECASE)):
+        return True
+    if marker.stated and re.search(marker.stated, described):
+        return True
+    return bool(variants and marker.variant and re.search(marker.variant, described))
+
+
 def matches(item: dict) -> list[str]:
     """The keys markers give an item, then what each also answers.  A
     marker holds, within its kinds, when the item's name meets its pattern,
@@ -302,25 +322,8 @@ def matches(item: dict) -> list[str]:
     described = str(item.get("description") or "")
     about = f"{name} {described}"
     variants = len(set(_RS.findall(described))) >= VARIANT_LIST
-
-    def holds(marker, pattern, exclude) -> bool:
-        if exclude and _said(exclude, None, name):
-            return False
-        # A row is a test of its own, whatever kind of item holds it.
-        if any(_said(pattern, exclude, row) for row in rows if row != name):
-            return True
-        if kind not in marker.kinds:
-            return False
-        if _said(pattern, exclude, name):
-            return True
-        if marker.genes and marker.genes <= listed \
-                and (not marker.purpose or re.search(marker.purpose, about, re.IGNORECASE)):
-            return True
-        if marker.stated and re.search(marker.stated, described):
-            return True
-        return bool(variants and marker.variant and re.search(marker.variant, described))
-
-    hits = [marker for marker, pattern, exclude in _COMPILED if holds(marker, pattern, exclude)]
+    hits = [marker for marker, pattern, exclude in _COMPILED
+            if _holds(marker, pattern, exclude, name, rows, kind, listed, described, about, variants)]
     return list(dict.fromkeys([*(m.key for m in hits), *(k for m in hits for k in m.also)]))
 
 

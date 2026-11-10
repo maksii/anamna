@@ -25,13 +25,14 @@ _OBSERVATION_HEADER = [
     "document_id", "page_number",
 ]
 _DOCUMENT_HEADER = ["id", "title", "document_type", "document_date", "original_filename", "archive_path"]
+_MEDICINES_CSV = "medicines.csv"
 #: CSV file name in the archive -> the table it is a copy of.
 _OWNED_TABLES = {
     "device_imports.csv": "device_imports",
     "vaccinations.csv": "immunizations",
     "device_metric_days.csv": "device_metric_days",
     "device_workouts.csv": "device_workouts",
-    "medicines.csv": "factors",
+    _MEDICINES_CSV: "factors",
     "medicine_effects.csv": "factor_effects",
 }
 
@@ -165,7 +166,7 @@ def write_record_archive(settings: Settings, user_id: str, target: BinaryIO) -> 
             (user_id,),
         ).fetchall()
         owned = {name: _owned_rows(connection, table, user_id) for name, table in _OWNED_TABLES.items()}
-    owned["medicines.csv"] = _medicine_csv(*owned["medicines.csv"])
+    owned[_MEDICINES_CSV] = _medicine_csv(*owned[_MEDICINES_CSV])
 
     files: dict[str, Path] = {}
     archive_paths: dict[str, str] = {}
@@ -205,7 +206,7 @@ def write_record_archive(settings: Settings, user_id: str, target: BinaryIO) -> 
         "device_imports": len(device_rows),
         "device_metric_days": len(owned["device_metric_days.csv"][1]),
         "device_workouts": len(workout_rows),
-        "medicines": len(owned["medicines.csv"][1]),
+        "medicines": len(owned[_MEDICINES_CSV][1]),
         "medicine_effects": len(owned["medicine_effects.csv"][1]),
         "device_files": device_files,
         "files": len(files),

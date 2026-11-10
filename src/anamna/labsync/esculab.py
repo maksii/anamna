@@ -57,6 +57,8 @@ SIGN_IN = "sms"
 _CODE_LENGTH = 4
 _CODE_RE = re.compile(r"\d{4}")
 _TOKEN_RE = re.compile(r"[A-Za-z0-9._~+/=-]{16,4096}")
+_NO_PATIENT = "labsync.esculab_error_no_patient"
+_WRONG_CODE = "labsync.password_error_code"
 
 
 def token_expiry(token: str) -> str | None:
@@ -99,22 +101,37 @@ def start_sign_in(base_url: str, phone: object, password: object, state: dict) -
                           "code_length": _CODE_LENGTH, "expires_in": 300}, "phone": phone}
 
 
-def _patient_entry(reply: object) -> dict:
-    """The PATIENT entry of the accept reply, its ``tokens`` folded in."""
+def _raise_if_refused(reply: object) -> None:
+    """The accept reply's own refusals: a wrong code, or a number with no patient."""
     if isinstance(reply, dict):
         status = reply.get("status")
         if (isinstance(status, int) and status >= 400) or reply.get("message") == "Error verifying code":
-            raise LabSyncError("labsync.password_error_code")
+            raise LabSyncError(_WRONG_CODE)
         if reply.get("message") == "User not found":
-            raise LabSyncError("labsync.esculab_error_no_patient")
-    entries = reply if isinstance(reply, list) else reply.get("tokens") if isinstance(reply, dict) else None
+            raise LabSyncError(_NO_PATIENT)
+
+
+def _patient_of(entries: list) -> dict:
+    """The PATIENT entry of a per-role list, its ``tokens`` folded in."""
+    entry = next((item for item in entries if isinstance(item, dict)
+                  and str(item.get("clientType") or "").upper() == "PATIENT"), None)
+    if entry is None:  # a doctor-only number, or nobody: the app's "User not found"
+        raise LabSyncError(_NO_PATIENT)
+    inner = entry.get("tokens")
+    return {**entry, **inner} if isinstance(inner, dict) else entry
+
+
+def _patient_entry(reply: object) -> dict:
+    """The PATIENT entry of the accept reply, its ``tokens`` folded in."""
+    _raise_if_refused(reply)
+    if isinstance(reply, list):
+        entries = reply
+    elif isinstance(reply, dict):
+        entries = reply.get("tokens")
+    else:
+        entries = None
     if isinstance(entries, list):
-        entry = next((item for item in entries if isinstance(item, dict)
-                      and str(item.get("clientType") or "").upper() == "PATIENT"), None)
-        if entry is None:  # a doctor-only number, or nobody: the app's "User not found"
-            raise LabSyncError("labsync.esculab_error_no_patient")
-        inner = entry.get("tokens")
-        return {**entry, **inner} if isinstance(inner, dict) else entry
+        return _patient_of(entries)
     if isinstance(reply, dict) and reply.get("token"):  # /api/auth/accept: {token, exist}
         return reply
     raise LabSyncError("labsync.error_reply")
@@ -123,12 +140,12 @@ def _patient_entry(reply: object) -> dict:
 def verify_code(base_url: str, challenge: dict, code: object, state: dict, phone: str) -> dict:
     code = re.sub(r"\s", "", str(code or ""))
     if not _CODE_RE.fullmatch(code):
-        raise LabSyncError("labsync.password_error_code")
+        raise LabSyncError(_WRONG_CODE)
     reply = _post(base_url, "/api/auth/application/accept", {"code": code, "uuid": challenge["token"]},
-                  "labsync.password_error_code", headers={"AccessPhone": phone})
+                  _WRONG_CODE, headers={"AccessPhone": phone})
     entry = _patient_entry(reply)
     if entry.get("exist") is False:
-        raise LabSyncError("labsync.esculab_error_no_patient")
+        raise LabSyncError(_NO_PATIENT)
     token = str(entry.get("token") or "")
     if not _TOKEN_RE.fullmatch(token):
         raise LabSyncError("labsync.error_reply")

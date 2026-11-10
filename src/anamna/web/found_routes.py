@@ -77,6 +77,80 @@ def _view(connection, owner_id: str, document_row, group: dict, seen: dict[str, 
     }
 
 
+def _start_scan(settings, user) -> JSONResponse:
+    """Start the reading of the waiting documents as a job; the page polls for its progress."""
+    if not ai.ai_active(settings, factor_scan.FEATURE):
+        return JSONResponse({"error": "disabled"})
+    owner_id = user["id"]
+    with connect(settings) as connection:
+        waiting = factor_scan.counts(connection, owner_id)["waiting"]
+    if not waiting and not factor_jobs.running(owner_id, "scan"):
+        return JSONResponse({"error": "lost"})
+    locale = get_locale()
+
+    def work(report) -> dict:
+        token = activate_locale(locale)
+        try:
+            return factor_scan.scan(
+                settings, partial(connect, settings), owner_id, locale=locale, report=report,
+            )
+        finally:
+            reset_locale(token)
+
+    return JSONResponse({"job": factor_jobs.start(owner_id, work, kind="scan", with_progress=True)})
+
+
+def _scan_status(user_id: str, job_id: str) -> JSONResponse:
+    job = factor_jobs.get(user_id, job_id)
+    if job is None or job["kind"] != "scan":
+        return JSONResponse({"state": "failed", "error": "lost", "done": 0, "total": 0, "failed": 0})
+    return JSONResponse({
+        "state": job["state"], "error": job["error"], "done": job["done"], "total": job["total"],
+        "failed": int((job["result"] or {}).get("failed") or 0),
+    })
+
+
+def _accept_found(connection, audit, user, keys: list[str], form) -> RedirectResponse:
+    patient = connection.execute(
+        "SELECT id FROM patients WHERE owner_user_id = ? ORDER BY created_at LIMIT 1", (user["id"],),
+    ).fetchone()
+    if patient is None:
+        return _redirect("/medicines")
+    statuses = {key: str(form.get(f"status:{key}") or "") for key in keys}
+    created, failed = factor_candidates.accept(
+        connection, user["id"], patient["id"], keys, statuses, today=date.today(),
+    )
+    for factor_id in created:
+        audit(user["id"], user["id"], "factor.create", "factor", factor_id, {"source": "documents"},
+              connection=connection)
+    connection.commit()
+    if not created:
+        error = "found_failed" if failed else "found_none"
+        return _redirect(f"/medicines/found?error={error}")
+    if failed:
+        return _redirect("/medicines/found?saved=found_added&error=found_failed")
+    return _redirect("/medicines/found?saved=found_added")
+
+
+def _dismiss_found(connection, user, keys: list[str]) -> RedirectResponse:
+    factor_candidates.dismiss(connection, user["id"], keys)
+    connection.commit()
+    return _redirect("/medicines/found?saved=found_dismissed")
+
+
+def _found_action(settings, audit, user, form) -> RedirectResponse:
+    keys = [str(key) for key in form.getlist("key")][:_MAX_KEYS]
+    if not keys:
+        return _redirect("/medicines/found?error=found_none")
+    action = str(form.get("action") or "")
+    with connect(settings) as connection:
+        if action == "accept":
+            return _accept_found(connection, audit, user, keys, form)
+        if action == "dismiss":
+            return _dismiss_found(connection, user, keys)
+    raise HTTPException(400)
+
+
 def register_routes(app, settings, *, templates, template_context, require_user, record_user, require_csrf,
                     audit, document_row) -> None:
     """``audit`` is ``partial(_audit, settings)``; ``document_row`` renders a documents row as the record search does."""
@@ -103,28 +177,6 @@ def register_routes(app, settings, *, templates, template_context, require_user,
             saved=_notice(saved, _SAVED), error=_notice(error, _ERRORS),
         ))
 
-    def start_scan(user) -> JSONResponse:
-        """Start the reading of the waiting documents as a job; the page polls for its progress."""
-        if not ai.ai_active(settings, factor_scan.FEATURE):
-            return JSONResponse({"error": "disabled"})
-        owner_id = user["id"]
-        with connect(settings) as connection:
-            waiting = factor_scan.counts(connection, owner_id)["waiting"]
-        if not waiting and not factor_jobs.running(owner_id, "scan"):
-            return JSONResponse({"error": "lost"})
-        locale = get_locale()
-
-        def work(report) -> dict:
-            token = activate_locale(locale)
-            try:
-                return factor_scan.scan(
-                    settings, partial(connect, settings), owner_id, locale=locale, report=report,
-                )
-            finally:
-                reset_locale(token)
-
-        return JSONResponse({"job": factor_jobs.start(owner_id, work, kind="scan", with_progress=True)})
-
     @app.post("/medicines/found/scan")
     async def found_scan_page(request: Request):
         user = require_user(request)
@@ -133,7 +185,7 @@ def register_routes(app, settings, *, templates, template_context, require_user,
         if not _writable(user, owner):
             raise HTTPException(403)
         require_csrf(user, str(form.get("csrf_token") or ""))
-        return await run_in_threadpool(start_scan, user)
+        return await run_in_threadpool(_start_scan, settings, user)
 
     @app.get("/medicines/found/scan/{job_id}")
     def found_scan_status(request: Request, job_id: str):
@@ -141,45 +193,7 @@ def register_routes(app, settings, *, templates, template_context, require_user,
         owner = record_user(request, user)
         if not _writable(user, owner):
             raise HTTPException(403)
-        job = factor_jobs.get(user["id"], job_id)
-        if job is None or job["kind"] != "scan":
-            return JSONResponse({"state": "failed", "error": "lost", "done": 0, "total": 0, "failed": 0})
-        return JSONResponse({
-            "state": job["state"], "error": job["error"], "done": job["done"], "total": job["total"],
-            "failed": int((job["result"] or {}).get("failed") or 0),
-        })
-
-    def found_action(user, form) -> RedirectResponse:
-        keys = [str(key) for key in form.getlist("key")][:_MAX_KEYS]
-        if not keys:
-            return _redirect("/medicines/found?error=found_none")
-        action = str(form.get("action") or "")
-        with connect(settings) as connection:
-            if action == "accept":
-                patient = connection.execute(
-                    "SELECT id FROM patients WHERE owner_user_id = ? ORDER BY created_at LIMIT 1", (user["id"],),
-                ).fetchone()
-                if patient is None:
-                    return _redirect("/medicines")
-                statuses = {key: str(form.get(f"status:{key}") or "") for key in keys}
-                created, failed = factor_candidates.accept(
-                    connection, user["id"], patient["id"], keys, statuses, today=date.today(),
-                )
-                for factor_id in created:
-                    audit(user["id"], user["id"], "factor.create", "factor", factor_id, {"source": "documents"},
-                          connection=connection)
-                connection.commit()
-                if not created:
-                    error = "found_failed" if failed else "found_none"
-                    return _redirect(f"/medicines/found?error={error}")
-                if failed:
-                    return _redirect("/medicines/found?saved=found_added&error=found_failed")
-                return _redirect("/medicines/found?saved=found_added")
-            if action == "dismiss":
-                factor_candidates.dismiss(connection, user["id"], keys)
-                connection.commit()
-                return _redirect("/medicines/found?saved=found_dismissed")
-        raise HTTPException(400)
+        return _scan_status(user["id"], job_id)
 
     @app.post("/medicines/found")
     async def found_action_page(request: Request):
@@ -189,4 +203,4 @@ def register_routes(app, settings, *, templates, template_context, require_user,
         if not _writable(user, owner):
             raise HTTPException(403)
         require_csrf(user, str(form.get("csrf_token") or ""))
-        return await run_in_threadpool(found_action, user, form)
+        return await run_in_threadpool(_found_action, settings, audit, user, form)

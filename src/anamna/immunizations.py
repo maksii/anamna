@@ -702,6 +702,20 @@ class ParsedDose:
     clinician: str = ""
 
 
+def _code_in_brackets(block: str) -> str | None:
+    """The canonical code of the first bracketed name that reads as one, or None."""
+    for candidate in re.findall(r"\(([^)]{2,40})\)", block):
+        key = fold(candidate)
+        if not key:
+            continue
+        if key in _FOLDED_CODES:
+            return _FOLDED_CODES[key]
+        close = difflib.get_close_matches(key, _FOLDED_CODES, n=1, cutoff=0.75)
+        if close:
+            return _FOLDED_CODES[close[0]]
+    return None
+
+
 def identify_vaccine(block: str) -> tuple[str, tuple[str, ...]]:
     """Which vaccine a row describes, from its bracketed code or its wording.
 
@@ -712,17 +726,9 @@ def identify_vaccine(block: str) -> tuple[str, tuple[str, ...]]:
     is judged on.
     """
     folded_block = fold(block)
-    for candidate in re.findall(r"\(([^)]{2,40})\)", block):
-        key = fold(candidate)
-        if not key:
-            continue
-        if key in _FOLDED_CODES:
-            code = _FOLDED_CODES[key]
-            return code, VACCINE_CODES[code]
-        close = difflib.get_close_matches(key, _FOLDED_CODES, n=1, cutoff=0.75)
-        if close:
-            code = _FOLDED_CODES[close[0]]
-            return code, VACCINE_CODES[code]
+    code = _code_in_brackets(block)
+    if code is not None:
+        return code, VACCINE_CODES[code]
     for words, code in _CODE_MARKERS:
         if all(word in folded_block for word in words):
             return code, VACCINE_CODES[code]

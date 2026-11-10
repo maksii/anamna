@@ -126,7 +126,7 @@
         /* A failed fetch must not leave a stale list looking like a result:
            fall back to the form the browser would have submitted anyway. */
         if (error.name !== 'AbortError') {
-          window.anamnaBusy?.navigating(control || form.querySelector('[type=submit]'));
+          globalThis.anamnaBusy?.navigating(control || form.querySelector('[type=submit]'));
           form.submit();
         }
       } finally {
@@ -135,7 +135,7 @@
     };
     /* The filter button spins while its own answer is awaited; typing and the
        selects show the top bar and the dimmed list. */
-    return window.anamnaBusy ? window.anamnaBusy.track(control, work) : work();
+    return globalThis.anamnaBusy ? globalThis.anamnaBusy.track(control, work) : work();
   };
 
   /* Debounced, because a search on every keystroke of «гемоглобін» is ten

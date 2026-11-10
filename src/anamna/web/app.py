@@ -312,6 +312,7 @@ from ..security import (
 #: Paths, media types, stored names and message keys used in more than one place.
 _DOCUMENTS_URL = "/documents"
 _LOGIN_URL = "/login"
+_REGISTER_URL = "/register"
 _SETUP_URL = "/setup"
 _setup_log = logging.getLogger("anamna.setup")
 _DOCTOR_URL = "/doctor"
@@ -326,7 +327,7 @@ _RESCAN_QUEUED_QUERY = "?rescan=queued"
 _PDF_MEDIA_TYPE = "application/pdf"
 #: Forms a visitor fills in before there is any session, so no CSRF token can
 #: guard them; `token_scope` refuses a cross-site post to any of these.
-_PRE_AUTH_FORMS = frozenset({_LOGIN_URL, "/register", _SETUP_URL, _DOCTOR_URL})
+_PRE_AUTH_FORMS = frozenset({_LOGIN_URL, _REGISTER_URL, _SETUP_URL, _DOCTOR_URL})
 _JSON_MEDIA_TYPE = "application/json"
 _DEVICE_METRIC_PREFIX = "device:"
 _UNKNOWN_PROVIDER = "Unknown provider"
@@ -352,6 +353,22 @@ _PROFILE_ERROR_CHOICE = "profile.error_choice"
 _TOKEN_ERROR_EXPIRY = "token.error_expiry"
 _INTAKE_FAILED_UNREADABLE = "intake.failed_unreadable"
 _INTAKE_FAILED_UNSUPPORTED = "intake.failed_unsupported"
+_INTAKE_FAILED_TOO_BIG = "intake.failed_too_big"
+_PROFILE_ERROR_PASSWORD_THROTTLED = "profile.error_password_throttled"
+_BEGIN_IMMEDIATE = "BEGIN IMMEDIATE"
+_API_PREFIX = "/api/"
+# Throttle keys, one namespace per meter (see `security.throttled`).
+_LOGIN_ACCOUNT_KEY_PREFIX = "login:"
+_LOGIN_IP_KEY_PREFIX = "login-ip:"
+_LOGIN_DEVICE_KEY_PREFIX = "login-dev:"
+_TOKEN_KEY_PREFIX = "token:"
+_DOCTOR_PIN_KEY_PREFIX = "doctor-pin:"
+_SETUP_CODE_KEY_PREFIX = "setup-code:"
+_REGISTER_KEY_PREFIX = "register:"
+_PWCHANGE_KEY_PREFIX = "pwchange:"
+_OBSERVATION_AUDIT_SQL = """INSERT INTO audit_events(
+                       owner_user_id, actor_user_id, action, entity_type, entity_id, details_json, created_at
+                   ) VALUES (?, ?, ?, 'observation', ?, ?, ?)"""
 
 THEME_COOKIE = "anamna_theme"
 VIEW_COOKIE = "anamna_record"
@@ -416,7 +433,7 @@ GUEST_ALLOWED_PREFIXES = (
     # A doctor holding a link may well have their own account here.  Without
     # these the sign-in page answers 403 to the one visitor most likely to want
     # it, which is a dead end reached by clicking nothing unusual.
-    _LOGIN_URL, "/register",
+    _LOGIN_URL, _REGISTER_URL,
     # And a doctor may hold invitations from two patients.  Refusing the second
     # link because the first one is still open would make the fix "sign out,
     # then click the link again", which nobody is going to guess.
@@ -433,7 +450,7 @@ GUEST_ALLOWED_PREFIXES = (
 #: the visit, change how it is displayed, or sign the visitor in as themselves,
 #: and refusing them would leave a guest unable to read the page in their own
 #: language or to stop being a guest.
-GUEST_ALLOWED_POSTS = ("/logout", "/theme", "/locale", _LOGIN_URL, "/register", _DOCTOR_URL,
+GUEST_ALLOWED_POSTS = ("/logout", "/theme", "/locale", _LOGIN_URL, _REGISTER_URL, _DOCTOR_URL,
                        # The one write a guest makes: a doctor's test selection,
                        # kept apart for the patient to accept, never the record.
                        "/plan-tests/suggest")
@@ -3028,8 +3045,8 @@ def _sparkline(card: dict[str, object], span: tuple[int, int] | None) -> dict[st
 # pollens, hemp (Can s) among animals and tomato (Sola l) among insect venoms.
 _PANEL_GROUP = {
     "animals": "animal_dander", "insects": "insect_venom", "latex": "other",
-    **{key: "foods" for key in ("legumes", "cereals", "spices", "fruits", "vegetables", "nuts_seeds",
-                                "milk", "egg", "fish_seafood", "meat")},
+    **dict.fromkeys(("legumes", "cereals", "spices", "fruits", "vegetables", "nuts_seeds",
+                     "milk", "egg", "fish_seafood", "meat"), "foods"),
 }
 
 
@@ -3101,7 +3118,9 @@ def _area_row(card: dict[str, object], area_id: str, legend) -> dict[str, object
     # ImmunoCAP classes belong to another assay.  The class column renders
     # ``allergy.cap_<key>``, so the ALEX key carries its prefix.
     alex = bool(legend) and (card.get("verdict") or {}).get("source_id") == ALEX_SOURCE_ID
-    level = _cap_class(value, alex_legend() if alex else legend) if legend else None
+    level = None
+    if legend:
+        level = _cap_class(value, alex_legend() if alex else legend)
     return {
         "card": card,
         "code": code.group(1) if code else "",
@@ -4904,23 +4923,35 @@ def _same_as_entries(
     return entries
 
 
+def _relation_text_key(relationship: str, is_source: bool, notes: str, person: bool) -> str | None:
+    key = _RELATION_TEXT_KEYS.get((relationship, is_source, notes)) or _RELATION_TEXT_KEYS.get(
+        (relationship, is_source)
+    )
+    if person:
+        key = "dup.rel_person_part_of" if is_source else "dup.rel_person_has_part"
+    return key
+
+
+def _related_entry(row, briefs: dict[str, dict[str, object]], document_id: str) -> dict[str, object] | None:
+    is_source = row["source_document_id"] == document_id
+    other_id = _relation_other_id(row, document_id)
+    relationship = str(row["relationship"])
+    person = str(row["notes"] or "") == PERSON_PART_NOTE
+    key = _relation_text_key(relationship, is_source, str(row["notes"] or ""), person)
+    if not key or other_id not in briefs:
+        return None
+    return {
+        "label": t(key), "document": briefs[other_id], "part": relationship == "part_of",
+        "person": person, "is_source": is_source,
+    }
+
+
 def _related_entries(related, briefs: dict[str, dict[str, object]], document_id: str) -> list[dict[str, object]]:
     entries: list[dict[str, object]] = []
     for row in related:
-        is_source = row["source_document_id"] == document_id
-        other_id = _relation_other_id(row, document_id)
-        relationship = str(row["relationship"])
-        key = _RELATION_TEXT_KEYS.get((relationship, is_source, str(row["notes"] or ""))) or _RELATION_TEXT_KEYS.get(
-            (relationship, is_source)
-        )
-        person = str(row["notes"] or "") == PERSON_PART_NOTE
-        if person:
-            key = "dup.rel_person_part_of" if is_source else "dup.rel_person_has_part"
-        if key and other_id in briefs:
-            entries.append({
-                "label": t(key), "document": briefs[other_id], "part": relationship == "part_of",
-                "person": person, "is_source": is_source,
-            })
+        entry = _related_entry(row, briefs, document_id)
+        if entry is not None:
+            entries.append(entry)
     # A file a person placed in a report is no longer offered as the next
     # screenshot of some other one.
     if any(item["person"] and item["is_source"] for item in entries):
@@ -5614,6 +5645,27 @@ def _resolve_user(request: Request):
     row = session_user(settings, request.cookies.get("anamna_session"))
     return None if row is None else dict(row) | {"bearer": False}
 
+def _guest_may_reach(request: Request, path: str) -> bool:
+    if request.method in ("GET", "HEAD"):
+        return path in GUEST_ALLOWED_PAGES or path.startswith(GUEST_ALLOWED_PREFIXES)
+    return path in GUEST_ALLOWED_POSTS
+
+
+def _upload_refusal(request: Request, path: str):
+    """The answer that refuses an upload before its body is read, or None to let it through."""
+    if request.state.anamna_user is None:
+        return login_redirect(request, HTTPException(401))
+    limit = (
+        MAX_ARCHIVE_UPLOAD_BYTES if path == _UPLOAD_URL else UPLOAD_CHUNK_BYTES
+    ) + _MULTIPART_OVERHEAD_BYTES
+    declared = (request.headers.get("content-length") or "").strip()
+    if not (declared.isascii() and declared.isdigit()):
+        return PlainTextResponse(t(_INTAKE_FAILED_TOO_BIG), status_code=411)
+    if int(declared) > limit:
+        return PlainTextResponse(t(_INTAKE_FAILED_TOO_BIG), status_code=413)
+    return None
+
+
 async def token_scope(request: Request, call_next):
     """Resolve the caller once, and hold each credential to its own reach.
 
@@ -5626,31 +5678,19 @@ async def token_scope(request: Request, call_next):
     request.state.anamna_user = await run_in_threadpool(_resolve_user, request)
     kind = (request.state.anamna_user or {}).get("token_kind")
     path = request.url.path
-    if kind == "api" and not path.startswith("/api/"):
+    if kind == "api" and not path.startswith(_API_PREFIX):
         return JSONResponse({"detail": t("token.error_api_only")}, status_code=403)
-    if kind == "guest":
-        if request.method in ("GET", "HEAD"):
-            permitted = path in GUEST_ALLOWED_PAGES or path.startswith(GUEST_ALLOWED_PREFIXES)
-        else:
-            permitted = path in GUEST_ALLOWED_POSTS
-        if not permitted:
-            return JSONResponse({"detail": t("token.error_guest_only")}, status_code=403)
+    if kind == "guest" and not _guest_may_reach(request, path):
+        return JSONResponse({"detail": t("token.error_guest_only")}, status_code=403)
     # Uploads are refused here rather than in the handler: FastAPI spools every
     # multipart file part to disk before the handler, and its `require_user`,
     # runs, so an anonymous or oversized body would be written in full first.
     # Who is asking and how much they declare are both known from the headers
     # already, so the body is never read for a request that cannot succeed.
     if request.method == "POST" and path in (_UPLOAD_URL, _UPLOAD_URL + "/chunk"):
-        if request.state.anamna_user is None:
-            return login_redirect(request, HTTPException(401))
-        limit = (
-            MAX_ARCHIVE_UPLOAD_BYTES if path == _UPLOAD_URL else UPLOAD_CHUNK_BYTES
-        ) + _MULTIPART_OVERHEAD_BYTES
-        declared = (request.headers.get("content-length") or "").strip()
-        if not (declared.isascii() and declared.isdigit()):
-            return PlainTextResponse(t("intake.failed_too_big"), status_code=411)
-        if int(declared) > limit:
-            return PlainTextResponse(t("intake.failed_too_big"), status_code=413)
+        refusal = _upload_refusal(request, path)
+        if refusal is not None:
+            return refusal
     # No session exists yet on these forms, so no CSRF token can guard them.
     # A browser says where a form post came from; one that came from another
     # site is refused.  A client that sends no such header (a script, an old
@@ -5923,7 +5963,7 @@ def switch_locale(
     return response
 
 def login_redirect(request: Request, exc: HTTPException):
-    if request.url.path.startswith("/api/"):
+    if request.url.path.startswith(_API_PREFIX):
         return JSONResponse({"detail": t("auth.required")}, status_code=401)
     return RedirectResponse(f"/login?next={request.url.path}", status_code=303)
 
@@ -5939,7 +5979,7 @@ def _is_page_navigation(request: Request) -> bool:
     headers = request.headers
     return (
         "text/html" in headers.get("accept", "")
-        and not request.url.path.startswith("/api/")
+        and not request.url.path.startswith(_API_PREFIX)
         and "authorization" not in headers
         and "x-api-key" not in headers
         and "x-requested-with" not in headers
@@ -6121,8 +6161,8 @@ def login(
         # The browser already holds a valid cookie: re-set it to refresh its life.
         device_value = request.cookies[DEVICE_COOKIE]
     else:
-        visitor = "login-ip:" + _visitor_key(request)
-        account = "login:" + account_key
+        visitor = _LOGIN_IP_KEY_PREFIX + _visitor_key(request)
+        account = _LOGIN_ACCOUNT_KEY_PREFIX + account_key
         if throttled(visitor):
             return _throttle_redirect(_LOGIN_URL, "throttled", visitor)
         if throttled(account, LOGIN_ACCOUNT_LIMIT):
@@ -6164,7 +6204,7 @@ def token_sign_in(request: Request, token: str):
     # reaches the database on every call, and leaving one of those open is
     # how a handful of connections becomes a saturated box.
     settings = request.app.state.settings
-    client = "token:" + _visitor_key(request)
+    client = _TOKEN_KEY_PREFIX + _visitor_key(request)
     if throttled(client):
         return _throttle_redirect(_LOGIN_URL, "throttled_token", client)
     row = access_token_user(settings, token)
@@ -6226,7 +6266,7 @@ def _doctor_client_key(request: Request) -> str:
     it only ever chooses a bucket: the global meter below it counts every
     failure no matter what this header says.
     """
-    return "doctor-pin:" + _visitor_key(request)
+    return _DOCTOR_PIN_KEY_PREFIX + _visitor_key(request)
 
 def _doctor_page(request: Request, error: str | None = None, status_code: int = 200):
     return templates.TemplateResponse(
@@ -6358,7 +6398,7 @@ def setup(
         return RedirectResponse(_LOGIN_URL, status_code=303)
     values = {"display_name": display_name.strip(), "email": email.strip(),
               "date_of_birth": date_of_birth.strip(), "sex_at_birth": sex_at_birth.strip()}
-    client = "setup-code:" + _visitor_key(request)
+    client = _SETUP_CODE_KEY_PREFIX + _visitor_key(request)
     blocker = _first_blocked((client, LOGIN_ATTEMPT_LIMIT), (SETUP_CODE_GLOBAL_KEY, SETUP_CODE_GLOBAL_LIMIT))
     if blocker:
         minutes = _minutes_text(retry_minutes(blocker))
@@ -6394,7 +6434,7 @@ def setup(
     ensure_seeded_token(settings, settings.agent_token)
     return _signed_in(request, "/", user_id)
 
-@router.get("/register", response_class=HTMLResponse)
+@router.get(_REGISTER_URL, response_class=HTMLResponse)
 def register_page(
     request: Request,
     error: str | None = None,
@@ -6417,7 +6457,7 @@ def register_page(
         template_context(request, error=message),
     )
 
-@router.post("/register")
+@router.post(_REGISTER_URL)
 def register(
     request: Request,
     email: Annotated[str, Form()],
@@ -6434,9 +6474,9 @@ def register(
         return RedirectResponse(_SETUP_URL, status_code=303)
     if not open_registration(settings):
         return RedirectResponse("/login?error=closed", status_code=303)
-    client = "register:" + _visitor_key(request)
+    client = _REGISTER_KEY_PREFIX + _visitor_key(request)
     if throttled(client):
-        return _throttle_redirect("/register", "throttled", client)
+        return _throttle_redirect(_REGISTER_URL, "throttled", client)
     if not email.strip() or not display_name.strip():
         return failed(_REGISTER_ERROR_INVALID)
     if len(password) < MINIMUM_PASSWORD_LENGTH:
@@ -6547,25 +6587,25 @@ def _user_stats(connection) -> list[dict[str, object]]:
 
 def _paused_label(key: str, emails: dict[str, str]) -> str:
     """What a paused meter guards, in words a person can act on."""
-    if key.startswith("login-dev:"):
+    if key.startswith(_LOGIN_DEVICE_KEY_PREFIX):
         # The device nonce after the address is not for the screen.
-        subject = key[len("login-dev:"):].rsplit(":", 1)[0]
+        subject = key[len(_LOGIN_DEVICE_KEY_PREFIX):].rsplit(":", 1)[0]
         return t("admin.paused_login_dev", subject=subject)
-    if key.startswith("login-ip:"):
-        return t("admin.paused_login_ip", subject=key[len("login-ip:"):])
-    if key.startswith("login:"):
-        return t("admin.paused_login", subject=key[len("login:"):])
-    if key.startswith("token:"):
-        return t("admin.paused_token", subject=key[len("token:"):])
-    if key.startswith("doctor-pin:"):
-        subject = key[len("doctor-pin:"):]
+    if key.startswith(_LOGIN_IP_KEY_PREFIX):
+        return t("admin.paused_login_ip", subject=key[len(_LOGIN_IP_KEY_PREFIX):])
+    if key.startswith(_LOGIN_ACCOUNT_KEY_PREFIX):
+        return t("admin.paused_login", subject=key[len(_LOGIN_ACCOUNT_KEY_PREFIX):])
+    if key.startswith(_TOKEN_KEY_PREFIX):
+        return t("admin.paused_token", subject=key[len(_TOKEN_KEY_PREFIX):])
+    if key.startswith(_DOCTOR_PIN_KEY_PREFIX):
+        subject = key[len(_DOCTOR_PIN_KEY_PREFIX):]
         return t("admin.paused_doctor_all") if subject == "*" else t("admin.paused_doctor", subject=subject)
-    if key.startswith("setup-code:"):
-        return t("admin.paused_setup", subject=key[len("setup-code:"):])
-    if key.startswith("register:"):
-        return t("admin.paused_register", subject=key[len("register:"):])
-    if key.startswith("pwchange:"):
-        user_id = key[len("pwchange:"):]
+    if key.startswith(_SETUP_CODE_KEY_PREFIX):
+        return t("admin.paused_setup", subject=key[len(_SETUP_CODE_KEY_PREFIX):])
+    if key.startswith(_REGISTER_KEY_PREFIX):
+        return t("admin.paused_register", subject=key[len(_REGISTER_KEY_PREFIX):])
+    if key.startswith(_PWCHANGE_KEY_PREFIX):
+        user_id = key[len(_PWCHANGE_KEY_PREFIX):]
         return t("admin.paused_pwchange", subject=emails.get(user_id, user_id))
     if key.startswith("webhook:"):
         return t("admin.paused_webhook", subject=key[len("webhook:"):])
@@ -6661,6 +6701,11 @@ def _delete_orphaned_sources(settings, connection, user_id: str) -> int:
     are touched, and only when no surviving document still points at them.
     Device exports the application unpacked are removed the same way.
     """
+    removed = _remove_unshared_documents(settings, connection, user_id)
+    return removed + _remove_unshared_device_files(settings, connection, user_id)
+
+
+def _remove_unshared_documents(settings, connection, user_id: str) -> int:
     paths = [
         row["source_path"]
         for row in connection.execute(
@@ -6683,6 +6728,10 @@ def _delete_orphaned_sources(settings, connection, user_id: str) -> int:
         if inside and path.is_file():
             path.unlink()
             removed += 1
+    return removed
+
+
+def _remove_unshared_device_files(settings, connection, user_id: str) -> int:
     source_root = settings.source_dir.resolve()
     device_paths = [
         row["source_path"]
@@ -6690,6 +6739,7 @@ def _delete_orphaned_sources(settings, connection, user_id: str) -> int:
             "SELECT DISTINCT source_path FROM device_imports WHERE owner_user_id = ?", (user_id,)
         )
     ]
+    removed = 0
     for stored in device_paths:
         # An API feed such as openwearables://api has no file on disk.
         if not stored or "://" in stored:
@@ -6703,22 +6753,28 @@ def _delete_orphaned_sources(settings, connection, user_id: str) -> int:
         ).fetchone()
         if still_used:
             continue
-        try:
-            path = resolve_source_path(settings, stored).resolve()
-            inside = path.is_relative_to(source_root) and path != source_root
-            if not inside:
-                continue
-            if path.is_file():
-                path.unlink()
-                removed += 1
-            # ponytail: only trees the application unpacked itself are removed; a folder an operator placed in sources/ by hand and imported from the command line stays for the operator.
-            elif path.is_dir() and path.is_relative_to(source_root / "uploads"):
-                discard_upload_tree(settings, path)
-                if not path.exists():
-                    removed += 1
-        except OSError:
-            continue
+        removed += _remove_device_path(settings, source_root, stored)
     return removed
+
+
+def _remove_device_path(settings, source_root, stored: str) -> int:
+    """Remove one device export, or an upload tree the application unpacked, inside sources/; returns 1 when it went."""
+    try:
+        path = resolve_source_path(settings, stored).resolve()
+        inside = path.is_relative_to(source_root) and path != source_root
+        if not inside:
+            return 0
+        if path.is_file():
+            path.unlink()
+            return 1
+        # ponytail: only trees the application unpacked itself are removed; a folder an operator placed in sources/ by hand and imported from the command line stays for the operator.
+        if path.is_dir() and path.is_relative_to(source_root / "uploads"):
+            discard_upload_tree(settings, path)
+            if not path.exists():
+                return 1
+    except OSError:
+        return 0
+    return 0
 
 def _delete_account(settings, connection, user_id: str) -> int:
     """Remove one account, its files and its rows; returns how many files went.
@@ -6862,9 +6918,9 @@ def admin_set_user_password(
     # against it no longer hold them out: release their meters.  The keys use
     # the same normalisation as sign-in (`login` above).
     account_key = target["email"].strip().casefold()[:254]
-    clear_attempts("login:" + account_key)
-    clear_attempts_matching("login-dev:" + account_key + ":")
-    clear_attempts("pwchange:" + user_id)
+    clear_attempts(_LOGIN_ACCOUNT_KEY_PREFIX + account_key)
+    clear_attempts_matching(_LOGIN_DEVICE_KEY_PREFIX + account_key + ":")
+    clear_attempts(_PWCHANGE_KEY_PREFIX + user_id)
     _audit(settings, admin["id"], admin["id"], "user_password_set_by_admin", "user", user_id, {"email": target["email"]})
     return _admin_redirect(done="password_set")
 
@@ -6920,7 +6976,7 @@ PROFILE_ERRORS = frozenset(
         "profile.error_share_self",
         "profile.error_share_unknown",
         "profile.error_password_current",
-        "profile.error_password_throttled",
+        _PROFILE_ERROR_PASSWORD_THROTTLED,
         "profile.error_password_match",
         "profile.error_password_short",
         "profile.error_email_invalid",
@@ -6956,7 +7012,7 @@ PROFILE_ERRORS = frozenset(
 def _profile_error_text(error: str | None, wait: str | None) -> str | None:
     if error not in PROFILE_ERRORS:
         return None
-    if error == "profile.error_password_throttled":
+    if error == _PROFILE_ERROR_PASSWORD_THROTTLED:
         return t(error, minutes=_minutes_text(_wait_minutes(wait)))
     return t(error)
 
@@ -7401,6 +7457,45 @@ def create_token(
         return _admin_tokens_response(request, user, new_token=minted)
     return _profile_response(request, user, new_token=minted)
 
+def _token_done(destination: str, key: str) -> RedirectResponse:
+    return RedirectResponse(f"{destination}?saved={key}", status_code=303)
+
+
+def _revoke_token(settings, user, token_id: str, scope, destination: str) -> RedirectResponse:
+    if not revoke_access_token(settings, token_id, scope):
+        return RedirectResponse(f"{destination}?error=token.error_unknown", status_code=303)
+    _audit(settings, user["id"], user["id"], "token_revoked", "access_token", token_id, {})
+    return _token_done(destination, "revoked")
+
+
+def _update_token(settings, user, token_id: str, label: str, expires_on: str, scope,
+                  destination: str) -> RedirectResponse:
+    if not label.strip():
+        return RedirectResponse(f"{destination}?error=token.error_label", status_code=303)
+    try:
+        expires_at = _token_expiry(expires_on)
+    except ValueError:
+        return RedirectResponse(f"{destination}?error=token.error_expiry", status_code=303)
+    row = access_token_row(settings, token_id, scope)
+    if row is None:
+        return RedirectResponse(f"{destination}?error=token.error_unknown", status_code=303)
+    # A PIN-opened access keeps the window its code was minted with; the
+    # submitted date cannot lengthen a doctor's access after the fact.
+    if row["pin_hash"]:
+        expires_at = row["expires_at"]
+    elif expires_at is not None and expires_at <= utc_now():
+        return RedirectResponse(f"{destination}?error=token.error_expiry", status_code=303)
+    # A guest link must stay time-limited, as create_token requires; removing
+    # its expiry would leave a link to a record that never stops being shared.
+    elif row["kind"] == "guest" and expires_at is None:
+        return RedirectResponse(f"{destination}?error=token.error_expiry", status_code=303)
+    if not update_access_token(settings, token_id, label, expires_at, scope):
+        return RedirectResponse(f"{destination}?error=token.error_unknown", status_code=303)
+    _audit(settings, user["id"], user["id"], "token_updated", "access_token", token_id,
+           {"label": label.strip(), "expires_at": expires_at})
+    return _token_done(destination, "token")
+
+
 @router.post("/tokens/{token_id}", responses=_RESPONSES_400_401_403)
 def change_token(
     request: Request,
@@ -7424,39 +7519,10 @@ def change_token(
     # that the page they were bounced to is not for them.
     destination = "/admin/tokens" if origin == "admin" and admin else _PROFILE_URL
 
-    def done(key: str) -> RedirectResponse:
-        return RedirectResponse(f"{destination}?saved={key}", status_code=303)
-
     if action == "revoke":
-        if not revoke_access_token(settings, token_id, scope):
-            return RedirectResponse(f"{destination}?error=token.error_unknown", status_code=303)
-        _audit(settings, user["id"], user["id"], "token_revoked", "access_token", token_id, {})
-        return done("revoked")
+        return _revoke_token(settings, user, token_id, scope, destination)
     if action == "update":
-        if not label.strip():
-            return RedirectResponse(f"{destination}?error=token.error_label", status_code=303)
-        try:
-            expires_at = _token_expiry(expires_on)
-        except ValueError:
-            return RedirectResponse(f"{destination}?error=token.error_expiry", status_code=303)
-        row = access_token_row(settings, token_id, scope)
-        if row is None:
-            return RedirectResponse(f"{destination}?error=token.error_unknown", status_code=303)
-        # A PIN-opened access keeps the window its code was minted with; the
-        # submitted date cannot lengthen a doctor's access after the fact.
-        if row["pin_hash"]:
-            expires_at = row["expires_at"]
-        elif expires_at is not None and expires_at <= utc_now():
-            return RedirectResponse(f"{destination}?error=token.error_expiry", status_code=303)
-        # A guest link must stay time-limited, as create_token requires; removing
-        # its expiry would leave a link to a record that never stops being shared.
-        elif row["kind"] == "guest" and expires_at is None:
-            return RedirectResponse(f"{destination}?error=token.error_expiry", status_code=303)
-        if not update_access_token(settings, token_id, label, expires_at, scope):
-            return RedirectResponse(f"{destination}?error=token.error_unknown", status_code=303)
-        _audit(settings, user["id"], user["id"], "token_updated", "access_token", token_id,
-               {"label": label.strip(), "expires_at": expires_at})
-        return done("token")
+        return _update_token(settings, user, token_id, label, expires_on, scope, destination)
     raise HTTPException(400, t("token.error_unknown"))
 
 def _local_moment(value: str, zone) -> str:
@@ -7943,9 +8009,9 @@ def change_password(
     # otherwise an unattended logged-in browser is enough to take the
     # account over permanently.  Wrong guesses are counted against the account
     # like sign-in failures, so the form cannot be used to search for it.
-    key = "pwchange:" + str(user["id"])
+    key = _PWCHANGE_KEY_PREFIX + str(user["id"])
     if throttled(key, PASSWORD_CHANGE_LIMIT):
-        return _throttle_redirect(_PROFILE_URL, "profile.error_password_throttled", key)
+        return _throttle_redirect(_PROFILE_URL, _PROFILE_ERROR_PASSWORD_THROTTLED, key)
     if authenticate(settings, user["email"], current_password) is None:
         record_attempt(key)
         return RedirectResponse("/profile?error=profile.error_password_current", status_code=303)
@@ -7991,9 +8057,9 @@ def delete_account(
     settings = request.app.state.settings
     user = _own_browser_session(request)
     require_csrf(user, csrf_token)
-    key = "pwchange:" + str(user["id"])
+    key = _PWCHANGE_KEY_PREFIX + str(user["id"])
     if throttled(key, PASSWORD_CHANGE_LIMIT):
-        return _throttle_redirect(_PROFILE_URL, "profile.error_password_throttled", key)
+        return _throttle_redirect(_PROFILE_URL, _PROFILE_ERROR_PASSWORD_THROTTLED, key)
     if authenticate(settings, user["email"], password) is None:
         record_attempt(key)
         return RedirectResponse("/profile?error=profile.error_delete_password", status_code=303)
@@ -8036,9 +8102,9 @@ def change_email(
     address = new_email.strip().casefold()
     if "@" not in address or " " in address:
         return RedirectResponse("/profile?error=profile.error_email_invalid", status_code=303)
-    key = "pwchange:" + str(user["id"])
+    key = _PWCHANGE_KEY_PREFIX + str(user["id"])
     if throttled(key, PASSWORD_CHANGE_LIMIT):
-        return _throttle_redirect(_PROFILE_URL, "profile.error_password_throttled", key)
+        return _throttle_redirect(_PROFILE_URL, _PROFILE_ERROR_PASSWORD_THROTTLED, key)
     if authenticate(settings, user["email"], password) is None:
         record_attempt(key)
         return RedirectResponse("/profile?error=profile.error_email_password", status_code=303)
@@ -8074,6 +8140,16 @@ def _write_export(settings, user_id: str, spool) -> None:
     spool.seek(0)
     _audit(settings, user_id, user_id, "record_exported", "user", user_id, {})
 
+def _build_export_spool(settings, user_id: str):
+    spool = tempfile.SpooledTemporaryFile(max_size=32 * 1024 * 1024)
+    try:
+        _write_export(settings, user_id, spool)
+    except BaseException:
+        spool.close()
+        raise
+    return spool
+
+
 @router.get("/profile/export.zip", responses=_RESPONSES_401_403)
 async def export_my_record(request: Request):
     """The signed-in account's own record as one ZIP, for the person to keep.
@@ -8087,12 +8163,7 @@ async def export_my_record(request: Request):
     user = require_user(request)
     if user.get("token_kind") == "guest":
         raise HTTPException(403)
-    spool = tempfile.SpooledTemporaryFile(max_size=32 * 1024 * 1024)
-    try:
-        await run_in_threadpool(_write_export, settings, user["id"], spool)
-    except BaseException:
-        spool.close()
-        raise
+    spool = await run_in_threadpool(_build_export_spool, settings, user["id"])
 
     def chunks():
         try:
@@ -10482,9 +10553,14 @@ def _mark_same_report(connection, owner_user_id: str, rows: list[dict[str, objec
     } if ids else set()
     for row in rows:
         others = [briefs[other] for other, _, _ in pairs.get(str(row["id"]), []) if other in briefs]
-        row["same_report_text"] = t(
-            "dup.card_same_as", title=others[0]["title_text"], date=format_date(others[0].get("report_date"))
-        ) if others else (t("dup.card_part") if str(row["id"]) in parted else "")
+        if others:
+            row["same_report_text"] = t(
+                "dup.card_same_as", title=others[0]["title_text"], date=format_date(others[0].get("report_date"))
+            )
+        elif str(row["id"]) in parted:
+            row["same_report_text"] = t("dup.card_part")
+        else:
+            row["same_report_text"] = ""
 
 
 def _document_search(settings, connection, owner_user_id: str, q: str, clinical_type: str,
@@ -11536,6 +11612,91 @@ def _audit_finding(connection, user, action: str, finding_id: str, details: dict
     )
 
 
+def _add_finding_answer(request: Request, connection, user, document_id: str, text: str, recommended: str,
+                        finding_date: str, health_area: str, destination: str):
+    try:
+        ids = _add_person_finding(
+            connection, user["id"], document_id, text, recommended, finding_date.strip(), health_area
+        )
+    except LookupError:
+        connection.rollback()
+        raise HTTPException(404) from None
+    except _FindingRefused as refused:
+        connection.rollback()
+        code = str(refused)
+        if _wants_json(request):
+            return JSONResponse(
+                {"ok": False, "error": code, "detail": t(f"doc.finding_error_{code}")}, status_code=409
+            )
+        return RedirectResponse(f"{destination}?finding_error={code}#side-panel-conclusion", status_code=303)
+    for added in ids:
+        _audit_finding(connection, user, "finding_added", added, {
+            "document_id": document_id, "source": "image", "after": _finding_fields(text, recommended),
+        })
+    connection.commit()
+    invalidate_catalog(user["id"])
+    if _wants_json(request):
+        return JSONResponse({"ok": True, "action": "add", "finding_ids": ids})
+    return RedirectResponse(destination + "#side-panel-conclusion", status_code=303)
+
+
+def _finding_rows(connection, user_id: str, document_id: str, action: str, finding_id: list[str]) -> list:
+    rows = connection.execute(
+        f"""SELECT * FROM clinical_findings WHERE owner_user_id=? AND document_id=?
+                  AND verification_status<>'rejected' AND id IN ({",".join("?" * len(finding_id))})""",
+        (user_id, document_id, *finding_id),
+    ).fetchall() if finding_id else []
+    if action == "remove":
+        rows = [row for row in rows if str(row["id"]).startswith(PERSON_FINDING_PREFIX)]
+    return rows
+
+
+def _finding_change_inputs(connection, user_id: str, action: str, text: str, recommended: str,
+                           finding_date: str, rows: list):
+    if action == "correct":
+        after = _finding_fields(text, recommended)
+        # The date the photo prints, when the reading lost it.
+        corrected_date = _validated_date(finding_date, _DOC_DATE_INVALID_KEY) if finding_date else None
+        return after, corrected_date, None
+    if action == "revert":
+        return None, None, _finding_corrections(connection, user_id, [str(row["id"]) for row in rows])
+    return None, None, None
+
+
+def _reverted_finding_fields(row, before: dict, history: dict):
+    if row["verification_status"] != "corrected" or str(row["id"]).startswith(PERSON_FINDING_PREFIX):
+        # A person's own conclusion has no reading to go back to; it is removed instead.
+        return None
+    return {**before, "verification_status": "extracted",
+            **(history.get(str(row["id"]), {}).get("before") or {})}
+
+
+def _apply_finding_row(connection, user, document_id: str, action: str, row, after, corrected_date, history) -> None:
+    columns = ("summary_uk", "summary_en", "recommendations", "status", "attention_reasons", "verification_status")
+    before = {name: row[name] for name in columns}
+    if action == "remove":
+        connection.execute("DELETE FROM clinical_findings WHERE id=?", (row["id"],))
+        _audit_finding(connection, user, "finding_removed", str(row["id"]), {
+            "document_id": document_id, "health_area": row["health_area"], "before": before,
+        })
+        return
+    if action == "revert":
+        after = _reverted_finding_fields(row, before, history)
+        if after is None:
+            return
+    connection.execute(
+        f"UPDATE clinical_findings SET {', '.join(f'{name}=?' for name in columns)} WHERE id=?",
+        (*(after[name] for name in columns), row["id"]),
+    )
+    if action == "correct" and corrected_date:
+        connection.execute("UPDATE clinical_findings SET finding_date=? WHERE id=?", (corrected_date, row["id"]))
+    _audit_finding(
+        connection, user, "finding_corrected" if action == "correct" else "finding_correction_reverted",
+        str(row["id"]), {"document_id": document_id, "source": "image", "before": before, "after": after,
+                         **({"finding_date": corrected_date} if action == "correct" and corrected_date else {})},
+    )
+
+
 @router.post("/documents/{document_id}/findings", responses=_RESPONSES_400_401_403_404)
 def correct_document_finding(
     request: Request,
@@ -11573,74 +11734,20 @@ def correct_document_finding(
         raise HTTPException(400)
     destination = _safe_next(next, f"/documents/{document_id}")
     with connect(settings) as connection:
-        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(_BEGIN_IMMEDIATE)
         if action == "add":
-            try:
-                ids = _add_person_finding(
-                    connection, user["id"], document_id, text, recommended, finding_date.strip(), health_area
-                )
-            except LookupError:
-                connection.rollback()
-                raise HTTPException(404) from None
-            except _FindingRefused as refused:
-                connection.rollback()
-                code = str(refused)
-                if _wants_json(request):
-                    return JSONResponse(
-                        {"ok": False, "error": code, "detail": t(f"doc.finding_error_{code}")}, status_code=409
-                    )
-                return RedirectResponse(f"{destination}?finding_error={code}#side-panel-conclusion", status_code=303)
-            for added in ids:
-                _audit_finding(connection, user, "finding_added", added, {
-                    "document_id": document_id, "source": "image", "after": _finding_fields(text, recommended),
-                })
-            connection.commit()
-            invalidate_catalog(user["id"])
-            if _wants_json(request):
-                return JSONResponse({"ok": True, "action": action, "finding_ids": ids})
-            return RedirectResponse(destination + "#side-panel-conclusion", status_code=303)
-        rows = connection.execute(
-            f"""SELECT * FROM clinical_findings WHERE owner_user_id=? AND document_id=?
-                  AND verification_status<>'rejected' AND id IN ({",".join("?" * len(finding_id))})""",
-            (user["id"], document_id, *finding_id),
-        ).fetchall() if finding_id else []
-        if action == "remove":
-            rows = [row for row in rows if str(row["id"]).startswith(PERSON_FINDING_PREFIX)]
+            return _add_finding_answer(
+                request, connection, user, document_id, text, recommended, finding_date, health_area, destination,
+            )
+        rows = _finding_rows(connection, user["id"], document_id, action, finding_id)
         if not rows:
             connection.rollback()
             raise HTTPException(404)
-        if action == "correct":
-            after = _finding_fields(text, recommended)
-            # The date the photo prints, when the reading lost it.
-            corrected_date = _validated_date(finding_date, _DOC_DATE_INVALID_KEY) if finding_date else None
-        elif action == "revert":
-            history = _finding_corrections(connection, user["id"], [str(row["id"]) for row in rows])
-        columns = ("summary_uk", "summary_en", "recommendations", "status", "attention_reasons", "verification_status")
+        after, corrected_date, history = _finding_change_inputs(
+            connection, user["id"], action, text, recommended, finding_date, rows,
+        )
         for row in rows:
-            before = {name: row[name] for name in columns}
-            if action == "remove":
-                connection.execute("DELETE FROM clinical_findings WHERE id=?", (row["id"],))
-                _audit_finding(connection, user, "finding_removed", str(row["id"]), {
-                    "document_id": document_id, "health_area": row["health_area"], "before": before,
-                })
-                continue
-            if action == "revert":
-                # A person's own conclusion has no reading to go back to; it is removed instead.
-                if row["verification_status"] != "corrected" or str(row["id"]).startswith(PERSON_FINDING_PREFIX):
-                    continue
-                after = {**before, "verification_status": "extracted",
-                         **(history.get(str(row["id"]), {}).get("before") or {})}
-            connection.execute(
-                f"UPDATE clinical_findings SET {', '.join(f'{name}=?' for name in columns)} WHERE id=?",
-                (*(after[name] for name in columns), row["id"]),
-            )
-            if action == "correct" and corrected_date:
-                connection.execute("UPDATE clinical_findings SET finding_date=? WHERE id=?", (corrected_date, row["id"]))
-            _audit_finding(
-                connection, user, "finding_corrected" if action == "correct" else "finding_correction_reverted",
-                str(row["id"]), {"document_id": document_id, "source": "image", "before": before, "after": after,
-                                 **({"finding_date": corrected_date} if action == "correct" and corrected_date else {})},
-            )
+            _apply_finding_row(connection, user, document_id, action, row, after, corrected_date, history)
         if action in {"revert", "remove"}:
             sync_clinical_findings(connection)  # an extracted row is refreshed from its page now
         connection.commit()
@@ -11822,7 +11929,7 @@ def delete_document(
     destination = _safe_next(next, _DOCUMENTS_URL)
 
     with connect(settings) as connection:
-        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(_BEGIN_IMMEDIATE)
         try:
             document = connection.execute(
                 """SELECT * FROM documents WHERE id=? AND owner_user_id=?""",
@@ -12135,7 +12242,7 @@ async def _receive_upload(settings, common: dict[str, object], kind: str, upload
             **common,
             filename=name,
             byte_size=written or None,
-            detail_key="intake.failed_too_big" if oversized else "intake.failed_missing",
+            detail_key=_INTAKE_FAILED_TOO_BIG if oversized else "intake.failed_missing",
         )
         return
 
@@ -12268,7 +12375,7 @@ async def _finish_chunked_upload(
         await run_in_threadpool(
             record_rejected,
             settings, **common, filename=display, byte_size=written,
-            detail_key="intake.failed_too_big",
+            detail_key=_INTAKE_FAILED_TOO_BIG,
         )
         return JSONResponse({"status": "rejected"})
 
@@ -12353,7 +12460,7 @@ async def upload_chunk(
         await run_in_threadpool(
             record_rejected,
             settings, **common, filename=display, byte_size=written,
-            detail_key="intake.failed_too_big",
+            detail_key=_INTAKE_FAILED_TOO_BIG,
         )
         return JSONResponse({"status": "rejected"})
     if final != "1":
@@ -12733,7 +12840,7 @@ def document_duplicate(
     destination = _safe_next(next, f"/documents/{document_id}")
     token_kind = user.get("token_kind")
     with connect(settings) as connection:
-        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(_BEGIN_IMMEDIATE)
         try:
             details = _apply_duplicate_action(
                 connection, user["id"], document_id, action, primary_id, other_id, token_kind
@@ -12995,9 +13102,7 @@ def correct_observation(
             ),
         )
         connection.execute(
-            """INSERT INTO audit_events(
-                       owner_user_id, actor_user_id, action, entity_type, entity_id, details_json, created_at
-                   ) VALUES (?, ?, ?, 'observation', ?, ?, ?)""",
+            _OBSERVATION_AUDIT_SQL,
             (
                 user["id"], user["id"],
                 audit_action,
@@ -13138,9 +13243,7 @@ def set_observation_state(
             (states[action], observation_id, user["id"]),
         )
         connection.execute(
-            """INSERT INTO audit_events(
-                       owner_user_id, actor_user_id, action, entity_type, entity_id, details_json, created_at
-                   ) VALUES (?, ?, ?, 'observation', ?, ?, ?)""",
+            _OBSERVATION_AUDIT_SQL,
             (
                 user["id"], user["id"], f"observation_{action}", observation_id,
                 json.dumps(
@@ -13311,9 +13414,7 @@ def add_observation(
             ),
         )
         connection.execute(
-            """INSERT INTO audit_events(
-                       owner_user_id, actor_user_id, action, entity_type, entity_id, details_json, created_at
-                   ) VALUES (?, ?, ?, 'observation', ?, ?, ?)""",
+            _OBSERVATION_AUDIT_SQL,
             (
                 user["id"], user["id"], audit_action, observation_id,
                 json.dumps({"document_id": document_id, "concept_id": concept_id}, ensure_ascii=False),
@@ -14182,6 +14283,23 @@ def _method_series(
     return series
 
 
+def _extend_chart_with_methods(chart_points: list, method_series: list) -> None:
+    chart_unit = canonical_unit(str(chart_points[0]["unit"])) if chart_points else None
+    for method in method_series:
+        # Drawn beside the main series only on the same axis unit.
+        chart_points.extend(
+            point for point in method["points"]
+            if chart_unit is None or canonical_unit(str(point["unit"])) == chart_unit
+        )
+
+
+def _chart_sources(chart_points: list) -> set[str]:
+    chart_sources = {str(point["source"]) for point in chart_points if point["line"] == "main"}
+    if any(point["line"] == "method" for point in chart_points):
+        chart_sources.add("method")
+    return chart_sources
+
+
 @router.get("/metrics/{concept_id}", response_class=HTMLResponse, responses=_RESPONSES_401_404)
 def metric_detail(request: Request, concept_id: str, offset: int = 0):
     settings = request.app.state.settings
@@ -14236,17 +14354,9 @@ def metric_detail(request: Request, concept_id: str, offset: int = 0):
     sample_saved = request.query_params.get("saved") == "sample_condition"
     parsed_rules = [_metric_rule(raw_rule, age, sex, page_context) for raw_rule in rules]
     chart_points = _metric_chart(connection, values, concept["preferred_unit"], date_of_birth, sex)
-    chart_unit = canonical_unit(str(chart_points[0]["unit"])) if chart_points else None
-    for method in method_series:
-        # Drawn beside the main series only on the same axis unit.
-        chart_points.extend(
-            point for point in method["points"]
-            if chart_unit is None or canonical_unit(str(point["unit"])) == chart_unit
-        )
+    _extend_chart_with_methods(chart_points, method_series)
     chart_points.sort(key=lambda point: str(point["date"]))
-    chart_sources = {str(point["source"]) for point in chart_points if point["line"] == "main"}
-    if any(point["line"] == "method" for point in chart_points):
-        chart_sources.add("method")
+    chart_sources = _chart_sources(chart_points)
     latest, previous_numeric, verdict = _metric_latest(connection, concept_id, values, card)
     chart_band = _chart_band(verdict)
     history_page = _pagination(len(values), max(0, offset), METRIC_HISTORY_PAGE_SIZE, f"/metrics/{concept_id}")
@@ -15421,7 +15531,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     register_chat_routes(
         app, settings, templates=templates, template_context=template_context, require_user=require_user,
-        record_user=record_user, require_csrf=require_csrf, viewing_row=viewing_row,
+        record_user=record_user, require_csrf=require_csrf,
     )
     for register in (register_allergy_routes, register_genetics_routes):
         register(app, settings, templates=templates, template_context=template_context,

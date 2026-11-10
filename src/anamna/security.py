@@ -339,6 +339,9 @@ def list_access_tokens(settings: Settings, owner_user_id: str | None = None):
         ).fetchall()
 
 
+_OWNER_CLAUSE = " AND owner_user_id = ?"
+
+
 def revoke_access_token(settings: Settings, token_id: str, owner_user_id: str | None = None) -> bool:
     """Delete a credential and every session it opened.
 
@@ -347,7 +350,7 @@ def revoke_access_token(settings: Settings, token_id: str, owner_user_id: str | 
     already keeps the record that it existed.  The sessions go with it through
     the foreign key, so a guest holding an open tab is signed out too.
     """
-    clause = " AND owner_user_id = ?" if owner_user_id else ""
+    clause = _OWNER_CLAUSE if owner_user_id else ""
     values = (token_id, owner_user_id) if owner_user_id else (token_id,)
     with connect(settings) as connection:
         return connection.execute(
@@ -364,7 +367,7 @@ def update_access_token(
 ) -> bool:
     """Rename a credential or move its expiry.  The secret never changes — a
     token that needs a new secret is a new token."""
-    clause = " AND owner_user_id = ?" if owner_user_id else ""
+    clause = _OWNER_CLAUSE if owner_user_id else ""
     values = (label.strip(), expires_at, token_id) + ((owner_user_id,) if owner_user_id else ())
     with connect(settings) as connection:
         return connection.execute(
@@ -375,7 +378,7 @@ def update_access_token(
 def access_token_row(settings: Settings, token_id: str, owner_user_id: str | None = None):
     """One credential's stored row (never its secret, which is not stored), or
     None; ``owner_user_id`` scopes the lookup the same way the update does."""
-    clause = " AND owner_user_id = ?" if owner_user_id else ""
+    clause = _OWNER_CLAUSE if owner_user_id else ""
     values = (token_id, owner_user_id) if owner_user_id else (token_id,)
     with connect(settings) as connection:
         return connection.execute(

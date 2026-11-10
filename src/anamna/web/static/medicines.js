@@ -20,7 +20,7 @@
   const i18n = globalThis.__HL_I18N__ || {};
   const say = (key, values = {}) => Object.entries(values)
     .reduce((text, [name, value]) => text.replace(`{${name}}`, value), i18n[key] || '');
-  const kind = () => (form.querySelector('[name="kind"]:checked') || {}).value || '';
+  const kind = () => form.querySelector('[name="kind"]:checked')?.value || '';
   const isDrug = () => ['medicine', 'supplement'].includes(kind());
   const number = value => Number.parseFloat(String(value).replace(',', '.'));
   // A number as the page's language writes it: Ukrainian uses a decimal comma.
@@ -78,10 +78,11 @@
     if (!totalLine) return;
     countTimes();
     const amount = number(field('dose_amount').value);
+    const hasAmount = amount > 0;   // NaN (no number typed) is "no amount"
     const unit = field('dose_unit').value;
     const match = STRENGTH.exec(field('strength').value);
     const perUnit = match && (match[3] ? unit === 'ml' : ['tablet', 'capsule', 'sachet', 'suppository', 'patch', 'injection', 'piece'].includes(unit));
-    if (!isDrug() || !perUnit || !(amount > 0)) { totalLine.hidden = true; return; }
+    if (!isDrug() || !perUnit || !hasAmount) { totalLine.hidden = true; return; }
     const each = number(match[1]) * amount;
     const repeat = field('repeat').value;
     const times = number(perDay.value);
@@ -208,8 +209,12 @@
     const words = docField.dataset;
     let found = [], at = -1, pause = 0, turn = 0;
 
+    const dateLine = item => {
+      if (!item.date_text) return '';
+      return item.dated ? item.date_text : words.undated.replace('{date}', item.date_text);
+    };
     const meta = item => [
-      item.date_text ? (item.dated ? item.date_text : words.undated.replace('{date}', item.date_text)) : '',
+      dateLine(item),
       item.type_label, item.clinic, item.doctor,
     // A title built from the type and the date already says both.
     ].filter(part => part && !item.title.includes(part)).join(' · ');
@@ -357,10 +362,10 @@
     wrap(name).append(note);
   };
 
-  const apply = suggestion => {
-    const sourced = Boolean(suggestion.source);
+  // Fills or offers each suggested field; true when any of them changed.
+  const applyFields = (fields, sourced) => {
     let any = false;
-    for (const [name, entry] of Object.entries(suggestion.fields || {})) {
+    for (const [name, entry] of Object.entries(fields || {})) {
       if (!wrap(name) || !entry.text) continue;
       const mine = field(name).value.trim();
       if (mine === entry.text.trim()) continue;
@@ -369,11 +374,12 @@
       // What the person wrote is offered a replacement and left alone.
       if (!mine || accepted.get(name) === field(name).value) put(name, entry, sourced); else offer(name, entry, sourced);
     }
-    const atc = field('atc_code');
-    if (suggestion.atc_code && !atc.value) { atc.value = suggestion.atc_code; form.querySelector('[data-med-ai-atc]').hidden = false; any = true; }
+    return any;
+  };
 
+  const applyEffects = (effects, sourced) => {
     const rows = effectsBox.querySelector('ul');
-    rows.replaceChildren(...(suggestion.effects || []).map(effect => {
+    rows.replaceChildren(...(effects || []).map(effect => {
       const row = template('#med-ai-effect-template');
       row.querySelector('input').value = JSON.stringify({
         concept_id: effect.concept_id || null, label: effect.label, direction: effect.direction,
@@ -390,27 +396,41 @@
       return row;
     }));
     effectsBox.hidden = !rows.children.length;
-    any = any || Boolean(rows.children.length);
+    return Boolean(rows.children.length);
+  };
 
-    const usual = suggestion.regimen;
-    regimenOffer.hidden = !(usual && usual.text && isDrug());
-    if (!regimenOffer.hidden) {
-      any = true;
-      regimenOffer.querySelector('[data-slot="text"]').textContent = usual.text;
-      regimenOffer.querySelector('q').textContent = usual.quote || '';
-      regimenOffer.querySelector('[data-act="use"]').onclick = () => {
-        if (usual.dose_amount) field('dose_amount').value = String(usual.dose_amount);
-        if (usual.dose_unit) field('dose_unit').value = usual.dose_unit;
-        if (usual.repeat) field('repeat').value = usual.repeat;
-        if (usual.every) field('every').value = String(usual.every);
-        if (usual.per_day) perDay.value = String(usual.per_day);
-        regimenOffer.hidden = true; changed(field('repeat'));
-      };
-    }
+  // Offers the usual dose when the reference gave one for a medicine; true when offered.
+  const applyRegimen = usual => {
+    regimenOffer.hidden = !(usual?.text && isDrug());
+    if (regimenOffer.hidden) return false;
+    regimenOffer.querySelector('[data-slot="text"]').textContent = usual.text;
+    regimenOffer.querySelector('q').textContent = usual.quote || '';
+    regimenOffer.querySelector('[data-act="use"]').onclick = () => {
+      if (usual.dose_amount) field('dose_amount').value = String(usual.dose_amount);
+      if (usual.dose_unit) field('dose_unit').value = usual.dose_unit;
+      if (usual.repeat) field('repeat').value = usual.repeat;
+      if (usual.every) field('every').value = String(usual.every);
+      if (usual.per_day) perDay.value = String(usual.per_day);
+      regimenOffer.hidden = true; changed(field('repeat'));
+    };
+    return true;
+  };
+
+  const apply = suggestion => {
+    const sourced = Boolean(suggestion.source);
+    let any = applyFields(suggestion.fields, sourced);
+    const atc = field('atc_code');
+    if (suggestion.atc_code && !atc.value) { atc.value = suggestion.atc_code; form.querySelector('[data-med-ai-atc]').hidden = false; any = true; }
+
+    const effects = applyEffects(suggestion.effects, sourced);
+    const regimen = applyRegimen(suggestion.regimen);
+    any = any || effects || regimen;
 
     const link = sourceLine.querySelector('a');
-    sourceLine.querySelector('span').textContent = !sourced ? panel.dataset.noSource
-      : suggestion.source.shown_for ? panel.dataset.source.replace('{name}', suggestion.source.shown_for) : panel.dataset.sourcePlain;
+    let sourceText = panel.dataset.sourcePlain;
+    if (!sourced) sourceText = panel.dataset.noSource;
+    else if (suggestion.source.shown_for) sourceText = panel.dataset.source.replace('{name}', suggestion.source.shown_for);
+    sourceLine.querySelector('span').textContent = sourceText;
     link.hidden = !sourced; if (sourced) link.href = suggestion.source.url;
     sourceLine.hidden = false;
     tell(any ? panel.dataset.done : panel.dataset.doneEmpty, 'done');
@@ -422,8 +442,23 @@
     start.disabled = false; start.textContent = panel.dataset.again;
     cancel.hidden = true;
   };
-  const fail = reason => { finish(); tell(panel.getAttribute(`data-error-${reason}`) || panel.getAttribute('data-error-lost'), 'error'); };
+  const fail = reason => { finish(); tell(panel.getAttribute(`data-error-${reason}`) || panel.dataset.errorLost || '', 'error'); };
   const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+  // Poll rather than hold one request open: a phone that sleeps mid-wait
+  // picks the answer up when it wakes.
+  const pollUntilDone = async (mine, job) => {
+    for (;;) {
+      await wait(1500);
+      if (mine !== run) return;
+      const reply = await fetch(`/medicines/suggest/${encodeURIComponent(job)}`, {headers: {Accept: 'application/json'}});
+      const state = reply.ok ? await reply.json() : {state: 'failed', error: 'lost'};
+      if (mine !== run) return;
+      if (state.state === 'running') continue;
+      if (state.state === 'done') { finish(); apply(state.suggestion); } else fail(state.error || 'lost');
+      return;
+    }
+  };
 
   const research = async () => {
     if (!field('name').value.trim()) { tell(panel.dataset.needName, 'error'); field('name').focus(); return; }
@@ -439,23 +474,13 @@
       const opened = asked.ok ? await asked.json() : {error: 'lost'};
       if (mine !== run) return;
       if (!opened.job) { fail(opened.error || 'lost'); return; }
-      // Poll rather than hold one request open: a phone that sleeps mid-wait
-      // picks the answer up when it wakes.
-      for (;;) {
-        await wait(1500);
-        if (mine !== run) return;
-        const reply = await fetch(`/medicines/suggest/${encodeURIComponent(opened.job)}`, {headers: {Accept: 'application/json'}});
-        const state = reply.ok ? await reply.json() : {state: 'failed', error: 'lost'};
-        if (mine !== run) return;
-        if (state.state === 'running') continue;
-        if (state.state === 'done') { finish(); apply(state.suggestion); } else fail(state.error || 'lost');
-        return;
-      }
+      await pollUntilDone(mine, opened.job);
     } catch {
       if (mine === run) fail('lost');
     }
   };
   start.addEventListener('click', research);
   cancel.addEventListener('click', () => { finish(); tell(''); });
-  if ('autostart' in panel.dataset) research();
+  // research() reports its own failures on the page, so nothing is left to catch.
+  if ('autostart' in panel.dataset) void research();
 })();

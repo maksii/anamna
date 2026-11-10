@@ -479,6 +479,24 @@ def _publishers(connection) -> dict[str, str]:
     }
 
 
+def _about_patient_lines(patient, counts: dict[str, object], include: Collection[str]) -> list[str]:
+    out = []
+    if "identity" in include:
+        out.append(t("ai.about_name", name=patient["display_name"]))
+        out.append(t("ai.about_dob", date=patient["date_of_birth"] or "-"))
+    age = counts.get("patient_age")
+    out.append(t("ai.about_age", age=age if age is not None else "-"))
+    out.append(t("ai.about_sex", sex=t(f"sex.{str(patient['sex_at_birth'] or 'unknown').casefold()}")))
+    if patient["blood_type"]:
+        out.append(t("ai.about_blood_type", value=patient["blood_type"]))
+    # Dosing is calculated from these (a weight-based dose, an eGFR-adjusted one), so they travel.
+    if patient["weight_kg"] is not None:
+        out.append("- " + t("ai.profile_weight", value=_num(patient["weight_kg"])))
+    if patient["height_cm"] is not None:
+        out.append("- " + t("ai.profile_height", value=_num(patient["height_cm"])))
+    return out
+
+
 def _about_lines(
     patient,
     counts: dict[str, object],
@@ -488,19 +506,7 @@ def _about_lines(
     """The "About me" section, shared by the whole-record and excerpt prompts."""
     out = [f"## {t('ai.about_heading')}", ""]
     if patient is not None:
-        if "identity" in include:
-            out.append(t("ai.about_name", name=patient["display_name"]))
-            out.append(t("ai.about_dob", date=patient["date_of_birth"] or "-"))
-        age = counts.get("patient_age")
-        out.append(t("ai.about_age", age=age if age is not None else "-"))
-        out.append(t("ai.about_sex", sex=t(f"sex.{str(patient['sex_at_birth'] or 'unknown').casefold()}")))
-        if patient["blood_type"]:
-            out.append(t("ai.about_blood_type", value=patient["blood_type"]))
-        # Dosing is calculated from these (a weight-based dose, an eGFR-adjusted one), so they travel.
-        if patient["weight_kg"] is not None:
-            out.append("- " + t("ai.profile_weight", value=_num(patient["weight_kg"])))
-        if patient["height_cm"] is not None:
-            out.append("- " + t("ai.profile_height", value=_num(patient["height_cm"])))
+        out += _about_patient_lines(patient, counts, include)
     if "identity" not in include:
         out.append(t("ai.identity_withheld"))
     lab_cards = [card for card in catalog if not card.get("is_device")]

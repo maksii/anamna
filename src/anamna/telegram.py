@@ -61,13 +61,18 @@ ERR_UNAVAILABLE = "telegram.unavailable"
 CB_METRICS = "metrics:0"
 CB_DOCS = "docs:0"
 #: What each slash command opens.
-_COMMAND_ACTIONS = {"/start": "home", "/menu": "home", "/cancel": "home", "/metrics": CB_METRICS, "/documents": CB_DOCS, "/search": "search", "/upload": "upload", "/uploads": "recent", "/account": "account", "/unlink": "unlink", "/language": "language", "/help": "help"}
+_UPLOAD_PAGE = "/upload"
+_PHOTO_NAME = "photo.jpg"
+_ERR_SIZE = "telegram.error_size"
+_ERR_TYPE = "telegram.error_type"
+_DONE_DUPLICATE = "intake.done_duplicate"
+_COMMAND_ACTIONS = {"/start": "home", "/menu": "home", "/cancel": "home", "/metrics": CB_METRICS, "/documents": CB_DOCS, "/search": "search", _UPLOAD_PAGE: "upload", "/uploads": "recent", "/account": "account", "/unlink": "unlink", "/language": "language", "/help": "help"}
 #: Bot menu commands and the catalog key describing each.
 _COMMANDS = (("start", "home"), ("menu", "home"), ("metrics", "metrics"), ("documents", "documents"), ("search", "search"), ("upload", "upload"), ("uploads", "recent"), ("account", "account"), ("unlink", "unlink"), ("language", "language"), ("help", "help"), ("cancel", "cancel"))
 #: Door refusals a file is reported with in its batch summary.
-_FILE_ERRORS = {"telegram.error_type", "telegram.error_size", ERR_FILE}
+_FILE_ERRORS = {_ERR_TYPE, _ERR_SIZE, ERR_FILE}
 #: Telegram attachment kinds besides photos, and the name one without a filename gets.
-_MEDIA = (("document", "photo.jpg"), ("video", "video.mp4"), ("animation", "animation.mp4"), ("video_note", "video.mp4"), ("audio", "audio.mp3"), ("voice", "voice.ogg"))
+_MEDIA = (("document", _PHOTO_NAME), ("video", "video.mp4"), ("animation", "animation.mp4"), ("video_note", "video.mp4"), ("audio", "audio.mp3"), ("voice", "voice.ogg"))
 _SIGNATURES = {".pdf": (b"%PDF-",), ".jpg": (b"\xff\xd8\xff",), ".jpeg": (b"\xff\xd8\xff",), ".png": (b"\x89PNG\r\n\x1a\n",), ".tif": (b"II*\0", b"MM\0*"), ".tiff": (b"II*\0", b"MM\0*"), ".zip": (b"PK\x03\x04", b"PK\x05\x06")}
 
 
@@ -108,7 +113,7 @@ def _attachment(msg):
         return None
     photo = msg.get("photo")
     if isinstance(photo, list) and photo and isinstance(photo[-1], dict):
-        return {**photo[-1], "file_name": "photo.jpg"}
+        return {**photo[-1], "file_name": _PHOTO_NAME}
     for kind, name in _MEDIA:
         file = msg.get(kind)
         if isinstance(file, dict):
@@ -117,7 +122,7 @@ def _attachment(msg):
 
 
 def _display_name(file) -> str:
-    return str(file.get("file_name") or "photo.jpg").replace("\\", "/").rsplit("/", 1)[-1][:240]
+    return str(file.get("file_name") or _PHOTO_NAME).replace("\\", "/").rsplit("/", 1)[-1][:240]
 
 
 def _audit(db, owner, action, entity="telegram", entity_id="account"):
@@ -440,9 +445,9 @@ class TelegramService:
         filename = _display_name(file)
         suffix = Path(filename).suffix.lower()
         if suffix not in _SIGNATURES:
-            raise TelegramError("telegram.error_type", permanent=True)
+            raise TelegramError(_ERR_TYPE, permanent=True)
         if int(file.get("file_size", 0)) > MAX_FILE_BYTES:
-            raise TelegramError("telegram.error_size", permanent=True)
+            raise TelegramError(_ERR_SIZE, permanent=True)
         return filename, suffix
 
     @staticmethod
@@ -487,10 +492,10 @@ class TelegramService:
         filename, suffix = self._upload_info(file)
         patient = self._patient(db, owner)
         if not data or len(data) > MAX_FILE_BYTES:
-            raise TelegramError("telegram.error_size", permanent=True)
+            raise TelegramError(_ERR_SIZE, permanent=True)
         # Validate claimed type before publishing bytes into the trusted intake queue.
         if not data.startswith(_SIGNATURES[suffix]):
-            raise TelegramError("telegram.error_type", permanent=True)
+            raise TelegramError(_ERR_TYPE, permanent=True)
         job, batch = self._job_ids(db, update_id, owner, chat)
         held = db.execute("SELECT id FROM documents WHERE owner_user_id=? AND sha256=? ORDER BY imported_at LIMIT 1", (owner, hashlib.sha256(data).hexdigest())).fetchone()
         # Keep an intelligible original filename without trusting it as a path.
@@ -501,7 +506,7 @@ class TelegramService:
             safe_name = Path(safe_name).stem[:140] + suffix
         # One directory per file: every Telegram photo is called photo.jpg.
         target = self.settings.source_dir / "uploads" / utc_now()[:7] / job / safe_name
-        state, detail = ("skipped", "intake.done_duplicate") if held else ("queued", "intake.step_waiting")
+        state, detail = ("skipped", _DONE_DUPLICATE) if held else ("queued", "intake.step_waiting")
         if not held:
             target.parent.mkdir(parents=True, exist_ok=True)
             written_paths.append(target)
@@ -564,6 +569,14 @@ class TelegramService:
         db.execute("UPDATE telegram_updates SET state='pending',attempts=attempts+1,available_at=?,error_key=? WHERE update_id=?", (time.time() + (error.retry_after or min(300, 2 ** min(row["attempts"], 8))), error.key, row["update_id"]))
         return True
 
+    def _report_refusal(self, db, update_id, update, snapshot, error):
+        # A refused file is reported once, in its batch summary;
+        # only a file with nowhere to be filed is answered alone.
+        file = _attachment(update.get("message")) if snapshot and isinstance(update, dict) else None
+        key = error.key if error.key in _FILE_ERRORS else ERR_FILE
+        if snapshot and not (file and error.key != ERR_UNAVAILABLE and self._reject_upload(db, update_id, snapshot["owner_user_id"], snapshot["chat_id"], file, key)):
+            self._queue(db, update_id, snapshot["owner_user_id"], snapshot["chat_id"], message(error.key.removeprefix("telegram."), snapshot["locale"]), self._nav(snapshot["locale"]))
+
     def process_one(self):
         row = self._claim_update()
         if row is None:
@@ -585,12 +598,7 @@ class TelegramService:
                 if error:
                     if self._retry_update(db, row, error):
                         return True
-                    # A refused file is reported once, in its batch summary;
-                    # only a file with nowhere to be filed is answered alone.
-                    file = _attachment(update.get("message")) if snapshot and isinstance(update, dict) else None
-                    key = error.key if error.key in _FILE_ERRORS else ERR_FILE
-                    if snapshot and not (file and error.key != ERR_UNAVAILABLE and self._reject_upload(db, update_id, snapshot["owner_user_id"], snapshot["chat_id"], file, key)):
-                        self._queue(db, update_id, snapshot["owner_user_id"], snapshot["chat_id"], message(error.key.removeprefix("telegram."), snapshot["locale"]), self._nav(snapshot["locale"]))
+                    self._report_refusal(db, update_id, update, snapshot, error)
                 db.execute("UPDATE telegram_updates SET state='done',payload='{}',error_key=? WHERE update_id=?", (error.key if error else None, update_id))
         except Exception:
             # These exact paths were created for this receipt, beneath source_dir.
@@ -627,7 +635,7 @@ class TelegramService:
             return None
         return action
 
-    def _message_action(self, db, update_id, owner, chat_id, msg, link, locale, downloaded, written_paths):
+    def _message_action(self, db, update_id, owner, chat_id, msg, link, downloaded, written_paths):
         """The action a typed message asks for, or None when it was an upload.
         A file gets no reply of its own: its batch is acknowledged and
         summarised once, by notify_uploads."""
@@ -660,6 +668,11 @@ class TelegramService:
         _audit(db, owner, "telegram_original_requested", "document", document["id"])
         return None
 
+    def _listing_card(self, db, owner, action, locale):
+        kind, page = action.split(":")
+        query = db.execute("SELECT search_query FROM telegram_links WHERE owner_user_id=?", (owner,)).fetchone()[0] if kind == "find" else ""
+        return self._listing(db, owner, kind, int(page), locale, query)
+
     def _card_for(self, db, update_id, owner, chat_id, action, locale):
         """The card an action opens as ``(text, buttons)``; None when a file was queued instead."""
         if action == "home":
@@ -684,9 +697,7 @@ class TelegramService:
         if action == "language" or action.startswith("lang:"):
             return self._language_card(db, owner, action, locale)
         if action.startswith(("docs:", "metrics:", "find:")):
-            kind, page = action.split(":")
-            query = db.execute("SELECT search_query FROM telegram_links WHERE owner_user_id=?", (owner,)).fetchone()[0] if kind == "find" else ""
-            return self._listing(db, owner, kind, int(page), locale, query)
+            return self._listing_card(db, owner, action, locale)
         if action.startswith("d:"):
             return self._document(db, owner, action[2:], locale)
         if action.startswith(("m:", "v:")):
@@ -721,7 +732,7 @@ class TelegramService:
             if callback:
                 action = self._callback_action(db, update_id, owner, chat_id, callback, locale)
             else:
-                action = self._message_action(db, update_id, owner, chat_id, msg, link, locale, downloaded, written_paths)
+                action = self._message_action(db, update_id, owner, chat_id, msg, link, downloaded, written_paths)
             card = self._card_for(db, update_id, owner, chat_id, action, locale) if action else None
             if card is not None:
                 self._queue(db, update_id, owner, chat_id, card[0], card[1], edit_message_id=msg.get("message_id") if callback else None)
@@ -796,10 +807,10 @@ class TelegramService:
             text += "\n\n" + message("batch_review", locale)
         # Telegram recompresses anything sent as a photo to about 1280 px;
         # small print on a phone screenshot then reads back as noise.
-        if any(job["filename"] == "photo.jpg" and job["state"] == "done" for job in shown):
+        if any(job["filename"] == _PHOTO_NAME and job["state"] == "done" for job in shown):
             text += "\n\n" + message("photo_compressed", locale)
         buttons = self._document_buttons(db, owner, documents)
-        url = self._url(db, "/upload")
+        url = self._url(db, _UPLOAD_PAGE)
         if url:
             buttons.append([_button(message("queue", locale), url=url)])
         if counts["added"]:
@@ -816,6 +827,34 @@ class TelegramService:
         return buttons
 
     @staticmethod
+    def _job_document(db, owner, job, detail):
+        """The document a job filed, or the original of an exact copy the
+        pipeline still filed, and the outcome key to report for it."""
+        doc = db.execute("SELECT id,title,duplicate_of_document_id FROM documents WHERE owner_user_id=? AND id=?", (owner, job["document_id"])).fetchone() if job["document_id"] else None
+        if doc and doc["duplicate_of_document_id"]:
+            # An exact copy the pipeline still filed: report the original.
+            doc = db.execute("SELECT id,title,duplicate_of_document_id FROM documents WHERE owner_user_id=? AND id=?", (owner, doc["duplicate_of_document_id"])).fetchone() or doc
+            detail = _DONE_DUPLICATE
+        return doc, detail
+
+    @staticmethod
+    def _job_notes(db, owner, doc_id, locale, review):
+        """What a filed file adds to its line: the suggested copy of it, and on
+        review whether a person still has to check it."""
+        notes = ""
+        # Same report, different file: a suggested relation a person confirms.
+        copy = db.execute("""SELECT d.title FROM document_relations r JOIN documents d
+            ON d.id = CASE WHEN r.source_document_id=?1 THEN r.target_document_id ELSE r.source_document_id END
+            WHERE (r.source_document_id=?1 OR r.target_document_id=?1) AND r.relationship IN ('duplicate','reprint')
+            AND r.notes LIKE 'auto:%' AND d.owner_user_id=?2 LIMIT 1""", (doc_id, owner)).fetchone()
+        if copy:
+            notes += " " + message("file_copy", locale, title=escape(str(copy[0])[:100]))
+        if review:
+            pending = db.execute("SELECT 1 FROM review_tasks WHERE owner_user_id=? AND entity_type='document' AND entity_id=? AND state='open' LIMIT 1", (owner, doc_id)).fetchone()
+            notes += " " + message("needs_review" if pending else "reviewed", locale)
+        return notes
+
+    @staticmethod
     def _job_line(db, owner, job, locale, review=False):
         """One file of an upload as a person reads it, and its outcome:
         ``added``, ``held`` (already in the record), ``failed`` or ``pending``.
@@ -826,31 +865,17 @@ class TelegramService:
             return message("file_waiting" if state == "queued" else "file_reading", locale, name=name), "pending"
         if state == "failed":
             return message("file_failed", locale, name=name, reason=escape(t(detail))), "failed"
-        doc = db.execute("SELECT id,title,duplicate_of_document_id FROM documents WHERE owner_user_id=? AND id=?", (owner, job["document_id"])).fetchone() if job["document_id"] else None
-        if doc and doc["duplicate_of_document_id"]:
-            # An exact copy the pipeline still filed: report the original.
-            doc = db.execute("SELECT id,title,duplicate_of_document_id FROM documents WHERE owner_user_id=? AND id=?", (owner, doc["duplicate_of_document_id"])).fetchone() or doc
-            detail = "intake.done_duplicate"
+        doc, detail = TelegramService._job_document(db, owner, job, detail)
         if not doc:
             return message("file_status", locale, name=name, reason=escape(t(detail))), "held" if state == "skipped" else "added"
         title = escape(str(doc["title"])[:100])
-        if detail in {"intake.done_duplicate", "intake.done_unchanged"}:
+        if detail in {_DONE_DUPLICATE, "intake.done_unchanged"}:
             return message("file_duplicate", locale, name=name, title=title), "held"
         if detail not in {"intake.done_imported", "intake.done_no_values"}:
             return message("file_status", locale, name=name, reason=escape(t(detail))), "added"
         count = int(job["observation_count"] or 0)
         line = message("file_added", locale, name=name, title=title, values=t_plural("intake.count_values", count)) if count else message("file_added_empty", locale, name=name, title=title)
-        # Same report, different file: a suggested relation a person confirms.
-        copy = db.execute("""SELECT d.title FROM document_relations r JOIN documents d
-            ON d.id = CASE WHEN r.source_document_id=?1 THEN r.target_document_id ELSE r.source_document_id END
-            WHERE (r.source_document_id=?1 OR r.target_document_id=?1) AND r.relationship IN ('duplicate','reprint')
-            AND r.notes LIKE 'auto:%' AND d.owner_user_id=?2 LIMIT 1""", (doc["id"], owner)).fetchone()
-        if copy:
-            line += " " + message("file_copy", locale, title=escape(str(copy[0])[:100]))
-        if review:
-            pending = db.execute("SELECT 1 FROM review_tasks WHERE owner_user_id=? AND entity_type='document' AND entity_id=? AND state='open' LIMIT 1", (owner, doc["id"])).fetchone()
-            line += " " + message("needs_review" if pending else "reviewed", locale)
-        return line, "added"
+        return line + TelegramService._job_notes(db, owner, doc["id"], locale, review), "added"
 
     def _recent(self, db, owner, locale):
         """The newest files of the record, from any source, and where each stands."""
@@ -865,7 +890,7 @@ class TelegramService:
             if job["document_id"] and job["document_id"] not in documents:
                 documents.append(job["document_id"])
         buttons = self._document_buttons(db, owner, documents)
-        url = self._url(db, "/upload")
+        url = self._url(db, _UPLOAD_PAGE)
         if url:
             buttons.append([_button(message("queue", locale), url=url)])
         return text, buttons + self._nav(locale)

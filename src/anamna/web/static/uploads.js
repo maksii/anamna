@@ -82,7 +82,7 @@
   // refreshing, and then the section says so rather than freezing on "processing".
   const FAILURES_BEFORE_STALLED = 3;
   let failures = 0;
-  const LIVE_ROLES = ["status", "alert", "log"];
+  const LIVE_ROLES = new Set(["status", "alert", "log"]);
 
   const el = (tag, className, text) => {
     const node = document.createElement(tag);
@@ -146,6 +146,21 @@
    * that did change is swapped for its new render, and focus is put back on the
    * link it was on. Order follows the payload. */
   function sync(jobs) {
+    const rows = pruneRows(jobs);
+    let cursor = list.firstElementChild;
+    for (const job of jobs) {
+      const fresh = render(job);
+      const node = rows.get(String(job.id));
+      const target = node ? refreshRow(node, fresh) : fresh;
+      if (cursor === node) cursor = target;
+      if (target === cursor) cursor = cursor.nextElementSibling;
+      else if (cursor) cursor.before(target);
+      else list.append(target);
+    }
+  }
+
+  // Removes the rows of jobs that are gone; returns the rest by job id.
+  function pruneRows(jobs) {
     const rows = new Map();
     for (const node of list.children) {
       if (node.dataset.job !== undefined) rows.set(node.dataset.job, node);
@@ -154,26 +169,23 @@
     for (const [id, node] of rows) {
       if (!wanted.has(id)) node.remove();
     }
-    let cursor = list.firstElementChild;
-    for (const job of jobs) {
-      const fresh = render(job);
-      let target = fresh;
-      const node = rows.get(String(job.id));
-      if (node) {
-        // fold() sets `hidden` after every poll; it is not part of the row's content.
-        fresh.hidden = node.hidden;
-        if (node.outerHTML === fresh.outerHTML) {
-          target = node;
-        } else {
-          const focused = node.contains(document.activeElement) ? document.activeElement : null;
-          if (cursor === node) cursor = fresh;
-          node.replaceWith(fresh);
-          if (focused) restoreFocus(focused, fresh);
-        }
-      }
-      if (target === cursor) cursor = cursor.nextElementSibling;
-      else list.insertBefore(target, cursor);
+    return rows;
+  }
+
+  // Returns the row to show for an existing node: the node itself when nothing
+  // changed, otherwise the fresh render that replaces it.
+  function refreshRow(node, fresh) {
+    // fold() sets `hidden` after every poll; it is not part of the row's content.
+    fresh.hidden = node.hidden;
+    let target = fresh;
+    if (node.outerHTML === fresh.outerHTML) {
+      target = node;
+    } else {
+      const focused = node.contains(document.activeElement) ? document.activeElement : null;
+      node.replaceWith(fresh);
+      if (focused) restoreFocus(focused, fresh);
     }
+    return target;
   }
 
   // The same kind of control in the new row: its link, matched by destination.
@@ -208,7 +220,7 @@
     const alert = document.getElementById("an-upload-failed");
     const pill = document.getElementById("an-queue-failed-pill");
     [alert, pill].forEach((node) => { if (node) node.hidden = !payload.failed; });
-    const failedText = alert && alert.querySelector("[data-failed-text]");
+    const failedText = alert?.querySelector("[data-failed-text]");
     // Unchanged text is not rewritten: a role=alert region announces each rewrite.
     if (failedText && payload.failed && failedText.textContent !== payload.failed_text) failedText.textContent = payload.failed_text;
     if (pill && payload.failed) pill.textContent = payload.failed_text;
@@ -262,7 +274,7 @@
   function stalled() {
     const text = section.dataset.msgStalled;
     if (!summary || !text) return;
-    if (!LIVE_ROLES.includes(summary.getAttribute("role"))) summary.setAttribute("role", "status");
+    if (!LIVE_ROLES.has(summary.getAttribute("role"))) summary.setAttribute("role", "status");
     summary.textContent = text;
   }
 

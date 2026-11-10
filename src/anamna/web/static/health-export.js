@@ -45,7 +45,7 @@
   const pdfError = form.querySelector('[data-export-pdf-error]');
   form.addEventListener('submit', (event) => {
     const button = event.submitter;
-    if (!button || !button.hasAttribute('data-export-pdf') || !globalThis.fetch || !globalThis.anamnaBusy) return;
+    if (!button || !('exportPdf' in button.dataset) || !globalThis.fetch || !globalThis.anamnaBusy) return;
     event.preventDefault();
     if (pdfError) pdfError.hidden = true;
     const url = `${button.getAttribute('formaction')}?${new URLSearchParams(new FormData(form))}`;

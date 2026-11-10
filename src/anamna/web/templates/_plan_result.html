@@ -244,7 +244,7 @@
     box.querySelector('[data-order-go]').remove();
     var controller = null, timer = null;
     function show(match) {
-      rows.forEach(function (row) { row.hidden = !!match && match.indexOf(row.dataset.item) < 0; });
+      rows.forEach(function (row) { row.hidden = !!match && !match.includes(row.dataset.item); });
       none.hidden = !match || match.length > 0;
     }
     function search() {

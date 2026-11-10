@@ -10,7 +10,11 @@ function element(tag = 'button') {
   const node = {
     nodeType: 1, tagName: tag.toUpperCase(), dataset: {}, disabled: false, hidden: false, textContent: 'Go',
     className: '', id: '', type: '', children: [], handlers: {},
-    setAttribute(name, value) { attributes.set(name, String(value)); },
+    setAttribute(name, value) {
+      attributes.set(name, String(value));
+      // As a browser does: data-foo-bar is dataset.fooBar.
+      if (name.startsWith('data-')) this.dataset[name.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = String(value);
+    },
     getAttribute(name) { return attributes.has(name) ? attributes.get(name) : null; },
     removeAttribute(name) { attributes.delete(name); },
     querySelector() { return null; },

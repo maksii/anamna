@@ -305,9 +305,12 @@ del _line, _codes, _group, _source, _code
 #: A WHO/IUIS code as printed: genus, species, then a component number or a
 #: ``_suffix`` naming which part of the species (``Bos d_milk``).  The species
 #: may be absent (``Ory_meat``, ``Sin``) or ``spp``.
-CODE_RE = re.compile(
-    r"\b([A-Z][a-z]{1,3})(?: ([a-z]{1,4})\.?)?(?:_([A-Za-z][A-Za-z0-9]*))?(?: (\d+(?:\.\d+)?(?:\+\d+)?))?(?=[\s,;)]|$)"
-)
+_CODE_GENUS = r"\b([A-Z][a-z]{1,3})"
+_CODE_SPECIES = r"(?: ([a-z]{1,4})\.?)?"
+_CODE_SUFFIX = r"(?:_([A-Za-z][A-Za-z0-9]*))?"
+_CODE_NUMBER = r"(?: (\d+(?:\.\d+)?(?:\+\d+)?))?"
+_CODE_END = r"(?=[\s,;)]|$)"
+CODE_RE = re.compile(rf"{_CODE_GENUS}{_CODE_SPECIES}{_CODE_SUFFIX}{_CODE_NUMBER}{_CODE_END}")
 
 
 def _code_keys(match: re.Match) -> list[str]:
@@ -324,6 +327,24 @@ def _code_keys(match: re.Match) -> list[str]:
     return keys
 
 
+def _code_source(match: re.Match) -> str | None:
+    for key in _code_keys(match):
+        if key in SOURCES:
+            return SOURCES[key][1]
+    return None
+
+
+def _code_text(name: str, matches: list[re.Match]) -> str:
+    if not matches:
+        return ""
+    start = matches[0].start()
+    # Keep a bracket the code sits in, so no printed code is dropped.
+    opening = name.rfind("(", 0, start)
+    if opening != -1 and name.find(")", opening) > start:
+        start = opening
+    return name[start:].strip()
+
+
 def parse_name(name: str) -> dict[str, object]:
     """Split a printed allergen name into the code text to show verbatim, the
     allergen source and whether it is a single molecule (a component)."""
@@ -331,23 +352,10 @@ def parse_name(name: str) -> dict[str, object]:
     # A printed suffix names the row itself; an earlier code is usually a note
     # inside it («Сеча собаки (вкл. Can f 5) Can f_male urine»).
     chosen = next((m for m in matches if m.group(3)), matches[0] if matches else None)
-    source = None
-    if chosen:
-        for key in _code_keys(chosen):
-            if key in SOURCES:
-                source = SOURCES[key][1]
-                break
+    source = _code_source(chosen) if chosen else None
     if source is None:
         source = _source_by_name(name)
-    if matches:
-        start = matches[0].start()
-        # Keep a bracket the code sits in, so no printed code is dropped.
-        opening = name.rfind("(", 0, start)
-        if opening != -1 and name.find(")", opening) > start:
-            start = opening
-        code_text = name[start:].strip()
-    else:
-        code_text = ""
+    code_text = _code_text(name, matches)
     # A number marks a single protein; so does a printed protein name after
     # the code, unless the code's suffix already names a part of the source
     # («Can f_male urine» is an extract, «Can f_Fd1 Uteroglobin» a protein).
@@ -506,28 +514,40 @@ def _value_text(row, reading: Callable) -> str:
     return f"{reading(row)} {unit}".strip()
 
 
-def overview(connection, owner_id: str, *, judge: Callable, reading: Callable, query: str = "") -> dict[str, object]:
-    """Everything /allergy shows for one record.
+def _test_for(tests: dict[tuple, dict[str, object]], row) -> dict[str, object]:
+    key = (row["document_id"] or row["report_id"] or "manual", row["observed_at"])
+    return tests.setdefault(key, {
+        "date": row["observed_at"], "date_text": format_date_localized(row["observed_at"]),
+        "vendor": row["vendor"] or "", "document_url": f"/documents/{row['document_id']}" if row["document_id"] else "",
+        "title": row["document_title"] or "", "alex": False, "allergens": 0, "positive": 0, "uncertain": 0,
+        "highest": None, "highest_text": "",
+    })
 
-    ``judge(row)`` returns the reference engine's verdict for an observation
-    row; ``reading(row)`` the value as printed (comparator kept).
-    """
-    rows = [dict(row) for row in connection.execute(_ROWS_SQL, (owner_id,))]
-    cap_legend = immunocap_legend(connection)
+
+def _legend_for(row, alex: bool, cap_legend: list[dict[str, object]]) -> list[dict[str, object]]:
+    if alex:
+        return alex_legend()
+    if (row["unit_canonical"] or "").casefold() == "kua/l":
+        return cap_legend
+    return []
+
+
+def _track_highest(test: dict[str, object], row, entry: dict[str, object]) -> None:
+    if row["value_numeric"] is not None and not str(row["comparator"] or "").startswith("<") and (
+        test["highest"] is None or row["value_numeric"] > test["highest"]
+    ):
+        test["highest"], test["highest_text"] = row["value_numeric"], entry["value_text"]
+
+
+def _tally_rows(rows: list[dict[str, object]], judge: Callable, reading: Callable,
+                cap_legend: list[dict[str, object]]) -> tuple[dict, dict, list]:
     tests: dict[tuple, dict[str, object]] = {}
     by_concept: dict[str, list[dict[str, object]]] = {}
     total_ige: list[dict[str, object]] = []
-
     for row in rows:
         verdict = judge(row)
-        key = (row["document_id"] or row["report_id"] or "manual", row["observed_at"])
         alex = is_alex(row["vendor_reference_high"])
-        test = tests.setdefault(key, {
-            "date": row["observed_at"], "date_text": format_date_localized(row["observed_at"]),
-            "vendor": row["vendor"] or "", "document_url": f"/documents/{row['document_id']}" if row["document_id"] else "",
-            "title": row["document_title"] or "", "alex": False, "allergens": 0, "positive": 0, "uncertain": 0,
-            "highest": None, "highest_text": "",
-        })
+        test = _test_for(tests, row)
         entry = {
             "row": row, "verdict": verdict, "status": _status(verdict), "test": test,
             "value_text": _value_text(row, reading), "date_text": test["date_text"],
@@ -535,57 +555,67 @@ def overview(connection, owner_id: str, *, judge: Callable, reading: Callable, q
         if row["concept_id"] == TOTAL_IGE:
             total_ige.append(entry)
             continue
-        legend = alex_legend() if alex else cap_legend if (row["unit_canonical"] or "").casefold() == "kua/l" else []
-        level = level_of(row["value_numeric"], legend)
+        level = level_of(row["value_numeric"], _legend_for(row, alex, cap_legend))
         entry["level"] = level["label"] if level else ""
         entry["level_rank"] = level["class"] if level else -1
         test["alex"] = test["alex"] or alex
         test["allergens"] += 1
         test["positive"] += entry["status"] == "positive"
         test["uncertain"] += entry["status"] == "uncertain"
-        if row["value_numeric"] is not None and not str(row["comparator"] or "").startswith("<") and (
-            test["highest"] is None or row["value_numeric"] > test["highest"]
-        ):
-            test["highest"], test["highest_text"] = row["value_numeric"], entry["value_text"]
+        _track_highest(test, row, entry)
         by_concept.setdefault(row["concept_id"], []).append(entry)
+    return tests, by_concept, total_ige
 
+
+def _order_tests(tests: dict[tuple, dict[str, object]]) -> tuple[list, list, dict[str, object] | None]:
     ordered_tests = sorted(tests.values(), key=lambda item: str(item["date"] or ""), reverse=True)
     for test in ordered_tests:
         test["name"] = _test_name(str(test["title"]), bool(test["alex"]))
     allergen_tests = [test for test in ordered_tests if test["allergens"]]
     latest_test = allergen_tests[0] if allergen_tests else None
+    return ordered_tests, allergen_tests, latest_test
 
-    items = []
-    for concept_id, entries in by_concept.items():
-        current = entries[-1]
-        row = current["row"]
-        parsed = parse_name(str(row["canonical_name"] or row["raw_name"] or ""))
-        source = parsed["source"]
-        group = SOURCE_GROUP.get(source or "", "other")
-        families = families_of(str(parsed["code_text"]))
-        items.append({
-            "concept_id": concept_id, "url": f"/metrics/{concept_id}",
-            "code_text": parsed["code_text"] or str(row["raw_name"] or row["canonical_name"]),
-            "printed": str(row["raw_name"] or row["canonical_name"] or ""),
-            "component": parsed["component"], "source": source, "group": group,
-            "source_name": t(f"allergen.{source}") if source else str(row["raw_name"] or row["canonical_name"]),
-            "families": families, "family_names": [t(f"allergy.family.{key}.name") for key in families],
-            "value_text": current["value_text"], "value": row["value_numeric"], "status": current["status"],
-            "level": current["level"], "level_rank": current["level_rank"],
-            "unverified": row["verification_status"] == "extracted",
-            "date_text": current["date_text"], "latest": current["test"] is latest_test,
-            "history": [{"date_text": e["date_text"], "value_text": e["value_text"], "status": e["status"]}
-                        for e in reversed(entries[:-1])],
-            "order": row["row_order"],
-        })
 
-    groups = _groups(items)
+def _concept_item(concept_id, entries: list[dict[str, object]], latest_test) -> dict[str, object]:
+    current = entries[-1]
+    row = current["row"]
+    parsed = parse_name(str(row["canonical_name"] or row["raw_name"] or ""))
+    source = parsed["source"]
+    group = SOURCE_GROUP.get(source or "", "other")
+    families = families_of(str(parsed["code_text"]))
+    return {
+        "concept_id": concept_id, "url": f"/metrics/{concept_id}",
+        "code_text": parsed["code_text"] or str(row["raw_name"] or row["canonical_name"]),
+        "printed": str(row["raw_name"] or row["canonical_name"] or ""),
+        "component": parsed["component"], "source": source, "group": group,
+        "source_name": t(f"allergen.{source}") if source else str(row["raw_name"] or row["canonical_name"]),
+        "families": families, "family_names": [t(f"allergy.family.{key}.name") for key in families],
+        "value_text": current["value_text"], "value": row["value_numeric"], "status": current["status"],
+        "level": current["level"], "level_rank": current["level_rank"],
+        "unverified": row["verification_status"] == "extracted",
+        "date_text": current["date_text"], "latest": current["test"] is latest_test,
+        "history": [{"date_text": e["date_text"], "value_text": e["value_text"], "status": e["status"]}
+                    for e in reversed(entries[:-1])],
+        "order": row["row_order"],
+    }
+
+
+def _positives(items: list[dict[str, object]]) -> list[dict[str, object]]:
     positives = [item for item in items if item["status"] in ("positive", "uncertain")]
     positives.sort(key=lambda item: (item["status"] != "positive", -item["level_rank"], -(item["value"] or 0)))
-    family_view = _families(items)
-    total = _total_ige(total_ige)
-    scale_alex = any(test["alex"] for test in allergen_tests)
-    scale_cap = any(not test["alex"] for test in allergen_tests)
+    return positives
+
+
+def _scales(scale_alex: bool, scale_cap: bool, cap_legend: list[dict[str, object]]) -> list[dict[str, object]]:
+    alex = ([{"key": "alex", "levels": alex_legend(), "sources": _citations(BLOCK_SOURCES["scale_alex"])}]
+            if scale_alex else [])
+    immunocap = ([{"key": "immunocap", "levels": cap_legend, "sources": _citations(BLOCK_SOURCES["scale_immunocap"])}]
+                 if scale_cap and cap_legend else [])
+    return alex + immunocap
+
+
+def _used_sources(family_view: list[dict[str, object]], total: dict[str, object] | None,
+                  scale_alex: bool, scale_cap: bool) -> list[str]:
     used = [*BLOCK_SOURCES["caveat"], *BLOCK_SOURCES["codes"], *BLOCK_SOURCES["next"]]
     if total:
         used += BLOCK_SOURCES["total_ige"]
@@ -594,6 +624,28 @@ def overview(connection, owner_id: str, *, judge: Callable, reading: Callable, q
     if scale_cap:
         used += BLOCK_SOURCES["scale_immunocap"]
     used += [source for family in family_view for source in FAMILIES[family["key"]]["sources"]]
+    return used
+
+
+def overview(connection, owner_id: str, *, judge: Callable, reading: Callable, query: str = "") -> dict[str, object]:
+    """Everything /allergy shows for one record.
+
+    ``judge(row)`` returns the reference engine's verdict for an observation
+    row; ``reading(row)`` the value as printed (comparator kept).
+    """
+    rows = [dict(row) for row in connection.execute(_ROWS_SQL, (owner_id,))]
+    cap_legend = immunocap_legend(connection)
+    tests, by_concept, total_ige = _tally_rows(rows, judge, reading, cap_legend)
+    ordered_tests, allergen_tests, latest_test = _order_tests(tests)
+    items = [_concept_item(concept_id, entries, latest_test) for concept_id, entries in by_concept.items()]
+
+    groups = _groups(items)
+    positives = _positives(items)
+    family_view = _families(items)
+    total = _total_ige(total_ige)
+    scale_alex = any(test["alex"] for test in allergen_tests)
+    scale_cap = any(not test["alex"] for test in allergen_tests)
+    used = _used_sources(family_view, total, scale_alex, scale_cap)
     return {
         "has_results": bool(items) or bool(total),
         "tests": ordered_tests,
@@ -604,16 +656,31 @@ def overview(connection, owner_id: str, *, judge: Callable, reading: Callable, q
         "positives": positives,
         "families": family_view,
         "total_ige": total,
-        "scales": ([{"key": "alex", "levels": alex_legend(), "sources": _citations(BLOCK_SOURCES["scale_alex"])}]
-                   if scale_alex else [])
-        + ([{"key": "immunocap", "levels": cap_legend, "sources": _citations(BLOCK_SOURCES["scale_immunocap"])}]
-           if scale_cap and cap_legend else []),
+        "scales": _scales(scale_alex, scale_cap, cap_legend),
         "search": _search(items, query),
         "block_sources": {key: _citations(ids) for key, ids in BLOCK_SOURCES.items()},
         "sources": _citations(used),
         "plan_url": PLAN_URL,
         "cutoff_text": f"{format_number_localized(ALEX_CUTOFF)} {display_unit('kUA/L')}" if scale_alex else "",
     }
+
+
+def _card_status(positive: int, uncertain: int, members: list[dict[str, object]]) -> str:
+    if positive:
+        return "positive"
+    if uncertain:
+        return "uncertain"
+    if all(item["status"] == "negative" for item in members):
+        return "negative"
+    return "unjudged"
+
+
+def _source_card(members: list[dict[str, object]]) -> dict[str, object]:
+    members.sort(key=lambda item: (item["component"], item["order"]))
+    positive = sum(item["status"] == "positive" for item in members)
+    uncertain = sum(item["status"] == "uncertain" for item in members)
+    return {"name": members[0]["source_name"], "items": members, "positive": positive,
+            "uncertain": uncertain, "status": _card_status(positive, uncertain, members)}
 
 
 def _groups(items: list[dict[str, object]]) -> list[dict[str, object]]:
@@ -625,14 +692,7 @@ def _groups(items: list[dict[str, object]]) -> list[dict[str, object]]:
         sources = by_group.get(key)
         if not sources:
             continue
-        cards = []
-        for members in sources.values():
-            members.sort(key=lambda item: (item["component"], item["order"]))
-            positive = sum(item["status"] == "positive" for item in members)
-            uncertain = sum(item["status"] == "uncertain" for item in members)
-            cards.append({"name": members[0]["source_name"], "items": members, "positive": positive,
-                          "uncertain": uncertain, "status": "positive" if positive else "uncertain" if uncertain else
-                          "negative" if all(item["status"] == "negative" for item in members) else "unjudged"})
+        cards = [_source_card(members) for members in sources.values()]
         cards.sort(key=lambda card: (card["status"] not in ("positive", "uncertain"), min(i["order"] for i in card["items"])))
         tested = sum(len(card["items"]) for card in cards)
         positive = sum(card["positive"] for card in cards)
@@ -687,6 +747,22 @@ def _printed_range(row) -> str:
                       inclusive(row["vendor_reference_low_inclusive"]), inclusive(row["vendor_reference_high_inclusive"]))
 
 
+def _search_haystack(item: dict[str, object], messages: dict[str, dict[str, str]]) -> str:
+    names = messages.get(f"allergen.{item['source']}", {}) if item["source"] else {}
+    group = messages.get(f"allergy.page.group.{item['group']}", {})
+    return " | ".join([*names.values(), *group.values(), item["printed"], item["code_text"]])
+
+
+def _search_status(statuses: set[str]) -> str:
+    if "positive" in statuses:
+        return "positive"
+    if "uncertain" in statuses:
+        return "uncertain"
+    if statuses == {"negative"}:
+        return "negative"
+    return "unjudged"
+
+
 def _search(items: list[dict[str, object]], query: str) -> dict[str, object] | None:
     """"Was I tested for cat?": source names in both languages, the printed
     name, the codes and the group name all answer, whatever the page locale."""
@@ -697,18 +773,13 @@ def _search(items: list[dict[str, object]], query: str) -> dict[str, object] | N
         return None
     found: dict[str, dict[str, object]] = {}
     for item in items:
-        names = MESSAGES.get(f"allergen.{item['source']}", {}) if item["source"] else {}
-        group = MESSAGES.get(f"allergy.page.group.{item['group']}", {})
-        haystack = " | ".join([*names.values(), *group.values(), item["printed"], item["code_text"]])
-        if needle in _fold(haystack):
+        if needle in _fold(_search_haystack(item, MESSAGES)):
             card = found.setdefault(item["source"] or item["printed"], {
                 "name": item["source_name"], "group": t(f"allergy.page.group.{item['group']}"), "items": []})
             card["items"].append(item)
     results = list(found.values())
     for card in results:
-        statuses = {item["status"] for item in card["items"]}
-        card["status"] = "positive" if "positive" in statuses else "uncertain" if "uncertain" in statuses else (
-            "negative" if statuses == {"negative"} else "unjudged")
+        card["status"] = _search_status({item["status"] for item in card["items"]})
     results.sort(key=lambda card: card["status"] not in ("positive", "uncertain"))
     return {"query": query.strip()[:80], "results": results,
             "summary": _plural("allergy.page.search_found", len(results), query=query.strip()[:80])}

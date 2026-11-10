@@ -172,16 +172,73 @@ def _ai_effects(form: Mapping[str, Any]) -> list[dict]:
     return effects
 
 
+def _posted(form: Mapping[str, Any], key: str) -> str:
+    """The value posted under ``key`` as stripped text; "" when it is absent."""
+    return str(form.get(key) or "").strip()
+
+
+def _atc_code(form: Mapping[str, Any]) -> str:
+    atc = re.sub(r"\s+", "", str(form.get("atc_code") or "")).upper()
+    return atc if _ATC.fullmatch(atc) else ""
+
+
+def _point_status(form: Mapping[str, Any], started: date | None, today: date) -> str:
+    # The date decides when there is one.  Without a date only the person's
+    # own word says whether it is still ahead.
+    planned = _posted(form, "status") == "prescribed"
+    return "prescribed" if (started and started > today) or (not started and planned) else "past"
+
+
+def _period_status(form: Mapping[str, Any], started: date | None, ended: date | None, today: date) -> str:
+    status = _posted(form, "status")
+    if status not in STATUSES:
+        status = "current"
+    if started and started > today:
+        status = "prescribed"
+    elif ended and ended < today:
+        status = "past"
+    # Otherwise the chosen status stands: a prescription dated in the past
+    # that has not been started stays "prescribed".
+    return status
+
+
+def _reference_pair(form: Mapping[str, Any]) -> tuple[str, str]:
+    reference_name = _posted(form, "reference_name")
+    name_ok = (
+        1 <= len(reference_name) <= SHORT
+        and not any(char in reference_name for char in "/\\?#%")
+        and ".." not in reference_name
+    )
+    reference_code = _posted(form, "reference_code")
+    name = reference_name if name_ok else ""
+    return name, (reference_code if name and _REFERENCE_CODE.fullmatch(reference_code) else "")
+
+
+def _dose_fields(form: Mapping[str, Any], kind: str) -> dict[str, Any]:
+    amount = _dose_amount(form) if kind in REGIMEN_KINDS else None
+    unit = _posted(form, "dose_unit")
+    return {
+        "dose_amount": amount,
+        "dose_unit": unit if amount is not None and unit in DOSE_UNITS else "",
+        "schedule_json": _schedule(form, kind),
+    }
+
+
+def _ai_fields(form: Mapping[str, Any], values: Mapping[str, Any]) -> tuple[str, ...]:
+    posted_fields = {part.strip() for part in str(form.get("ai_fields") or "").split(",")}
+    return tuple(field for field in SUGGESTED_FIELDS if field in posted_fields and values[field])
+
+
 def clean(form: Mapping[str, Any], *, today: date) -> tuple[dict, str | None]:
-    kind = str(form.get("kind") or "").strip()
+    kind = _posted(form, "kind")
     if kind not in KINDS:
         return {}, "kind"
-    name = str(form.get("name") or "").strip()
+    name = _posted(form, "name")
     if not 1 <= len(name) <= SHORT:
         return {}, "name"
     try:
-        started = _parse_date(str(form.get("started_on") or "").strip())
-        ended = _parse_date(str(form.get("ended_on") or "").strip())
+        started = _parse_date(_posted(form, "started_on"))
+        ended = _parse_date(_posted(form, "ended_on"))
     except ValueError:
         return {}, "date_format"
     if started and ended and started > ended:
@@ -189,58 +246,27 @@ def clean(form: Mapping[str, Any], *, today: date) -> tuple[dict, str | None]:
 
     if kind in POINT_KINDS:
         ended = None
-        # The date decides when there is one.  Without a date only the person's
-        # own word says whether it is still ahead.
-        planned = str(form.get("status") or "").strip() == "prescribed"
-        status = "prescribed" if (started and started > today) or (not started and planned) else "past"
+        status = _point_status(form, started, today)
     else:
-        status = str(form.get("status") or "").strip()
-        if status not in STATUSES:
-            status = "current"
-        if started and started > today:
-            status = "prescribed"
-        elif ended and ended < today:
-            status = "past"
-        # Otherwise the chosen status stands: a prescription dated in the past
-        # that has not been started stays "prescribed".
+        status = _period_status(form, started, ended, today)
 
-    atc = re.sub(r"\s+", "", str(form.get("atc_code") or "")).upper()
     values: dict[str, Any] = {
         "kind": kind,
         "name": name,
-        "atc_code": atc if _ATC.fullmatch(atc) else "",
+        "atc_code": _atc_code(form),
         "status": status,
         "started_on": started.isoformat() if started else None,
         "ended_on": ended.isoformat() if ended else None,
-        "dates_approximate": 1 if str(form.get("dates_approximate") or "").strip() in _TRUE_FLAGS else 0,
-        "document_id": str(form.get("document_id") or "").strip() or None,
+        "dates_approximate": 1 if _posted(form, "dates_approximate") in _TRUE_FLAGS else 0,
+        "document_id": _posted(form, "document_id") or None,
     }
     for key in SHORT_TEXT:
         values[key] = _cut(form.get(key), SHORT)
     for key in LONG_TEXT:
         values[key] = _cut(form.get(key), LONG)
-
-    reference_name = str(form.get("reference_name") or "").strip()
-    name_ok = (
-        1 <= len(reference_name) <= SHORT
-        and not any(char in reference_name for char in "/\\?#%")
-        and ".." not in reference_name
-    )
-    reference_code = str(form.get("reference_code") or "").strip()
-    values["reference_name"] = reference_name if name_ok else ""
-    values["reference_code"] = (
-        reference_code if values["reference_name"] and _REFERENCE_CODE.fullmatch(reference_code) else ""
-    )
-
-    amount = _dose_amount(form) if kind in REGIMEN_KINDS else None
-    unit = str(form.get("dose_unit") or "").strip()
-    values["dose_amount"] = amount
-    values["dose_unit"] = unit if amount is not None and unit in DOSE_UNITS else ""
-    values["schedule_json"] = _schedule(form, kind)
-    posted_fields = {part.strip() for part in str(form.get("ai_fields") or "").split(",")}
-    values["ai_fields"] = tuple(
-        field for field in SUGGESTED_FIELDS if field in posted_fields and values[field]
-    )
+    values["reference_name"], values["reference_code"] = _reference_pair(form)
+    values.update(_dose_fields(form, kind))
+    values["ai_fields"] = _ai_fields(form, values)
     values["ai_effects"] = _ai_effects(form)
     return values, None
 
@@ -373,17 +399,18 @@ def effective_status(row: Mapping[str, Any], today: date) -> str:
 
 
 def implied_facts(row: Mapping[str, Any]) -> tuple[str, ...]:
+    facts: list[str] = []
     if row["kind"] == "illness":
-        return ("illness", "infection_or_inflammation")
-    if row["kind"] != "medicine":
-        return ()
-    atc = row["atc_code"] or ""
-    text = f"{row['substance']} {row['name']}".casefold()
-    return tuple(
-        fact
-        for fact, (prefixes, words) in FACT_MEDICINES.items()
-        if any(atc.startswith(prefix) for prefix in prefixes) or any(word in text for word in words)
-    )
+        facts = ["illness", "infection_or_inflammation"]
+    elif row["kind"] == "medicine":
+        atc = row["atc_code"] or ""
+        text = f"{row['substance']} {row['name']}".casefold()
+        facts = [
+            fact
+            for fact, (prefixes, words) in FACT_MEDICINES.items()
+            if any(atc.startswith(prefix) for prefix in prefixes) or any(word in text for word in words)
+        ]
+    return tuple(facts)
 
 
 def _effect(row: sqlite3.Row) -> dict:
@@ -478,6 +505,20 @@ def _write(connection: sqlite3.Connection, owner_id: str, factor_id: str, change
     )
 
 
+def _existing_effect(connection: sqlite3.Connection, factor_id: str, concept: str | None, label: str) -> str | None:
+    """The id of the effect this one repeats, or None when it is new."""
+    if concept is not None:
+        existing = connection.execute(
+            "SELECT id FROM factor_effects WHERE factor_id=? AND concept_id=?", (factor_id, concept)
+        ).fetchone()
+        return existing["id"] if existing is not None else None
+    wanted = label.casefold()
+    for other in connection.execute("SELECT id, label FROM factor_effects WHERE factor_id=?", (factor_id,)):
+        if other["label"].casefold() == wanted:
+            return other["id"]
+    return None
+
+
 def add_effect(
     connection: sqlite3.Connection,
     owner_id: str,
@@ -507,17 +548,9 @@ def add_effect(
     if concept is None and not label:
         return None
 
-    if concept is not None:
-        existing = connection.execute(
-            "SELECT id FROM factor_effects WHERE factor_id=? AND concept_id=?", (factor_id, concept)
-        ).fetchone()
-        if existing is not None:
-            return existing["id"]
-    else:
-        wanted = label.casefold()
-        for other in connection.execute("SELECT id, label FROM factor_effects WHERE factor_id=?", (factor_id,)):
-            if other["label"].casefold() == wanted:
-                return other["id"]
+    existing_id = _existing_effect(connection, factor_id, concept, label)
+    if existing_id is not None:
+        return existing_id
 
     effect_id = str(uuid.uuid4())
     connection.execute(
@@ -615,42 +648,55 @@ def _amount_form(amount: float) -> str:
     return "few" if get_locale() == "uk" else "many"
 
 
-def _plan_parts(plan: Mapping[str, Any], kind: str) -> list[str]:
+def _count_text(per_day: int, when: list[str]) -> str:
+    text = t_plural("med.regimen.per_day", per_day)
+    if when:
+        text += " (" + ", ".join(when) + ")"
+    return text
+
+
+def _weekly_text(plan: Mapping[str, Any]) -> str:
+    every = plan["every"]
+    text = t("med.regimen.week1") if every == 1 else t_plural("med.regimen.weeks", every)
+    if plan["weekdays"]:
+        days = ", ".join(t(f"med.weekday.{day}") for day in plan["weekdays"])
+        text += " " + t("med.regimen.on_days", days=days)
+    return text
+
+
+def _repeat_text(plan: Mapping[str, Any], regimen: bool, when: list[str]) -> str | None:
     repeat = plan["repeat"]
     every = plan["every"]
+    if repeat == "as_needed":
+        text = t("med.regimen.as_needed")
+        if plan["per_day"] > 1:
+            text += ", " + t_plural("med.regimen.up_to", plan["per_day"])
+        return text
+    if repeat == "daily":
+        if regimen:
+            return _count_text(plan["per_day"], when)
+        return t("med.regimen.daily")
+    if repeat == "days":
+        return t_plural("med.regimen.days", every)
+    if repeat == "weekly":
+        return _weekly_text(plan)
+    if repeat == "monthly":
+        return t("med.regimen.month1") if every == 1 else t_plural("med.regimen.months", every)
+    return None
+
+
+def _plan_parts(plan: Mapping[str, Any], kind: str) -> list[str]:
+    repeat = plan["repeat"]
     per_day = plan["per_day"]
     when = [t(f"med.daypart.{part}") for part in plan["times"]] + list(plan["clock"])
     regimen = kind in REGIMEN_KINDS
     parts: list[str] = []
-    if repeat == "as_needed":
-        text = t("med.regimen.as_needed")
-        if per_day > 1:
-            text += ", " + t_plural("med.regimen.up_to", per_day)
+    text = _repeat_text(plan, regimen, when)
+    if text is not None:
         parts.append(text)
-    elif repeat == "daily":
-        if regimen:
-            text = t_plural("med.regimen.per_day", per_day)
-            if when:
-                text += " (" + ", ".join(when) + ")"
-        else:
-            text = t("med.regimen.daily")
-        parts.append(text)
-    elif repeat == "days":
-        parts.append(t_plural("med.regimen.days", every))
-    elif repeat == "weekly":
-        text = t("med.regimen.week1") if every == 1 else t_plural("med.regimen.weeks", every)
-        if plan["weekdays"]:
-            days = ", ".join(t(f"med.weekday.{day}") for day in plan["weekdays"])
-            text += " " + t("med.regimen.on_days", days=days)
-        parts.append(text)
-    elif repeat == "monthly":
-        parts.append(t("med.regimen.month1") if every == 1 else t_plural("med.regimen.months", every))
     if repeat in ("days", "weekly", "monthly") and regimen:
         if per_day > 1:
-            text = t_plural("med.regimen.per_day", per_day)
-            if when:
-                text += " (" + ", ".join(when) + ")"
-            parts.append(text)
+            parts.append(_count_text(per_day, when))
         elif when:
             parts.append(", ".join(when))
     if plan["meal"]:

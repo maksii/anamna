@@ -72,6 +72,16 @@ def _encode_body(payload: object | None, form: dict[str, str] | None) -> tuple[b
     return (json.dumps(payload).encode("utf-8") if payload is not None else None), "application/json"
 
 
+def _checked_pdf(body: bytes) -> bytes:
+    if not body.startswith(b"%PDF"):
+        raise LabSyncError("labsync.error_pdf")
+    if b"%%EOF" not in body[-2048:]:
+        # A PDF cut short in transit: retry later, never store it.
+        logger.warning("labsync: PDF without its end marker (%s bytes)", len(body))
+        raise LabSyncError("labsync.error_unreachable")
+    return body
+
+
 def call(method: str, url: str, *, headers: dict[str, str], payload: object | None = None,
          want: str = "json", form: dict[str, str] | None = None,
          limit: int | None = None, timeout: int | None = None) -> tuple[object, list[str]]:
@@ -97,13 +107,7 @@ def call(method: str, url: str, *, headers: dict[str, str], payload: object | No
         logger.warning("labsync: %s request answered HTTP %s", method, status)
         raise LabSyncError(ERROR_REPLY, status)
     if want == "pdf":
-        if not body.startswith(b"%PDF"):
-            raise LabSyncError("labsync.error_pdf")
-        if b"%%EOF" not in body[-2048:]:
-            # A PDF cut short in transit: retry later, never store it.
-            logger.warning("labsync: PDF without its end marker (%s bytes)", len(body))
-            raise LabSyncError("labsync.error_unreachable")
-        return body, cookies
+        return _checked_pdf(body), cookies
     if want == "file":
         return body, cookies
     try:

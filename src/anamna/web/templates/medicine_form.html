@@ -187,9 +187,9 @@
          data-none="{{ t('med.doc.none') }}" data-mentions="{{ t('med.doc.mentions') }}" data-undated="{{ t('med.doc.undated') }}"
          data-filled="{{ t('med.doc.filled') }}" data-filled-date="{{ t('med.doc.filled_date') }}"
          data-filled-prescriber="{{ t('med.doc.filled_prescriber') }}" data-filled-reason="{{ t('med.doc.filled_reason') }}">
-      <label for="med-document_id" data-med-doc-label>{{ t('med.doc.label') }}</label>
+      <label id="med-doc-label" for="med-document_id" data-med-doc-label>{{ t('med.doc.label') }}</label>
       <div class="an-med-doc__box" data-med-doc-box hidden>
-        <input id="med-document-search" type="search" placeholder="{{ t('med.doc.placeholder') }}" autocomplete="off"
+        <input id="med-document-search" type="search" aria-labelledby="med-doc-label" placeholder="{{ t('med.doc.placeholder') }}" autocomplete="off"
                role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="med-doc-list" aria-describedby="med-doc-help">
         <ul id="med-doc-list" class="an-med-lookup__list" role="listbox" aria-label="{{ t('med.doc.list_aria') }}" hidden></ul>
       </div>

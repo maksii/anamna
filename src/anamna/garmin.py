@@ -968,6 +968,27 @@ def _record_failure(settings: Settings, row_id: int, error: str, transient: bool
     return True
 
 
+def _process_queued(settings: Settings, row, connections, reauth: set[str], touched: set[str]) -> bool:
+    """Process one queued delivery. True when it is done; False when it stays pending."""
+    try:
+        payload = json.loads(str(row["payload"]))
+    except json.JSONDecodeError:
+        payload = {}
+    payload = payload if isinstance(payload, dict) else {}
+    users = _event_garmin_users(payload)
+    if users & reauth:
+        return False  # the account needs a new authorization: not called again in this pass, no attempt counted
+    try:
+        touched.update(process_event(settings, payload, connections, str(row["received_at"] or "")))
+    except Exception as exc:  # noqa: BLE001 — one bad delivery must never hold up the others
+        if isinstance(exc, integrations.ReauthorizeError):
+            reauth.update(users)
+        if not _record_failure(settings, int(row["id"]), type(exc).__name__, isinstance(exc, IntegrationError)):
+            logger.warning("garmin: delivery %s failed, will retry: %s", row["id"], type(exc).__name__)
+        return False
+    return True
+
+
 def process_pending(settings: Settings) -> int:
     """Turn archived deliveries into rows, oldest first, and mark them done.
     A delivery that fails stays pending for the next run until it has failed
@@ -989,23 +1010,8 @@ def process_pending(settings: Settings) -> int:
     done: list[int] = []
     touched: set[str] = set()
     for row in rows:
-        try:
-            payload = json.loads(str(row["payload"]))
-        except json.JSONDecodeError:
-            payload = {}
-        payload = payload if isinstance(payload, dict) else {}
-        users = _event_garmin_users(payload)
-        if users & reauth:
-            continue  # the account needs a new authorization: not called again in this pass, no attempt counted
-        try:
-            touched |= process_event(settings, payload, connections, str(row["received_at"] or ""))
-        except Exception as exc:  # noqa: BLE001 — one bad delivery must never hold up the others
-            if isinstance(exc, integrations.ReauthorizeError):
-                reauth |= users
-            if not _record_failure(settings, int(row["id"]), type(exc).__name__, isinstance(exc, IntegrationError)):
-                logger.warning("garmin: delivery %s failed, will retry: %s", row["id"], type(exc).__name__)
-            continue
-        done.append(int(row["id"]))
+        if _process_queued(settings, row, connections, reauth, touched):
+            done.append(int(row["id"]))
     now = utc_now()
     with connect(settings) as db:
         db.executemany("UPDATE provider_events SET processed_at=? WHERE id=?", [(now, i) for i in done])
