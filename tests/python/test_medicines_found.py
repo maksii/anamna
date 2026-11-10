@@ -13,11 +13,14 @@ from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
+from markupsafe import escape
 
-from anamna import ai, factor_jobs, factor_scan, security
+from anamna import ai, factor_candidates, factor_jobs, factor_scan, security
 from anamna.db import connect, migrate, utc_now
 from anamna.i18n import format_date_localized
+from anamna.locales.messages_factors import MESSAGES_FACTORS
 from anamna.security import create_access_token, create_user
+from anamna.web import found_routes
 from anamna.web.app import create_app
 
 from test_web_profile import csrf_for, login
@@ -134,7 +137,7 @@ def test_the_page_lists_a_new_candidate_and_keeps_the_existing_one_unticked(worl
     assert '<span class="pill">Medicine</span>' in page
     assert 'name="status:medicine:amlodipine"' in page
     assert 'href="/documents/doc-alpha-consult.txt"' in page
-    assert 'value="medicine:amlodipine" checked' in page
+    assert 'value="medicine:amlodipine" checked' not in page
 
     existing = page.split('class="an-found-existing"', 1)[1]
     assert "Lisinopril" in existing
@@ -224,7 +227,7 @@ def test_the_scan_is_a_job_that_reports_its_progress(world, clients, monkeypatch
     job = scan_started(world, alpha).json()["job"]
     assert reported.wait(10)
     status = alpha.get(f"/medicines/found/scan/{job}").json()
-    assert status == {"state": "running", "error": "", "done": 1, "total": 3}
+    assert status == {"state": "running", "error": "", "done": 1, "total": 3, "failed": 0}
     assert scan_started(world, alpha).json()["job"] == job
 
     release.set()
@@ -235,7 +238,7 @@ def test_the_scan_is_a_job_that_reports_its_progress(world, clients, monkeypatch
 def test_a_scan_status_is_lost_for_an_unknown_foreign_or_research_job(world, clients):
     alpha = clients("alpha@example.test")
     bravo = clients("bravo@example.test")
-    lost = {"state": "failed", "error": "lost", "done": 0, "total": 0}
+    lost = {"state": "failed", "error": "lost", "done": 0, "total": 0, "failed": 0}
 
     assert alpha.get("/medicines/found/scan/no-such-job").json() == lost
 
@@ -316,3 +319,80 @@ def test_no_keys_a_missing_csrf_token_and_an_unknown_action_are_refused(world, c
         "csrf_token": csrf(world, alpha), "action": "explode", "key": ["medicine:amlodipine"],
     }).status_code == 400
     assert candidate_states(world) == {"amlodipine": "new"}
+
+
+def test_accepting_a_ticked_item_says_it_was_added(world, clients):
+    alpha = clients("alpha@example.test")
+    add_candidate(world, "Amlodipine")
+
+    response = alpha.post("/medicines/found", data={
+        "csrf_token": csrf(world, alpha), "action": "accept", "key": ["medicine:amlodipine"],
+    }, follow_redirects=False)
+
+    assert response.headers["location"] == "/medicines/found?saved=found_added"
+    assert candidate_states(world) == {"amlodipine": "accepted"}
+
+
+def test_an_item_the_form_refuses_twice_is_reported_as_not_added(world, clients, monkeypatch):
+    alpha = clients("alpha@example.test")
+    add_candidate(world, "Amlodipine")
+    monkeypatch.setattr(factor_candidates, "accept", lambda *args, **kwargs: ([], 1))
+
+    response = alpha.post("/medicines/found", data={
+        "csrf_token": csrf(world, alpha), "action": "accept", "key": ["medicine:amlodipine"],
+    }, follow_redirects=False)
+
+    assert response.headers["location"] == "/medicines/found?error=found_failed"
+
+
+def test_a_key_that_is_not_offered_adds_nothing(world, clients):
+    alpha = clients("alpha@example.test")
+    add_candidate(world, "Amlodipine")
+
+    response = alpha.post("/medicines/found", data={
+        "csrf_token": csrf(world, alpha), "action": "accept", "key": ["medicine:nothing"],
+    }, follow_redirects=False)
+
+    assert response.headers["location"] == "/medicines/found?error=found_none"
+
+
+@pytest.mark.parametrize("error", ["found_failed", "found_unread"])
+def test_each_found_error_shows_its_message(world, clients, error):
+    alpha = clients("alpha@example.test")
+    text = MESSAGES_FACTORS[f"med.error_{error}"]["en"]
+
+    response = alpha.get(f"/medicines/found?error={error}")
+
+    assert response.status_code == 200
+    assert str(escape(text)) in response.text
+
+
+def test_the_scan_status_reports_the_documents_it_could_not_read(world, clients):
+    alpha = clients("alpha@example.test")
+    job = factor_jobs.start(
+        world.alpha, lambda report: {"read": 1, "found": 0, "failed": 2}, kind="scan", with_progress=True,
+    )
+    factor_jobs.join(job)
+
+    status = alpha.get(f"/medicines/found/scan/{job}").json()
+
+    assert status["state"] == "done"
+    assert status["failed"] == 2
+    assert alpha.get("/medicines/found/scan/no-such-job").json()["failed"] == 0
+
+
+def test_the_page_reads_a_document_once_however_many_groups_cite_it(world, clients, monkeypatch):
+    alpha = clients("alpha@example.test")
+    add_candidate(world, "Amlodipine")
+    add_candidate(world, "Losartan")
+    reads = []
+    original = found_routes._documents
+
+    def counting(*args, **kwargs):
+        reads.append(args[3])
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(found_routes, "_documents", counting)
+
+    assert alpha.get("/medicines/found").status_code == 200
+    assert reads == [world.document]

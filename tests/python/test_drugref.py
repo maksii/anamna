@@ -525,3 +525,101 @@ def test_cached_instruction_is_none_while_the_site_is_paused(tmp_path: Path, sit
         assert drugref.cached_instruction(connection, "Валсартан-Тева") is None
         assert drugref.cached_instruction(connection, "Валсартан-Тева") is None
     assert len(site.requests) == 1
+
+
+def cache_then_age(connection, monkeypatch, days=200):
+    """Caches the test page, then ages the row past the cache limit. Returns the cached copy and the old date."""
+    monkeypatch.setattr(drugref, "_open", lambda url, data=None: PAGE)
+    cached = drugref.cached_instruction(connection, "Валсартан-Тева")
+    old = (datetime.now(UTC) - timedelta(days=days)).isoformat()
+    connection.execute("UPDATE drug_references SET fetched_at = ?", (old,))
+    return cached, old
+
+
+def fetched_at_of(connection):
+    return connection.execute("SELECT fetched_at FROM drug_references").fetchone()[0]
+
+
+def test_stale_cache_is_used_when_the_fetch_fails(tmp_path: Path, monkeypatch):
+    settings = settings_for(tmp_path)
+    migrate(settings)
+    with connect(settings) as connection:
+        cached, old = cache_then_age(connection, monkeypatch)
+
+        def down(url, data=None):
+            raise DrugRefError("URLError")
+
+        monkeypatch.setattr(drugref, "_open", down)
+        result = drugref.cached_instruction(connection, "Валсартан-Тева")
+        assert result == cached
+        assert result["sections"][0][0] == "Склад"
+        assert result["atc"] == ["C09DA03", "C09CA03"]
+        assert result["shown_for"] == cached["shown_for"]
+        assert fetched_at_of(connection) == old
+
+
+def test_stale_cache_is_used_while_lookups_are_paused(tmp_path: Path, monkeypatch):
+    settings = settings_for(tmp_path)
+    migrate(settings)
+    with connect(settings) as connection:
+        cached, old = cache_then_age(connection, monkeypatch)
+
+        def paused(url, data=None):
+            raise DrugRefPaused(60)
+
+        monkeypatch.setattr(drugref, "_open", paused)
+        assert drugref.cached_instruction(connection, "Валсартан-Тева") == cached
+        assert fetched_at_of(connection) == old
+
+
+def test_stale_cache_is_used_when_the_page_has_no_sections(tmp_path: Path, monkeypatch):
+    settings = settings_for(tmp_path)
+    migrate(settings)
+    with connect(settings) as connection:
+        cached, old = cache_then_age(connection, monkeypatch)
+        monkeypatch.setattr(drugref, "_open", lambda url, data=None: "<html>no sections</html>")
+        assert drugref.cached_instruction(connection, "Валсартан-Тева") == cached
+        assert fetched_at_of(connection) == old
+
+
+def test_stale_cache_is_replaced_by_a_good_fetch(tmp_path: Path, monkeypatch):
+    settings = settings_for(tmp_path)
+    migrate(settings)
+    with connect(settings) as connection:
+        _, old = cache_then_age(connection, monkeypatch)
+        page = PAGE.replace("Склад", "Склад оновлено")
+        monkeypatch.setattr(drugref, "_open", lambda url, data=None: page)
+        result = drugref.cached_instruction(connection, "Валсартан-Тева")
+        assert result["sections"][0][0] == "Склад оновлено"
+        sections_json = connection.execute("SELECT sections_json FROM drug_references").fetchone()[0]
+        assert "Склад оновлено" in sections_json
+        assert fetched_at_of(connection) != old
+
+
+def test_no_cache_and_failed_fetch_gives_none(tmp_path: Path, monkeypatch):
+    settings = settings_for(tmp_path)
+    migrate(settings)
+
+    def down(url, data=None):
+        raise DrugRefError("URLError")
+
+    monkeypatch.setattr(drugref, "_open", down)
+    with connect(settings) as connection:
+        assert drugref.cached_instruction(connection, "Валсартан-Тева") is None
+        assert connection.execute("SELECT COUNT(*) FROM drug_references").fetchone()[0] == 0
+
+
+def test_broken_stale_row_gives_none_when_the_fetch_fails(tmp_path: Path, monkeypatch):
+    settings = settings_for(tmp_path)
+    migrate(settings)
+    with connect(settings) as connection:
+        cache_then_age(connection, monkeypatch)
+        connection.execute("UPDATE drug_references SET sections_json = ?", ("not json",))
+
+        def down(url, data=None):
+            raise DrugRefError("URLError")
+
+        monkeypatch.setattr(drugref, "_open", down)
+        assert drugref.cached_instruction(connection, "Валсартан-Тева") is None
+        monkeypatch.setattr(drugref, "_open", lambda url, data=None: PAGE)
+        assert drugref.cached_instruction(connection, "Валсартан-Тева")["sections"][0][0] == "Склад"

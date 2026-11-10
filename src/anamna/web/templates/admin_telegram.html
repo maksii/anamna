@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ t('telegram.admin') }}{% endblock %}
 {% block content %}
+{% include "_admin_tabs.html" %}
 <section class="page-head"><div><div class="eyebrow">{{ t('admin.eyebrow') }}</div><h1>{{ t('telegram.admin') }}</h1></div></section>
 {% if error %}<div class="alert error" role="alert">{{ error }}</div>{% endif %}
 {% if done %}<div class="alert" role="status">{{ done }}</div>{% endif %}

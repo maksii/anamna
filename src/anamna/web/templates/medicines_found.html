@@ -3,11 +3,12 @@
 {% block title %}{{ t('med.found.title') }}{% endblock %}
 
 {#- One thing the documents say, as the person reviews it. The passage it was
-    read from is always shown: the tick is the person's word that it is true. -#}
+    read from is always shown. Nothing starts ticked: the tick is the person's
+    word, and a pre-ticked list was one press of Dismiss away from losing all. -#}
 {% macro found_item(item, index, tickable=true) -%}
 <li class="an-found-item">
   <label class="an-med-check">
-    <input type="checkbox" name="key" value="{{ item.key }}"{% if tickable %} checked{% endif %}>
+    <input type="checkbox" name="key" value="{{ item.key }}">
     <span>
       <strong class="an-found-item__name">{{ item.name }}{% if item.strength %} <small>{{ item.strength }}</small>{% endif %}</strong>
       <span class="an-found-item__meta">
@@ -76,14 +77,14 @@
   <section aria-labelledby="found-list">
     <h2 id="found-list">{{ t('med.found.list_heading') }} <span class="an-med-count">{{ fresh|length }}</span></h2>
     <p class="an-med-section__lead">{{ t('med.found.list_lead') }}</p>
-    <label class="an-med-check an-found-all"><input type="checkbox" data-found-all checked><span>{{ t('med.found.select_all') }}</span></label>
+    <label class="an-med-check an-found-all"><input type="checkbox" data-found-all><span>{{ t('med.found.select_all') }}</span></label>
     <ul class="an-found-list">
       {% for item in fresh %}{{ found_item(item, loop.index) }}{% endfor %}
     </ul>
   </section>
   <div class="an-med-actions an-found-actions">
     <button class="primary" type="submit" name="action" value="accept" data-busy="{{ t('med.saving') }}">{{ t('med.found.add') }}</button>
-    <button class="secondary" type="submit" name="action" value="dismiss">{{ t('med.found.dismiss') }}</button>
+    <button class="secondary" type="submit" name="action" value="dismiss" data-confirm="{{ t('med.found.dismiss_confirm') }}">{{ t('med.found.dismiss') }}</button>
   </div>
 </form>
 {% elif counts.documents and not counts.waiting and not job %}
@@ -98,7 +99,7 @@
     <ul class="an-found-list">
       {% for item in existing %}{{ found_item(item, 'x' ~ loop.index, tickable=false) }}{% endfor %}
     </ul>
-    <div class="an-med-actions"><button class="secondary" type="submit" name="action" value="dismiss">{{ t('med.found.dismiss') }}</button></div>
+    <div class="an-med-actions"><button class="secondary" type="submit" name="action" value="dismiss" data-confirm="{{ t('med.found.dismiss_confirm') }}">{{ t('med.found.dismiss') }}</button></div>
   </form>
 </details>
 {% endif %}

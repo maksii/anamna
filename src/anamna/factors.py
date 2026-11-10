@@ -189,7 +189,10 @@ def clean(form: Mapping[str, Any], *, today: date) -> tuple[dict, str | None]:
 
     if kind in POINT_KINDS:
         ended = None
-        status = "prescribed" if started and started > today else "past"
+        # The date decides when there is one.  Without a date only the person's
+        # own word says whether it is still ahead.
+        planned = str(form.get("status") or "").strip() == "prescribed"
+        status = "prescribed" if (started and started > today) or (not started and planned) else "past"
     else:
         status = str(form.get("status") or "").strip()
         if status not in STATUSES:

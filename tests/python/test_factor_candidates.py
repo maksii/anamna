@@ -9,7 +9,7 @@ from __future__ import annotations
 import itertools
 import json
 import uuid
-from datetime import date
+from datetime import date, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -282,7 +282,7 @@ def test_accept_creates_the_entry_and_marks_its_candidates(db):
     entry(db, kind="medicine", name="Known")
     beta_diacor = add(db, db.beta_doc, name="Diacor", owner=db.beta)
 
-    ids = accept(
+    ids, failed = accept(
         db,
         [key("medicine", "Diacor"), key("medicine", "Warfarin"), key("medicine", "Course"),
          key("medicine", "Known"), "nonsense:key"],
@@ -290,6 +290,7 @@ def test_accept_creates_the_entry_and_marks_its_candidates(db):
     )
 
     assert len(ids) == 3
+    assert failed == 0
     diacor, warf, ended_course = (factors.get(db.connection, db.alpha, factor_id, today=TODAY) for factor_id in ids)
     assert diacor["name"] == "Diacor"
     assert diacor["status"] == "prescribed"
@@ -337,7 +338,7 @@ def test_prescriber_comes_from_the_earliest_document(db, monkeypatch):
     add(db, d["jan"], name="Diacor", how_written="daily")
     add(db, d["may20"], name="Diacor", how_written="twice a day")
 
-    [factor_id] = accept(db, [key("medicine", "Diacor")])
+    [factor_id], _ = accept(db, [key("medicine", "Diacor")])
 
     created = factors.get(db.connection, db.alpha, factor_id, today=TODAY)
     assert created["prescriber"] == "Dr. Petrenko, Test Lab"
@@ -347,7 +348,7 @@ def test_prescriber_comes_from_the_earliest_document(db, monkeypatch):
 def test_a_procedure_keeps_its_own_date(db):
     add(db, db.docs["may1"], name="Appendectomy", kind="procedure", event_date="2025-02-02", date_exact=1)
 
-    [factor_id] = accept(db, [key("procedure", "Appendectomy")])
+    [factor_id], _ = accept(db, [key("procedure", "Appendectomy")])
 
     created = factors.get(db.connection, db.alpha, factor_id, today=TODAY)
     assert created["started_on"] == "2025-02-02"
@@ -359,7 +360,7 @@ def test_a_past_procedure_without_a_date_gets_no_start_and_never_the_document_da
     add(db, db.docs["may1"], name="Appendectomy", kind="procedure", timing="past")
 
     group = offered(db)["procedure:appendectomy"]
-    [factor_id] = accept(db, [key("procedure", "Appendectomy")])
+    [factor_id], _ = accept(db, [key("procedure", "Appendectomy")])
 
     assert group["started_on"] == ""
     assert group["suggested_status"] == "past"
@@ -373,7 +374,7 @@ def test_a_procedure_date_is_approximate_unless_the_document_gave_it_in_full(db,
     add(db, db.docs["may1"], name="Appendectomy", kind="procedure", timing="past",
         event_date="2019-01-01", date_exact=exact)
 
-    [factor_id] = accept(db, [key("procedure", "Appendectomy")])
+    [factor_id], _ = accept(db, [key("procedure", "Appendectomy")])
 
     created = factors.get(db.connection, db.alpha, factor_id, today=TODAY)
     assert created["started_on"] == "2019-01-01"
@@ -384,7 +385,7 @@ def test_a_planned_procedure_is_prescribed_and_stays_so(db):
     add(db, db.docs["may1"], name="Scan", kind="procedure", timing="planned", event_date="2025-07-01")
 
     assert offered(db)["procedure:scan"]["suggested_status"] == "prescribed"
-    [factor_id] = accept(db, [key("procedure", "Scan")])
+    [factor_id], _ = accept(db, [key("procedure", "Scan")])
 
     created = factors.get(db.connection, db.alpha, factor_id, today=TODAY)
     assert created["status"] == "prescribed"
@@ -395,7 +396,7 @@ def test_a_past_illness_without_a_date_is_past_with_no_start(db):
     add(db, db.docs["may1"], name="Flu", kind="illness", timing="past")
 
     group = offered(db)["illness:flu"]
-    [factor_id] = accept(db, [key("illness", "Flu")])
+    [factor_id], _ = accept(db, [key("illness", "Flu")])
 
     assert group["suggested_status"] == "past"
     assert group["started_on"] == ""
@@ -408,7 +409,7 @@ def test_a_stopped_medicine_ends_on_its_document_date_with_no_schedule(db):
     add(db, db.docs["may1"], name="Ramipril", stopped=1, how_written="stop taking")
 
     group = offered(db)["medicine:ramipril"]
-    [factor_id] = accept(db, [key("medicine", "Ramipril")])
+    [factor_id], _ = accept(db, [key("medicine", "Ramipril")])
 
     assert group["started_on"] == ""
     assert group["ended_on"] == "2025-05-01"
@@ -425,7 +426,7 @@ def test_a_stopped_medicine_mentioned_earlier_starts_on_the_earlier_date(db):
     add(db, d["may1"], name="Ramipril", stopped=1, how_written="stop taking")
 
     group = offered(db)["medicine:ramipril"]
-    [factor_id] = accept(db, [key("medicine", "Ramipril")])
+    [factor_id], _ = accept(db, [key("medicine", "Ramipril")])
 
     assert group["started_on"] == "2024-01-10"
     assert group["ended_on"] == "2025-05-01"
@@ -441,7 +442,7 @@ def test_the_stored_parts_of_day_and_meal_reach_the_entry(db):
     add(db, db.docs["jan"], name="Amlodipine", dose_amount=1, dose_unit="tablet",
         schedule_json=json.dumps(schedule))
 
-    [factor_id] = accept(db, [key("medicine", "Amlodipine")])
+    [factor_id], _ = accept(db, [key("medicine", "Amlodipine")])
 
     created = factors.get(db.connection, db.alpha, factor_id, today=TODAY)
     assert created["regimen"]["times"] == ["morning"]
@@ -452,7 +453,7 @@ def test_a_group_the_form_rejects_is_left_new(db):
     too_long = "x" * 201
     candidate = add(db, db.docs["jan"], name=too_long)
 
-    assert accept(db, [key("medicine", too_long)]) == []
+    assert accept(db, [key("medicine", too_long)]) == ([], 1)
     assert state(db, candidate) == ("new", None)
 
 
@@ -469,3 +470,82 @@ def test_dismiss_marks_only_the_named_groups_for_this_owner(db):
     assert state(db, beta_diacor) == ("new", None)
     assert list(offered(db)) == ["medicine:other"]
     assert factor_candidates.count(db.connection, db.beta) == 1
+
+
+def date_document(db, document_id: str, days_ago: int) -> date:
+    """Dates the document as written that many days before TODAY."""
+    day = TODAY - timedelta(days=days_ago)
+    db.connection.execute("UPDATE documents SET report_date=? WHERE id=?", (day.isoformat(), document_id))
+    return day
+
+
+def test_running_course_keeps_its_end_date(db):
+    started = date_document(db, db.docs["may20"], 10)
+    add(db, db.docs["may20"], name="Course", duration_days=30)
+
+    [factor_id], failed = accept(db, [key("medicine", "Course")])
+
+    created = factors.get(db.connection, db.alpha, factor_id, today=TODAY)
+    assert failed == 0
+    assert created["status"] == "current"
+    assert created["ended_on"] == (started + timedelta(days=30)).isoformat()
+
+
+def test_finished_course_is_past_with_its_end_date(db):
+    started = date_document(db, db.docs["may20"], 60)
+    add(db, db.docs["may20"], name="Course", duration_days=30)
+
+    [factor_id], failed = accept(db, [key("medicine", "Course")])
+
+    created = factors.get(db.connection, db.alpha, factor_id, today=TODAY)
+    assert failed == 0
+    assert created["status"] == "past"
+    assert created["ended_on"] == (started + timedelta(days=30)).isoformat()
+
+
+def test_current_override_of_a_finished_course_drops_the_end(db):
+    date_document(db, db.docs["may20"], 60)
+    add(db, db.docs["may20"], name="Course", duration_days=30)
+
+    [factor_id], _ = accept(db, [key("medicine", "Course")], {key("medicine", "Course"): "current"})
+
+    created = factors.get(db.connection, db.alpha, factor_id, today=TODAY)
+    assert created["status"] == "current"
+    assert created["ended_on"] is None
+
+
+def test_accept_counts_what_could_not_be_added(db, monkeypatch):
+    candidate = add(db, db.docs["jan"], name="Diacor")
+    monkeypatch.setattr(factor_candidates.factors, "clean", lambda form, *, today: ({}, "name"))
+
+    assert accept(db, [key("medicine", "Diacor")]) == ([], 1)
+    assert state(db, candidate) == ("new", None)
+
+
+def test_accept_ignores_unknown_and_existing_keys(db):
+    entry(db, kind="medicine", name="Known")
+    add(db, db.docs["may20"], name="Known")
+
+    assert accept(db, ["medicine:nothing", key("medicine", "Known")]) == ([], 0)
+
+
+def test_count_matches_the_groups(db):
+    d = db.docs
+    entry(db, kind="medicine", name="Known")
+    entry(db, kind="medicine", name="Ramipril", substance="ramipril")
+    add(db, d["jan"], name="Diacor")
+    add(db, d["mar"], name="Diacor")
+    add(db, d["may1"], name="Surgery", kind="procedure")
+    add(db, d["may20"], name="Known")
+    add(db, d["jan"], name="Tritace", substance="ramipril")
+    add(db, d["jan"], name="Dropped", state="dismissed")
+
+    listed = factor_candidates.groups(db.connection, db.alpha, today=TODAY, locale="en")
+
+    expected = sum(1 for group in listed if not group["existing"])
+    assert expected == 2
+    assert factor_candidates.count(db.connection, db.alpha) == expected
+
+
+def test_count_is_zero_without_candidates(db):
+    assert factor_candidates.count(db.connection, db.alpha) == 0

@@ -39,7 +39,7 @@
     {% if can_edit %}
     <div class="an-med-card__actions">
       <a class="secondary" href="{{ item.url }}/edit" aria-label="{{ t('med.card.edit_aria', name=item.name) }}">{{ t('med.card.edit') }}</a>
-      <form action="{{ item.url }}" method="post" data-confirm="{{ t('med.remove_confirm') }}">
+      <form action="{{ item.url }}" method="post" data-confirm="{{ t('med.remove_confirm', name=item.name) }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="action" value="remove">
         <button class="secondary" type="submit" aria-label="{{ t('med.card.remove_aria', name=item.name) }}">{{ t('med.card.remove') }}</button>

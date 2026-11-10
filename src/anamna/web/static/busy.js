@@ -83,6 +83,8 @@
 
   document.addEventListener('submit', (event) => {
     const form = event.target;
+    // A form that only closes its <dialog> goes nowhere.
+    if ((form.getAttribute('method') || '').toLowerCase() === 'dialog') return;
     if (form.dataset.submitting) {
       event.preventDefault();
       return;
@@ -139,14 +141,71 @@
     }
   }
 
-  // A form marked data-confirm asks first; the message is the attribute. A
-  // cancelled submit stops here, before any other submit handler runs.
+  // A form marked data-confirm asks first; the message is the attribute. The
+  // question is a <dialog> on the page. window.confirm() answers "no" without
+  // showing anything in an embedded browser, and in any browser once a person
+  // ticks "stop this page opening dialogs": every Delete became a dead button.
+  function ask(form, submitter, message) {
+    const words = globalThis.__HL_I18N__ || {};
+    const dialog = document.createElement('dialog');
+    dialog.className = 'an-confirm';
+    dialog.setAttribute('role', 'alertdialog');
+    dialog.setAttribute('aria-describedby', 'an-confirm-text');
+    const text = document.createElement('p');
+    text.id = 'an-confirm-text';
+    text.textContent = message;
+    const actions = document.createElement('div');
+    actions.className = 'an-confirm__actions';
+    const no = document.createElement('button');
+    no.type = 'button';
+    no.className = 'secondary';
+    no.textContent = words['confirm.cancel'] || 'Cancel';
+    no.addEventListener('click', () => dialog.close());
+    const yes = document.createElement('button');
+    yes.type = 'button';
+    yes.className = 'primary';
+    // The button repeats the word the person pressed ("Delete"), so the two
+    // answers cannot be mixed up the way "OK" and "Cancel" are.
+    yes.textContent = (submitter && submitter.textContent.trim()) || words['confirm.yes'] || 'Yes, continue';
+    yes.addEventListener('click', () => dialog.close('yes'));
+    actions.append(no, yes);
+    dialog.append(text, actions);
+    dialog.addEventListener('close', () => {
+      dialog.remove();
+      if (dialog.returnValue !== 'yes') return;
+      form.dataset.confirmed = '1';
+      // requestSubmit keeps the pressed button's name and value in the post.
+      if (submitter && submitter.form === form) form.requestSubmit(submitter);
+      else form.requestSubmit();
+    });
+    document.body.append(dialog);
+    dialog.showModal();
+    // The safe answer holds the focus: Enter on a question about deleting
+    // must not delete.
+    no.focus();
+  }
+
+  // Capturing: a submit that still waits for its answer stops here, before
+  // any other submit handler runs.
   document.addEventListener('submit', (event) => {
     const form = event.target;
-    const message = form && form.getAttribute && form.getAttribute('data-confirm');
-    if (message && !window.confirm(message)) {
-      event.preventDefault();
-      event.stopPropagation();
+    // On the pressed button when only one of a form's actions needs the
+    // question; on the form when every way of sending it does.
+    const pressed = event.submitter;
+    const message = (pressed && pressed.getAttribute && pressed.getAttribute('data-confirm'))
+      || (form && form.getAttribute && form.getAttribute('data-confirm'));
+    if (!message) return;
+    if (form.dataset.confirmed) {
+      delete form.dataset.confirmed;
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    if (typeof HTMLDialogElement === 'function' && typeof form.requestSubmit === 'function') {
+      ask(form, event.submitter, message);
+    } else if (window.confirm(message)) {
+      // A browser too old for <dialog>: its own box is all there is.
+      form.submit();
     }
   }, true);
 

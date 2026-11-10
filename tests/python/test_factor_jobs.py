@@ -215,3 +215,53 @@ def test_a_finished_job_is_kept_for_the_keep_limit_and_dropped_by_a_later_start(
     last_id = factor_jobs.start("u3", lambda: {})
     factor_jobs.join(last_id)
     assert factor_jobs.get("u1", old_id) is None
+
+
+def test_same_key_returns_the_running_job():
+    release = threading.Event()
+    runs: list[str] = []
+
+    def work():
+        runs.append("run")
+        release.wait(5)
+        return {}
+
+    first_id = factor_jobs.start("u1", work, key="a")
+    try:
+        assert factor_jobs.start("u1", work, key="a") == first_id
+    finally:
+        release.set()
+    factor_jobs.join(first_id)
+    assert runs == ["run"]
+
+
+def test_a_different_key_starts_its_own_job():
+    release = threading.Event()
+
+    def answering(who: str):
+        def work():
+            release.wait(5)
+            return {"who": who}
+
+        return work
+
+    a_id = factor_jobs.start("u1", answering("a"), key="a")
+    try:
+        b_id = factor_jobs.start("u1", answering("b"), key="b")
+        assert b_id != a_id
+    finally:
+        release.set()
+    factor_jobs.join(a_id)
+    factor_jobs.join(b_id)
+    assert factor_jobs.get("u1", a_id)["result"] == {"who": "a"}
+    assert factor_jobs.get("u1", b_id)["result"] == {"who": "b"}
+
+
+def test_default_key_still_reuses():
+    release = threading.Event()
+    first_id = factor_jobs.start("u1", blocked(release))
+    try:
+        assert factor_jobs.start("u1", blocked(release)) == first_id
+    finally:
+        release.set()
+    factor_jobs.join(first_id)

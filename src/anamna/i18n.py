@@ -259,6 +259,9 @@ JS_KEYS = (
     "med.lookup.searching", "med.lookup.paused",
     # The site-wide progress bar (busy.js).
     "busy.loading",
+    # The question before a destructive form is sent (busy.js).
+    "confirm.cancel",
+    "confirm.yes",
     # /metrics type-ahead chrome (the results themselves arrive as HTML).
     "metrics.matches_for",
     "metrics.recent",

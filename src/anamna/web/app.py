@@ -6571,6 +6571,12 @@ def _paused_label(key: str, emails: dict[str, str]) -> str:
         return t("admin.paused_webhook", subject=key[len("webhook:"):])
     return t("admin.paused_other", subject=key)
 
+@router.get("/admin", responses=_RESPONSES_401_403)
+def admin_home(request: Request):
+    """The administration area opens on its first section."""
+    require_admin(request)
+    return RedirectResponse("/admin/users", status_code=303)
+
 @router.get("/admin/users", response_class=HTMLResponse, responses=_RESPONSES_401_403)
 def admin_users(request: Request, error: str | None = None, done: str | None = None):
     settings = request.app.state.settings

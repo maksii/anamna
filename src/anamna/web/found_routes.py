@@ -22,7 +22,12 @@ from ..i18n import activate_locale, format_date_localized, get_locale, reset_loc
 from .factors_routes import _documents, _redirect, _writable
 
 _SAVED = {"found_added": "med.found_added_notice", "found_dismissed": "med.found_dismissed_notice"}
-_ERRORS = {"found_none": "med.error_found_none", "found_stopped": "med.error_found_stopped"}
+_ERRORS = {
+    "found_none": "med.error_found_none",
+    "found_stopped": "med.error_found_stopped",
+    "found_failed": "med.error_found_failed",
+    "found_unread": "med.error_found_unread",
+}
 _MAX_KEYS = 200
 
 
@@ -52,13 +57,18 @@ def _when(group: dict) -> str:
     return ", ".join(parts)
 
 
-def _view(connection, owner_id: str, document_row, group: dict) -> dict:
-    """One group as the found page reads it.  A document that no longer exists is left out."""
+def _view(connection, owner_id: str, document_row, group: dict, seen: dict[str, dict | None]) -> dict:
+    """One group as the found page reads it.  A document that no longer exists is left out.
+
+    ``seen`` holds each document already read for this request, so a document several groups cite is read once.
+    """
     documents = []
     for document in group["documents"]:
-        found = _documents(connection, owner_id, document_row, document["id"])
-        if found:
-            documents.append(found[0])
+        if document["id"] not in seen:
+            found = _documents(connection, owner_id, document_row, document["id"])
+            seen[document["id"]] = found[0] if found else None
+        if seen[document["id"]] is not None:
+            documents.append(seen[document["id"]])
     return {
         "key": group["key"], "name": group["name"], "strength": group["strength"], "how": group["how"],
         "reason": group["reason"], "quote": group["quote"], "suggested_status": group["suggested_status"],
@@ -80,10 +90,11 @@ def register_routes(app, settings, *, templates, template_context, require_user,
         today = date.today()
         locale = get_locale()
         views: dict[bool, list[dict]] = {False: [], True: []}
+        seen: dict[str, dict | None] = {}
         with connect(settings) as connection:
             counts = factor_scan.counts(connection, user["id"])
             for group in factor_candidates.groups(connection, user["id"], today=today, locale=locale):
-                views[group["existing"]].append(_view(connection, user["id"], document_row, group))
+                views[group["existing"]].append(_view(connection, user["id"], document_row, group, seen))
         return templates.TemplateResponse(request, "medicines_found.html", template_context(
             request, active="medicines", counts=counts,
             ai_ready=ai.ai_active(settings, factor_scan.FEATURE),
@@ -132,9 +143,10 @@ def register_routes(app, settings, *, templates, template_context, require_user,
             raise HTTPException(403)
         job = factor_jobs.get(user["id"], job_id)
         if job is None or job["kind"] != "scan":
-            return JSONResponse({"state": "failed", "error": "lost", "done": 0, "total": 0})
+            return JSONResponse({"state": "failed", "error": "lost", "done": 0, "total": 0, "failed": 0})
         return JSONResponse({
             "state": job["state"], "error": job["error"], "done": job["done"], "total": job["total"],
+            "failed": int((job["result"] or {}).get("failed") or 0),
         })
 
     def found_action(user, form) -> RedirectResponse:
@@ -150,13 +162,18 @@ def register_routes(app, settings, *, templates, template_context, require_user,
                 if patient is None:
                     return _redirect("/medicines")
                 statuses = {key: str(form.get(f"status:{key}") or "") for key in keys}
-                created = factor_candidates.accept(
+                created, failed = factor_candidates.accept(
                     connection, user["id"], patient["id"], keys, statuses, today=date.today(),
                 )
                 for factor_id in created:
                     audit(user["id"], user["id"], "factor.create", "factor", factor_id, {"source": "documents"},
                           connection=connection)
                 connection.commit()
+                if not created:
+                    error = "found_failed" if failed else "found_none"
+                    return _redirect(f"/medicines/found?error={error}")
+                if failed:
+                    return _redirect("/medicines/found?saved=found_added&error=found_failed")
                 return _redirect("/medicines/found?saved=found_added")
             if action == "dismiss":
                 factor_candidates.dismiss(connection, user["id"], keys)

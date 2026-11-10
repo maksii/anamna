@@ -301,7 +301,7 @@
 </template>
 
 {% if not is_new %}
-<form class="an-med-delete" action="{{ action }}" method="post" data-confirm="{{ t('med.remove_confirm') }}">
+<form class="an-med-delete" action="{{ action }}" method="post" data-confirm="{{ t('med.remove_confirm', name=factor.name) }}">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <input type="hidden" name="action" value="remove">
   <button class="secondary" type="submit">{{ t('med.remove') }}</button>

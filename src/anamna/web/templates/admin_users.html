@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ t('admin.title') }}{% endblock %}
 {% block content %}
+{% include "_admin_tabs.html" %}
 
 <section class="page-head">
   <div>
@@ -11,8 +12,6 @@
 
 {% if error %}<div class="alert error" role="alert">{{ error }}</div>{% endif %}
 {% if done %}<div class="alert" role="status">{{ done }}</div>{% endif %}
-
-<p class="muted"><a href="/admin/tokens">{{ t('token.admin_link') }}</a></p>
 
 <div class="stat-grid">
   <article>

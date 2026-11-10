@@ -168,11 +168,12 @@ def test_administrator_sees_the_page_and_a_member_never_sees_the_link(tmp_path: 
         page = client.get("/admin/users")
         assert page.status_code == 200
         assert "member@example.test" in page.text
-        assert "/admin/users" in client.get("/profile").text
+        # The account menu carries one link to the administration area.
+        assert 'href="/admin"' in client.get("/profile").text
 
     with TestClient(create_app(settings)) as client:
         sign_in(client, "member@example.test")
-        assert "/admin/users" not in client.get("/profile").text
+        assert 'href="/admin' not in client.get("/profile").text
 
 
 def test_blocking_ends_live_sessions_and_refuses_the_next_sign_in(tmp_path: Path):

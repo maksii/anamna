@@ -133,13 +133,10 @@
             record, so it belongs beside the profile rather than in the row of
             clinical destinations. Absent entirely for a member. -#}
         {% if user.role == 'admin' %}
-        <a class="account-panel__link {{ 'active' if active == 'admin' else '' }}" href="/admin/users"{% if active == 'admin' %} aria-current="page"{% endif %}>{{ t('nav.admin') }}</a>
-        <a class="account-panel__link {{ 'active' if active == 'admin_tokens' else '' }}" href="/admin/tokens"{% if active == 'admin_tokens' %} aria-current="page"{% endif %}>{{ t('nav.admin_tokens') }}</a>
-        <a class="account-panel__link {{ 'active' if active == 'admin_ai' else '' }}" href="/admin/ai"{% if active == 'admin_ai' %} aria-current="page"{% endif %}>{{ t('nav.admin_ai') }}</a>
-        <a class="account-panel__link {{ 'active' if active == 'admin_paperless' else '' }}" href="/admin/paperless"{% if active == 'admin_paperless' %} aria-current="page"{% endif %}>{{ t('nav.admin_paperless') }}</a>
-        <a class="account-panel__link {{ 'active' if active == 'admin_openwearables' else '' }}" href="/admin/openwearables"{% if active == 'admin_openwearables' %} aria-current="page"{% endif %}>{{ t('nav.admin_openwearables') }}</a>
-        <a class="account-panel__link {{ 'active' if active == 'admin_telegram' else '' }}" href="/admin/telegram"{% if active == 'admin_telegram' %} aria-current="page"{% endif %}>{{ t('telegram.admin') }}</a>
-        <a class="account-panel__link {{ 'active' if active == 'admin_labsync' else '' }}" href="/admin/lab-connections"{% if active == 'admin_labsync' %} aria-current="page"{% endif %}>{{ t('labsync.nav') }}</a>
+        {#- One link: the sections live on the administration pages' own tab
+            strip (_admin_tabs.html), not in this menu. -#}
+        {% set in_admin = (active|default('', true))[:5] == 'admin' %}
+        <a class="account-panel__link {{ 'active' if in_admin else '' }}" href="/admin"{% if in_admin %} aria-current="page"{% endif %}>{{ t('nav.administration') }}</a>
         {% endif %}
         {% endif %}
         <div class="account-panel__prefs">{{ switchers() }}</div>

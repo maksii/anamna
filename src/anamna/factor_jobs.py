@@ -4,8 +4,8 @@ A model answer can take up to a minute, and a scan of many documents takes
 longer, so both run on a thread and the page polls for the answer.  A scan
 reports its progress after each document.  Jobs live in memory, so a restart
 loses a running one and the page then says the request was interrupted.  One
-job of each kind may run per owner, so the research button and the document
-scan do not wait for each other.
+job per owner, kind and request key may run at a time, so the research button
+and the document scan do not wait for each other.
 """
 
 from __future__ import annotations
@@ -44,13 +44,15 @@ def start(
     *,
     kind: str = "research",
     with_progress: bool = False,
+    key: str = "",
 ) -> str:
     """Start ``work`` on a thread for ``owner_id`` and return the job id.
 
-    A press of the button while the owner's job of the same ``kind`` is still
-    running returns that job, so the provider gets one request.  With
-    ``with_progress`` the thread calls ``work(report)``, where
-    ``report(done, total)`` records progress on the job.
+    A repeat press for the same request (same ``kind`` and ``key``) returns the
+    running job, so the provider is asked once.  A different ``key`` is a
+    different request and starts its own job.  With ``with_progress`` the thread
+    calls ``work(report)``, where ``report(done, total)`` records progress on
+    the job.
     """
     with _LOCK:
         now = _now()
@@ -60,14 +62,14 @@ def start(
         ]:
             del _JOBS[old_id]
         for job_id, job in _JOBS.items():
-            if _running(job, owner_id, kind, now):
+            if _running(job, owner_id, kind, now) and job["key"] == key:
                 return job_id
         job_id = secrets.token_urlsafe(16)
         thread = threading.Thread(
             target=_run, args=(job_id, kind, work, with_progress), name=f"{kind}-job", daemon=True
         )
         _JOBS[job_id] = {
-            "owner": owner_id, "kind": kind, "state": "running", "result": None, "error": "",
+            "owner": owner_id, "kind": kind, "key": key, "state": "running", "result": None, "error": "",
             "started": now, "touched": now, "done": 0, "total": 0, "finished": None, "thread": thread,
         }
         thread.start()

@@ -126,6 +126,50 @@ def test_a_past_procedure_is_past():
     assert values["status"] == "past"
 
 
+def test_procedure_without_a_date_keeps_a_planned_status():
+    values, error = cleaned(kind="procedure", name="Septoplasty", status="prescribed")
+    assert error is None
+    assert values["status"] == "prescribed"
+    assert values["started_on"] is None
+    assert values["ended_on"] is None
+
+
+def test_procedure_without_a_date_is_past_by_default():
+    values, _ = factors.clean({"kind": "procedure", "name": "Septoplasty"}, today=TODAY)
+    assert values["status"] == "past"
+    assert cleaned(kind="procedure", name="Septoplasty", status="current")[0]["status"] == "past"
+    assert cleaned(kind="procedure", name="Septoplasty", status="past")[0]["status"] == "past"
+
+
+def test_dated_procedure_ignores_the_posted_status():
+    past = cleaned(kind="procedure", name="Septoplasty", started_on="2025-03-01", status="prescribed")
+    future = cleaned(kind="procedure", name="Septoplasty", started_on="2025-06-02", status="past")
+    assert past[0]["status"] == "past"
+    assert future[0]["status"] == "prescribed"
+
+
+def test_procedure_without_a_date_keeps_a_planned_status():
+    values, error = cleaned(kind="procedure", name="Septoplasty", status="prescribed")
+    assert error is None
+    assert values["status"] == "prescribed"
+    assert values["started_on"] is None
+    assert values["ended_on"] is None
+
+
+def test_procedure_without_a_date_is_past_by_default():
+    values, _ = factors.clean({"kind": "procedure", "name": "Septoplasty"}, today=TODAY)
+    assert values["status"] == "past"
+    assert cleaned(kind="procedure", name="Septoplasty", status="current")[0]["status"] == "past"
+    assert cleaned(kind="procedure", name="Septoplasty", status="past")[0]["status"] == "past"
+
+
+def test_dated_procedure_ignores_the_posted_status():
+    past = cleaned(kind="procedure", name="Septoplasty", started_on="2025-03-01", status="prescribed")
+    future = cleaned(kind="procedure", name="Septoplasty", started_on="2025-06-02", status="past")
+    assert past[0]["status"] == "past"
+    assert future[0]["status"] == "prescribed"
+
+
 def test_an_ended_medicine_is_past():
     values, _ = cleaned(started_on="2025-01-01", ended_on="2025-02-01")
     assert values["status"] == "past"

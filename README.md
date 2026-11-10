@@ -42,7 +42,9 @@ The compose file runs the container with a read-only root filesystem and without
 ## Configure
 
 Settings come from environment variables. Most integrations are configured later in the
-Administration pages, where a saved value wins over the environment.
+Administration pages, where a saved value wins over the environment. An administrator opens them
+from the account menu ("Administration"): one area with a tab for people, access credentials, the
+AI assistant, Paperless, OpenWearables, Telegram and lab connections.
 
 | Variable | Purpose |
 |---|---|

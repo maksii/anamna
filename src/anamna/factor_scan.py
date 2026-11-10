@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import logging
 import re
 import sqlite3
 import uuid
@@ -18,18 +19,26 @@ from collections.abc import Callable
 from . import ai, factor_research, factors, health
 from .db import utc_now
 
+_LOG = logging.getLogger(__name__)
+
 FEATURE = factor_research.FEATURE
 SCAN_TYPES = ("consultation", "clinical_report")
 SCAN_KINDS = ("medicine", "supplement", "procedure", "illness", "diet", "activity")
 TEXT_CHARS = 12000
+MAX_CHUNKS = 8
+MAX_DOCUMENT_ITEMS = 60
 MAX_ITEMS = 30
 MAX_TOKENS = 3000
 TIMEOUT = 120
 _REPEATS = factors.REPEATS
 
+
+class UnreadableReply(ai.AIUnavailable):
+    """The model answered and the answer cannot be used: cut short, or not the JSON asked for."""
+
 SYSTEM = """You read one medical document from a person's own record and list what it says the person takes, was prescribed, underwent or was ill with. The person reviews every item before it enters their record, so list what the document states and nothing else.
 
-The input is one JSON object: `document` (its type, its date and its text, in Ukrainian or English), `language` and `output_contract`. Return one JSON object matching `output_contract` and nothing else.
+The input is one JSON object: `document` (its type, its date and its text, in Ukrainian or English), `language` and `output_contract`. Return one JSON object matching `output_contract` and nothing else. When `document.part` is present, the text is one part of a longer document: list what this part states.
 
 List one item for each of these that the document states about this person:
 - a medicine the person takes, is prescribed, or is told to continue or to stop (kind `medicine`), and the same for a vitamin, a mineral or a dietary supplement (kind `supplement`);
@@ -112,6 +121,14 @@ def waiting(connection: sqlite3.Connection, owner_id: str) -> list[dict]:
     return [{"id": row[0], "clinical_type": row[1], "date": row[2] or ""} for row in rows]
 
 
+def has_documents(connection: sqlite3.Connection, owner_id: str) -> bool:
+    """Whether the owner has any document the scan would read, read already or not."""
+    return connection.execute(
+        f"SELECT 1 FROM documents WHERE owner_user_id = ? AND {_document_filter()} LIMIT 1",
+        (owner_id, *SCAN_TYPES),
+    ).fetchone() is not None
+
+
 def counts(connection: sqlite3.Connection, owner_id: str) -> dict:
     documents = connection.execute(
         f"SELECT COUNT(*) FROM documents WHERE owner_user_id = ? AND {_document_filter()}",
@@ -126,6 +143,29 @@ def document_text(connection: sqlite3.Connection, document_id: str) -> str:
         (document_id,),
     ).fetchall()
     return "\n".join(health._page_text(row) for row in rows)
+
+
+def _chunks(text: str) -> list[str]:
+    """The text in pieces of at most TEXT_CHARS, cut at line ends."""
+    pieces: list[str] = []
+    current = ""
+    for line in text.splitlines(keepends=True):
+        while line:
+            if len(current) + len(line) <= TEXT_CHARS:
+                current += line
+                break
+            if current:
+                pieces.append(current)
+                current = ""
+                continue
+            # A line longer than a piece has no line end to cut at.
+            pieces.append(line[:TEXT_CHARS])
+            line = line[TEXT_CHARS:]
+    if current:
+        pieces.append(current)
+    pieces = [piece for piece in pieces if piece.strip()]
+    # ponytail: a document past MAX_CHUNKS * TEXT_CHARS characters is read up to there; raise MAX_CHUNKS when such documents appear.
+    return pieces[:MAX_CHUNKS]
 
 
 def _text(value: object, limit: int) -> str:
@@ -269,48 +309,62 @@ def read_document(settings, connection: sqlite3.Connection, document: dict, *, l
     text = ai.redact_document_text(document_text(connection, document["id"]))
     if not text.strip():
         return [], ""
-    payload = {
-        "document": {"type": document["clinical_type"], "date": document["date"], "text": text[:TEXT_CHARS]},
-        "language": "Ukrainian" if locale == "uk" else "English",
-        "output_contract": RESPONSE_FORMAT["json_schema"]["schema"],
-    }
-    messages = [
-        {"role": "system", "content": SYSTEM},
-        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-    ]
-    # ai.complete records usage on its own connection with BEGIN IMMEDIATE.
-    connection.commit()
-    result = ai.complete(
-        settings, FEATURE, messages,
-        max_tokens=MAX_TOKENS, timeout=TIMEOUT, response_format=RESPONSE_FORMAT,
-    )
-    try:
-        reply = ai.parse_json_reply(result.content)
-        if not isinstance(reply.get("items"), list):
-            raise ai.AIUnavailable("provider_error", "reply has no items list")
-    except ai.AIUnavailable as exc:
-        # HTTP 200 with unusable output is a failed result; keep no excerpt.
-        ai.settle_usage(
-            settings, result.usage_id, ok=False, model=result.model,
-            prompt_tokens=result.prompt_tokens, completion_tokens=result.completion_tokens,
-            duration_ms=result.duration_ms, error=exc.detail or "unparseable reply",
-        )
-        raise
+    chunks = _chunks(text)
     haystack = factor_research._normal(text)
     items: list[dict] = []
     seen: set[tuple[str, str]] = set()
-    for raw in reply["items"]:
-        if len(items) == MAX_ITEMS:
+    model = ""
+    for number, chunk in enumerate(chunks, start=1):
+        if len(items) >= MAX_DOCUMENT_ITEMS:
             break
-        item = _item(raw, haystack)
-        if item is None:
-            continue
-        key = (item["kind"], item["name"].casefold())
-        if key in seen:
-            continue
-        seen.add(key)
-        items.append(item)
-    return items, result.model or ""
+        document_part = {"type": document["clinical_type"], "date": document["date"], "text": chunk}
+        if len(chunks) > 1:
+            document_part["part"] = f"{number} of {len(chunks)}"
+        payload = {
+            "document": document_part,
+            "language": "Ukrainian" if locale == "uk" else "English",
+            "output_contract": RESPONSE_FORMAT["json_schema"]["schema"],
+        }
+        messages = [
+            {"role": "system", "content": SYSTEM},
+            {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+        ]
+        # ai.complete records usage on its own connection with BEGIN IMMEDIATE.
+        connection.commit()
+        try:
+            result = ai.complete(
+                settings, FEATURE, messages,
+                max_tokens=MAX_TOKENS, timeout=TIMEOUT, response_format=RESPONSE_FORMAT,
+            )
+        except ai.AIUnavailable as exc:
+            if exc.reason == "truncated":
+                raise UnreadableReply("truncated", exc.detail) from exc
+            raise
+        try:
+            reply = ai.parse_json_reply(result.content)
+            if not isinstance(reply.get("items"), list):
+                raise ai.AIUnavailable("provider_error", "reply has no items list")
+        except ai.AIUnavailable as exc:
+            # HTTP 200 with unusable output is a failed result; keep no excerpt.
+            ai.settle_usage(
+                settings, result.usage_id, ok=False, model=result.model,
+                prompt_tokens=result.prompt_tokens, completion_tokens=result.completion_tokens,
+                duration_ms=result.duration_ms, error=exc.detail or "unparseable reply",
+            )
+            raise UnreadableReply("provider_error", exc.detail or "unparseable reply") from exc
+        model = result.model or ""
+        for raw in reply["items"]:
+            if len(items) == MAX_DOCUMENT_ITEMS:
+                break
+            item = _item(raw, haystack)
+            if item is None:
+                continue
+            key = (item["kind"], item["name"].casefold())
+            if key in seen:
+                continue
+            seen.add(key)
+            items.append(item)
+    return items, model
 
 
 def store(connection: sqlite3.Connection, owner_id: str, document_id: str, items: list[dict], model: str) -> int:
@@ -344,7 +398,8 @@ def scan(settings, connect: Callable, owner_id: str, *, locale: str, report: Cal
     """Read every waiting document of the owner, one committed document at a time.
 
     ``connect()`` returns a context manager that yields a connection.  An
-    ``ai.AIUnavailable`` ends the scan; the documents read before it stay stored.
+    unusable reply leaves its document waiting and the scan goes on to the next one.
+    Any other ``ai.AIUnavailable`` ends the scan; the documents read before it stay stored.
     """
     with connect() as connection:
         documents = waiting(connection, owner_id)
@@ -352,10 +407,16 @@ def scan(settings, connect: Callable, owner_id: str, *, locale: str, report: Cal
         if report is not None:
             report(0, total)
         found = 0
+        failed = 0
         for index, document in enumerate(documents):
-            items, model = read_document(settings, connection, document, locale=locale)
-            found += store(connection, owner_id, document["id"], items, model)
-            connection.commit()
+            try:
+                items, model = read_document(settings, connection, document, locale=locale)
+            except UnreadableReply:
+                failed += 1
+                _LOG.warning("document scan: unusable reply for document %s", document["id"])
+            else:
+                found += store(connection, owner_id, document["id"], items, model)
+                connection.commit()
             if report is not None:
                 report(index + 1, total)
-    return {"read": total, "found": found}
+    return {"read": total - failed, "found": found, "failed": failed}

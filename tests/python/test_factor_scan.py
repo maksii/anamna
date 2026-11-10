@@ -84,7 +84,11 @@ def seeded(tmp_path: Path, *, text: str = TEXT) -> dict:
 
 
 def stub_model(settings, monkeypatch, replies: list) -> list[dict]:
-    """Queue the provider's answers; an exception in the queue is raised instead."""
+    """Queue the provider's answers.
+
+    An exception is raised, an AIResult is returned as it is, and a callable is
+    given the parsed user payload and answers with the reply text.
+    """
     ai.save_ai_settings(settings, {"ai_api_key": "sk-or-test"})
     calls: list[dict] = []
     queue = list(replies)
@@ -92,8 +96,12 @@ def stub_model(settings, monkeypatch, replies: list) -> list[dict]:
     def provider(api_key, model, messages, max_tokens, timeout, response_format=None, **kwargs):
         calls.append({"messages": messages, "timeout": timeout, "response_format": response_format})
         answer = queue.pop(0) if queue else json.dumps({"items": []})
+        if callable(answer):
+            answer = answer(json.loads(messages[1]["content"]))
         if isinstance(answer, BaseException):
             raise answer
+        if isinstance(answer, ai.AIResult):
+            return answer
         return ai.AIResult(content=answer, model="test/model", prompt_tokens=10, completion_tokens=5)
 
     monkeypatch.setitem(ai.PROVIDERS, "openrouter", provider)
@@ -294,10 +302,11 @@ def test_the_text_sent_is_redacted_first_and_cut_to_the_limit(tmp_path: Path, mo
     calls = stub_model(settings, monkeypatch, [reply()])
     with connect(settings) as connection:
         factor_scan.read_document(settings, connection, DOCUMENT, locale="en")
-    sent = sent_payload(calls)["document"]["text"]
-    assert sent.startswith("MARK ")
-    assert len(sent) == factor_scan.TEXT_CHARS
-    assert sent_payload(calls)["language"] == "English"
+    # The text is longer than one part, so the first part carries the redacted start.
+    first = json.loads(calls[0]["messages"][1]["content"])
+    assert first["document"]["text"].startswith("MARK ")
+    assert len(first["document"]["text"]) == factor_scan.TEXT_CHARS
+    assert first["language"] == "English"
     assert calls[-1]["response_format"]["json_schema"]["name"] == "factor_scan"
 
 
@@ -319,7 +328,7 @@ def test_a_reply_without_an_items_list_is_unusable_and_settled_as_failed(tmp_pat
     settings = seeded(tmp_path)
     stub_model(settings, monkeypatch, [json.dumps({"entries": []})])
     with connect(settings) as connection:
-        with pytest.raises(ai.AIUnavailable) as refused:
+        with pytest.raises(factor_scan.UnreadableReply) as refused:
             factor_scan.read_document(settings, connection, DOCUMENT, locale="uk")
     assert refused.value.reason == "provider_error"
     with connect(settings) as connection:
@@ -386,7 +395,7 @@ def test_scan_reads_each_waiting_document_commits_each_and_reports_progress(tmp_
     progress: list[tuple[int, int]] = []
     result = factor_scan.scan(settings, functools.partial(connect, settings), "u1",
                               locale="uk", report=lambda done, total: progress.append((done, total)))
-    assert result == {"read": 3, "found": 3}
+    assert result == {"read": 3, "found": 3, "failed": 0}
     assert progress == [(0, 3), (1, 3), (2, 3), (3, 3)]
     assert len(calls) == 3
     with connect(settings) as connection:
@@ -397,7 +406,7 @@ def test_scan_reads_each_waiting_document_commits_each_and_reports_progress(tmp_
     again: list[tuple[int, int]] = []
     second = factor_scan.scan(settings, functools.partial(connect, settings), "u1",
                               locale="uk", report=lambda done, total: again.append((done, total)))
-    assert second == {"read": 0, "found": 0}
+    assert second == {"read": 0, "found": 0, "failed": 0}
     assert again == [(0, 0)]
     assert len(calls) == 3
 
@@ -445,3 +454,128 @@ def test_the_model_call_runs_with_no_write_open_on_the_callers_connection(tmp_pa
     with connect(settings) as connection:
         assert connection.execute("SELECT COUNT(*) FROM documents WHERE id = 'd2'").fetchone()[0] == 1
         assert connection.execute("SELECT COUNT(*) FROM ai_usage WHERE ok = 1").fetchone()[0] == 1
+
+
+# --- long documents -----------------------------------------------------------------
+
+FILLER = "Рядок опису без особливостей, стан задовільний.\n"
+
+
+def test_chunks_of_a_short_text_is_the_text_itself():
+    assert factor_scan._chunks(TEXT) == [TEXT]
+
+
+def test_chunks_cut_at_line_ends_and_keep_the_whole_text():
+    text = ("a" * 4999 + "\n") * 3
+    pieces = factor_scan._chunks(text)
+    assert len(pieces) == 2
+    assert all(piece.endswith("\n") for piece in pieces)
+    assert "".join(pieces) == text
+
+
+def test_chunks_cut_a_line_longer_than_a_piece_into_slices():
+    pieces = factor_scan._chunks("x" * 30000)
+    assert len(pieces) == 3
+    assert all(len(piece) <= factor_scan.TEXT_CHARS for piece in pieces)
+    assert "".join(pieces) == "x" * 30000
+
+
+def test_chunks_stop_at_the_cap():
+    pieces = factor_scan._chunks("x" * (factor_scan.MAX_CHUNKS * factor_scan.TEXT_CHARS + 5000))
+    assert len(pieces) == factor_scan.MAX_CHUNKS
+
+
+def test_long_document_is_read_to_the_end(tmp_path: Path, monkeypatch):
+    settings = seeded(tmp_path, text=FILLER * 260 + QUOTE + "\n")
+
+    def names_it(payload):
+        return reply(GOOD_ITEM) if "Діокор" in payload["document"]["text"] else reply()
+
+    calls = stub_model(settings, monkeypatch, [names_it, names_it])
+    with connect(settings) as connection:
+        items, _model = factor_scan.read_document(settings, connection, DOCUMENT, locale="uk")
+    assert len(calls) == 2
+    parts = [json.loads(call["messages"][1]["content"])["document"]["part"] for call in calls]
+    assert parts == ["1 of 2", "2 of 2"]
+    assert [item["name"] for item in items] == ["Діокор"]
+
+
+def test_short_document_sends_no_part(tmp_path: Path, monkeypatch):
+    settings = seeded(tmp_path)
+    calls = stub_model(settings, monkeypatch, [reply()])
+    with connect(settings) as connection:
+        factor_scan.read_document(settings, connection, DOCUMENT, locale="uk")
+    assert len(calls) == 1
+    assert "part" not in sent_payload(calls)["document"]
+
+
+def test_same_item_in_two_parts_is_listed_once(tmp_path: Path, monkeypatch):
+    settings = seeded(tmp_path, text=QUOTE + "\n" + FILLER * 260 + QUOTE + "\n")
+    calls = stub_model(settings, monkeypatch, [reply(GOOD_ITEM), reply(GOOD_ITEM)])
+    with connect(settings) as connection:
+        items, _model = factor_scan.read_document(settings, connection, DOCUMENT, locale="uk")
+    assert len(calls) == 2
+    assert [item["name"] for item in items] == ["Діокор"]
+
+
+# --- unusable replies ---------------------------------------------------------------
+
+def test_unparseable_reply_settles_usage_as_failed(tmp_path: Path, monkeypatch):
+    settings = seeded(tmp_path)
+    stub_model(settings, monkeypatch, ["not json at all"])
+    with connect(settings) as connection:
+        with pytest.raises(factor_scan.UnreadableReply) as refused:
+            factor_scan.read_document(settings, connection, DOCUMENT, locale="uk")
+    assert refused.value.reason == "provider_error"
+    with connect(settings) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM ai_usage WHERE ok = 0").fetchone()[0] == 1
+
+
+def test_unusable_reply_does_not_stop_the_scan(tmp_path: Path, monkeypatch):
+    settings = seeded(tmp_path)
+    with connect(settings) as connection:
+        add_document(connection, "d2", "u1", "p1", report_date="2026-02-01")
+    stub_model(settings, monkeypatch, ["not json at all", reply(GOOD_ITEM)])
+    progress: list[tuple[int, int]] = []
+    result = factor_scan.scan(settings, functools.partial(connect, settings), "u1",
+                              locale="uk", report=lambda done, total: progress.append((done, total)))
+    assert result == {"read": 1, "found": 1, "failed": 1}
+    assert progress[-1] == (2, 2)
+    with connect(settings) as connection:
+        assert [row["id"] for row in factor_scan.waiting(connection, "u1")] == ["d1"]
+        assert connection.execute("SELECT COUNT(*) FROM factor_scans WHERE document_id = 'd1'").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM factor_scans WHERE document_id = 'd2'").fetchone()[0] == 1
+        assert connection.execute("SELECT COUNT(*) FROM factor_candidates WHERE document_id = 'd2'").fetchone()[0] == 1
+
+
+def test_truncated_reply_raises_unreadable_with_reason_truncated(tmp_path: Path, monkeypatch):
+    settings = seeded(tmp_path)
+    cut_short = ai.AIResult(content='{"items": [', model="test/model", prompt_tokens=10,
+                            completion_tokens=5, finish_reason="length")
+    stub_model(settings, monkeypatch, [cut_short])
+    with connect(settings) as connection:
+        with pytest.raises(factor_scan.UnreadableReply) as refused:
+            factor_scan.read_document(settings, connection, DOCUMENT, locale="uk")
+    assert refused.value.reason == "truncated"
+
+
+def test_truncated_reply_is_unusable_not_fatal(tmp_path: Path, monkeypatch):
+    settings = seeded(tmp_path)
+    with connect(settings) as connection:
+        add_document(connection, "d2", "u1", "p1", report_date="2026-02-01")
+    cut_short = ai.AIResult(content='{"items": [', model="test/model", prompt_tokens=10,
+                            completion_tokens=5, finish_reason="length")
+    stub_model(settings, monkeypatch, [cut_short, reply(GOOD_ITEM)])
+    result = factor_scan.scan(settings, functools.partial(connect, settings), "u1", locale="uk")
+    assert result == {"read": 1, "found": 1, "failed": 1}
+
+
+def test_budget_error_on_the_first_document_still_ends_the_scan(tmp_path: Path, monkeypatch):
+    settings = seeded(tmp_path)
+    with connect(settings) as connection:
+        add_document(connection, "d2", "u1", "p1", report_date="2026-02-01")
+    stub_model(settings, monkeypatch, [ai.AIUnavailable("budget")])
+    with pytest.raises(ai.AIUnavailable) as stopped:
+        factor_scan.scan(settings, functools.partial(connect, settings), "u1", locale="uk")
+    assert stopped.value.reason == "budget"
+    assert not isinstance(stopped.value, factor_scan.UnreadableReply)

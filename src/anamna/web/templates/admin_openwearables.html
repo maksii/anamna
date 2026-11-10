@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ t('openwearables.admin_title') }}{% endblock %}
 {% block content %}
+{% include "_admin_tabs.html" %}
 
 <section class="page-head">
   <div>
@@ -107,6 +108,5 @@
   </form>
 </section>
 {% include "_openwearables_status.html" %}
-<p class="muted"><a href="/admin/users">{{ t('token.back_to_people') }}</a></p>
 
 {% endblock %}

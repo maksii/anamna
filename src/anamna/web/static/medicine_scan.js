@@ -34,7 +34,8 @@
       }
       // Done, or stopped part of the way: either way what was stored is on
       // the page after a reload.  A failure says why first.
-      if (state.state === 'done' || state.done) { location.assign('/medicines/found' + (state.state === 'done' ? '' : '?error=found_stopped')); return; }
+      if (state.state === 'done') { location.assign('/medicines/found' + (state.failed ? '?error=found_unread' : '')); return; }
+      if (state.done) { location.assign('/medicines/found?error=found_stopped'); return; }
       failed(state.error || 'lost');
       return;
     }

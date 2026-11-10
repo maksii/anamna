@@ -403,10 +403,21 @@ def _fresh(fetched_at: str) -> bool:
     return datetime.now(UTC) - when < timedelta(days=CACHE_DAYS)
 
 
+def _from_cache(url: str, row: tuple) -> dict:
+    return {
+        "url": url,
+        "sections": json.loads(row[2]),
+        "atc": [code_ for code_ in row[1].split(",") if code_],
+        "shown_for": row[0],
+    }
+
+
 def cached_instruction(connection: sqlite3.Connection, reference_name: str, code: str = "") -> dict | None:
     """The instruction from the cache, or fetched and stored (the caller commits).
 
-    Never raises: a failed fetch, a pause or a page without sections gives None and stores nothing.
+    Never raises. When the page cannot be fetched or parses to no sections, an
+    older cached copy is returned if there is one: an instruction from last
+    season is better evidence than none. Without any copy the answer is None.
     """
     try:
         url = _readable(page_url(reference_name, code))
@@ -416,15 +427,13 @@ def cached_instruction(connection: sqlite3.Connection, reference_name: str, code
             (SOURCE, url),
         ).fetchone()
         if row is not None and _fresh(row[3]):
-            return {
-                "url": url,
-                "sections": json.loads(row[2]),
-                "atc": [code_ for code_ in row[1].split(",") if code_],
-                "shown_for": row[0],
-            }
-        fetched = instruction(reference_name, code)
-        if not fetched["sections"]:
-            return None
+            return _from_cache(url, row)
+        try:
+            fetched = instruction(reference_name, code)
+        except DrugRefError:
+            fetched = None
+        if fetched is None or not fetched["sections"]:
+            return _from_cache(url, row) if row is not None else None
         connection.execute(
             "INSERT OR REPLACE INTO drug_references "
             "(source, url, shown_for, atc_codes, sections_json, fetched_at) VALUES (?, ?, ?, ?, ?, ?)",

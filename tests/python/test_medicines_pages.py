@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 import urllib.request
 from contextlib import ExitStack
 from dataclasses import dataclass
@@ -461,6 +462,45 @@ def test_an_unknown_job_or_another_users_job_reads_as_lost(world, clients, monke
 
     bravo = clients("bravo@example.test")
     assert bravo.get(f"/medicines/suggest/{job}").json() == {"state": "failed", "error": "lost"}
+
+
+def test_suggest_for_another_name_gets_its_own_job(world, clients, monkeypatch):
+    ai_on(monkeypatch, True)
+    release = threading.Event()
+
+    def research(settings, connection, factor, *, locale):
+        release.wait(5)
+        answer = suggestion(LDL_ID)
+        answer["fields"]["purpose"]["text"] = f"For {factor['name']}."
+        return answer
+
+    monkeypatch.setattr(factor_research, "research", research)
+    owner = clients("alpha@example.test")
+    token = csrf(world, owner)
+
+    def ask(name: str) -> str:
+        response = owner.post("/medicines/suggest", data={**entry_fields(name=name), "csrf_token": token})
+        return response.json()["job"]
+
+    try:
+        alpha_job = ask("Alpha")
+        beta_job = ask("Beta")
+        assert beta_job != alpha_job
+        assert ask("Alpha") == alpha_job
+    finally:
+        release.set()
+    alpha_result = wait_for(owner, alpha_job)
+    beta_result = wait_for(owner, beta_job)
+    assert alpha_result["state"] == beta_result["state"] == "done"
+    assert alpha_result["suggestion"]["fields"]["purpose"]["text"] == "For Alpha."
+    assert beta_result["suggestion"]["fields"]["purpose"]["text"] == "For Beta."
+
+
+def test_suggest_status_refuses_a_job_of_another_kind(world, clients):
+    owner = clients("alpha@example.test")
+    job = factor_jobs.start(world.alpha, lambda: {"read": 0, "found": 0}, kind="scan")
+    factor_jobs.join(job)
+    assert owner.get(f"/medicines/suggest/{job}").json() == {"state": "failed", "error": "lost"}
 
 
 def test_suggest_needs_the_csrf_token_and_refuses_a_guest(world, clients, monkeypatch):

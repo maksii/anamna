@@ -12,6 +12,7 @@ hold the request.  Saving an entry never calls the AI.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import re
@@ -279,7 +280,7 @@ def register_routes(app, settings, *, templates, template_context, require_user,
             metric_ids = _metric_ids(connection, owner["id"])
             names = _concept_names(connection)
             found_count = factor_candidates.count(connection, owner["id"]) if writable else 0
-            can_find = writable and factor_scan.counts(connection, owner["id"])["documents"] > 0
+            can_find = writable and factor_scan.has_documents(connection, owner["id"])
         axis = factors_view.scale(rows, today, locale)
         counts = Counter(row["kind"] for row in rows)
         # A filter that matches nothing is ignored rather than showing an empty page.
@@ -407,7 +408,11 @@ def register_routes(app, settings, *, templates, template_context, require_user,
             finally:
                 reset_locale(token)
 
-        return JSONResponse({"job": factor_jobs.start(user["id"], work)})
+        # The job answers for exactly this request: a press for another name must not get this answer.
+        asked = [kind, entry["name"], entry["substance"], entry["strength"], entry["reference_name"],
+                 entry["reference_code"], factor_id, locale]
+        key = hashlib.sha256(json.dumps(asked, ensure_ascii=False).encode("utf-8")).hexdigest()
+        return JSONResponse({"job": factor_jobs.start(user["id"], work, key=key)})
 
     @app.post("/medicines/suggest")
     async def suggest_page(request: Request):
@@ -426,7 +431,7 @@ def register_routes(app, settings, *, templates, template_context, require_user,
         if not _writable(user, owner):
             raise HTTPException(403)
         job = factor_jobs.get(user["id"], job_id)
-        if job is None:
+        if job is None or job["kind"] != "research":
             return JSONResponse({"state": "failed", "error": "lost"})
         if job["state"] == "done":
             return JSONResponse({"state": "done", "suggestion": job["result"]})

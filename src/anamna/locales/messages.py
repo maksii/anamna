@@ -263,6 +263,10 @@ MESSAGES: dict[str, dict[str, str]] = {
     # Administration — accounts on this server
     "nav.admin": {"en": "People", "uk": "Користувачі"},
     "admin.title": {"en": "People · Anamna", "uk": "Користувачі · Anamna"},
+    "nav.administration": {"en": "Administration", "uk": "Адміністрування"},
+    "admin.tabs_label": {"en": "Administration sections", "uk": "Розділи адміністрування"},
+    "admin.tab_telegram": {"en": "Telegram", "uk": "Telegram"},
+    "admin.tab_labs": {"en": "Labs", "uk": "Лабораторії"},
     "admin.eyebrow": {"en": "Administration", "uk": "Адміністрування"},
     "admin.heading": {"en": "People on this server", "uk": "Користувачі цього сервера"},
     "admin.lead": {
@@ -1021,8 +1025,6 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Choose the record it opens first: a credential is bound to one account and cannot be moved to another.",
         "uk": "Спершу оберіть картку, яку він відкриває: ключ прив’язаний до одного облікового запису й не переноситься на інший.",
     },
-    "token.admin_link": {"en": "Manage access credentials", "uk": "Керувати ключами доступу"},
-    "token.back_to_people": {"en": "Back to accounts", "uk": "Назад до облікових записів"},
     "token.list_count": {"en": "{count} credentials", "uk": "Ключів: {count}"},
     "token.list_count_one": {"en": "{count} credential", "uk": "{count} ключ"},
     "token.list_count_few": {"en": "{count} credentials", "uk": "{count} ключі"},
@@ -5209,7 +5211,6 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
     # Lab connections (Esculab, Synevo): /admin/lab-connections, the profile
     # Connections tab, and the document cross-check panel.
-    "labsync.nav": {"en": "Lab connections", "uk": "Підключення лабораторій"},
     "labsync.admin_title": {"en": "Lab connections", "uk": "Підключення лабораторій"},
     "labsync.admin_heading": {"en": "Lab connections", "uk": "Підключення лабораторій"},
     "labsync.admin_lead": {
@@ -8090,6 +8091,8 @@ MESSAGES: dict[str, dict[str, str]] = {
         "uk": "ФСГ, ЛГ, естрадіол, прогестерон, пролактин, тестостерон із ГЗСГ, ДГЕА-С та онкомаркери CA-125, HE4 і CA 15-3. Гормони краще здавати в день циклу, який назве лікар.",
     },
     "busy.loading": {"en": "Loading", "uk": "Завантаження"},
+    "confirm.cancel": {"en": "Cancel", "uk": "Скасувати"},
+    "confirm.yes": {"en": "Yes, continue", "uk": "Так, продовжити"},
     "plan.untick_all": {"en": "Untick all", "uk": "Зняти всі"},
     "plan.preset_recent_one": {
         "en": "{count} more left out: measured in the last {days} days",

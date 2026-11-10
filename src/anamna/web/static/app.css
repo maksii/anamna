@@ -658,6 +658,13 @@ form[data-submitting] :is(button, .button, input, select, textarea, label) { poi
   .an-progress::before { animation: none; width: 100%; opacity: .7; }
 }
 
+/* The question before a form marked data-confirm is sent (busy.js). */
+.an-confirm { width: min(420px, calc(100vw - 32px)); padding: 22px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); color: var(--ink); box-shadow: 0 24px 60px rgba(12, 26, 23, .28); }
+.an-confirm::backdrop { background: rgba(12, 26, 23, .55); }
+.an-confirm p { margin: 0 0 18px; font-size: 16px; line-height: 1.45; overflow-wrap: anywhere; }
+.an-confirm__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; }
+.an-confirm__actions button { min-height: 44px; min-width: 96px; }
+
 
 
 /* Flex, not a 1fr/auto/1fr grid: the old centre track sized to the nav's
@@ -1172,7 +1179,7 @@ td.result { font-weight: 750; white-space: nowrap; }
 
 /* Standalone strip: the insights one rides inside .page-head and inherits its
    spacing, this one sits between the alerts and the first panel. */
-.an-profile-tabs { margin-bottom: 20px; }
+.an-profile-tabs, .an-admin-tabs { margin-bottom: 20px; }
 
 
 

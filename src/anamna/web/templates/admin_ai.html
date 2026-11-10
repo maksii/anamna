@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ t('aiassist.admin_title') }}{% endblock %}
 {% block content %}
+{% include "_admin_tabs.html" %}
 
 <section class="page-head">
   <div>
@@ -301,7 +302,6 @@
   {% endif %}
 </section>
 
-<p class="muted"><a href="/admin/users">{{ t('token.back_to_people') }}</a></p>
 
 <script nonce="{{ csp_nonce }}">
 (() => {

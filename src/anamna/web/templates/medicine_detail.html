@@ -42,7 +42,7 @@
   <div class="an-med-hero__actions">
     <a class="primary" href="{{ factor.url }}/edit">{{ t('med.edit') }}</a>
     {% if factor.status == 'current' and not factor.is_point %}{{ act('stop', t('med.stop'), confirm=t('med.stop_confirm')) }}{% endif %}
-    {{ act('remove', t('med.card.remove'), confirm=t('med.remove_confirm')) }}
+    {{ act('remove', t('med.card.remove'), confirm=t('med.remove_confirm', name=factor.name)) }}
   </div>
   {% endif %}
 </header>

@@ -206,8 +206,8 @@ MESSAGES_FACTORS: dict[str, dict[str, str]] = {
     "med.cancel": {"en": "Cancel", "uk": "Скасувати"},
     "med.remove": {"en": "Delete this entry", "uk": "Видалити цей запис"},
     "med.remove_confirm": {
-        "en": "Delete this entry and its effects? This cannot be undone.",
-        "uk": "Видалити цей запис і його впливи? Це неможливо скасувати.",
+        "en": "Delete “{name}” and its effects? This cannot be undone.",
+        "uk": "Видалити запис «{name}» і його впливи? Це неможливо скасувати.",
     },
     "med.error_name": {"en": "Give it a name.", "uk": "Вкажіть назву."},
     "med.error_kind": {"en": "Choose what you are adding.", "uk": "Виберіть, що ви додаєте."},
@@ -556,7 +556,8 @@ MESSAGES_FACTORS: dict[str, dict[str, str]] = {
     "med.found.ai_off": {"en": "The AI assistant is not set up on this server, so documents cannot be read automatically. Entries are added by hand.", "uk": "ШІ-асистент на цьому сервері не налаштовано, тому документи не можна прочитати автоматично. Записи додаються вручну."},
     "med.error_found_stopped": {"en": "Reading stopped before the end. What was found so far is below. Press the button to continue.", "uk": "Читання зупинилося до завершення. Знайдене на цей момент показано нижче. Натисніть кнопку, щоб продовжити."},
     "med.found.list_heading": {"en": "Tick what is true", "uk": "Позначте те, що правда"},
-    "med.found.list_lead": {"en": "Each item shows the passage it was read from. Untick what is wrong or not yours. You can correct an entry after adding it.", "uk": "Біля кожного пункту показано фрагмент, з якого його прочитано. Зніміть позначку з хибного або не вашого. Запис можна виправити після додавання."},
+    "med.found.list_lead": {"en": "Each item shows the passage it was read from. Tick what is true and add it. Tick what is wrong or not yours and dismiss it. You can correct an entry after adding it.", "uk": "Біля кожного пункту показано фрагмент, з якого його прочитано. Позначте те, що правда, і додайте. Позначте хибне або не ваше і відхиліть. Запис можна виправити після додавання."},
+    "med.found.dismiss_confirm": {"en": "Dismiss the ticked items? They will not be offered again.", "uk": "Відхилити позначені пункти? Їх більше не пропонуватимуть."},
     "med.found.select_all": {"en": "Tick all", "uk": "Позначити всі"},
     "med.found.add": {"en": "Add the ticked", "uk": "Додати позначені"},
     "med.found.dismiss": {"en": "Dismiss the ticked", "uk": "Відхилити позначені"},
@@ -574,4 +575,6 @@ MESSAGES_FACTORS: dict[str, dict[str, str]] = {
     "med.found_added_notice": {"en": "Added to your list.", "uk": "Додано до вашого списку."},
     "med.found_dismissed_notice": {"en": "Dismissed. These will not be offered again.", "uk": "Відхилено. Їх більше не пропонуватимуть."},
     "med.error_found_none": {"en": "Tick at least one item first.", "uk": "Спершу позначте хоча б один пункт."},
+    "med.error_found_failed": {"en": "Some ticked items could not be added as the document writes them. Add them by hand with “Add an entry”.", "uk": "Деякі позначені пункти не вдалося додати так, як їх записано в документі. Додайте їх вручну через «Додати запис»."},
+    "med.error_found_unread": {"en": "Some documents could not be read this time: the AI's answer was cut short or unusable. What was found is below. Press the button to try them again.", "uk": "Деякі документи цього разу не вдалося прочитати: відповідь ШІ була обірвана або непридатна. Знайдене показано нижче. Натисніть кнопку, щоб спробувати ще раз."},
 }

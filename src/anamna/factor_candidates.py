@@ -13,13 +13,8 @@ import sqlite3
 from datetime import date, timedelta
 from typing import Any
 
-from anamna import factors
+from anamna import factor_documents, factors
 from anamna.health import _page_text
-
-try:  # written by another agent; the list works without it
-    from anamna import factor_documents
-except ImportError:
-    factor_documents = None
 
 RECENT_DAYS = 90
 DOCUMENTS_SHOWN = 5
@@ -42,7 +37,17 @@ def groups(connection: sqlite3.Connection, owner_id: str, *, today: date, locale
 
 def count(connection: sqlite3.Connection, owner_id: str) -> int:
     """How many groups are offered, leaving out the ones the record already has."""
-    return sum(1 for group in groups(connection, owner_id, today=date.today(), locale="en") if not group["existing"])
+    # MAX(substance) is close to the latest substance _build uses; they differ only for a group naming two.
+    offered = connection.execute(
+        "SELECT kind, name_key, MAX(substance) AS substance FROM factor_candidates "
+        "WHERE owner_user_id = ? AND state = 'new' GROUP BY kind, name_key",
+        (owner_id,),
+    ).fetchall()
+    if not offered:
+        return 0
+    rows = connection.execute("SELECT kind, name, substance FROM factors WHERE owner_user_id = ?", (owner_id,))
+    entries = [(row["kind"], _fold(row["name"]), _fold(row["substance"])) for row in rows]
+    return sum(1 for row in offered if not _existing(row["kind"], row["name_key"], row["substance"], entries))
 
 
 def accept(
@@ -53,10 +58,14 @@ def accept(
     statuses: dict[str, str],
     *,
     today: date,
-) -> list[str]:
-    """Make one entry per chosen group.  Does not commit."""
+) -> tuple[list[str], int]:
+    """Make one entry per chosen group.  Does not commit.
+
+    Returns the new factor ids, and how many offered groups the form refused twice.
+    """
     wanted = {group["key"]: (group, items) for group, items in _build(connection, owner_id, today=today, locale="en")}
     created: list[str] = []
+    failed = 0
     for key in dict.fromkeys(keys):
         if key not in wanted or wanted[key][0]["existing"]:
             continue
@@ -64,7 +73,7 @@ def accept(
         status = statuses.get(key)
         if status not in factors.STATUSES:
             status = group["suggested_status"]
-        form = _form(connection, group, items, status)
+        form = _form(connection, group, items, status, today=today)
         values, error = factors.clean(form, today=today)
         if error:
             # Retry once without the end date, in case the end date is the
@@ -72,6 +81,7 @@ def accept(
             form["ended_on"] = ""
             values, error = factors.clean(form, today=today)
         if error:
+            failed += 1
             continue
         factor_id = factors.create(connection, owner_id, patient_id, values)
         connection.executemany(
@@ -79,7 +89,7 @@ def accept(
             [(factor_id, item["id"], owner_id) for item in items],
         )
         created.append(factor_id)
-    return created
+    return created, failed
 
 
 def dismiss(connection: sqlite3.Connection, owner_id: str, keys: list[str]) -> int:
@@ -264,15 +274,12 @@ def _build(connection: sqlite3.Connection, owner_id: str, *, today: date, locale
 
 
 def _doctor_name(connection: sqlite3.Connection, document_id: str) -> str:
-    finder = getattr(factor_documents, "doctor_in", None)
-    if finder is None:
-        return ""
     pages = connection.execute(
         "SELECT native_text, ocr_text FROM document_pages WHERE document_id=? ORDER BY page_number",
         (document_id,),
     ).fetchall()
     text = "\n".join(_page_text(page) for page in pages)
-    return str(finder(text) or "").strip()
+    return str(factor_documents.doctor_in(text) or "").strip()
 
 
 def _prescriber(connection: sqlite3.Connection, mention: dict) -> str:
@@ -281,12 +288,16 @@ def _prescriber(connection: sqlite3.Connection, mention: dict) -> str:
     return ", ".join(part for part in (doctor, clinic) if part)
 
 
-def _form(connection: sqlite3.Connection, group: dict, items: list[dict], status: str) -> dict[str, Any]:
+def _form(
+    connection: sqlite3.Connection, group: dict, items: list[dict], status: str, *, today: date,
+) -> dict[str, Any]:
     """The form ``factors.clean`` reads, filled from the group."""
     latest = items[0]
     point = group["kind"] in factors.POINT_KINDS
     earliest = min(items, key=lambda item: (item["day"] == "", item["day"], item["created_at"]))
     regimen = next((item for item in items if item["has_regimen"]), None)
+    # A running course keeps the end the document gives it; a finished date on a current entry would flip it back to past.
+    keeps_end = status == "past" or (status == "current" and group["ended_on"] > today.isoformat())
     form: dict[str, Any] = {
         "kind": group["kind"],
         "name": group["name"],
@@ -294,7 +305,7 @@ def _form(connection: sqlite3.Connection, group: dict, items: list[dict], status
         "strength": group["strength"],
         "status": status,
         "started_on": group["started_on"],
-        "ended_on": group["ended_on"] if status == "past" else "",
+        "ended_on": group["ended_on"] if keeps_end else "",
         # Only a full date the document gave is exact; a month or a year, or
         # no date at all, is approximate.
         "dates_approximate": "0" if point and latest["date_exact"] == 1 and latest["own_day"] else "1",
