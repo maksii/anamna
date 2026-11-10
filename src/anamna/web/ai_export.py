@@ -651,7 +651,7 @@ def _factor_line(factor: dict[str, object]) -> str:
     if factor["strength"]:
         head += f" {factor['strength']}"
     head += f" [{t('med.kind.' + str(factor['kind']))}, {t('med.status.' + str(factor['effective_status']))}]"
-    dosing = ", ".join(str(part) for part in (factor["dose"], factor["schedule"]) if part)
+    dosing = factors.regimen_text(factor, get_locale())
     started, ended = factor["started_on"], factor["ended_on"]
     when = ""
     if started and ended:

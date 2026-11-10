@@ -75,7 +75,8 @@
         <input type="checkbox" name="drug_lookup" value="1" {{ 'checked' if drug_lookup else '' }} aria-describedby="drug-lookup-hint">
         {{ t('admin.drug_lookup_label') }}
       </label>
-      <p class="tiny muted" id="drug-lookup-hint">{{ t('admin.drug_lookup_help') }}</p>
+      <p class="tiny muted" id="drug-lookup-hint">{{ t('admin.drug_lookup_help') }} {{ t('admin.drug_lookup_manners') }}</p>
+      {% if drug_lookup_paused_minutes %}<p class="alert neutral" role="status">{{ t('admin.drug_lookup_paused', minutes=drug_lookup_paused_minutes) }}</p>{% endif %}
     </fieldset>
 
     <fieldset class="ai-fieldset">

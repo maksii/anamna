@@ -13,7 +13,7 @@ import json
 import re
 import sqlite3
 
-from . import ai, drugref
+from . import ai, drugref, factors
 from .db import utc_now
 
 SYSTEM = """You fill in a reference card about one medicine, supplement, operation or procedure, illness, diet or kind of physical activity for a personal medical record. The card helps the person and their clinical assistant understand what this thing does to laboratory results and body measurements, what it depends on, and what has to be watched.
@@ -29,6 +29,7 @@ Fields:
 - `substance`: the active substance or substances by international nonproprietary name. Empty for anything that is not a medicine or supplement.
 - `purpose`: what it is and what it is used for, in two or three plain sentences.
 - `usual_dose`: the usual adult dosing: starting dose, usual range, maximum, how it is adjusted for kidney or liver function, age or weight, how and when it is taken (with food, time of day) and for how long. Give the figures exactly as the source gives them. For a diet or an activity, give the amounts that define it when that has a meaning, otherwise leave it empty.
+- `usual_regimen`: the usual adult regimen for the most common indication, as data, and only when the instruction states one regimen plainly for the form and strength in `item.strength`: `dose_amount` units of `dose_unit` taken `per_day` times a day, with `repeat` set to daily, or to days, weekly or monthly with `every` as the interval. Count in the units a person takes: 1 tablet, 2 capsules, 10 drops, 5 ml. Put in `quote` the passage that states it, copied exactly. When the dose depends on body weight, on the indication or on a test result, when the instruction gives it only as an amount that is not a whole or half number of units of this form, or when there is no instruction, set `dose_amount` to 0, `dose_unit` and `repeat` to empty strings, `every` and `per_day` to 0 and `quote` to an empty string. Do not guess.
 - `interactions`: what it interacts with. Start with the items in `also_taking` that interact with it and say what happens. Then other medicines, food, alcohol and supplements.
 - `monitoring`: which tests or measurements should be checked while this lasts, and how often when the source says.
 - `cautions`: conditions and states in which it is contraindicated or needs care (kidney, liver, pregnancy, age), and the effects after which a doctor must be told.
@@ -85,13 +86,29 @@ _EFFECT_OBJECT = {
     "required": ["analyte_id", "label", "direction", "note", "quote"],
     "additionalProperties": False,
 }
+_REGIMEN_KEYS = ("dose_amount", "dose_unit", "repeat", "every", "per_day", "quote")
+_REGIMEN_OBJECT = {
+    "type": "object",
+    "properties": {
+        "dose_amount": {"type": "number"},
+        "dose_unit": {"type": "string", "enum": [*factors.DOSE_UNITS, ""]},
+        "repeat": {"type": "string", "enum": ["daily", "days", "weekly", "monthly", ""]},
+        "every": {"type": "integer"},
+        "per_day": {"type": "integer"},
+        "quote": {"type": "string"},
+    },
+    "required": list(_REGIMEN_KEYS),
+    "additionalProperties": False,
+}
+REGIMEN_REPEATS = ("daily", "days", "weekly", "monthly")
 RESPONSE_FORMAT = ai._json_schema(
     "medicine_research",
     {
         **{name: _TEXT_OBJECT for name in TEXT_FIELDS},
         "effects": {"type": "array", "maxItems": MAX_EFFECTS, "items": _EFFECT_OBJECT},
+        "usual_regimen": _REGIMEN_OBJECT,
     },
-    [*TEXT_FIELDS, "effects"],
+    [*TEXT_FIELDS, "effects", "usual_regimen"],
 )
 
 
@@ -126,7 +143,7 @@ def _also_taking(connection: sqlite3.Connection, factor: dict) -> list[str]:
     rows = connection.execute(
         "SELECT name, substance FROM factors "
         "WHERE owner_user_id = ? AND id != ? AND status = 'current' ORDER BY id LIMIT ?",
-        (factor["owner_user_id"], factor["id"], ALSO_TAKING_LIMIT),
+        (factor["owner_user_id"], factor.get("id") or "", ALSO_TAKING_LIMIT),
     ).fetchall()
     return [f"{row[0]} ({row[1]})" if row[1] else row[0] for row in rows]
 
@@ -183,6 +200,49 @@ def _effects(reply: dict, haystack: str, known: dict[str, str]) -> list[dict]:
     return effects
 
 
+def _whole(value: object, default: int, low: int, high: int) -> int:
+    """``value`` as an int clamped to ``low``..``high``, or ``default`` when it is not an int."""
+    if not isinstance(value, int) or isinstance(value, bool):
+        return default
+    return min(max(value, low), high)
+
+
+def _regimen(reply: dict, haystack: str, kind: str) -> dict | None:
+    """The usual regimen the instruction states, or None when it is not offered.
+
+    Only a regimen whose quote is found in the instruction is kept, so with no
+    instruction there is never one.
+    """
+    if kind not in factors.REGIMEN_KINDS:
+        return None
+    value = reply.get("usual_regimen")
+    if not isinstance(value, dict):
+        return None
+    amount = value.get("dose_amount")
+    if isinstance(amount, bool) or not isinstance(amount, (int, float)) or not 0 < amount <= 1000:
+        return None
+    unit = value.get("dose_unit")
+    if unit not in factors.DOSE_UNITS:
+        return None
+    repeat = value.get("repeat")
+    if repeat not in REGIMEN_REPEATS:
+        return None
+    quote = _checked(value.get("quote"), haystack)
+    if not quote:
+        return None
+    every = 1 if repeat == "daily" else _whole(value.get("every"), 1, 1, 99)
+    if repeat == "days" and every == 1:
+        repeat = "daily"
+    return {
+        "dose_amount": round(float(amount), 3),
+        "dose_unit": unit,
+        "repeat": repeat,
+        "every": every,
+        "per_day": _whole(value.get("per_day"), 1, 1, 24),
+        "quote": quote,
+    }
+
+
 def research(settings, connection: sqlite3.Connection, factor: dict, *, locale: str) -> dict:
     """The reference card for ``factor``.  Does not write ``factors``.
 
@@ -203,8 +263,8 @@ def research(settings, connection: sqlite3.Connection, factor: dict, *, locale: 
     analytes = _analytes(connection)
     payload = {
         "item": {
-            key: factor.get(key) or ""
-            for key in ("kind", "name", "substance", "strength", "dose", "schedule", "reason")
+            **{key: factor.get(key) or "" for key in ("kind", "name", "substance", "strength", "reason")},
+            "how_taken": factor.get("how_taken") or "",
         },
         "instruction": _instruction_payload(reference),
         "analytes": analytes,
@@ -248,4 +308,5 @@ def research(settings, connection: sqlite3.Connection, factor: dict, *, locale: 
         "atc_codes": list(reference["atc"]) if reference else [],
         "fields": _fields(reply, haystack),
         "effects": _effects(reply, haystack, known),
+        "regimen": _regimen(reply, haystack, factor.get("kind") or ""),
     }

@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from anamna import ai, drugref, factor_research, security
+from anamna import ai, drugref, factor_jobs, factor_research, security
 from anamna.db import connect, migrate, utc_now
 from anamna.i18n import MESSAGES
 from anamna.ingest.concepts import stable_concept_id
@@ -43,6 +43,15 @@ def offline(monkeypatch):
     security._attempts.clear()
     yield
     security._attempts.clear()
+
+
+@pytest.fixture(autouse=True)
+def fresh_jobs():
+    factor_jobs.reset()
+    drugref.reset_state()
+    yield
+    factor_jobs.reset()
+    drugref.reset_state()
 
 
 @dataclass
@@ -159,16 +168,37 @@ def suggestion(concept_id: str | None = None) -> dict:
             {"concept_id": concept_id, "label": "LDL cholesterol", "direction": "lowers",
              "note": "Трохи.", "quote": ""},
         ],
+        "regimen": {"dose_amount": 1, "dose_unit": "tablet", "repeat": "daily", "every": 1,
+                    "per_day": 2, "quote": quote},
     }
 
 
-def stub_research(monkeypatch, *, reply=None, error: str | None = None):
+def stub_research(monkeypatch, *, reply=None, error: str | None = None) -> list[dict]:
+    """Replaces the AI research; returns the list each call's draft is appended to."""
+    seen: list[dict] = []
+
     def research(settings, connection, factor, *, locale):
+        seen.append(factor)
         if error:
             raise ai.AIUnavailable(error)
         return reply if reply is not None else suggestion(LDL_ID)
 
     monkeypatch.setattr(factor_research, "research", research)
+    return seen
+
+
+def ai_on(monkeypatch, on: bool) -> None:
+    monkeypatch.setattr(ai, "ai_active", lambda settings, task=None: on)
+
+
+def wait_for(owner: TestClient, job: str) -> dict:
+    factor_jobs.join(job)
+    return owner.get(f"/medicines/suggest/{job}").json()
+
+
+def count_entries(world: World) -> int:
+    with connect(world.settings) as connection:
+        return connection.execute("SELECT COUNT(*) FROM factors WHERE owner_user_id = ?", (world.alpha,)).fetchone()[0]
 
 
 def test_empty_page_renders_in_both_locales_with_the_add_link(world, clients):
@@ -210,17 +240,56 @@ def test_create_with_every_field_lists_it_under_now_with_period_and_bar(world, c
     assert_no_missing_keys(listing.text)
 
 
-def test_a_validation_error_returns_to_the_form_with_its_message(world, clients):
+def test_a_validation_error_answers_400_with_the_form_and_its_message(world, clients):
     owner = clients("alpha@example.test")
     response = create_entry(world, owner, name="")
-    assert response.status_code == 303
-    assert response.headers["location"] == "/medicines/new?kind=medicine&error=name"
-    form = owner.get(response.headers["location"])
-    assert "Give it a name." in form.text
+    assert response.status_code == 400
+    assert "Give it a name." in response.text
+    assert "location" not in response.headers
 
     reversed_dates = create_entry(world, owner, started_on="2025-05-01", ended_on="2025-01-01")
-    assert reversed_dates.headers["location"].endswith("error=dates")
-    assert "The end date is before the start date." in owner.get(reversed_dates.headers["location"]).text
+    assert reversed_dates.status_code == 400
+    assert "The end date is before the start date." in reversed_dates.text
+
+
+def test_new_form_offers_the_dose_and_schedule_pickers(world, clients):
+    owner = clients("alpha@example.test")
+    page = owner.get("/medicines/new").text
+    for name in ("dose_amount", "dose_unit", "repeat", "weekday", "day_part", "per_day", "meal"):
+        assert f'name="{name}"' in page, name
+    assert_no_missing_keys(page)
+
+
+def test_create_stores_the_dose_and_schedule_and_the_entry_shows_them(world, clients):
+    owner = clients("alpha@example.test")
+    response = create_entry(
+        world, owner, dose_amount="1", dose_unit="tablet", repeat="daily", per_day="2",
+        day_part=["morning", "evening"], meal="after",
+    )
+    assert response.status_code == 303
+    factor_id = factor_id_of(response)
+    assert response.headers["location"] == f"/medicines/{factor_id}?saved=created"
+
+    row = row_of(world, factor_id)
+    assert row["dose_amount"] == 1 and row["dose_unit"] == "tablet"
+    assert json.loads(row["schedule_json"]) == {
+        "repeat": "daily", "every": 1, "weekdays": [], "per_day": 2,
+        "times": ["morning", "evening"], "clock": [], "meal": "after",
+    }
+    page = owner.get(f"/medicines/{factor_id}").text
+    assert "1 tablet" in page
+    assert "2 times a day" in page
+
+
+def test_a_refused_create_keeps_what_was_typed_and_saves_nothing(world, clients):
+    owner = clients("alpha@example.test")
+    before = count_entries(world)
+    response = create_entry(world, owner, name="", reason="Тиск для проби", dose_amount="2", dose_unit="capsule")
+    assert response.status_code == 400
+    assert "Give it a name." in response.text
+    assert "Тиск для проби" in response.text
+    assert 'value="capsule" selected' in response.text
+    assert count_entries(world) == before
 
 
 def test_warfarin_entry_shows_the_inr_note(world, clients):
@@ -311,132 +380,123 @@ def test_effect_remove_takes_the_effect_off(world, clients):
     assert effects_of(world, factor_id) == []
 
 
-def test_research_stores_a_suggestion_that_shows_its_quotes_and_the_apply_buttons(world, clients, monkeypatch):
-    stub_research(monkeypatch)
+def test_create_marks_accepted_ai_text_and_effects_as_ai(world, clients):
     owner = clients("alpha@example.test")
-    factor_id = factor_id_of(create_entry(world, owner, purpose="", usual_dose=""))
-
-    asked = act(world, owner, factor_id, action="research")
-    assert asked.headers["location"] == f"/medicines/{factor_id}?saved=researched#suggestions"
-
+    effects = [
+        json.dumps({"concept_id": LDL_ID, "label": "LDL cholesterol", "direction": "lowers",
+                    "note": "Трохи.", "quote": "80 мг"}, ensure_ascii=False),
+        json.dumps({"concept_id": None, "label": "Тривожність", "direction": "changes",
+                    "note": "", "quote": ""}, ensure_ascii=False),
+    ]
+    response = create_entry(world, owner, purpose="Знижує тиск", ai_fields="purpose", ai_effect=effects)
+    factor_id = factor_id_of(response)
+    assert row_of(world, factor_id)["ai_fields"] == "purpose"
+    assert {effect["label"]: effect["origin"] for effect in effects_of(world, factor_id)} == {
+        "LDL cholesterol": "ai", "Тривожність": "ai",
+    }
     page = owner.get(f"/medicines/{factor_id}").text
-    assert "Suggestions from the AI, waiting for you" in page
-    assert "«Дорослим призначають 80 мг один раз на добу.»" in page
-    assert "Not found in the instruction" in page
-    assert 'name="what" value="all"' in page
-    assert 'name="what" value="purpose"' in page
-    assert "Accept all where mine is empty" in page
-    assert_no_missing_keys(page)
+    assert re.search(r"What it is and what it is for <span class=\"an-ai-tag\"", page)
 
 
-def test_apply_all_fills_only_the_empty_fields(world, clients, monkeypatch):
-    stub_research(monkeypatch)
+def test_suggest_says_disabled_when_ai_is_off(world, clients, monkeypatch):
+    ai_on(monkeypatch, False)
     owner = clients("alpha@example.test")
-    factor_id = factor_id_of(create_entry(world, owner, purpose="Мій опис", usual_dose=""))
-    act(world, owner, factor_id, action="research")
-
-    applied = act(world, owner, factor_id, action="apply", what="all")
-    # The purpose suggestion is still waiting, so the page points back at the suggestions.
-    assert applied.headers["location"] == f"/medicines/{factor_id}?saved=applied#suggestions"
-    row = row_of(world, factor_id)
-    assert row["purpose"] == "Мій опис"
-    assert row["usual_dose"] == "80 мг раз на добу."
-    assert row["interactions"] == "Калій-зберігаючі діуретики."
-    assert {effect["label"] for effect in effects_of(world, factor_id)} == {"LDL cholesterol"}
+    response = owner.post("/medicines/suggest", data={**entry_fields(), "csrf_token": csrf(world, owner)})
+    assert response.json() == {"error": "disabled"}
 
 
-def test_apply_one_field_overwrites_what_the_person_wrote(world, clients, monkeypatch):
-    stub_research(monkeypatch)
+def test_suggest_runs_as_a_job_and_returns_the_suggestion(world, clients, monkeypatch):
+    ai_on(monkeypatch, True)
+    seen = stub_research(monkeypatch)
     owner = clients("alpha@example.test")
-    factor_id = factor_id_of(create_entry(world, owner, purpose="Мій опис"))
-    act(world, owner, factor_id, action="research")
+    response = owner.post("/medicines/suggest", data={**entry_fields(), "csrf_token": csrf(world, owner)})
+    assert response.status_code == 200
+    result = wait_for(owner, response.json()["job"])
 
-    act(world, owner, factor_id, action="apply", what="purpose")
-    assert row_of(world, factor_id)["purpose"] == "Таблетки для зниження тиску."
+    assert result["state"] == "done"
+    view = result["suggestion"]
+    assert set(view["fields"]) == {"purpose", "usual_dose", "interactions"}
+    assert view["fields"]["purpose"]["text"] == "Таблетки для зниження тиску."
+    assert view["effects"][0]["direction_label"] == "lowers"
+    assert view["atc_code"] == "C09CA03"
+    assert view["source"]["url"] == "https://tabletki.ua/uk/Диокор/8311/"
+    assert view["regimen"]["text"].startswith("1 tablet")
+    assert seen[0]["name"] == "Диокор" and seen[0]["id"] == ""
 
 
-def test_dismiss_clears_the_suggestions(world, clients, monkeypatch):
+def test_suggest_leaves_out_an_effect_the_entry_already_has(world, clients, monkeypatch):
+    ai_on(monkeypatch, True)
     stub_research(monkeypatch)
     owner = clients("alpha@example.test")
     factor_id = factor_id_of(create_entry(world, owner))
-    act(world, owner, factor_id, action="research")
+    act(world, owner, factor_id, action="effect_add", label="LDL cholesterol", direction="raises", note="")
 
-    dismissed = act(world, owner, factor_id, action="apply", what="dismiss")
-    assert dismissed.headers["location"] == f"/medicines/{factor_id}?saved=dismissed"
-    assert row_of(world, factor_id)["suggestion_json"] is None
-    assert "Accept all where mine is empty" not in owner.get(f"/medicines/{factor_id}").text
+    response = owner.post("/medicines/suggest", data={
+        **entry_fields(), "factor_id": factor_id, "csrf_token": csrf(world, owner),
+    })
+    result = wait_for(owner, response.json()["job"])
+    assert result["state"] == "done"
+    assert result["suggestion"]["effects"] == []
 
 
-def test_research_failure_shows_the_translated_error_and_keeps_the_entry(world, clients, monkeypatch):
+def test_a_failed_research_ends_failed_with_the_reason(world, clients, monkeypatch):
+    ai_on(monkeypatch, True)
     stub_research(monkeypatch, error="budget")
     owner = clients("alpha@example.test")
-    factor_id = factor_id_of(create_entry(world, owner))
-
-    failed = act(world, owner, factor_id, action="research")
-    assert failed.headers["location"] == f"/medicines/{factor_id}?error=ai_budget"
-    page = owner.get(failed.headers["location"]).text
-    assert "The AI budget for today is used up." in page
-    assert row_of(world, factor_id)["name"] == "Диокор"
+    response = owner.post("/medicines/suggest", data={**entry_fields(), "csrf_token": csrf(world, owner)})
+    assert wait_for(owner, response.json()["job"]) == {"state": "failed", "error": "budget"}
 
 
-def test_research_on_create_runs_after_saving(world, clients, monkeypatch):
+def test_an_unknown_job_or_another_users_job_reads_as_lost(world, clients, monkeypatch):
+    ai_on(monkeypatch, True)
+    stub_research(monkeypatch)
+    alpha = clients("alpha@example.test")
+    assert alpha.get("/medicines/suggest/unknown").json() == {"state": "failed", "error": "lost"}
+
+    response = alpha.post("/medicines/suggest", data={**entry_fields(), "csrf_token": csrf(world, alpha)})
+    job = response.json()["job"]
+    factor_jobs.join(job)
+    assert alpha.get(f"/medicines/suggest/{job}").json()["state"] == "done"
+
+    bravo = clients("bravo@example.test")
+    assert bravo.get(f"/medicines/suggest/{job}").json() == {"state": "failed", "error": "lost"}
+
+
+def test_suggest_needs_the_csrf_token_and_refuses_a_guest(world, clients, monkeypatch):
+    ai_on(monkeypatch, True)
     stub_research(monkeypatch)
     owner = clients("alpha@example.test")
-    response = create_entry(world, owner, research="1")
-    factor_id = factor_id_of(response)
-    assert response.headers["location"] == f"/medicines/{factor_id}?saved=researched#suggestions"
-    assert row_of(world, factor_id)["suggestion_json"] is not None
+    assert owner.post("/medicines/suggest", data=entry_fields()).status_code == 403
+
+    expires = (datetime.now(UTC) + timedelta(days=14)).replace(microsecond=0).isoformat()
+    _, secret = create_access_token(world.settings, world.alpha, kind="guest", label="doctor", expires_at=expires)
+    with TestClient(create_app(world.settings)) as guest:
+        assert guest.get(f"/t/{secret}", follow_redirects=False).status_code in (302, 303)
+        assert guest.post("/medicines/suggest", data={**entry_fields(), "csrf_token": "x"}).status_code == 403
 
 
-def test_research_on_create_with_only_the_provider_faked_stores_a_suggestion(world, clients, monkeypatch):
-    """The real research runs: its reference lookup writes the cache on the request's connection,
-    and the model call then records usage on another connection.  Only the model adapter and the
-    reference page fetch (network) are faked."""
-    ai.save_ai_settings(world.settings, {"ai_api_key": "sk-or-test"})
-    reply = json.dumps({
-        "substance": {"text": "валсартан", "quote": ""},
-        "purpose": {"text": "Таблетки для зниження тиску.", "quote": ""},
-        "usual_dose": {"text": "80 мг раз на добу.", "quote": ""},
-        "interactions": {"text": "", "quote": ""},
-        "monitoring": {"text": "", "quote": ""},
-        "cautions": {"text": "", "quote": ""},
-        "effects": [],
-    }, ensure_ascii=False)
-
-    def provider(api_key, model, messages, max_tokens, timeout, response_format=None, **kwargs):
-        return ai.AIResult(content=reply, model="test/model", prompt_tokens=10, completion_tokens=5)
-
-    monkeypatch.setitem(ai.PROVIDERS, "openrouter", provider)
-    monkeypatch.setattr(drugref, "instruction", lambda name, code="": {
-        "url": "https://tabletki.ua/uk/Диокор/8311/",
-        "shown_for": "Диокор 80 мг",
-        "atc": ["C09CA03"],
-        "sections": [["Спосіб застосування", "Дорослим призначають 80 мг один раз на добу."]],
-    })
+def test_edit_with_suggest_one_autostarts_only_when_ai_is_on(world, clients, monkeypatch):
     owner = clients("alpha@example.test")
-    response = create_entry(world, owner, research="1")
-    factor_id = factor_id_of(response)
-    assert response.status_code == 303
-    assert response.headers["location"] == f"/medicines/{factor_id}?saved=researched#suggestions"
-    assert row_of(world, factor_id)["suggestion_json"] is not None
+    factor_id = factor_id_of(create_entry(world, owner))
+    ai_on(monkeypatch, True)
+    assert "data-autostart" in owner.get(f"/medicines/{factor_id}/edit?suggest=1").text
+    ai_on(monkeypatch, False)
+    assert "data-autostart" not in owner.get(f"/medicines/{factor_id}/edit?suggest=1").text
 
 
-def test_research_failure_on_create_keeps_the_entry(world, clients, monkeypatch):
-    stub_research(monkeypatch, error="provider_error")
+def test_the_research_and_apply_actions_are_gone(world, clients):
     owner = clients("alpha@example.test")
-    response = create_entry(world, owner, research="1")
-    factor_id = factor_id_of(response)
-    assert response.headers["location"] == f"/medicines/{factor_id}?saved=created&error=ai_provider_error"
-    page = owner.get(response.headers["location"]).text
-    assert "The entry is saved." in page
-    assert row_of(world, factor_id) is not None
+    factor_id = factor_id_of(create_entry(world, owner))
+    assert act(world, owner, factor_id, action="research").status_code == 400
+    assert act(world, owner, factor_id, action="apply", what="all").status_code == 400
+    assert row_of(world, factor_id)["name"] == "Диокор"
 
 
 def test_lookup_returns_items_and_says_when_it_is_off_or_unreachable(world, clients, monkeypatch):
     items = [{"kind": "trade_name", "code": "8311", "name": "Диокор", "reference_name": "Диокор", "maker": ""}]
-    monkeypatch.setattr(drugref, "suggest", lambda text: items)
+    monkeypatch.setattr(drugref, "suggest", lambda text: [dict(item) for item in items])
     owner = clients("alpha@example.test")
-    assert owner.get("/medicines/lookup", params={"q": "дио"}).json() == {"items": items}
+    assert owner.get("/medicines/lookup", params={"q": "дио"}).json() == {"items": [{**items[0], "strength": ""}]}
 
     with connect(world.settings) as connection:
         drugref.set_enabled(connection, False)
@@ -452,6 +512,26 @@ def test_lookup_returns_items_and_says_when_it_is_off_or_unreachable(world, clie
 
     monkeypatch.setattr(drugref, "suggest", unreachable)
     assert owner.get("/medicines/lookup", params={"q": "дио"}).json() == {"items": [], "error": "unavailable"}
+
+
+def test_lookup_localizes_the_strength_and_says_when_the_site_asks_for_a_pause(world, clients, monkeypatch):
+    item = {"kind": "trade_name", "code": "8311", "name": "Диокор", "reference_name": "Диокор", "maker": "",
+            "strength": "160 мг", "unit": "мг"}
+    monkeypatch.setattr(drugref, "suggest", lambda text: [dict(item)])
+    owner = clients("alpha@example.test")
+    found = owner.get("/medicines/lookup", params={"q": "дио"}).json()["items"][0]
+    assert found["strength"] == "160 mg" and found["unit"] == "мг"
+
+    owner.cookies.set("anamna_lang", "uk")
+    assert owner.get("/medicines/lookup", params={"q": "дио"}).json()["items"][0]["strength"] == "160 мг"
+
+    def paused(text):
+        raise drugref.DrugRefPaused(300)
+
+    monkeypatch.setattr(drugref, "suggest", paused)
+    assert owner.get("/medicines/lookup", params={"q": "дио"}).json() == {
+        "items": [], "error": "paused", "minutes": 5,
+    }
 
 
 def test_a_second_user_cannot_open_edit_or_post_to_the_first_users_entry(world, clients):
@@ -506,10 +586,9 @@ def test_the_medicine_templates_carry_no_inline_event_handlers():
         assert not pattern.search((TEMPLATES / name).read_text(encoding="utf-8")), name
 
 
-def test_every_page_renders_in_both_locales_without_a_missing_key(world, clients, monkeypatch):
-    stub_research(monkeypatch)
+def test_every_page_renders_in_both_locales_without_a_missing_key(world, clients):
     owner = clients("alpha@example.test")
-    factor_id = factor_id_of(create_entry(world, owner, research="1", atc_code="B01AA03", name="Варфарин"))
+    factor_id = factor_id_of(create_entry(world, owner, atc_code="B01AA03", name="Варфарин"))
     act(world, owner, factor_id, action="effect_add", label="LDL cholesterol", direction="raises", note="")
     pages = ("/medicines", "/medicines/new", f"/medicines/{factor_id}", f"/medicines/{factor_id}/edit")
     for locale in ("uk", "en"):
@@ -536,8 +615,20 @@ def test_saving_an_invalid_edit_returns_to_the_edit_form(world, clients):
     owner = clients("alpha@example.test")
     factor_id = factor_id_of(create_entry(world, owner))
     response = act(world, owner, factor_id, action="save", kind="medicine", name="", status="current")
-    assert response.headers["location"] == f"/medicines/{factor_id}/edit?error=name"
-    assert "Give it a name." in owner.get(response.headers["location"]).text
+    assert response.status_code == 400
+    assert "Give it a name." in response.text
+    assert row_of(world, factor_id)["name"] == "Диокор"
+
+
+def test_a_save_with_the_end_before_the_start_changes_nothing(world, clients):
+    owner = clients("alpha@example.test")
+    factor_id = factor_id_of(create_entry(world, owner))
+    response = act(world, owner, factor_id, action="save", kind="medicine", name="Диокор Плюс",
+                   status="current", started_on="2025-05-01", ended_on="2025-01-01")
+    assert response.status_code == 400
+    assert "The end date is before the start date." in response.text
+    row = row_of(world, factor_id)
+    assert row["name"] == "Диокор" and row["started_on"] == "2025-01-10"
 
 
 def test_chart_periods_lists_the_entries_that_can_change_the_result(world, clients):

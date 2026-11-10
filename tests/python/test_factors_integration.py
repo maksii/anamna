@@ -7,6 +7,7 @@ behaviour through, on a throwaway database.
 
 from __future__ import annotations
 
+import csv
 import io
 import zipfile
 from datetime import UTC, datetime
@@ -277,7 +278,41 @@ def test_the_record_export_carries_the_medicines_and_their_effects(tmp_path: Pat
         assert b"INR" in archive.read("medicine_effects.csv")
 
 
+def test_the_export_puts_the_dose_and_how_it_is_taken_right_after_the_schedule(tmp_path: Path):
+    settings, user_id, _ = build(tmp_path)
+    add_factor(settings, user_id, name="Marevan", started="2026-02-01", dose_amount="1",
+               dose_unit="tablet", repeat="daily", per_day="2")
+    add_factor(settings, user_id, name="Vitamin", started="2026-02-01")
+    buffer = io.BytesIO()
+    write_record_archive(settings, user_id, buffer)
+    with zipfile.ZipFile(io.BytesIO(buffer.getvalue())) as archive:
+        table = list(csv.reader(io.StringIO(archive.read("medicines.csv").decode("utf-8"))))
+    header = table[0]
+    assert header.count("dose_amount") == 1 and header.count("dose_unit") == 1
+    assert header.index("dose_amount") == header.index("schedule") + 1
+    assert header.index("dose_unit") == header.index("dose_amount") + 1
+    assert header.index("how_taken") == header.index("dose_unit") + 1
+    rows = {row[header.index("name")]: dict(zip(header, row)) for row in table[1:]}
+    assert rows["Marevan"]["dose_amount"] == "1"
+    assert rows["Marevan"]["dose_unit"] == "tablet"
+    assert "1 tablet" in rows["Marevan"]["how_taken"] and "2 times a day" in rows["Marevan"]["how_taken"]
+    assert rows["Vitamin"]["dose_amount"] == "" and rows["Vitamin"]["how_taken"] == ""
+
+
 # --- the administrator's switch -----------------------------------------------------
+
+
+def test_the_administrator_page_asks_for_the_pause_in_minutes(tmp_path: Path, monkeypatch):
+    _settings, _admin_id, client = build(tmp_path)
+    asked = []
+
+    def paused_seconds() -> int:
+        asked.append(True)
+        return 300
+
+    monkeypatch.setattr(drugref, "paused_seconds", paused_seconds)
+    assert client.get("/admin/ai").status_code == 200
+    assert asked
 
 
 def test_the_administrator_switches_the_medicine_reference_on_and_off(tmp_path: Path):

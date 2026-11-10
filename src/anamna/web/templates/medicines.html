@@ -26,9 +26,6 @@
       {% if item.effects|length > 4 %}<li class="an-med-effects__more">{{ t('med.effects_more', count=item.effects|length - 4) }}</li>{% endif %}
     </ul>
     {% endif %}
-    {% if item.pending and can_edit %}
-    <p><a class="an-med-pending" href="{{ item.url }}#suggestions">{{ plural_t('med.pending', item.pending) }}</a></p>
-    {% endif %}
   </div>
   {% if item.bar %}
   <svg class="an-med-track" viewBox="0 0 1000 12" preserveAspectRatio="none" role="img" aria-label="{{ item.bar.title }}">

@@ -1,5 +1,6 @@
 """Medicines and other factors: input rules, the record, the people who may touch it,
-the chart periods, the medicine-implied facts, AI suggestions and the assistant's text.
+the chart periods, the medicine-implied facts, the dose and schedule, AI-accepted
+text and effects, and the assistant's text.
 
 Each test asserts one rule of the feature.  The database is a temporary one; the
 baseline fixtures are created through the same helpers the lifecycle tests use.
@@ -7,6 +8,7 @@ baseline fixtures are created through the same helpers the lifecycle tests use.
 
 from __future__ import annotations
 
+import json
 from datetime import date
 from types import SimpleNamespace
 
@@ -14,27 +16,17 @@ import pytest
 
 from anamna import factors
 from anamna.db import connect, migrate
+from anamna.i18n import MESSAGES, get_locale
 from anamna.ingest.pipeline import seed_concepts
 from anamna.security import create_user
 from test_web_security import PASSWORD, seed_document, seed_patient, settings_for
 
 TODAY = date(2025, 6, 1)
 
-SUGGESTION = {
-    "created_at": "2025-06-01T00:00:00+00:00",
-    "model": "test-model",
-    "language": "en",
-    "source": {"name": "Reference", "url": "https://example.test/reference", "shown_for": "Warfarin"},
-    "fields": {
-        "purpose": {"text": "AI purpose text", "quote": "purpose quote"},
-        "usual_dose": {"text": "2.5 mg daily", "quote": "dose quote"},
-        "monitoring": {"text": "Check INR", "quote": "monitoring quote"},
-    },
-    "effects": [
-        {"concept_id": "ldl-cholesterol", "label": "LDL cholesterol", "direction": "lowers", "note": "dose", "quote": "quote-ldl"},
-        {"concept_id": None, "label": "Platelets", "direction": "raises", "note": "", "quote": "quote-plt"},
-    ],
-}
+UK_KEYS_READY = "med.unit.tablet_few" in MESSAGES
+
+AI_LDL = {"concept_id": "ldl-cholesterol", "label": "LDL cholesterol", "direction": "lowers", "note": "dose", "quote": "quote-ldl"}
+AI_PLATELETS = {"concept_id": None, "label": "Platelets", "direction": "raises", "note": "", "quote": "quote-plt"}
 
 
 def base(**fields) -> dict:
@@ -43,6 +35,27 @@ def base(**fields) -> dict:
 
 def cleaned(**fields):
     return factors.clean(base(**fields), today=TODAY)
+
+
+def saved(**fields) -> dict:
+    values, error = cleaned(**fields)
+    assert error is None, error
+    return values
+
+
+def schedule(**fields) -> dict:
+    return json.loads(saved(**fields)["schedule_json"])
+
+
+def shaped(**fields) -> dict:
+    """A factor as ``factors.get`` shapes it, with the dose and schedule keys empty."""
+    row = {"kind": "medicine", "dose_amount": None, "dose_unit": "", "dose": "", "schedule": "", "regimen": None}
+    return {**row, **fields}
+
+
+def plan(**fields) -> dict:
+    """A schedule as ``factors.get`` returns it under ``regimen``."""
+    return {"repeat": "daily", "every": 1, "weekdays": [], "per_day": 1, "times": [], "clock": [], "meal": "", **fields}
 
 
 @pytest.fixture
@@ -183,8 +196,179 @@ def test_clean_returns_exactly_the_documented_keys():
         "kind", "name", "substance", "atc_code", "strength", "dose", "schedule", "status",
         "started_on", "ended_on", "dates_approximate", "reason", "prescriber", "document_id",
         "notes", "purpose", "usual_dose", "interactions", "monitoring", "cautions",
-        "reference_name", "reference_code",
+        "reference_name", "reference_code", "dose_amount", "dose_unit", "schedule_json",
+        "ai_fields", "ai_effects",
     }
+
+
+# --- clean: the dose ----------------------------------------------------------
+
+def test_a_dose_amount_with_a_comma_is_read_as_a_decimal():
+    assert saved(dose_amount=" 0,5 ", dose_unit="tablet")["dose_amount"] == 0.5
+
+
+def test_a_dose_amount_is_rounded_to_three_decimals():
+    assert saved(dose_amount="0.12345", dose_unit="mg")["dose_amount"] == 0.123
+
+
+@pytest.mark.parametrize("amount", ["0", "-1", "100001", "nan", "inf", "abc"])
+def test_a_dose_amount_outside_the_range_or_not_a_number_is_dropped(amount):
+    values = saved(dose_amount=amount, dose_unit="tablet")
+    assert (values["dose_amount"], values["dose_unit"]) == (None, "")
+
+
+def test_a_dose_amount_is_none_for_a_kind_that_takes_no_dose():
+    values = saved(kind="diet", dose_amount="2", dose_unit="g")
+    assert (values["dose_amount"], values["dose_unit"]) == (None, "")
+
+
+def test_a_dose_unit_without_an_amount_is_dropped():
+    assert saved(dose_unit="tablet")["dose_unit"] == ""
+
+
+def test_an_unknown_dose_unit_is_dropped():
+    assert saved(dose_amount="1", dose_unit="spoon")["dose_unit"] == ""
+
+
+def test_a_known_dose_unit_is_kept_with_its_amount():
+    assert saved(dose_amount="2", dose_unit="drop")["dose_unit"] == "drop"
+
+
+# --- clean: the schedule ------------------------------------------------------
+
+@pytest.mark.parametrize("repeat", ["daily", "as_needed", "monthly"])
+def test_each_repeat_is_stored(repeat):
+    assert schedule(repeat=repeat)["repeat"] == repeat
+
+
+def test_weekly_is_stored_with_its_weekdays():
+    assert schedule(repeat="weekly", weekday=["0", "3"])["weekdays"] == [0, 3]
+
+
+def test_days_with_every_one_becomes_daily():
+    stored = schedule(repeat="days", every="1")
+    assert (stored["repeat"], stored["every"]) == ("daily", 1)
+
+
+def test_days_with_every_three_stays_days():
+    stored = schedule(repeat="days", every="3")
+    assert (stored["repeat"], stored["every"]) == ("days", 3)
+
+
+def test_as_needed_always_has_every_one():
+    assert schedule(repeat="as_needed", every="5")["every"] == 1
+
+
+def test_every_is_clamped_to_99_and_defaults_to_one():
+    assert schedule(repeat="monthly", every="500")["every"] == 99
+    assert schedule(repeat="monthly", every="abc")["every"] == 1
+
+
+def test_weekdays_are_kept_only_for_a_weekly_repeat():
+    assert schedule(repeat="daily", weekday=["0", "3"])["weekdays"] == []
+
+
+def test_weekdays_are_sorted_distinct_and_within_the_week():
+    assert schedule(repeat="weekly", weekday=["3", "0", "3", "7", "x"])["weekdays"] == [0, 3]
+
+
+def test_per_day_is_raised_to_the_number_of_times_of_day():
+    assert schedule(repeat="daily", per_day="1", day_part=["morning", "night"])["per_day"] == 2
+
+
+def test_per_day_is_raised_to_the_number_of_clock_times():
+    assert schedule(repeat="daily", per_day="1", clock=["08:00", "20:00"])["per_day"] == 2
+
+
+def test_per_day_is_clamped_to_one_through_twenty_four():
+    assert schedule(repeat="daily", per_day="0")["per_day"] == 1
+    assert schedule(repeat="daily", per_day="30")["per_day"] == 24
+
+
+def test_times_of_day_keep_the_day_order_and_drop_unknown_and_repeated_ones():
+    stored = schedule(repeat="daily", day_part=["night", "nonsense", "morning", "night"])
+    assert stored["times"] == ["morning", "night"]
+
+
+def test_clock_times_must_be_real_times_of_day():
+    stored = schedule(repeat="daily", clock=["08:00", "8:00", "24:00", "23:59", "12:60", "08:00"])
+    assert stored["clock"] == ["08:00", "23:59"]
+
+
+def test_clock_times_are_capped_at_twelve():
+    stored = schedule(repeat="daily", clock=[f"{hour:02d}:00" for hour in range(15)])
+    assert len(stored["clock"]) == 12
+
+
+def test_a_meal_must_be_one_of_the_known_meals():
+    assert schedule(repeat="daily", meal="during")["meal"] == ""
+    assert schedule(repeat="daily", meal="after")["meal"] == "after"
+
+
+def test_an_activity_carries_only_its_repeat():
+    stored = schedule(
+        kind="activity", repeat="weekly", weekday=["1"], per_day="3",
+        day_part=["morning"], clock=["08:00"], meal="after",
+    )
+    assert stored == {"repeat": "weekly", "every": 1, "weekdays": [1], "per_day": 1, "times": [], "clock": [], "meal": ""}
+
+
+def test_the_schedule_keys_are_stored_in_the_documented_order():
+    stored = saved(repeat="daily", day_part="morning")["schedule_json"]
+    assert list(json.loads(stored)) == ["repeat", "every", "weekdays", "per_day", "times", "clock", "meal"]
+
+
+def test_a_diet_has_no_schedule():
+    assert saved(kind="diet", repeat="daily")["schedule_json"] == ""
+
+
+def test_an_unknown_repeat_gives_no_schedule():
+    assert saved(repeat="hourly")["schedule_json"] == ""
+
+
+# --- clean: AI-accepted fields and effects ------------------------------------
+
+def test_ai_fields_name_the_posted_fields_that_have_text_in_schema_order():
+    values = saved(purpose="A", usual_dose="B", monitoring="", ai_fields="monitoring,usual_dose,purpose,bogus")
+    assert values["ai_fields"] == ("purpose", "usual_dose")
+
+
+def test_ai_fields_are_empty_when_nothing_is_posted():
+    assert saved(purpose="A")["ai_fields"] == ()
+
+
+def test_ai_effects_are_empty_when_nothing_is_posted():
+    assert saved()["ai_effects"] == []
+
+
+def test_ai_effects_keep_the_usable_fields_and_cut_them_to_their_limits():
+    posted = {
+        "concept_id": "  ldl-cholesterol ", "label": "L" * 300, "direction": "lowers",
+        "note": "n" * 600, "quote": "q" * 500, "unused": 1,
+    }
+    effect = saved(ai_effect=[json.dumps(posted)])["ai_effects"][0]
+    assert (effect["concept_id"], len(effect["label"]), len(effect["note"]), len(effect["quote"])) == (
+        "ldl-cholesterol", 200, 500, 400,
+    )
+
+
+def test_ai_effects_skip_what_is_not_an_object_or_has_no_known_direction():
+    posted = [
+        "not json", "[1, 2]", json.dumps({"label": "x", "direction": "up"}),
+        json.dumps({"label": "Iron", "direction": "raises"}),
+    ]
+    effects = saved(ai_effect=posted)["ai_effects"]
+    assert [(item["label"], item["concept_id"]) for item in effects] == [("Iron", None)]
+
+
+def test_a_concept_id_that_is_not_text_becomes_none():
+    effect = saved(ai_effect=[json.dumps({"concept_id": 5, "label": "Iron", "direction": "raises"})])["ai_effects"][0]
+    assert effect["concept_id"] is None
+
+
+def test_ai_effects_are_capped_at_twenty():
+    posted = [json.dumps({"label": f"Effect {index}", "direction": "raises"}) for index in range(25)]
+    assert len(saved(ai_effect=posted)["ai_effects"]) == 20
 
 
 # --- create, get, update, delete ----------------------------------------------
@@ -209,6 +393,91 @@ def test_a_reference_name_alone_gives_a_link_without_a_code(db):
 def test_a_reference_source_is_recorded_when_there_is_a_name(db):
     factor_id = add(db, db.alpha, db.alpha_patient, reference_name="Coumadin")
     assert fetch(db, factor_id)["reference_source"] == "tabletki"
+
+
+def test_the_dose_and_schedule_round_trip_and_read_back_as_a_regimen(db):
+    factor_id = add(
+        db, db.alpha, db.alpha_patient, dose_amount="1", dose_unit="tablet", repeat="daily",
+        per_day="2", day_part=["evening", "morning"], meal="after",
+    )
+    row = fetch(db, factor_id)
+    assert (row["dose_amount"], row["dose_unit"]) == (1.0, "tablet")
+    assert row["regimen"] == {
+        "repeat": "daily", "every": 1, "weekdays": [], "per_day": 2,
+        "times": ["morning", "evening"], "clock": [], "meal": "after",
+    }
+
+
+def test_a_factor_without_a_schedule_has_no_regimen(db):
+    assert fetch(db, add(db, db.alpha, db.alpha_patient))["regimen"] is None
+
+
+def test_the_migration_drops_the_suggestion_columns_and_adds_the_dose_columns(db):
+    columns = {row[1] for row in db.connection.execute("PRAGMA table_info(factors)")}
+    assert "suggestion_json" not in columns and "suggestion_at" not in columns
+    assert {"dose_amount", "dose_unit", "schedule_json"} <= columns
+
+
+def test_create_stores_accepted_ai_fields_and_effects_as_ai(db):
+    values = saved(
+        purpose="Blood thinner", usual_dose="2.5 mg", ai_fields="usual_dose",
+        ai_effect=[json.dumps(AI_LDL), json.dumps(AI_PLATELETS)],
+    )
+    factor_id = factors.create(db.connection, db.alpha, db.alpha_patient, values)
+    row = fetch(db, factor_id)
+    assert row["ai_fields"] == ("usual_dose",)
+    # Effects written in the same second order by id, so compare as a set.
+    assert sorted((effect["origin"], effect["evidence"]) for effect in row["effects"]) == [
+        ("ai", "quote-ldl"), ("ai", "quote-plt"),
+    ]
+
+
+def test_create_keeps_only_one_of_two_ai_effects_with_the_same_label(db):
+    posted = [
+        json.dumps({"label": "Iron", "direction": "lowers", "quote": "a"}),
+        json.dumps({"label": "iron", "direction": "raises", "quote": "b"}),
+    ]
+    factor_id = factors.create(db.connection, db.alpha, db.alpha_patient, saved(ai_effect=posted))
+    assert len(fetch(db, factor_id)["effects"]) == 1
+
+
+def test_update_keeps_an_unchanged_ai_field_and_drops_an_edited_one(db):
+    factor_id = factors.create(
+        db.connection, db.alpha, db.alpha_patient,
+        saved(purpose="AI purpose", usual_dose="2.5 mg", ai_fields="purpose,usual_dose"),
+    )
+    factors.update(db.connection, db.alpha, factor_id, saved(purpose="AI purpose", usual_dose="5 mg"))
+    assert fetch(db, factor_id)["ai_fields"] == ("purpose",)
+
+
+def test_update_marks_a_newly_accepted_ai_field_and_keeps_the_others(db):
+    factor_id = factors.create(
+        db.connection, db.alpha, db.alpha_patient,
+        saved(purpose="AI purpose", usual_dose="2.5 mg", ai_fields="purpose,usual_dose"),
+    )
+    factors.update(db.connection, db.alpha, factor_id, saved(purpose="AI purpose", usual_dose="5 mg"))
+    factors.update(
+        db.connection, db.alpha, factor_id,
+        saved(purpose="AI purpose", usual_dose="5 mg", monitoring="Check INR", ai_fields="monitoring"),
+    )
+    assert fetch(db, factor_id)["ai_fields"] == ("purpose", "monitoring")
+
+
+def test_update_adds_an_ai_effect_unless_the_factor_already_has_its_label(db):
+    factor_id = add(db, db.alpha, db.alpha_patient)
+    factors.add_effect(db.connection, db.alpha, factor_id, concept_id=None, label="Iron", direction="lowers")
+    factors.update(db.connection, db.alpha, factor_id, saved(ai_effect=[json.dumps({"label": "iron", "direction": "raises"})]))
+    effects = fetch(db, factor_id)["effects"]
+    assert [(effect["label"], effect["origin"]) for effect in effects] == [("Iron", "person")]
+
+
+def test_update_adds_an_ai_effect_on_a_new_concept(db):
+    factor_id = add(db, db.alpha, db.alpha_patient)
+    factors.update(db.connection, db.alpha, factor_id, saved(ai_effect=[json.dumps(AI_LDL)]))
+    effects = fetch(db, factor_id)["effects"]
+    assert [(effect["concept_id"], effect["origin"], effect["evidence"]) for effect in effects] == [
+        ("ldl-cholesterol", "ai", "quote-ldl"),
+    ]
 
 
 def test_update_replaces_the_values(db):
@@ -241,12 +510,6 @@ def test_search_rows_lists_the_factor_with_its_reason(db):
     add(db, db.alpha, db.alpha_patient, reason="atrial fibrillation")
     rows = factors.search_rows(db.connection, db.alpha)
     assert [(row["name"], row["reason"]) for row in rows] == [("Warfarin", "atrial fibrillation")]
-
-
-def test_a_broken_stored_suggestion_reads_as_none(db):
-    factor_id = add(db, db.alpha, db.alpha_patient)
-    db.connection.execute("UPDATE factors SET suggestion_json='{not json' WHERE id=?", (factor_id,))
-    assert fetch(db, factor_id)["suggestion"] is None
 
 
 def test_stop_ends_a_period_as_past(db):
@@ -291,13 +554,6 @@ def test_another_user_cannot_stop_or_add_an_effect_to_a_factor(db):
     assert factors.stop(db.connection, db.beta, factor_id, TODAY) is False
     assert factors.add_effect(db.connection, db.beta, factor_id, concept_id=None, label="x", direction="raises") is None
     assert fetch(db, factor_id)["status"] == "current"
-
-
-def test_another_user_cannot_apply_a_suggestion_to_a_factor(db):
-    factor_id = add(db, db.alpha, db.alpha_patient)
-    factors.store_suggestion(db.connection, db.alpha, factor_id, SUGGESTION)
-    assert factors.apply_suggestion(db.connection, db.beta, factor_id, "all", today=TODAY) is False
-    assert fetch(db, factor_id)["effects"] == []
 
 
 # --- effects ------------------------------------------------------------------
@@ -464,94 +720,82 @@ def test_fact_periods_and_facts_on_cover_inside_before_after_and_ongoing(db):
     assert factors.facts_on(periods, "2030-01-01") == {"vka_therapy"}
 
 
-# --- AI suggestions -----------------------------------------------------------
+# --- dose and schedule text ---------------------------------------------------
 
-def suggested_factor(db) -> str:
-    factor_id = add(db, db.alpha, db.alpha_patient, purpose="Person wrote this", started_on="2025-01-01")
-    factors.store_suggestion(db.connection, db.alpha, factor_id, SUGGESTION)
-    return factor_id
-
-
-def test_pending_lists_the_fields_and_effects_still_to_take(db):
-    factor_id = suggested_factor(db)
-    pending = factors.pending(fetch(db, factor_id))
-    assert [field["name"] for field in pending["fields"]] == ["purpose", "usual_dose", "monitoring"]
-    assert [effect["index"] for effect in pending["effects"]] == [0, 1]
+@pytest.mark.skipif(not UK_KEYS_READY, reason="Ukrainian medicine keys are not in the catalogue yet")
+def test_regimen_text_in_ukrainian_uses_the_plural_forms():
+    text = factors.regimen_text(shaped(dose_amount=2, dose_unit="tablet", regimen=plan(per_day=3)), "uk")
+    assert text == "2 таблетки · 3 рази на день"
 
 
-def test_pending_leaves_out_an_effect_the_factor_already_has(db):
-    factor_id = suggested_factor(db)
-    factors.add_effect(db.connection, db.alpha, factor_id, concept_id="ldl-cholesterol", label="", direction="lowers")
-    assert [effect["index"] for effect in factors.pending(fetch(db, factor_id))["effects"]] == [1]
+@pytest.mark.skipif(not UK_KEYS_READY, reason="Ukrainian medicine keys are not in the catalogue yet")
+def test_a_fractional_amount_in_ukrainian_uses_a_comma_and_the_few_form():
+    text = factors.regimen_text(shaped(dose_amount=0.5, dose_unit="tablet", regimen=plan()), "uk")
+    assert text.startswith("0,5 таблетки")
 
 
-def test_pending_of_no_suggestion_is_empty():
-    assert factors.pending({"suggestion": None}) == {"fields": [], "effects": [], "empty": True}
+def test_regimen_text_restores_the_locale_it_was_asked_in():
+    before = get_locale()
+    factors.regimen_text(shaped(dose_amount=1, dose_unit="tablet"), "uk")
+    assert get_locale() == before
 
 
-def test_all_fills_only_the_empty_fields_and_marks_them_ai(db):
-    factor_id = suggested_factor(db)
-    assert factors.apply_suggestion(db.connection, db.alpha, factor_id, "all", today=TODAY) is True
-    row = fetch(db, factor_id)
-    assert (row["purpose"], row["usual_dose"]) == ("Person wrote this", "2.5 mg daily")
+def test_regimen_text_for_a_tablet_taken_twice_a_day_with_a_meal():
+    row = shaped(dose_amount=1, dose_unit="tablet", regimen=plan(per_day=2, times=["morning", "evening"], meal="after"))
+    assert factors.regimen_text(row, "en") == "1 tablet · 2 times a day (morning, evening) · after food"
 
 
-def test_all_records_the_filled_fields_as_ai_text(db):
-    factor_id = suggested_factor(db)
-    factors.apply_suggestion(db.connection, db.alpha, factor_id, "all", today=TODAY)
-    assert fetch(db, factor_id)["ai_fields"] == ("usual_dose", "monitoring")
+def test_regimen_text_for_half_a_tablet_once_a_day():
+    row = shaped(dose_amount=0.5, dose_unit="tablet", regimen=plan(per_day=1))
+    assert factors.regimen_text(row, "en") == "0.5 tablets · once a day"
 
 
-def test_all_adds_every_pending_effect_as_ai_with_its_quote(db):
-    factor_id = suggested_factor(db)
-    factors.apply_suggestion(db.connection, db.alpha, factor_id, "all", today=TODAY)
-    effects = fetch(db, factor_id)["effects"]
-    # Effects written in the same second order by id, so compare as a set.
-    assert sorted((effect["origin"], effect["evidence"]) for effect in effects) == [("ai", "quote-ldl"), ("ai", "quote-plt")]
+def test_regimen_text_for_drops_every_week_on_two_days_with_a_clock_time():
+    row = shaped(dose_amount=10, dose_unit="drop", regimen=plan(repeat="weekly", weekdays=[0, 3], clock=["08:00"]))
+    assert factors.regimen_text(row, "en") == "10 drops · every week on Mon, Thu · 08:00"
 
 
-def test_naming_a_field_overwrites_the_person_text_and_marks_it(db):
-    factor_id = suggested_factor(db)
-    assert factors.apply_suggestion(db.connection, db.alpha, factor_id, "purpose", today=TODAY) is True
-    row = fetch(db, factor_id)
-    assert (row["purpose"], row["ai_fields"]) == ("AI purpose text", ("purpose",))
+def test_regimen_text_for_an_as_needed_dose_with_a_maximum():
+    row = shaped(dose_amount=1, dose_unit="tablet", regimen=plan(repeat="as_needed", per_day=3))
+    assert factors.regimen_text(row, "en") == "1 tablet · when needed, up to 3 times a day"
 
 
-def test_naming_an_effect_adds_only_that_effect(db):
-    factor_id = suggested_factor(db)
-    assert factors.apply_suggestion(db.connection, db.alpha, factor_id, "effect:1", today=TODAY) is True
-    effects = fetch(db, factor_id)["effects"]
-    assert [(effect["label"], effect["origin"]) for effect in effects] == [("Platelets", "ai")]
+def test_regimen_text_for_a_every_three_days_dose_with_two_times_a_day():
+    row = shaped(regimen=plan(repeat="days", every=3, per_day=2))
+    assert factors.regimen_text(row, "en") == "every 3 days · 2 times a day"
 
 
-def test_an_effect_index_out_of_range_is_refused(db):
-    factor_id = suggested_factor(db)
-    assert factors.apply_suggestion(db.connection, db.alpha, factor_id, "effect:9", today=TODAY) is False
+def test_regimen_text_for_an_activity_on_three_weekdays_with_its_note():
+    row = shaped(kind="activity", regimen=plan(repeat="weekly", weekdays=[1, 3, 5]), schedule="1 hour")
+    assert factors.regimen_text(row, "en") == "every week on Tue, Thu, Sat · 1 hour"
 
 
-def test_dismiss_clears_the_suggestion(db):
-    factor_id = suggested_factor(db)
-    assert factors.apply_suggestion(db.connection, db.alpha, factor_id, "dismiss", today=TODAY) is True
-    assert fetch(db, factor_id)["suggestion"] is None
+def test_regimen_text_for_an_activity_every_day_has_no_dose_part():
+    assert factors.regimen_text(shaped(kind="activity", regimen=plan()), "en") == "every day"
 
 
-def test_an_unknown_action_is_refused(db):
-    factor_id = suggested_factor(db)
-    assert factors.apply_suggestion(db.connection, db.alpha, factor_id, "nonsense", today=TODAY) is False
+def test_regimen_text_for_free_text_dose_and_schedule():
+    assert factors.regimen_text(shaped(dose="one pill", schedule="mornings"), "en") == "one pill · mornings"
 
 
-def test_an_action_without_a_suggestion_is_refused(db):
+def test_regimen_text_for_nothing_is_empty():
+    assert factors.regimen_text(shaped(), "en") == ""
+
+
+# --- AI suggestions: the form owns them now -----------------------------------
+
+def test_another_user_cannot_add_an_ai_effect_through_update(db):
     factor_id = add(db, db.alpha, db.alpha_patient)
-    assert factors.apply_suggestion(db.connection, db.alpha, factor_id, "all", today=TODAY) is False
+    factors.update(db.connection, db.beta, factor_id, saved(ai_effect=[json.dumps(AI_LDL)]))
+    assert fetch(db, factor_id)["effects"] == []
 
 
 def test_editing_an_ai_field_removes_its_ai_mark(db):
-    factor_id = suggested_factor(db)
-    factors.apply_suggestion(db.connection, db.alpha, factor_id, "all", today=TODAY)
-    values, _ = cleaned(
-        purpose="Person wrote this", usual_dose="5 mg", monitoring="Check INR",
-        started_on="2025-01-01",
+    factor_id = factors.create(
+        db.connection, db.alpha, db.alpha_patient,
+        saved(purpose="Person wrote this", usual_dose="2.5 mg", monitoring="Check INR", ai_fields="usual_dose,monitoring"),
     )
+    values = saved(purpose="Person wrote this", usual_dose="5 mg", monitoring="Check INR", started_on="2025-01-01")
     factors.update(db.connection, db.alpha, factor_id, values)
     assert fetch(db, factor_id)["ai_fields"] == ("monitoring",)
 
@@ -575,9 +819,19 @@ def test_chat_lines_describe_one_medicine_with_its_effect(db):
     lines = factors.chat_lines(db.connection, db.alpha, today=TODAY)
     assert lines[0] == "## medicines and other factors (1 current, 0 prescribed but not started, 0 past; detail: get_medicines)"
     assert lines[1] == (
-        f"- Warfarin [medicine; warfarin; ATC B01AA03] 1 mg; 5 mg, evening; since 2025-01-01; for AF; "
+        f"- Warfarin [medicine; warfarin; ATC B01AA03] 1 mg; 5 mg · evening; since 2025-01-01; for AF; "
         f"effects: lowers LDL cholesterol m:{factor_id}"
     )
+
+
+def test_chat_lines_show_the_scheduled_dose_of_a_medicine(db):
+    add(
+        db, db.alpha, db.alpha_patient, name="Warfarin", dose_amount="5", dose_unit="mg",
+        repeat="daily", per_day="2", day_part=["morning", "evening"], started_on="2025-01-01",
+    )
+    line = factors.chat_lines(db.connection, db.alpha, today=TODAY)[1]
+    assert line.startswith("- Warfarin [medicine] ")
+    assert "5 mg · 2 times a day (morning, evening)" in line
 
 
 def test_chat_detail_without_an_id_on_an_empty_record(db):

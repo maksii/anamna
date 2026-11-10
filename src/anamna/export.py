@@ -9,6 +9,7 @@ import zipfile
 from pathlib import Path
 from typing import BinaryIO
 
+from . import factors
 from .config import Settings, resolve_source_path
 from .db import transaction, utc_now
 
@@ -46,6 +47,47 @@ def _owned_rows(connection: sqlite3.Connection, table: str, user_id: str) -> tup
         f"SELECT {', '.join(columns)} FROM {table} WHERE owner_user_id = ? ORDER BY rowid", (user_id,)
     ).fetchall()
     return columns, [tuple(row) for row in rows]
+
+
+#: Raw dose columns that medicines.csv moves beside ``schedule`` (see ``_medicine_csv``).
+_DOSE_COLUMNS = ("dose_amount", "dose_unit")
+
+
+def _medicine_csv(columns: list[str], rows: list[tuple]) -> tuple[list[str], list[tuple]]:
+    """medicines.csv with the dose and how it is taken right after ``schedule``.
+
+    ``dose_amount`` and ``dose_unit`` are already raw columns, further right; they move up
+    so the dose sits with the schedule. ``how_taken`` is the line the Medicines page prints.
+    """
+    kept = [name for name in columns if name not in _DOSE_COLUMNS]
+    after = kept.index("schedule") + 1
+    header = kept[:after] + [*_DOSE_COLUMNS, "how_taken"] + kept[after:]
+    out = []
+    for row in rows:
+        values = dict(zip(columns, row))
+        plan = values.get("schedule_json") or ""
+        amount = values["dose_amount"]
+        shaped = {
+            "kind": values["kind"],
+            "dose_amount": amount,
+            "dose_unit": values["dose_unit"],
+            "dose": values["dose"],
+            "schedule": values["schedule"],
+            "regimen": json.loads(plan) if plan else None,
+        }
+        # A whole number is written without ".0".
+        if amount is None:
+            amount_text = ""
+        elif float(amount).is_integer():
+            amount_text = str(int(amount))
+        else:
+            amount_text = str(amount)
+        values.update(
+            dose_amount=amount_text,
+            how_taken=factors.regimen_text(shaped, "en"),
+        )
+        out.append(tuple(values[name] for name in header))
+    return header, out
 
 
 def _csv_text(header: list[str], rows: list[tuple]) -> str:
@@ -123,6 +165,7 @@ def write_record_archive(settings: Settings, user_id: str, target: BinaryIO) -> 
             (user_id,),
         ).fetchall()
         owned = {name: _owned_rows(connection, table, user_id) for name, table in _OWNED_TABLES.items()}
+    owned["medicines.csv"] = _medicine_csv(*owned["medicines.csv"])
 
     files: dict[str, Path] = {}
     archive_paths: dict[str, str] = {}

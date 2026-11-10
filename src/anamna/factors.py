@@ -2,9 +2,9 @@
 
 A factor is something the person takes, has had done, has been ill with, eats or
 does: a medicine, a supplement, an operation, an illness, a diet, a training
-load.  Each one has a period, reference notes, and a list of effects on
-concepts the charts draw.  An AI may suggest the notes and the effects; a
-suggestion never overwrites what the person wrote unless they confirm it.
+load.  Each one has a period, a dose and a schedule, reference notes, and a list
+of effects on concepts the charts draw.  An AI may suggest the notes and the
+effects; the person reviews them on the form before anything is saved.
 
 The functions take an open connection whose rows are ``sqlite3.Row`` and never
 commit: the caller does.  They return keys and data; pages translate.
@@ -22,6 +22,15 @@ from datetime import date
 from typing import Any
 
 from anamna.db import utc_now
+from anamna.i18n import (
+    activate_locale,
+    format_number_localized,
+    get_locale,
+    plural_form,
+    reset_locale,
+    t,
+    t_plural,
+)
 
 KINDS = ("medicine", "supplement", "procedure", "illness", "diet", "activity", "other")
 STATUSES = ("current", "prescribed", "past")
@@ -32,22 +41,30 @@ SUGGESTED_FIELDS = ("substance", *REFERENCE_FIELDS)
 SHORT, LONG = 200, 4000
 SHORT_TEXT = ("substance", "strength", "dose", "schedule", "reason", "prescriber")
 LONG_TEXT = ("notes", *REFERENCE_FIELDS)
-EFFECT_NOTE, EFFECT_EVIDENCE = 500, 500
+EFFECT_NOTE, EFFECT_EVIDENCE, EFFECT_QUOTE = 500, 500, 400
+AI_EFFECT_LIMIT = 20
 FACT_MEDICINES = {
     "vka_therapy": (("B01AA",), ("warfarin", "варфарин", "acenocoumarol", "аценокумарол", "phenprocoumon", "фенпрокумон", "phenindione", "феніндіон")),
     "urate_lowering_therapy": (("M04AA", "M04AB", "M04AX"), ("allopurinol", "алопуринол", "аллопуринол", "febuxostat", "фебуксостат", "probenecid", "пробенецид", "benzbromarone", "бензбромарон", "pegloticase", "пеглотиказа")),
 }
+DOSE_UNITS = ("tablet", "capsule", "drop", "ml", "mg", "g", "mcg", "iu", "puff", "sachet",
+              "suppository", "application", "patch", "injection", "piece")
+REPEATS = ("daily", "days", "weekly", "monthly", "as_needed")
+DAY_PARTS = ("morning", "midday", "evening", "night")
+MEALS = ("before", "with", "after", "empty")
+REGIMEN_KINDS = ("medicine", "supplement")            # a dose, times a day, food
+REPEAT_KINDS = ("medicine", "supplement", "activity")  # how often
 
 _STATUS_RANK = {"current": 0, "prescribed": 1, "past": 2}
 _ATC = re.compile(r"[A-Z][0-9]{2}(?:[A-Z]{1,2}(?:[0-9]{2})?)?")
 _REFERENCE_CODE = re.compile(r"[0-9]{1,12}")
-_EFFECT_INDEX = re.compile(r"effect:([0-9]+)")
+_CLOCK = re.compile(r"[0-2][0-9]:[0-5][0-9]")
 _TRUE_FLAGS = ("1", "on", "true")
 _VALUE_COLUMNS = (
     "kind", "name", "substance", "atc_code", "strength", "dose", "schedule", "status",
     "started_on", "ended_on", "dates_approximate", "reason", "prescriber", "document_id",
     "notes", "purpose", "usual_dose", "interactions", "monitoring", "cautions",
-    "reference_name", "reference_code",
+    "reference_name", "reference_code", "dose_amount", "dose_unit", "schedule_json",
 )
 _EFFECT_COLUMNS = "id, concept_id, label, direction, note, origin, evidence"
 
@@ -62,7 +79,100 @@ def _parse_date(text: str | None) -> date | None:
     return date.fromisoformat(text)
 
 
-def clean(form: Mapping[str, str], *, today: date) -> tuple[dict, str | None]:
+def _many(form: Any, name: str) -> list[str]:
+    """Every non-empty value posted under ``name``; a plain dict may hold a single value or a list."""
+    if hasattr(form, "getlist"):
+        values = form.getlist(name)
+    else:
+        value = form.get(name)
+        values = value if isinstance(value, (list, tuple)) else [value]
+    return [str(item).strip() for item in values if item is not None and str(item).strip()]
+
+
+def _to_int(value: Any) -> int | None:
+    try:
+        return int(str(value).strip())
+    except ValueError:
+        return None
+
+
+def _count(value: Any, high: int) -> int:
+    """A whole number from 1 to ``high``; 1 when the value does not parse."""
+    number = _to_int(value)
+    return 1 if number is None else min(max(number, 1), high)
+
+
+def _valid_clock(text: str) -> bool:
+    return _CLOCK.fullmatch(text) is not None and int(text[:2]) <= 23
+
+
+def _dose_amount(form: Mapping[str, Any]) -> float | None:
+    text = str(form.get("dose_amount") or "").strip().replace(",", ".")
+    try:
+        amount = round(float(text), 3)
+    except ValueError:
+        return None
+    return amount if 0 < amount <= 100000 else None
+
+
+def _schedule(form: Mapping[str, Any], kind: str) -> str:
+    """The schedule as JSON, or '' when the kind has none or no valid repeat was posted."""
+    repeat = str(form.get("repeat") or "").strip()
+    if kind not in REPEAT_KINDS or repeat not in REPEATS:
+        return ""
+    every = _count(form.get("every"), 99)
+    if repeat in ("daily", "as_needed"):
+        every = 1
+    if repeat == "days" and every == 1:
+        repeat = "daily"
+    weekdays: list[int] = []
+    if repeat == "weekly":
+        days = {_to_int(item) for item in _many(form, "weekday")}
+        weekdays = sorted(day for day in days if day is not None and 0 <= day <= 6)
+    if kind in REGIMEN_KINDS:
+        posted_parts = set(_many(form, "day_part"))
+        times = [part for part in DAY_PARTS if part in posted_parts]
+        clock = sorted({text for text in _many(form, "clock") if _valid_clock(text)})[:12]
+        per_day = max(_count(form.get("per_day"), 24), len(times) + len(clock))
+        meal = str(form.get("meal") or "").strip()
+        if meal not in MEALS:
+            meal = ""
+    else:
+        per_day, times, clock, meal = 1, [], [], ""
+    return json.dumps(
+        {
+            "repeat": repeat, "every": every, "weekdays": weekdays, "per_day": per_day,
+            "times": times, "clock": clock, "meal": meal,
+        },
+        separators=(",", ":"),
+    )
+
+
+def _ai_effects(form: Mapping[str, Any]) -> list[dict]:
+    """The accepted AI effects the form posts, each a JSON object; the first few usable ones."""
+    effects: list[dict] = []
+    for raw in _many(form, "ai_effect"):
+        if len(effects) == AI_EFFECT_LIMIT:
+            break
+        try:
+            item = json.loads(raw)
+        except ValueError:
+            continue
+        if not isinstance(item, dict) or item.get("direction") not in DIRECTIONS:
+            continue
+        concept = item.get("concept_id")
+        concept_id = concept.strip() if isinstance(concept, str) else ""
+        effects.append({
+            "concept_id": concept_id or None,
+            "label": _cut(item.get("label"), SHORT),
+            "direction": item["direction"],
+            "note": _cut(item.get("note"), EFFECT_NOTE),
+            "quote": _cut(item.get("quote"), EFFECT_QUOTE),
+        })
+    return effects
+
+
+def clean(form: Mapping[str, Any], *, today: date) -> tuple[dict, str | None]:
     kind = str(form.get("kind") or "").strip()
     if kind not in KINDS:
         return {}, "kind"
@@ -118,6 +228,17 @@ def clean(form: Mapping[str, str], *, today: date) -> tuple[dict, str | None]:
     values["reference_code"] = (
         reference_code if values["reference_name"] and _REFERENCE_CODE.fullmatch(reference_code) else ""
     )
+
+    amount = _dose_amount(form) if kind in REGIMEN_KINDS else None
+    unit = str(form.get("dose_unit") or "").strip()
+    values["dose_amount"] = amount
+    values["dose_unit"] = unit if amount is not None and unit in DOSE_UNITS else ""
+    values["schedule_json"] = _schedule(form, kind)
+    posted_fields = {part.strip() for part in str(form.get("ai_fields") or "").split(",")}
+    values["ai_fields"] = tuple(
+        field for field in SUGGESTED_FIELDS if field in posted_fields and values[field]
+    )
+    values["ai_effects"] = _ai_effects(form)
     return values, None
 
 
@@ -147,21 +268,39 @@ def _with(names: tuple[str, ...], name: str) -> tuple[str, ...]:
     return names if name in names else (*names, name)
 
 
-def _suggestion(text: str | None) -> dict | None:
-    if not text:
-        return None
-    try:
-        value = json.loads(text)
-    except ValueError:
-        return None
-    return value if isinstance(value, dict) else None
+def _has_effect(existing: list[dict], effect: Mapping[str, Any]) -> bool:
+    """True when an effect on the same concept, or with the same label, is already there."""
+    concept = effect.get("concept_id") or None
+    label = str(effect.get("label") or "").strip().casefold()
+    for item in existing:
+        if concept and item.get("concept_id") == concept:
+            return True
+        if label and str(item.get("label") or "").strip().casefold() == label:
+            return True
+    return False
 
 
-def _suggested_text(suggestion: Mapping[str, Any], name: str) -> str:
-    entry = (suggestion.get("fields") or {}).get(name)
-    if not isinstance(entry, dict):
-        return ""
-    return str(entry.get("text") or "").strip()
+def _add_ai_effects(connection: sqlite3.Connection, owner_id: str, factor_id: str, effects: list[dict]) -> None:
+    existing = [
+        {"concept_id": row["concept_id"], "label": row["label"]}
+        for row in connection.execute(
+            "SELECT concept_id, label FROM factor_effects WHERE factor_id=? AND owner_user_id=?",
+            (factor_id, owner_id),
+        )
+    ]
+    for effect in effects:
+        if _has_effect(existing, effect):
+            continue
+        add_effect(
+            connection, owner_id, factor_id,
+            concept_id=effect.get("concept_id") or None,
+            label=str(effect.get("label") or ""),
+            direction=effect["direction"],
+            note=str(effect.get("note") or ""),
+            origin="ai",
+            evidence=str(effect.get("quote") or ""),
+        )
+        existing.append({"concept_id": effect.get("concept_id") or None, "label": effect.get("label") or ""})
 
 
 def create(connection: sqlite3.Connection, owner_id: str, patient_id: str, values: Mapping[str, Any]) -> str:
@@ -170,10 +309,12 @@ def create(connection: sqlite3.Connection, owner_id: str, patient_id: str, value
     row: dict[str, Any] = {key: values[key] for key in _VALUE_COLUMNS}
     row["document_id"] = _document_for(connection, owner_id, values["document_id"])
     row["reference_source"], row["reference_url"] = _reference(values)
+    row["ai_fields"] = ",".join(values.get("ai_fields", ()))
     row.update(id=factor_id, owner_user_id=owner_id, patient_id=patient_id, created_at=now, updated_at=now)
     columns = ", ".join(row)
     marks = ", ".join("?" for _ in row)
     connection.execute(f"INSERT INTO factors ({columns}) VALUES ({marks})", tuple(row.values()))
+    _add_ai_effects(connection, owner_id, factor_id, values.get("ai_effects", []))
     return factor_id
 
 
@@ -185,6 +326,9 @@ def update(connection: sqlite3.Connection, owner_id: str, factor_id: str, values
         return False
     changed = {name for name in SUGGESTED_FIELDS if current[name] != values[name]}
     names = tuple(name for name in _names(current["ai_fields"]) if name not in changed)
+    for name in values.get("ai_fields", ()):
+        names = _with(names, name)
+    names = tuple(name for name in SUGGESTED_FIELDS if name in names)
     row: dict[str, Any] = {key: values[key] for key in _VALUE_COLUMNS}
     row["document_id"] = _document_for(connection, owner_id, values["document_id"])
     row["reference_source"], row["reference_url"] = _reference(values)
@@ -195,6 +339,7 @@ def update(connection: sqlite3.Connection, owner_id: str, factor_id: str, values
         f"UPDATE factors SET {assignments} WHERE id=? AND owner_user_id=?",
         (*row.values(), factor_id, owner_id),
     )
+    _add_ai_effects(connection, owner_id, factor_id, values.get("ai_effects", []))
     return True
 
 
@@ -250,11 +395,31 @@ def _effect(row: sqlite3.Row) -> dict:
     }
 
 
+def _regimen(text: str | None) -> dict | None:
+    """The schedule stored as JSON, with every key filled in; None when there is none."""
+    if not text:
+        return None
+    try:
+        value = json.loads(text)
+    except ValueError:
+        return None
+    if not isinstance(value, dict) or value.get("repeat") not in REPEATS:
+        return None
+    plan: dict[str, Any] = {
+        "repeat": value["repeat"], "every": 1, "weekdays": [], "per_day": 1,
+        "times": [], "clock": [], "meal": "",
+    }
+    for key in ("every", "weekdays", "per_day", "times", "clock", "meal"):
+        if key in value:
+            plan[key] = value[key]
+    return plan
+
+
 def _shape(row: sqlite3.Row, effects: list[dict], today: date) -> dict:
     data = dict(row)
     data["effective_status"] = effective_status(row, today)
     data["effects"] = effects
-    data["suggestion"] = _suggestion(row["suggestion_json"])
+    data["regimen"] = _regimen(row["schedule_json"])
     data["facts"] = implied_facts(row)
     data["ai_fields"] = _names(row["ai_fields"])
     data["is_point"] = row["kind"] in POINT_KINDS
@@ -430,117 +595,6 @@ def facts_on(periods: list[tuple[str, str, str | None]], day: str) -> set[str]:
     }
 
 
-def store_suggestion(connection: sqlite3.Connection, owner_id: str, factor_id: str, suggestion: dict) -> bool:
-    cursor = connection.execute(
-        "UPDATE factors SET suggestion_json=?, suggestion_at=? WHERE id=? AND owner_user_id=?",
-        (json.dumps(suggestion, ensure_ascii=False), utc_now(), factor_id, owner_id),
-    )
-    return cursor.rowcount > 0
-
-
-def _usable_effect(effect: Any) -> bool:
-    if not isinstance(effect, dict) or effect.get("direction") not in DIRECTIONS:
-        return False
-    return bool(effect.get("concept_id") or str(effect.get("label") or "").strip())
-
-
-def _has_effect(existing: list[dict], effect: Mapping[str, Any]) -> bool:
-    concept = effect.get("concept_id") or None
-    if concept:
-        return any(item.get("concept_id") == concept for item in existing)
-    label = str(effect.get("label") or "").strip().casefold()
-    return any(str(item.get("label") or "").strip().casefold() == label for item in existing)
-
-
-def pending(factor: Mapping[str, Any]) -> dict:
-    suggestion = factor.get("suggestion")
-    if not suggestion:
-        return {"fields": [], "effects": [], "empty": True}
-    fields = []
-    for name in SUGGESTED_FIELDS:
-        text = _suggested_text(suggestion, name)
-        current = factor.get(name) or ""
-        if text and text != current.strip():
-            entry = (suggestion.get("fields") or {}).get(name)
-            quote = str(entry.get("quote") or "") if isinstance(entry, dict) else ""
-            fields.append({"name": name, "text": text, "quote": quote, "current": current})
-    existing = factor.get("effects") or []
-    effects = [
-        {**effect, "index": index}
-        for index, effect in enumerate(suggestion.get("effects") or [])
-        if _usable_effect(effect) and not _has_effect(existing, effect)
-    ]
-    return {"fields": fields, "effects": effects, "empty": not fields and not effects}
-
-
-def apply_suggestion(connection: sqlite3.Connection, owner_id: str, factor_id: str, what: str, *, today: date) -> bool:
-    row = connection.execute(
-        "SELECT * FROM factors WHERE id=? AND owner_user_id=?", (factor_id, owner_id)
-    ).fetchone()
-    if row is None:
-        return False
-    suggestion = _suggestion(row["suggestion_json"])
-    if not suggestion:
-        return False
-
-    if what == "dismiss":
-        _write(connection, owner_id, factor_id, {"suggestion_json": None, "suggestion_at": None})
-        return True
-
-    if what == "all":
-        names = _names(row["ai_fields"])
-        changes: dict[str, Any] = {}
-        for name in SUGGESTED_FIELDS:
-            text = _suggested_text(suggestion, name)
-            if text and not (row[name] or "").strip():
-                changes[name] = text
-                names = _with(names, name)
-        if changes:
-            changes["ai_fields"] = ",".join(names)
-        shaped = get(connection, owner_id, factor_id, today=today)
-        for effect in pending(shaped)["effects"]:
-            add_effect(
-                connection, owner_id, factor_id,
-                concept_id=effect.get("concept_id") or None,
-                label=str(effect.get("label") or ""),
-                direction=effect["direction"],
-                note=str(effect.get("note") or ""),
-                origin="ai",
-                evidence=str(effect.get("quote") or ""),
-            )
-        _write(connection, owner_id, factor_id, changes)
-        return True
-
-    if what in SUGGESTED_FIELDS:
-        text = _suggested_text(suggestion, what)
-        if text:
-            names = _with(_names(row["ai_fields"]), what)
-            _write(connection, owner_id, factor_id, {what: text, "ai_fields": ",".join(names)})
-        return True
-
-    match = _EFFECT_INDEX.fullmatch(what)
-    if match:
-        effects = suggestion.get("effects") or []
-        index = int(match.group(1))
-        if index >= len(effects) or not _usable_effect(effects[index]):
-            return False
-        effect = effects[index]
-        added = add_effect(
-            connection, owner_id, factor_id,
-            concept_id=effect.get("concept_id") or None,
-            label=str(effect.get("label") or ""),
-            direction=effect["direction"],
-            note=str(effect.get("note") or ""),
-            origin="ai",
-            evidence=str(effect.get("quote") or ""),
-        )
-        if added is None:
-            return False
-        _write(connection, owner_id, factor_id, {})
-        return True
-    return False
-
-
 def search_rows(connection: sqlite3.Connection, owner_id: str) -> list[dict]:
     return [
         dict(row)
@@ -551,6 +605,87 @@ def search_rows(connection: sqlite3.Connection, owner_id: str) -> list[dict]:
     ]
 
 
+def _amount_form(amount: float) -> str:
+    """The plural form of a dose amount.  A fraction takes the Ukrainian genitive singular, the "few" form."""
+    if float(amount).is_integer():
+        return plural_form(int(amount))
+    return "few" if get_locale() == "uk" else "many"
+
+
+def _plan_parts(plan: Mapping[str, Any], kind: str) -> list[str]:
+    repeat = plan["repeat"]
+    every = plan["every"]
+    per_day = plan["per_day"]
+    when = [t(f"med.daypart.{part}") for part in plan["times"]] + list(plan["clock"])
+    regimen = kind in REGIMEN_KINDS
+    parts: list[str] = []
+    if repeat == "as_needed":
+        text = t("med.regimen.as_needed")
+        if per_day > 1:
+            text += ", " + t_plural("med.regimen.up_to", per_day)
+        parts.append(text)
+    elif repeat == "daily":
+        if regimen:
+            text = t_plural("med.regimen.per_day", per_day)
+            if when:
+                text += " (" + ", ".join(when) + ")"
+        else:
+            text = t("med.regimen.daily")
+        parts.append(text)
+    elif repeat == "days":
+        parts.append(t_plural("med.regimen.days", every))
+    elif repeat == "weekly":
+        text = t("med.regimen.week1") if every == 1 else t_plural("med.regimen.weeks", every)
+        if plan["weekdays"]:
+            days = ", ".join(t(f"med.weekday.{day}") for day in plan["weekdays"])
+            text += " " + t("med.regimen.on_days", days=days)
+        parts.append(text)
+    elif repeat == "monthly":
+        parts.append(t("med.regimen.month1") if every == 1 else t_plural("med.regimen.months", every))
+    if repeat in ("days", "weekly", "monthly") and regimen:
+        if per_day > 1:
+            text = t_plural("med.regimen.per_day", per_day)
+            if when:
+                text += " (" + ", ".join(when) + ")"
+            parts.append(text)
+        elif when:
+            parts.append(", ".join(when))
+    if plan["meal"]:
+        parts.append(t(f"med.meal.{plan['meal']}"))
+    return parts
+
+
+def _regimen_parts(row: Mapping[str, Any]) -> list[str]:
+    parts: list[str] = []
+    amount = row.get("dose_amount")
+    if amount is not None:
+        number = format_number_localized(amount, 3)
+        unit = row.get("dose_unit") or ""
+        if unit:
+            unit_word = t(f"med.unit.{unit}_{_amount_form(amount)}")
+            parts.append(f"{number} {unit_word}")
+        else:
+            parts.append(number)
+    elif row.get("dose"):
+        parts.append(row["dose"])
+    plan = row.get("regimen")
+    if isinstance(plan, dict):
+        parts.extend(_plan_parts(plan, row.get("kind") or ""))
+    if row.get("schedule"):
+        parts.append(row["schedule"])
+    return parts
+
+
+def regimen_text(row: Mapping[str, Any], locale: str) -> str:
+    """One line saying how the thing is taken: the dose, the times and days, the meal, then the note."""
+    token = activate_locale(locale)
+    try:
+        parts = _regimen_parts(row)
+    finally:
+        reset_locale(token)
+    return " · ".join(parts)
+
+
 def _line(factor: Mapping[str, Any], *, detail: bool) -> str:
     inside = [factor["kind"]]
     if factor["substance"]:
@@ -558,11 +693,7 @@ def _line(factor: Mapping[str, Any], *, detail: bool) -> str:
     if factor["atc_code"]:
         inside.append(f"ATC {factor['atc_code']}")
     head = f"- {factor['name']} [{'; '.join(inside)}]"
-    dosing = "; ".join(
-        part
-        for part in (factor["strength"], ", ".join(value for value in (factor["dose"], factor["schedule"]) if value))
-        if part
-    )
+    dosing = "; ".join(part for part in (factor["strength"], regimen_text(factor, "en")) if part)
     if dosing:
         head += f" {dosing}"
     parts = []

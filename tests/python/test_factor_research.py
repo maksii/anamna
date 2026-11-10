@@ -60,7 +60,7 @@ def card(**overrides) -> str:
 def factor_for(**overrides) -> dict:
     factor = {
         "id": "f10", "owner_user_id": "u1", "kind": "medicine", "name": "Діокор", "substance": "валсартан",
-        "atc_code": "", "strength": "80 мг", "dose": "1 таблетка", "schedule": "щодня",
+        "atc_code": "", "strength": "80 мг", "how_taken": "1 tablet · once a day",
         "reason": "тиск", "reference_name": "Диокор", "reference_code": "8311",
     }
     factor.update(overrides)
@@ -225,6 +225,7 @@ def test_without_a_reference_the_source_is_none_and_no_quote_survives(tmp_path: 
         )
     assert result["source"] is None
     assert result["atc_codes"] == []
+    assert result["regimen"] is None
     assert all(field["quote"] == "" for field in result["fields"].values())
     assert result["fields"]["substance"]["text"] == "валсартан, гідрохлоротіазид"
 
@@ -279,6 +280,13 @@ def test_the_model_gets_the_schema_timeout_and_the_language(tmp_path: Path, monk
     assert payload["language"] == "English"
     assert payload["output_contract"]["additionalProperties"] is False
     assert payload["item"]["substance"] == "валсартан"
+    assert payload["item"]["how_taken"] == "1 tablet · once a day"
+    assert "dose" not in payload["item"] and "schedule" not in payload["item"]
+    regimen_schema = payload["output_contract"]["properties"]["usual_regimen"]
+    assert regimen_schema["additionalProperties"] is False
+    assert set(regimen_schema["required"]) == {
+        "dose_amount", "dose_unit", "repeat", "every", "per_day", "quote"}
+    assert "usual_regimen" in payload["output_contract"]["required"]
     assert result["model"] == "test/model"
     assert result["language"] == "en"
 
@@ -352,3 +360,109 @@ def test_research_commits_the_cached_reference_before_the_model_call_takes_its_l
     with connect(settings) as connection:
         assert connection.execute("SELECT COUNT(*) FROM drug_references").fetchone()[0] == 1
         assert connection.execute("SELECT COUNT(*) FROM ai_usage WHERE ok = 1").fetchone()[0] == 1
+
+
+REGIMEN_QUOTE = "Дорослим призначають 80 мг один раз на добу."
+HAYSTACK = factor_research._normal(" ".join(text for _, text in REFERENCE["sections"]))
+
+
+def regimen_reply(**overrides) -> dict:
+    regimen = {"dose_amount": 80, "dose_unit": "mg", "repeat": "daily", "every": 1, "per_day": 1,
+               "quote": REGIMEN_QUOTE}
+    regimen.update(overrides)
+    return {"usual_regimen": regimen}
+
+
+def test_a_regimen_the_instruction_states_is_offered():
+    assert factor_research._regimen(regimen_reply(), HAYSTACK, "medicine") == {
+        "dose_amount": 80.0, "dose_unit": "mg", "repeat": "daily", "every": 1, "per_day": 1,
+        "quote": REGIMEN_QUOTE,
+    }
+
+
+@pytest.mark.parametrize("reply, haystack, kind", [
+    (regimen_reply(quote="Цього тексту немає в інструкції."), HAYSTACK, "medicine"),
+    (regimen_reply(), "", "medicine"),
+    (regimen_reply(dose_amount=0), HAYSTACK, "medicine"),
+    (regimen_reply(dose_amount=1001), HAYSTACK, "medicine"),
+    (regimen_reply(dose_amount=True), HAYSTACK, "medicine"),
+    (regimen_reply(dose_unit=""), HAYSTACK, "medicine"),
+    (regimen_reply(repeat=""), HAYSTACK, "medicine"),
+    (regimen_reply(repeat="as_needed"), HAYSTACK, "medicine"),
+    (regimen_reply(), HAYSTACK, "diet"),
+    ({}, HAYSTACK, "medicine"),
+])
+def test_a_regimen_that_is_not_stated_or_not_usable_is_not_offered(reply, haystack, kind):
+    assert factor_research._regimen(reply, haystack, kind) is None
+
+
+def test_every_and_per_day_are_clamped_and_a_one_day_interval_becomes_daily():
+    regimen = factor_research._regimen
+    weekly = regimen(regimen_reply(repeat="weekly", every=500, per_day=30), HAYSTACK, "supplement")
+    assert (weekly["every"], weekly["per_day"]) == (99, 24)
+    monthly = regimen(regimen_reply(repeat="monthly", every=0, per_day=-3), HAYSTACK, "medicine")
+    assert (monthly["every"], monthly["per_day"]) == (1, 1)
+    not_ints = regimen(regimen_reply(repeat="weekly", every="2", per_day="x"), HAYSTACK, "medicine")
+    assert (not_ints["every"], not_ints["per_day"]) == (1, 1)
+    one_day = regimen(regimen_reply(repeat="days", every=1), HAYSTACK, "medicine")
+    assert (one_day["repeat"], one_day["every"]) == ("daily", 1)
+    every_three = regimen(regimen_reply(repeat="days", every=3), HAYSTACK, "medicine")
+    assert (every_three["repeat"], every_three["every"]) == ("days", 3)
+    daily = regimen(regimen_reply(repeat="daily", every=5), HAYSTACK, "medicine")
+    assert daily["every"] == 1
+
+
+def test_a_fractional_amount_is_rounded_to_three_places():
+    offered = factor_research._regimen(regimen_reply(dose_amount=0.3333333), HAYSTACK, "medicine")
+    assert offered["dose_amount"] == 0.333
+
+
+def test_research_offers_the_regimen_only_when_the_instruction_states_it(tmp_path: Path, monkeypatch):
+    settings = make_database(tmp_path)
+    stub_model(settings, monkeypatch, card(**regimen_reply()))
+    use_reference(monkeypatch)
+    with connect(settings) as connection:
+        result = factor_research.research(settings, connection, factor_for(), locale="uk")
+    assert result["regimen"] == {"dose_amount": 80.0, "dose_unit": "mg", "repeat": "daily",
+                                 "every": 1, "per_day": 1, "quote": REGIMEN_QUOTE}
+
+    stub_model(settings, monkeypatch, card(**regimen_reply(quote="Немає такого в інструкції.")))
+    with connect(settings) as connection:
+        assert factor_research.research(settings, connection, factor_for(), locale="uk")["regimen"] is None
+
+    stub_model(settings, monkeypatch, card(**regimen_reply()))
+    use_reference(monkeypatch, None)
+    with connect(settings) as connection:
+        assert factor_research.research(settings, connection, factor_for(), locale="uk")["regimen"] is None
+
+
+def test_a_draft_without_an_id_or_a_database_row_is_researched(tmp_path: Path, monkeypatch):
+    settings = make_database(tmp_path)
+    with connect(settings) as connection:
+        add_owner(connection, "u1", "p1")
+        connection.execute(
+            "INSERT INTO factors (id, owner_user_id, patient_id, kind, name, substance, status, created_at, updated_at) "
+            "VALUES ('f2', 'u1', 'p1', 'medicine', 'Амлодипін', 'амлодипін', 'current', "
+            "'2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00')"
+        )
+    calls = stub_model(settings, monkeypatch, card(**regimen_reply()))
+    use_reference(monkeypatch)
+    draft = {key: value for key, value in factor_for().items() if key != "id"}
+    with connect(settings) as connection:
+        result = factor_research.research(settings, connection, draft, locale="uk")
+    payload = sent_payload(calls)
+    assert payload["also_taking"] == ["Амлодипін (амлодипін)"]
+    assert payload["item"]["name"] == "Діокор"
+    assert payload["item"]["how_taken"] == "1 tablet · once a day"
+    assert result["regimen"]["quote"] == REGIMEN_QUOTE
+    assert result["fields"]["usual_dose"]["quote"] == REGIMEN_QUOTE
+
+
+def test_a_reply_without_a_regimen_still_works_and_offers_none(tmp_path: Path, monkeypatch):
+    settings = make_database(tmp_path)
+    stub_model(settings, monkeypatch, card())
+    use_reference(monkeypatch)
+    with connect(settings) as connection:
+        result = factor_research.research(settings, connection, factor_for(), locale="uk")
+    assert result["regimen"] is None
+    assert result["fields"]["usual_dose"]["quote"] == REGIMEN_QUOTE

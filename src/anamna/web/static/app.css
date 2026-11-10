@@ -7379,7 +7379,7 @@ svg.an-trend { display: block; width: 100%; max-width: 24rem; height: auto; over
 .an-med-lead { margin: 0; max-width: 68ch; color: var(--muted); font-size: var(--text-sm); line-height: 1.55; }
 .an-med-add { min-height: 44px; }
 .an-med-crumb { margin-bottom: var(--space-3); }
-.an-med-crumb a, .an-med-link, .an-med-pending { display: inline-flex; align-items: center; gap: var(--space-1); min-height: 44px; font-size: var(--text-sm); font-weight: 650; }
+.an-med-crumb a, .an-med-link { display: inline-flex; align-items: center; gap: var(--space-1); min-height: 44px; font-size: var(--text-sm); font-weight: 650; }
 
 .an-med-filter { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-4); }
 .an-med-filter a { display: inline-flex; align-items: center; gap: var(--space-2); min-height: 44px; padding: 0 var(--space-3); border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--ink); font-size: var(--text-sm); font-weight: 650; }
@@ -7427,7 +7427,60 @@ svg.an-trend { display: block; width: 100%; max-width: 24rem; height: auto; over
 .an-med-section { display: grid; gap: var(--space-4); min-width: 0; }
 .an-med-section h2, .an-med-panel h2 { margin: 0; font-size: var(--text-lg); letter-spacing: -.01em; }
 .an-med-section__lead { margin: 0; color: var(--muted); font-size: var(--text-sm); line-height: 1.55; }
-.an-med-field { min-width: 0; }
+.an-med-field { display: grid; gap: 7px; min-width: 0; }
+.an-med-field > label { display: block; }
+/* A number with a button on each side: a phone shows no spinner on a number
+   field, and a thumb needs 44 px.  The native spinner is hidden so there is
+   one way to step, not two. */
+.an-stepper { display: grid; grid-template-columns: 44px minmax(64px, 96px) 44px; gap: var(--space-1); }
+.an-stepper input { padding-inline: 6px; text-align: center; -moz-appearance: textfield; appearance: textfield; }
+.an-stepper input::-webkit-outer-spin-button, .an-stepper input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.an-stepper button { min-width: 44px; min-height: 44px; padding: 0; font-size: var(--text-lg); font-weight: 700; line-height: 1; }
+.an-med-dose { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.an-med-dose select { flex: 1 1 120px; width: auto; min-width: 0; }
+.an-med-total { margin: 0; padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); background: var(--st-normal-bg); color: var(--st-normal-fg); font-size: var(--text-sm); font-weight: 650; }
+.an-med-offer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2) var(--space-3); margin: 0; padding: var(--space-2) var(--space-3); border: 1px solid var(--st-conflict-line); border-radius: var(--radius-sm); color: var(--ink); font-size: var(--text-sm); font-weight: 500; }
+.an-med-offer .secondary { min-height: 44px; }
+.an-med-total[hidden], .an-med-offer[hidden] { display: none; }
+/* Tick-chips for weekdays and parts of the day.  The checkbox covers the
+   chip, so the whole chip is the target; a chosen chip carries a tick as
+   well as a colour. */
+.an-med-chips { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0; padding: 0; border: 0; min-width: 0; }
+.an-med-chips legend { margin-bottom: 7px; padding: 0; color: var(--muted); font-size: 12px; font-weight: 700; }
+.an-med-chips .an-field-help { flex-basis: 100%; margin: 0; }
+.an-med-chip { position: relative; display: inline-flex; gap: 0; cursor: pointer; }
+.an-med-chip input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.an-med-chip > span { display: inline-flex; align-items: center; justify-content: center; min-width: 48px; min-height: 44px; padding: 0 var(--space-3); border: 1px solid var(--edge-strong); border-radius: 999px; background: var(--surface); color: var(--ink); font-size: var(--text-sm); font-weight: 650; }
+.an-med-chip abbr { text-decoration: none; }
+.an-med-chip input:checked + span { border-color: var(--teal); background: var(--mint); color: var(--teal-dark); }
+.an-med-chip input:checked + span::before { content: "✓"; margin-inline-end: 6px; font-weight: 800; }
+.an-med-chip input:focus-visible + span { outline: 3px solid var(--focus); outline-offset: 2px; }
+.an-med-clocks { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); flex-basis: 100%; }
+.an-med-clock { display: inline-flex; gap: var(--space-1); }
+.an-med-clock input { width: auto; min-width: 124px; }
+.an-med-clock button { min-width: 44px; min-height: 44px; padding: 0; font-size: var(--text-lg); line-height: 1; }
+.an-med-clocks > button { min-height: 44px; }
+/* The AI panel, and what it leaves under a field it filled or would fill. */
+.an-med-ai { display: grid; gap: var(--space-3); min-width: 0; padding: var(--space-4); border: 1px solid var(--st-conflict-line); border-radius: var(--radius-md); background: var(--surface); }
+.an-med-ai h2 { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin: 0; font-size: var(--text-lg); letter-spacing: -.01em; }
+.an-med-ai p { margin: 0; }
+.an-med-ai .primary, .an-med-ai .secondary { min-height: 44px; }
+.an-med-ai__status { font-size: var(--text-sm); font-weight: 650; }
+.an-med-ai__status[data-state="error"] { color: var(--warn-ink); }
+.an-med-ai__status[data-state="running"]::before { content: ""; display: inline-block; width: 14px; height: 14px; margin-inline-end: 8px; border: 2px solid var(--edge-strong); border-top-color: var(--teal); border-radius: 50%; vertical-align: -2px; animation: an-spin .8s linear infinite; }
+.an-med-ai__source { font-size: var(--text-sm); }
+.an-med-ai [hidden], .an-med-ai-note [hidden], .an-med-ai-effects li [hidden] { display: none; }
+.an-med-ai-note { display: grid; gap: var(--space-2); padding: var(--space-2) var(--space-3); border-left: 3px solid var(--st-conflict-line); border-radius: 0 var(--radius-xs) var(--radius-xs) 0; background: var(--surface-sunken); color: var(--ink); font-size: var(--text-sm); font-weight: 500; }
+.an-med-ai-note p { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin: 0; }
+.an-med-ai-note .secondary { min-height: 44px; }
+.an-med-ai-effects { display: grid; gap: var(--space-2); margin: 0; padding: 0; border: 0; min-width: 0; }
+.an-med-ai-effects[hidden] { display: none; }
+.an-med-ai-effects legend { padding: 0; font-size: var(--text-md); font-weight: 700; }
+.an-med-ai-effects ul { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.an-med-ai-effects li { display: grid; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); }
+.an-med-ai-effects .an-med-check > span { justify-items: start; }
+.an-med-ai-effects .an-med-sug__text, .an-med-offer .an-med-quote { font-weight: 500; }
+.an-med-offer .an-med-quote { flex-basis: 100%; }
 .an-med-form textarea { width: 100%; min-height: 88px; border: 1px solid var(--edge-strong); border-radius: 10px; background: var(--surface); color: var(--ink); padding: 11px 12px; font: inherit; font-size: var(--text-sm); line-height: 1.5; overflow-wrap: anywhere; resize: vertical; }
 .an-med-form textarea:focus { border-color: var(--teal); box-shadow: 0 0 0 3px rgba(40,106,97,.12); outline: 0; }
 .an-med-dates { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: var(--space-4); }
@@ -7460,7 +7513,15 @@ svg.an-trend { display: block; width: 100%; max-width: 24rem; height: auto; over
 .an-med-form:has([name="kind"][value="illness"]:checked) .not-illness,
 .an-med-form:not(:has([name="kind"][value="medicine"]:checked, [name="kind"][value="supplement"]:checked)) .only-drug,
 .an-med-form:has([name="kind"][value="medicine"]:checked, [name="kind"][value="supplement"]:checked) .not-drug,
-.an-med-form:not(:has([name="kind"][value="medicine"]:checked)) .only-medicine { display: none; }
+.an-med-form:not(:has([name="kind"][value="medicine"]:checked)) .only-medicine,
+.an-med-form:not(:has([name="kind"][value="medicine"]:checked, [name="kind"][value="supplement"]:checked, [name="kind"][value="activity"]:checked)) .only-repeat,
+.an-med-form:has(#med-repeat option[value=""]:checked) .rep-set,
+.an-med-form:not(:has(#med-repeat option:is([value="days"], [value="weekly"], [value="monthly"]):checked)) .rep-every,
+.an-med-form:not(:has(#med-repeat option[value="weekly"]:checked)) .rep-weekly,
+.an-med-form:not(:has(#med-repeat option[value="days"]:checked)) .rep-days,
+.an-med-form:not(:has(#med-repeat option[value="monthly"]:checked)) .rep-monthly,
+.an-med-form:has(#med-repeat option[value="as_needed"]:checked) .rep-not-needed,
+.an-med-form:not(:has(#med-repeat option[value="as_needed"]:checked)) .rep-needed { display: none; }
 
 .an-med-lookup { position: relative; display: grid; gap: 7px; }
 .an-med-lookup > label { display: block; }
@@ -7492,22 +7553,17 @@ svg.an-trend { display: block; width: 100%; max-width: 24rem; height: auto; over
 .an-med-facts dd, .an-med-reference dd { margin: 0; font-size: var(--text-sm); line-height: 1.55; overflow-wrap: anywhere; white-space: pre-line; }
 .an-med-reference { display: grid; gap: var(--space-4); }
 
-.an-med-suggestions { border-color: var(--st-conflict-line); }
-.an-med-sug-all { display: flex; flex-wrap: wrap; gap: var(--space-2); }
-.an-med-sug { display: grid; gap: var(--space-2); padding: var(--space-4); border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); justify-items: start; }
-.an-med-sug h3, .an-med-sug-effects { margin: 0; font-size: var(--text-sm); }
 .an-med-sug__text { margin: 0; font-size: var(--text-sm); line-height: 1.55; overflow-wrap: anywhere; white-space: pre-line; }
-.an-med-sug__yours { margin: 0; padding: var(--space-2) var(--space-3); border-radius: var(--radius-xs); background: var(--surface-sunken); font-size: var(--text-sm); overflow-wrap: anywhere; }
-.an-med-sug__yours span, .an-med-quote span { display: block; color: var(--muted); font-size: var(--text-2xs); font-weight: 700; font-style: normal; }
+.an-med-quote span { display: block; color: var(--muted); font-size: var(--text-2xs); font-weight: 700; font-style: normal; }
 .an-med-quote { margin: 0; padding: var(--space-2) var(--space-3); border-left: 3px solid var(--rb-edge); background: var(--surface-sunken); border-radius: 0 var(--radius-xs) var(--radius-xs) 0; font-size: var(--text-xs); line-height: 1.5; font-style: italic; overflow-wrap: anywhere; }
 .an-med-unquoted { margin: 0; color: var(--warn-ink); font-size: var(--text-xs); font-weight: 650; }
-.an-med-sug-list, .an-med-effect-rows { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
-.an-med-sug-list > li, .an-med-effect-rows > li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-3) 0; border-top: 1px solid var(--line); }
-.an-med-sug-list > li:first-child, .an-med-effect-rows > li:first-child { border-top: 0; }
-.an-med-sug-list > li > div, .an-med-effect-rows > li > div { display: grid; gap: var(--space-2); flex: 1 1 260px; min-width: 0; }
-.an-med-sug-list p, .an-med-effect-rows p { margin: 0; }
+.an-med-effect-rows { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
+.an-med-effect-rows > li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-3) 0; border-top: 1px solid var(--line); }
+.an-med-effect-rows > li:first-child { border-top: 0; }
+.an-med-effect-rows > li > div { display: grid; gap: var(--space-2); flex: 1 1 260px; min-width: 0; }
+.an-med-effect-rows p { margin: 0; }
 .an-med-effect-rows__head .an-effect { padding: 6px 12px; font-size: var(--text-sm); }
-.an-med-effect-rows__head .an-effect a { display: inline-block; padding-block: 13px; }
+.an-med-effect-rows__head .an-effect a { display: inline-block; min-width: 44px; padding-block: 13px; text-align: center; }
 .an-med-add-effect > summary { display: inline-flex; align-items: center; min-height: 44px; cursor: pointer; color: var(--teal); font-size: var(--text-sm); font-weight: 700; }
 .an-med-add-effect[open] > summary { margin-bottom: var(--space-3); }
 

@@ -3,20 +3,37 @@
 
 {#- One field: the label wraps the control, as everywhere else in the app.
     `only` is a visibility class; the stylesheet shows or hides it from the
-    checked kind with :has(), so the form needs no script to fit the kind. -#}
-{% macro text_field(name, label, value, help='', only='', maxlength=200) -%}
-<label class="an-med-field {{ only }}" for="med-{{ name }}">{{ label }}
+    checked kind with :has(), so the form fits the kind without a script.
+    `ai` marks a field the AI panel may fill: the script puts its suggestion
+    and the passage it came from right under the control. -#}
+{% macro text_field(name, label, value, help='', only='', maxlength=200, ai=false) -%}
+<div class="an-med-field {{ only }}"{% if ai %} data-ai-field="{{ name }}"{% endif %}>
+  <label for="med-{{ name }}">{{ label }}</label>
   <input id="med-{{ name }}" name="{{ name }}" value="{{ value or '' }}" maxlength="{{ maxlength }}"{% if help %} aria-describedby="med-{{ name }}-help"{% endif %}>
   {% if help %}<span id="med-{{ name }}-help" class="an-field-help">{{ help }}</span>{% endif %}
-</label>
+</div>
 {%- endmacro %}
 
 {% macro long_field(name, label, value, help='', only='') -%}
-<label class="an-med-field {{ only }}" for="med-{{ name }}">{{ label }}
+<div class="an-med-field {{ only }}" data-ai-field="{{ name }}">
+  <label for="med-{{ name }}">{{ label }}</label>
   <textarea id="med-{{ name }}" name="{{ name }}" rows="3" maxlength="4000"{% if help %} aria-describedby="med-{{ name }}-help"{% endif %}>{{ value or '' }}</textarea>
   {% if help %}<span id="med-{{ name }}-help" class="an-field-help">{{ help }}</span>{% endif %}
-</label>
+</div>
 {%- endmacro %}
+
+{#- A number with a button on each side: a phone has no spinner on a number
+    field, and a thumb needs 44 px. `step` is what one press changes. -#}
+{% macro stepper(name, label, value, min, max, step='1', decimal=false) -%}
+<div class="an-stepper" data-stepper data-step="{{ step }}" data-min="{{ min }}" data-max="{{ max }}">
+  <button type="button" class="secondary" data-stepper-by="-1" aria-label="{{ t('med.form.less', label=label) }}"><span aria-hidden="true">−</span></button>
+  <input id="med-{{ name }}" name="{{ name }}" type="number" inputmode="{{ 'decimal' if decimal else 'numeric' }}" min="{{ 0 if decimal else min }}" max="{{ max }}" step="{{ 'any' if decimal else '1' }}" value="{{ value }}">
+  <button type="button" class="secondary" data-stepper-by="1" aria-label="{{ t('med.form.more', label=label) }}"><span aria-hidden="true">+</span></button>
+</div>
+{%- endmacro %}
+
+{% set plan = factor.regimen or {} %}
+{% set repeat = plan.repeat or ('' if not is_new else ('weekly' if factor.kind == 'activity' else 'daily')) %}
 
 {% block content %}
 <nav class="an-med-crumb" aria-label="{{ t('med.title') }}"><a href="{{ back_url }}"><span aria-hidden="true">←</span> {{ back_label }}</a></nav>
@@ -24,9 +41,11 @@
 
 {% if error %}<div class="alert error" role="alert">{{ error }}</div>{% endif %}
 
-<form class="an-med-form" action="{{ action }}" method="post" autocomplete="off">
+<form class="an-med-form" action="{{ action }}" method="post" autocomplete="off" data-med-form>
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   {% if not is_new %}<input type="hidden" name="action" value="save">{% endif %}
+  {% if not is_new %}<input type="hidden" name="factor_id" value="{{ action.rsplit('/', 1)[-1] }}">{% endif %}
+  <input type="hidden" name="ai_fields" value="">
 
   <fieldset class="an-med-kindpick">
     <legend>{{ t('med.field.kind') }}</legend>
@@ -58,30 +77,124 @@
       <input type="hidden" name="reference_name" value="{{ factor.reference_name or '' }}">
       <input type="hidden" name="reference_code" value="{{ factor.reference_code or '' }}">
     </div>
-    {{ text_field('strength', t('med.field.strength'), factor.strength, t('med.field.strength_help'), 'only-drug') }}
+    <div class="an-med-field only-drug">
+      <label for="med-strength">{{ t('med.field.strength') }}</label>
+      <input id="med-strength" name="strength" value="{{ factor.strength or '' }}" maxlength="200" aria-describedby="med-strength-help">
+      <span id="med-strength-help" class="an-field-help" data-default="{{ t('med.field.strength_help') }}" data-picked="{{ t('med.form.strength_from') }}">{{ t('med.field.strength_help') }}</span>
+    </div>
   </section>
+
+  {% if ai_ready %}
+  {#- The AI works on what is in the form now and answers into the form. Every
+      message it can show is a data attribute, so the script carries no text. -#}
+  <section class="an-med-ai" aria-labelledby="med-ai-heading" data-med-ai{% if autostart %} data-autostart{% endif %}
+           data-running="{{ t('med.ai.running') }}" data-done="{{ t('med.ai.done') }}" data-done-empty="{{ t('med.ai.done_empty') }}"
+           data-need-name="{{ t('med.ai.need_name') }}" data-again="{{ t('med.ai.again') }}"
+           data-source="{{ t('med.ai.source') }}" data-source-plain="{{ t('med.ai.source_plain') }}" data-no-source="{{ t('med.ai.no_source') }}"
+           data-error-disabled="{{ t('med.ai.error_disabled') }}" data-error-budget="{{ t('med.ai.error_budget') }}"
+           data-error-provider_error="{{ t('med.ai.error_provider_error') }}" data-error-truncated="{{ t('med.ai.error_truncated') }}"
+           data-error-in_progress="{{ t('med.ai.error_in_progress') }}" data-error-lost="{{ t('med.ai.error_lost') }}">
+    <h2 id="med-ai-heading"><span class="an-ai-tag" aria-hidden="true">{{ t('med.ai_tag') }}</span> {{ t('med.ai.heading') }}</h2>
+    <p class="an-med-section__lead">{{ t('med.ai.lead') }}</p>
+    <div class="an-med-actions">
+      <button type="button" class="primary" data-med-ai-start>{{ t('med.ai.start') }}</button>
+      <button type="button" class="secondary" data-med-ai-cancel hidden>{{ t('med.ai.cancel') }}</button>
+    </div>
+    <p class="an-med-ai__status" role="status" aria-live="polite" data-med-ai-status hidden></p>
+    <p class="an-med-ai__source" data-med-ai-source hidden><span></span> <a class="an-med-link" target="_blank" rel="noreferrer noopener" hidden>{{ t('med.ai.open_source') }}</a></p>
+    <p class="an-field-help">{{ t('med.ai.sent') }}</p>
+  </section>
+  {% endif %}
 
   <section class="an-med-section not-point not-illness" aria-labelledby="med-how">
     <h2 id="med-how">{{ t('med.form.section_how') }}</h2>
-    {{ text_field('dose', t('med.field.dose'), factor.dose, t('med.field.dose_help'), 'only-drug') }}
-    {{ text_field('schedule', t('med.field.schedule'), factor.schedule, t('med.field.schedule_help')) }}
+
+    <div class="an-med-field only-drug">
+      <label for="med-dose_amount">{{ t('med.field.dose') }}</label>
+      <div class="an-med-dose">
+        {{ stepper('dose_amount', t('med.field.dose'), ('%g' % factor.dose_amount) if factor.dose_amount is not none and factor.dose_amount != '' else '', 0, 100000, '1', true) }}
+        <select id="med-dose_unit" name="dose_unit" aria-label="{{ t('med.form.dose_unit') }}">
+          {% for unit in dose_units %}<option value="{{ unit }}"{% if factor.dose_unit == unit %} selected{% endif %}>{{ t('med.unit_option.' ~ unit) }}</option>{% endfor %}
+        </select>
+      </div>
+      <p class="an-med-total" data-med-total data-each="{{ t('med.form.total_each') }}" data-day="{{ t('med.form.total_day') }}" role="status" aria-live="polite" hidden></p>
+      <p class="an-med-offer" data-med-ai-regimen hidden>
+        <span><span class="an-ai-tag" title="{{ t('med.ai_tag_help') }}">{{ t('med.ai_tag') }}</span> {{ t('med.ai.regimen') }} <strong data-slot="text"></strong></span>
+        <button type="button" class="secondary" data-act="use">{{ t('med.ai.regimen_use') }}</button>
+        <blockquote class="an-med-quote"><span>{{ t('med.ai.quote') }}</span> <q></q></blockquote>
+      </p>
+    </div>
+    {% if factor.dose %}
+    <div class="an-med-field only-drug">
+      <label for="med-dose">{{ t('med.form.dose_legacy') }}</label>
+      <input id="med-dose" name="dose" value="{{ factor.dose }}" maxlength="200" aria-describedby="med-dose-help">
+      <span id="med-dose-help" class="an-field-help">{{ t('med.form.dose_legacy_help') }}</span>
+    </div>
+    {% endif %}
+
+    <div class="an-med-field only-repeat">
+      <label for="med-repeat">{{ t('med.form.repeat') }}</label>
+      <select id="med-repeat" name="repeat">
+        <option value=""{% if not repeat %} selected{% endif %}>{{ t('med.repeat.none') }}</option>
+        {% for key in repeats %}<option value="{{ key }}"{% if repeat == key %} selected{% endif %}>{{ t('med.repeat.' ~ key) }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="an-med-field only-repeat rep-every">
+      <label for="med-every"><span class="rep-days">{{ t('med.form.every_days') }}</span><span class="rep-weekly">{{ t('med.form.every_weeks') }}</span><span class="rep-monthly">{{ t('med.form.every_months') }}</span></label>
+      {{ stepper('every', t('med.form.repeat'), plan.every or (2 if repeat == 'days' else 1), 1, 99) }}
+    </div>
+    <fieldset class="an-med-chips only-repeat rep-weekly">
+      <legend>{{ t('med.form.weekdays') }}</legend>
+      {% for day in range(7) %}
+      <label class="an-med-chip"><input type="checkbox" name="weekday" value="{{ day }}"{% if day in (plan.weekdays or []) %} checked{% endif %}><span><abbr title="{{ t('med.weekday_full.' ~ day) }}">{{ t('med.weekday.' ~ day) }}</abbr></span></label>
+      {% endfor %}
+    </fieldset>
+    <div class="an-med-field only-drug rep-set">
+      <label for="med-per_day"><span class="rep-not-needed">{{ t('med.form.per_day') }}</span><span class="rep-needed">{{ t('med.form.per_day_max') }}</span></label>
+      {{ stepper('per_day', t('med.form.per_day'), plan.per_day or 1, 1, 24) }}
+    </div>
+    <fieldset class="an-med-chips only-drug rep-set rep-not-needed">
+      <legend>{{ t('med.form.when') }}</legend>
+      {% for part in day_parts %}
+      <label class="an-med-chip"><input type="checkbox" name="day_part" value="{{ part }}"{% if part in (plan.times or []) %} checked{% endif %}><span>{{ t('med.daypart_option.' ~ part) }}</span></label>
+      {% endfor %}
+      <div class="an-med-clocks" data-med-clocks>
+        {% for time in (plan.clock or []) %}
+        <span class="an-med-clock"><input type="time" name="clock" value="{{ time }}" aria-label="{{ t('med.form.clock_label') }}"><button type="button" class="secondary" data-med-clock-remove aria-label="{{ t('med.form.clock_remove') }}"><span aria-hidden="true">×</span></button></span>
+        {% endfor %}
+        <button type="button" class="secondary" data-med-clock-add>{{ t('med.form.clock_add') }}</button>
+      </div>
+      <template id="med-clock-template"><span class="an-med-clock"><input type="time" name="clock" aria-label="{{ t('med.form.clock_label') }}"><button type="button" class="secondary" data-med-clock-remove aria-label="{{ t('med.form.clock_remove') }}"><span aria-hidden="true">×</span></button></span></template>
+      <p class="an-field-help">{{ t('med.form.when_help') }}</p>
+    </fieldset>
+    <div class="an-med-field only-drug rep-set">
+      <label for="med-meal">{{ t('med.form.meal') }}</label>
+      <select id="med-meal" name="meal">
+        <option value="">{{ t('med.meal_option.none') }}</option>
+        {% for key in meals %}<option value="{{ key }}"{% if plan.meal == key %} selected{% endif %}>{{ t('med.meal_option.' ~ key) }}</option>{% endfor %}
+      </select>
+    </div>
+    {{ text_field('schedule', t('med.form.schedule_note'), factor.schedule, t('med.form.schedule_note_help')) }}
   </section>
 
   <section class="an-med-section" aria-labelledby="med-when">
     <h2 id="med-when">{{ t('med.form.section_when') }}</h2>
-    <label class="an-med-field not-point" for="med-status">{{ t('med.field.status') }}
+    <div class="an-med-field not-point">
+      <label for="med-status">{{ t('med.field.status') }}</label>
       <select id="med-status" name="status">
         {% for key in statuses %}<option value="{{ key }}"{% if factor.status == key %} selected{% endif %}>{{ t('med.status_option.' ~ key) }}</option>{% endfor %}
       </select>
-    </label>
+    </div>
     <div class="an-med-dates">
-      <label class="an-med-field" for="med-started_on"><span class="not-point">{{ t('med.field.started_on') }}</span><span class="only-point">{{ t('med.field.started_on_point') }}</span>
+      <div class="an-med-field">
+        <label for="med-started_on"><span class="not-point">{{ t('med.field.started_on') }}</span><span class="only-point">{{ t('med.field.started_on_point') }}</span></label>
         <input id="med-started_on" type="date" name="started_on" value="{{ factor.started_on or '' }}">
-      </label>
-      <label class="an-med-field not-point" for="med-ended_on">{{ t('med.field.ended_on') }}
+      </div>
+      <div class="an-med-field not-point">
+        <label for="med-ended_on">{{ t('med.field.ended_on') }}</label>
         <input id="med-ended_on" type="date" name="ended_on" value="{{ factor.ended_on or '' }}" aria-describedby="med-ended_on-help">
         <span id="med-ended_on-help" class="an-field-help">{{ t('med.field.ended_on_help') }}</span>
-      </label>
+      </div>
     </div>
     <label class="an-med-check" for="med-approximate">
       <input id="med-approximate" type="checkbox" name="dates_approximate" value="1"{% if factor.dates_approximate %} checked{% endif %} aria-describedby="med-approximate-help">
@@ -90,43 +203,78 @@
     {{ text_field('reason', t('med.field.reason'), factor.reason, t('med.field.reason_help')) }}
     {{ text_field('prescriber', t('med.field.prescriber'), factor.prescriber, '', 'not-illness') }}
     {% if documents %}
-    <label class="an-med-field" for="med-document_id">{{ t('med.field.document') }}
+    <div class="an-med-field">
+      <label for="med-document_id">{{ t('med.field.document') }}</label>
       <select id="med-document_id" name="document_id">
         <option value="">{{ t('med.field.document_none') }}</option>
         {% for document in documents %}<option value="{{ document.id }}"{% if factor.document_id == document.id %} selected{% endif %}>{{ document.label }}</option>{% endfor %}
       </select>
-    </label>
+    </div>
     {% endif %}
-    {{ long_field('notes', t('med.field.notes'), factor.notes, t('med.field.notes_help')) }}
+    <div class="an-med-field">
+      <label for="med-notes">{{ t('med.field.notes') }}</label>
+      <textarea id="med-notes" name="notes" rows="3" maxlength="4000" aria-describedby="med-notes-help">{{ factor.notes or '' }}</textarea>
+      <span id="med-notes-help" class="an-field-help">{{ t('med.field.notes_help') }}</span>
+    </div>
   </section>
 
-  <section class="an-med-section" aria-labelledby="med-reference">
+  <section class="an-med-section" id="med-reference-section" aria-labelledby="med-reference">
     <h2 id="med-reference">{{ t('med.form.section_reference') }}</h2>
-    <p class="an-med-section__lead">{{ t('med.form.reference_lead') }}</p>
-    {% if is_new %}
-    {% if ai_ready %}
-    <label class="an-med-check" for="med-research">
-      <input id="med-research" type="checkbox" name="research" value="1" checked aria-describedby="med-research-help">
-      <span>{{ t('med.form.research') }}<span id="med-research-help" class="an-field-help">{{ t('med.form.research_help') }}</span></span>
-    </label>
-    {% else %}
-    <p class="an-field-help">{{ t('med.form.research_off') }}</p>
-    {% endif %}
-    {% endif %}
-    {{ text_field('substance', t('med.field.substance'), factor.substance, t('med.field.substance_help'), 'only-drug') }}
-    {{ text_field('atc_code', t('med.field.atc'), factor.atc_code, t('med.field.atc_help'), 'only-medicine', 8) }}
+    <p class="an-med-section__lead">{{ t('med.form.reference_lead') if ai_ready else t('med.form.research_off') }}</p>
+    {{ text_field('substance', t('med.field.substance'), factor.substance, t('med.field.substance_help'), 'only-drug', ai=true) }}
+    <div class="an-med-field only-medicine">
+      <label for="med-atc_code">{{ t('med.field.atc') }}</label>
+      <input id="med-atc_code" name="atc_code" value="{{ factor.atc_code or '' }}" maxlength="8" aria-describedby="med-atc_code-help">
+      <span id="med-atc_code-help" class="an-field-help">{{ t('med.field.atc_help') }}</span>
+      <span class="an-field-help" data-med-ai-atc hidden>{{ t('med.ai.atc_from') }}</span>
+    </div>
     {{ long_field('purpose', t('med.field.purpose'), factor.purpose) }}
     {{ long_field('usual_dose', t('med.field.usual_dose'), factor.usual_dose, t('med.field.usual_dose_help'), 'only-drug') }}
     {{ long_field('interactions', t('med.field.interactions'), factor.interactions) }}
     {{ long_field('monitoring', t('med.field.monitoring'), factor.monitoring) }}
     {{ long_field('cautions', t('med.field.cautions'), factor.cautions) }}
+
+    <fieldset class="an-med-ai-effects" data-med-ai-effects hidden>
+      <legend>{{ t('med.ai.effects_heading') }}</legend>
+      <p class="an-field-help">{{ t('med.ai.effects_help') }}</p>
+      <ul></ul>
+    </fieldset>
   </section>
 
-  <div class="an-med-actions">
+  <div class="an-med-actions an-med-actions--save">
     <button class="primary" type="submit" data-busy="{{ t('med.saving') }}">{{ t('med.save') }}</button>
     <a class="secondary" href="{{ back_url }}">{{ t('med.cancel') }}</a>
   </div>
 </form>
+
+{#- What the script clones when the AI answers. The words stay here, in the
+    page's language; the script only fills the slots. -#}
+<template id="med-ai-filled-template">
+  <div class="an-med-ai-note" data-ai-note>
+    <p><span class="an-ai-tag" title="{{ t('med.ai_tag_help') }}">{{ t('med.ai_tag') }}</span> {{ t('med.ai.filled') }} <button type="button" class="secondary" data-act="clear">{{ t('med.ai.clear') }}</button></p>
+    <blockquote class="an-med-quote" data-slot="quote"><span>{{ t('med.ai.quote') }}</span> <q></q></blockquote>
+    <p class="an-med-unquoted" data-slot="unquoted">{{ t('med.ai.unquoted') }}</p>
+  </div>
+</template>
+<template id="med-ai-offer-template">
+  <div class="an-med-ai-note an-med-ai-note--offer" data-ai-note>
+    <p><span class="an-ai-tag" title="{{ t('med.ai_tag_help') }}">{{ t('med.ai_tag') }}</span> {{ t('med.ai.offer') }}</p>
+    <p class="an-med-sug__text" data-slot="text"></p>
+    <blockquote class="an-med-quote" data-slot="quote"><span>{{ t('med.ai.quote') }}</span> <q></q></blockquote>
+    <p class="an-med-unquoted" data-slot="unquoted">{{ t('med.ai.unquoted') }}</p>
+    <p class="an-med-actions"><button type="button" class="secondary" data-act="replace">{{ t('med.ai.replace') }}</button> <button type="button" class="secondary" data-act="dismiss">{{ t('med.ai.dismiss') }}</button></p>
+  </div>
+</template>
+<template id="med-ai-effect-template">
+  <li>
+    <label class="an-med-check">
+      <input type="checkbox" name="ai_effect" checked>
+      <span><span class="an-effect" data-slot="chip"></span><span class="an-med-sug__text" data-slot="note"></span></span>
+    </label>
+    <blockquote class="an-med-quote" data-slot="quote"><span>{{ t('med.ai.quote') }}</span> <q></q></blockquote>
+    <p class="an-med-unquoted" data-slot="unquoted">{{ t('med.ai.unquoted') }}</p>
+  </li>
+</template>
 
 {% if not is_new %}
 <form class="an-med-delete" action="{{ action }}" method="post" data-confirm="{{ t('med.remove_confirm') }}">
@@ -136,5 +284,5 @@
 </form>
 {% endif %}
 
-{% if lookup_on %}<script src="{{ asset('medicines.js') }}" defer></script>{% endif %}
+<script src="{{ asset('medicines.js') }}" defer></script>
 {% endblock %}

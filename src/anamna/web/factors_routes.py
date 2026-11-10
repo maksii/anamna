@@ -1,43 +1,47 @@
-"""The Medicines pages: the record of medicines and other factors, one entry and
-its page, its form, the lookup of medicine names, and the AI reference card.
-Wired by create_app.
+"""The Medicines pages: the list, one entry and its page, its form, the lookup of
+medicine names, and the AI reference card.  Wired by create_app.
 
 Reads go through ``record_user``, so a share viewer and a guest see the owner's
 entries read-only.  Every write is bound to the signed-in account and refused to
 a guest or to a share viewer.  The lookup and the AI research leave the machine,
 so they run in the threadpool.
+
+The AI research runs as a job that the form polls, so a slow answer does not
+hold the request.  Saving an entry never calls the AI.
 """
 
 from __future__ import annotations
 
+import json
+import math
 import re
 from collections import Counter
 from datetime import date
-from urllib.parse import urlencode
 
 from fastapi import HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from starlette.concurrency import run_in_threadpool
 
-from .. import ai, drugref, factor_research, factors
-from ..db import connect, utc_now
+from .. import ai, drugref, factor_jobs, factor_research, factors
+from ..db import connect
 from ..health import concept_display_name
-from ..i18n import format_date_localized, get_locale, t
+from ..i18n import activate_locale, get_locale, reset_locale, t
 from ..locales.concepts_en import CONCEPT_NAMES_EN
 from ..locales.concepts_uk import CONCEPT_NAMES_UK
 from ..locales.messages_factors import MESSAGES_FACTORS
 from . import factors_view
 
-_AI_REASONS = frozenset(("disabled", "budget", "provider_error", "truncated", "in_progress"))
 _ATC = re.compile(r"[A-Z][0-9]{2}(?:[A-Z]{1,2}(?:[0-9]{2})?)?")
 _DOCUMENT_LIMIT = 200
 _FACT_ILLNESS = frozenset(("illness", "infection_or_inflammation"))
+# Fields that a form posts more than once; every other field has one value.
+_MULTI = ("weekday", "day_part", "clock", "ai_effect")
 _BLANK = {
     "name": "", "substance": "", "atc_code": "", "strength": "", "dose": "", "schedule": "",
     "started_on": "", "ended_on": "", "dates_approximate": 0, "reason": "", "prescriber": "",
     "document_id": "", "notes": "", "purpose": "", "usual_dose": "", "interactions": "",
     "monitoring": "", "cautions": "", "reference_name": "", "reference_code": "", "reference_url": "",
-    "ai_fields": (),
+    "ai_fields": (), "dose_amount": None, "dose_unit": "", "regimen": None,
 }
 
 
@@ -63,10 +67,6 @@ def _error(value: str) -> str | None:
 
 def _kind(value: str) -> str:
     return value if value in factors.KINDS else "medicine"
-
-
-def _ai_error(exc: ai.AIUnavailable) -> str:
-    return f"ai_{exc.reason if exc.reason in _AI_REASONS else 'provider_error'}"
 
 
 def _redirect(url: str) -> RedirectResponse:
@@ -138,23 +138,64 @@ def _fact_notes(row: dict) -> list[str]:
     return notes
 
 
-def _research(settings, connection, user_id: str, factor_id: str, locale: str, today: date) -> bool:
-    """Ask the AI about one entry and store the answer.  Returns whether any
-    suggestion is now waiting for the person.  Raises ``ai.AIUnavailable``;
-    nothing is stored then.  Blocking: call it from the threadpool."""
-    row = factors.get(connection, user_id, factor_id, today=today)
-    suggestion = factor_research.research(settings, connection, row, locale=locale)
-    factors.store_suggestion(connection, user_id, factor_id, suggestion)
-    codes = suggestion.get("atc_codes") or []
-    if codes and not row["atc_code"] and _ATC.fullmatch(codes[0]):
-        # The code comes from the reference page, never from the model's text.
-        connection.execute(
-            "UPDATE factors SET atc_code = ?, updated_at = ? WHERE id = ? AND owner_user_id = ? AND atc_code = ''",
-            (codes[0], utc_now(), factor_id, user_id),
-        )
-    connection.commit()
-    fresh = factors.get(connection, user_id, factor_id, today=today)
-    return not factors.pending(fresh)["empty"]
+def _draft(form, *, today: date) -> dict:
+    """What the person posted, shaped like an entry, for showing the form again
+    or for the AI.  Unlike ``factors.clean`` it never refuses: a missing name or a
+    bad date is replaced for the cleaning and the posted text is put back."""
+    multi = hasattr(form, "getlist")
+    posted = {key: (form.getlist(key) if multi and key in _MULTI else form.get(key)) for key in form.keys()}
+    name = str(posted.get("name") or "").strip()[: factors.SHORT]
+    safe = {**posted, "kind": _kind(str(posted.get("kind") or "")), "name": name or "-"}
+    values, problem = factors.clean(safe, today=today)
+    if problem in ("date_format", "dates"):
+        values, problem = factors.clean({**safe, "started_on": "", "ended_on": ""}, today=today)
+    # The kind and the name are valid by now, so clean refuses nothing else.
+    values["name"] = name
+    values["started_on"] = str(posted.get("started_on") or "").strip()
+    values["ended_on"] = str(posted.get("ended_on") or "").strip()
+    values["regimen"] = json.loads(values["schedule_json"]) if values["schedule_json"] else None
+    values["ai_fields"] = tuple(values.get("ai_fields", ()))
+    return {**_BLANK, **values}
+
+
+def _suggestion_view(suggestion: dict, kind: str, locale: str, metric_ids, names, have: list[dict]) -> dict:
+    """What the form shows for one AI answer: the suggested texts with their quotes,
+    the effects the entry does not have yet, the code, the source and the regimen."""
+    posted_fields = suggestion.get("fields") or {}
+    fields = {
+        name: {"text": posted_fields[name].get("text", ""), "quote": posted_fields[name].get("quote", "")}
+        for name in factors.SUGGESTED_FIELDS if name in posted_fields
+    }
+    effects = []
+    for effect in suggestion.get("effects") or []:
+        label = " ".join(str(effect.get("label") or "").split()).casefold()
+        concept = effect.get("concept_id") or ""
+        if any((concept and item["concept_id"] == concept) or (label and item["label"] == label) for item in have):
+            continue
+        view = factors_view.effect_view(effect, locale, metric_ids, names)
+        effects.append({
+            key: view.get(key, "")
+            for key in ("concept_id", "label", "direction", "direction_label", "note", "quote")
+        })
+    atc = next((code for code in suggestion.get("atc_codes") or [] if _ATC.fullmatch(str(code))), "")
+    source = suggestion.get("source")
+    source_view = {"url": source.get("url", ""), "shown_for": source.get("shown_for", "")} if source else None
+    regimen = suggestion.get("regimen")
+    regimen_view = None
+    if regimen is not None:
+        plan = {
+            "repeat": regimen["repeat"], "every": regimen["every"], "weekdays": [],
+            "per_day": regimen["per_day"], "times": [], "clock": [], "meal": "",
+        }
+        text = factors.regimen_text({
+            "kind": kind, "dose_amount": regimen["dose_amount"], "dose_unit": regimen["dose_unit"],
+            "dose": "", "schedule": "", "regimen": plan,
+        }, locale)
+        regimen_view = {
+            **{key: value for key, value in regimen.items() if key != "quote"},
+            "quote": regimen.get("quote", ""), "text": text,
+        }
+    return {"fields": fields, "effects": effects, "atc_code": atc, "source": source_view, "regimen": regimen_view}
 
 
 def register_routes(app, settings, *, templates, template_context, require_user, record_user, require_csrf,
@@ -162,14 +203,17 @@ def register_routes(app, settings, *, templates, template_context, require_user,
     """``audit`` is ``partial(_audit, settings)``; ``document_row`` renders a documents row as the record search does."""
 
     def form_response(request: Request, connection, owner_id: str, *, is_new: bool, factor: dict,
-                      action: str, back_url: str, back_label: str):
+                      action: str, back_url: str, back_label: str, autostart: bool = False,
+                      error: str | None = None, status_code: int = 200):
         return templates.TemplateResponse(request, "medicine_form.html", template_context(
             request, active="medicines", is_new=is_new, factor=factor, kinds=_kinds(),
             statuses=factors.STATUSES, documents=_documents(connection, owner_id, document_row),
             lookup_on=drugref.enabled(connection), ai_ready=ai.ai_active(settings, factor_research.FEATURE),
             action=action, back_url=back_url, back_label=back_label,
-            error=_error(request.query_params.get("error", "")),
-        ))
+            dose_units=factors.DOSE_UNITS, repeats=factors.REPEATS, day_parts=factors.DAY_PARTS,
+            meals=factors.MEALS, autostart=autostart,
+            error=error if error is not None else _error(request.query_params.get("error", "")),
+        ), status_code=status_code)
 
     def owned_factor(connection, user_id: str, factor_id: str, today: date) -> dict:
         row = factors.get(connection, user_id, factor_id, today=today)
@@ -225,11 +269,16 @@ def register_routes(app, settings, *, templates, template_context, require_user,
             return form_response(request, connection, user["id"], is_new=True, factor=factor,
                                  action="/medicines", back_url="/medicines", back_label=t("med.title"))
 
-    def create(request: Request, user, form) -> RedirectResponse:
+    def create(request: Request, user, form):
         today = date.today()
         values, problem = factors.clean(form, today=today)
         if problem:
-            return _redirect(f"/medicines/new?{urlencode({'kind': _kind(str(form.get('kind') or '')), 'error': problem})}")
+            with connect(settings) as connection:
+                return form_response(
+                    request, connection, user["id"], is_new=True, factor=_draft(form, today=today),
+                    action="/medicines", back_url="/medicines", back_label=t("med.title"),
+                    error=_error(problem), status_code=400,
+                )
         with connect(settings) as connection:
             patient = connection.execute(
                 "SELECT id FROM patients WHERE owner_user_id = ? ORDER BY created_at LIMIT 1", (user["id"],),
@@ -240,16 +289,7 @@ def register_routes(app, settings, *, templates, template_context, require_user,
             audit(user["id"], user["id"], "factor.create", "factor", factor_id, {"kind": values["kind"]},
                   connection=connection)
             connection.commit()
-            target = f"/medicines/{factor_id}"
-            if form.get("research") != "1":
-                return _redirect(f"{target}?saved=created")
-            try:
-                waiting = _research(settings, connection, user["id"], factor_id, get_locale(), today)
-            except ai.AIUnavailable as exc:
-                return _redirect(f"{target}?saved=created&error={_ai_error(exc)}")
-        if waiting:
-            return _redirect(f"{target}?saved=researched#suggestions")
-        return _redirect(f"{target}?saved=researched_empty")
+        return _redirect(f"/medicines/{factor_id}?saved=created")
 
     @app.post("/medicines")
     async def create_page(request: Request):
@@ -270,11 +310,80 @@ def register_routes(app, settings, *, templates, template_context, require_user,
         with connect(settings) as connection:
             if not drugref.enabled(connection):
                 return JSONResponse({"items": [], "error": "off"})
+        locale = get_locale()
         try:
             items = drugref.suggest(q[:200])
+        except drugref.DrugRefPaused as exc:
+            return JSONResponse({"items": [], "error": "paused", "minutes": max(1, math.ceil(exc.seconds / 60))})
         except drugref.DrugRefError:
             return JSONResponse({"items": [], "error": "unavailable"})
+        for item in items:
+            item["strength"] = drugref.localize_strength(item.get("strength") or "", locale)
         return JSONResponse({"items": items})
+
+    def start_research(user, form) -> JSONResponse:
+        """Start the AI research for the posted draft as a job; the form polls for the answer."""
+        if not ai.ai_active(settings, factor_research.FEATURE):
+            return JSONResponse({"error": "disabled"})
+        today = date.today()
+        draft = _draft(form, today=today)
+        if not draft["name"]:
+            return JSONResponse({"error": "lost"}, status_code=400)
+        factor_id = str(form.get("factor_id") or "")
+        have: list[dict] = []
+        with connect(settings) as connection:
+            if factor_id and factors.get(connection, user["id"], factor_id, today=today) is None:
+                factor_id = ""  # never research against another person's entry
+            if factor_id:
+                have = [
+                    {"concept_id": row["concept_id"], "label": " ".join(str(row["label"] or "").split()).casefold()}
+                    for row in connection.execute(
+                        "SELECT concept_id, label FROM factor_effects WHERE factor_id = ? AND owner_user_id = ?",
+                        (factor_id, user["id"]),
+                    )
+                ]
+        entry = {**draft, "id": factor_id, "owner_user_id": user["id"], "how_taken": factors.regimen_text(draft, "en")}
+        locale = get_locale()
+        kind = entry["kind"]
+
+        def work() -> dict:
+            token = activate_locale(locale)
+            try:
+                with connect(settings) as connection:
+                    suggestion = factor_research.research(settings, connection, entry, locale=locale)
+                    connection.commit()
+                    metric_ids = _metric_ids(connection, user["id"])
+                    names = _concept_names(connection)
+                return _suggestion_view(suggestion, kind, locale, metric_ids, names, have)
+            finally:
+                reset_locale(token)
+
+        return JSONResponse({"job": factor_jobs.start(user["id"], work)})
+
+    @app.post("/medicines/suggest")
+    async def suggest_page(request: Request):
+        user = require_user(request)
+        form = await request.form()
+        owner = await run_in_threadpool(record_user, request, user)
+        if not _writable(user, owner):
+            raise HTTPException(403)
+        require_csrf(user, str(form.get("csrf_token") or ""))
+        return await run_in_threadpool(start_research, user, form)
+
+    @app.get("/medicines/suggest/{job_id}")
+    def suggest_status(request: Request, job_id: str):
+        user = require_user(request)
+        owner = record_user(request, user)
+        if not _writable(user, owner):
+            raise HTTPException(403)
+        job = factor_jobs.get(user["id"], job_id)
+        if job is None:
+            return JSONResponse({"state": "failed", "error": "lost"})
+        if job["state"] == "done":
+            return JSONResponse({"state": "done", "suggestion": job["result"]})
+        if job["state"] == "failed":
+            return JSONResponse({"state": "failed", "error": job["error"] or "provider_error"})
+        return JSONResponse({"state": "running"})
 
     @app.get("/medicines/{factor_id}", response_class=HTMLResponse)
     def detail_page(request: Request, factor_id: str, saved: str = "", error: str = ""):
@@ -294,48 +403,42 @@ def register_routes(app, settings, *, templates, template_context, require_user,
         entry = factors_view.card(row, locale=locale, today=today, metric_ids=metric_ids, concept_names=names)
         entry["document"] = documents[0] if documents else None
         entry["fact_notes"] = _fact_notes(row)
-        pending = None
-        suggestion = row["suggestion"]
-        if suggestion:
-            state = factors.pending(row)
-            source = suggestion.get("source") or None
-            created = suggestion.get("created_at")
-            pending = {
-                "fields": [{**field, "label": t(f"med.field.{field['name']}")} for field in state["fields"]],
-                "effects": [factors_view.effect_view(effect, locale, metric_ids, names) for effect in state["effects"]],
-                "empty": state["empty"],
-                "source": source,
-                "created_text": format_date_localized(created) if created else "",
-            }
         return templates.TemplateResponse(request, "medicine_detail.html", template_context(
-            request, active="medicines", factor=entry, pending=pending, pending_at=row["suggestion_at"],
+            request, active="medicines", factor=entry,
             effect_options=effect_options, ai_ready=ai.ai_active(settings, factor_research.FEATURE),
             saved=_saved(saved), error=_error(error),
         ))
 
     @app.get("/medicines/{factor_id}/edit", response_class=HTMLResponse)
-    def edit_page(request: Request, factor_id: str):
+    def edit_page(request: Request, factor_id: str, suggest: str = ""):
         user = require_user(request)
         owner = record_user(request, user)
         if not _writable(user, owner):
             return _redirect(f"/medicines/{factor_id}")
         with connect(settings) as connection:
             row = owned_factor(connection, user["id"], factor_id, date.today())
-            return form_response(request, connection, user["id"], is_new=False, factor=row,
-                                 action=f"/medicines/{factor_id}", back_url=f"/medicines/{factor_id}",
-                                 back_label=row["name"])
+            return form_response(
+                request, connection, user["id"], is_new=False, factor=row,
+                action=f"/medicines/{factor_id}", back_url=f"/medicines/{factor_id}",
+                back_label=row["name"],
+                autostart=suggest == "1" and ai.ai_active(settings, factor_research.FEATURE),
+            )
 
     def act(request: Request, user, factor_id: str, form) -> RedirectResponse:
         today = date.today()
-        locale = get_locale()
         base = f"/medicines/{factor_id}"
         action = str(form.get("action") or "")
         with connect(settings) as connection:
-            owned_factor(connection, user["id"], factor_id, today)
+            stored = owned_factor(connection, user["id"], factor_id, today)
             if action == "save":
                 values, problem = factors.clean(form, today=today)
                 if problem:
-                    return _redirect(f"{base}/edit?{urlencode({'error': problem})}")
+                    return form_response(
+                        request, connection, user["id"], is_new=False,
+                        factor={**_draft(form, today=today), "id": factor_id},
+                        action=base, back_url=base, back_label=stored["name"],
+                        error=_error(problem), status_code=400,
+                    )
                 factors.update(connection, user["id"], factor_id, values)
                 audit(user["id"], user["id"], "factor.update", "factor", factor_id, {"kind": values["kind"]},
                       connection=connection)
@@ -350,22 +453,6 @@ def register_routes(app, settings, *, templates, template_context, require_user,
                 audit(user["id"], user["id"], "factor.delete", "factor", factor_id, {}, connection=connection)
                 connection.commit()
                 return _redirect("/medicines?saved=removed")
-            if action == "research":
-                try:
-                    waiting = _research(settings, connection, user["id"], factor_id, locale, today)
-                except ai.AIUnavailable as exc:
-                    return _redirect(f"{base}?error={_ai_error(exc)}")
-                if waiting:
-                    return _redirect(f"{base}?saved=researched#suggestions")
-                return _redirect(f"{base}?saved=researched_empty")
-            if action == "apply":
-                what = str(form.get("what") or "")
-                factors.apply_suggestion(connection, user["id"], factor_id, what, today=today)
-                connection.commit()
-                if what == "dismiss":
-                    return _redirect(f"{base}?saved=dismissed")
-                state = factors.pending(factors.get(connection, user["id"], factor_id, today=today))
-                return _redirect(f"{base}?saved=applied" + ("" if state["empty"] else "#suggestions"))
             if action == "effect_add":
                 label = " ".join(str(form.get("label") or "").split())[:200]
                 concept = _concept_for_label(connection, label)

@@ -702,8 +702,9 @@ def factors_payload(connection, owner_user_id: str, *, today: date) -> list[dict
             chosen.append(factor)
     # Stable: current first, the order of the Medicines page otherwise.
     chosen.sort(key=lambda factor: factor["effective_status"] != "current")
-    return [
-        {
+    payload = []
+    for factor in chosen[:FACTOR_LIMIT]:
+        item = {
             "name": factor["name"],
             "kind": factor["kind"],
             "since": _year_month(factor["started_on"]),
@@ -714,8 +715,11 @@ def factors_payload(connection, owner_user_id: str, *, today: date) -> list[dict
                 for effect in factor["effects"]
             ],
         }
-        for factor in chosen[:FACTOR_LIMIT]
-    ]
+        how_taken = factors.regimen_text(factor, "en")
+        if how_taken:
+            item["how_taken"] = how_taken
+        payload.append(item)
+    return payload
 
 
 def fingerprint(payload) -> str:
@@ -815,10 +819,14 @@ def _payload_years(payload) -> set[float]:
 
 
 def _factor_numbers(factor_items) -> set[float]:
-    """A medicine's name can carry a number ("Діокор 80", "Вітамін D3"): a sentence naming it is grounded."""
+    """A medicine's name can carry a number ("Діокор 80", "Вітамін D3"): a sentence naming it is grounded.
+
+    The same holds for how it is taken ("1 tablet, 2 times a day"): those numbers are in the record.
+    """
     found: set[float] = set()
     for item in factor_items:
         found |= _numbers(str(item["name"]))
+        found |= _numbers(str(item.get("how_taken") or ""))
     return found
 
 

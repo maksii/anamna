@@ -256,6 +256,7 @@ def format_date_localized(value: str | None, fallback_key: str = "date.unknown")
 # a string needed by a card belongs in the template, not in this payload.
 JS_KEYS = (
     "med.lookup.none", "med.lookup.unavailable", "med.lookup.trade_name", "med.lookup.linked",
+    "med.lookup.searching", "med.lookup.paused",
     # The site-wide progress bar (busy.js).
     "busy.loading",
     # /metrics type-ahead chrome (the results themselves arrive as HTML).

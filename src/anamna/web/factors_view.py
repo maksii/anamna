@@ -199,11 +199,6 @@ def effect_view(
         }
 
 
-def _pending_count(row: Mapping[str, Any]) -> int:
-    pending = factors.pending(row)
-    return len(pending["fields"]) + len(pending["effects"])
-
-
 def card(
     row: Mapping[str, Any],
     *,
@@ -220,12 +215,11 @@ def card(
         data["kind_label"] = kind_label(row["kind"], locale)
         data["status"] = row["effective_status"]
         data["status_label"] = status_label(row["effective_status"], locale)
-        data["dose_line"] = ", ".join(value for value in (row["dose"], row["schedule"]) if value)
+        data["dose_line"] = factors.regimen_text(row, locale)
         data["period_text"] = period_text(row, locale)
         data["duration_text"] = duration_text(row, today, locale)
         data["approximate"] = bool(row["dates_approximate"])
         data["effects"] = [effect_view(effect, locale, metric_ids, concept_names) for effect in row["effects"]]
-        data["pending"] = _pending_count(row)
         data["has_reference_text"] = any(row[name] for name in factors.REFERENCE_FIELDS)
         data["bar"] = _bar(row, scale, today, locale)
         data["document"] = None

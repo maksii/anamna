@@ -7585,6 +7585,7 @@ def admin_ai(
             ai=config,
             ai_on=ai_active(settings),
             drug_lookup=drug_lookup,
+            drug_lookup_paused_minutes=math.ceil(drugref.paused_seconds() / 60),
             # Enough of each key to recognise it, never enough to use it.
             key_tails={
                 name: value[-6:] if value else "" for name, value in config["keys"].items()

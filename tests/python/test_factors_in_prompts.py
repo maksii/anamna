@@ -58,7 +58,7 @@ def test_a_current_medicine_is_listed_with_its_dosing_dates_and_effect_in_englis
     assert "## Medicines and other entries I recorded" in text
     line, effect = _line_after(text, "- Діокор 80")
     assert line == (
-        f"- Діокор 80 80 mg [Medicine, Current]: perindopril; 1 tablet, once daily; "
+        f"- Діокор 80 80 mg [Medicine, Current]: perindopril; 1 tablet · once daily; "
         f"from {started}; blood pressure"
     )
     assert effect == "  - raises ferritin"
@@ -78,7 +78,7 @@ def test_a_current_medicine_is_listed_with_its_dosing_dates_and_effect_in_ukrain
     assert "## Мої записи про ліки та інше" in text
     line, effect = _line_after(text, "- Діокор 80")
     assert line == (
-        f"- Діокор 80 80 mg [Ліки, Триває]: perindopril; 1 tablet, once daily; "
+        f"- Діокор 80 80 mg [Ліки, Триває]: perindopril; 1 tablet · once daily; "
         f"з {started}; тиск"
     )
     assert effect == "  - підвищує ferritin"
@@ -148,6 +148,8 @@ def test_the_change_summary_carries_current_factors_and_leaves_out_one_stopped_t
     assert current["since"] == _days_ago(120)[:7]
     assert current["until"] is None
     assert current["can_change"] == [{"test": "ferritin", "direction": "raises"}]
+    # No dose or schedule on record: the key is left out rather than sent empty.
+    assert "how_taken" not in current
 
     messages = changes.messages_for(view["ai_payload"], "en", items)
     user = json.loads(messages[1]["content"])
@@ -156,16 +158,16 @@ def test_the_change_summary_carries_current_factors_and_leaves_out_one_stopped_t
     assert "`factors` lists the medicines" in messages[0]["content"]
 
 
-def _summary_of(settings, user_id: str, medicine: str, monkeypatch, *, pass_factors: bool):
+def _summary_of(settings, user_id: str, medicine: str, monkeypatch, *, pass_factors: bool, state=None, **form):
     """Summarise the fixture's report with one medicine on record and a model reply naming it."""
     _add(
         settings, user_id, kind="medicine", name=medicine, substance="perindopril",
-        started_on=_days_ago(120), effect="ferritin",
+        started_on=_days_ago(120), effect="ferritin", **form,
     )
     with connect(settings) as connection:
         view = changes.build_changes(connection, user_id)
     model = json.dumps({
-        "state": (
+        "state": state or (
             f"{medicine} може підвищувати цей показник. "
             "Zeta marker is now 7.0 mmol/L, above range. "
             "Показник сягає 42 одиниць."
@@ -208,4 +210,45 @@ def test_a_medicine_number_is_grounded_only_because_the_medicine_is_in_the_paylo
     settings, user_id, _client, _ = build_changes_fixture(tmp_path / "again")
     content, _fake = _summary_of(settings, user_id, "Діокор 137", monkeypatch, pass_factors=False)
     assert "Діокор 137" not in content["state"]
+    assert content["state"] == "Zeta marker is now 7.0 mmol/L, above range."
+
+
+_TAKEN = {"dose_amount": "1", "dose_unit": "tablet", "repeat": "daily", "per_day": "12"}
+
+
+def test_the_copy_for_ai_says_how_a_medicine_is_taken_from_its_dose_and_schedule(tmp_path: Path):
+    settings, user_id, client = build(tmp_path)
+    _add(settings, user_id, kind="medicine", name="Діокор 80", substance="perindopril",
+         started_on=_days_ago(120), **_TAKEN)
+    line, _effect = _line_after(_prompt(client, locale="en"), "- Діокор 80")
+    assert "1 tablet" in line and "12 times a day" in line
+
+
+def test_the_change_summary_carries_how_a_medicine_is_taken(tmp_path: Path):
+    settings, user_id, _client, _ = build_changes_fixture(tmp_path)
+    _add(settings, user_id, kind="medicine", name="Діокор 80", started_on=_days_ago(120), **_TAKEN)
+    with connect(settings) as connection:
+        items = changes.factors_payload(connection, user_id, today=date.today())
+    item = next(item for item in items if item["name"] == "Діокор 80")
+    assert "1 tablet" in item["how_taken"] and "12 times a day" in item["how_taken"]
+
+
+def test_a_number_in_how_a_medicine_is_taken_is_grounded_only_because_it_is_in_the_payload(
+    tmp_path: Path, monkeypatch
+):
+    # 12 is in no measurement of the fixture, so only the medicine's regimen can ground it.
+    state = "Діокор 80 приймають 12 разів на день. Показник сягає 42 одиниць."
+    settings, user_id, _client, _ = build_changes_fixture(tmp_path)
+    content, _fake = _summary_of(settings, user_id, "Діокор 80", monkeypatch, pass_factors=True,
+                                 state=state, **_TAKEN)
+    assert content["state"] == "Діокор 80 приймають 12 разів на день."
+
+    # Without the medicine in the payload the same sentence is dropped; a clean sentence keeps the state non-empty.
+    (tmp_path / "again").mkdir()
+    settings, user_id, _client, _ = build_changes_fixture(tmp_path / "again")
+    content, _fake = _summary_of(
+        settings, user_id, "Діокор 80", monkeypatch, pass_factors=False,
+        state=state + " Zeta marker is now 7.0 mmol/L, above range.", **_TAKEN,
+    )
+    assert "12 разів" not in content["state"]
     assert content["state"] == "Zeta marker is now 7.0 mmol/L, above range."

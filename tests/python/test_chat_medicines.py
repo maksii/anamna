@@ -100,7 +100,7 @@ def test_the_profile_lists_a_current_medicine_with_its_dose_and_effect(tmp_path:
         factors.add_effect(db, owner, factor_id, concept_id="ldl-cholesterol", label="", direction="lowers")
     profile = _profile(settings, owner)
     assert "## medicines and other factors (1 current, 0 prescribed but not started, 0 past" in profile
-    assert (f"- Warfarin [medicine; warfarin; ATC B01AA03] 1 mg; 5 mg, evening; since 2025-01-01; for AF; "
+    assert (f"- Warfarin [medicine; warfarin; ATC B01AA03] 1 mg; 5 mg · evening; since 2025-01-01; for AF; "
             f"effects: lowers LDL cholesterol m:{factor_id}") in profile
 
 
