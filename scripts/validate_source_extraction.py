@@ -20,6 +20,7 @@ from pypdf import PdfReader
 
 from anamna.config import ROOT, Settings, get_settings, resolve_source_path
 from anamna.health import _extract_clinical_assessment, _extract_date
+from anamna.ingest.parsers import SYNEVO_SUMMARY_FOOTER
 
 
 # ".json": the lab's own record of an order it issued no PDF for (labsync).
@@ -92,6 +93,18 @@ def check_file_facts(record: dict[str, object], path: Path, row: sqlite3.Row) ->
     return actual_pages
 
 
+def filed_under(connection: sqlite3.Connection, row: sqlite3.Row) -> str | None:
+    """The document a person filed this one as a part of: a photographed page
+    of a protocol, an image sheet beside its report.  Its text and conclusion
+    live there."""
+    parent = connection.execute(
+        """SELECT target_document_id FROM document_relations
+           WHERE source_document_id=? AND relationship='part_of' AND notes LIKE 'person:%' LIMIT 1""",
+        (row["id"],),
+    ).fetchone()
+    return str(parent[0]) if parent else None
+
+
 def check_pages(
     record: dict[str, object], connection: sqlite3.Connection, row: sqlite3.Row, actual_pages: int
 ) -> tuple[list[sqlite3.Row], list[int]]:
@@ -105,7 +118,12 @@ def check_pages(
         native = str(stored["native_text"] or "").strip()
         ocr = str(stored["ocr_text"] or "").strip()
         if not native and not ocr and row["clinical_type"] != "diagnostic_image":
-            add_issue(record, "error", "page_without_text_evidence", f"Page {stored['page_number']} has no native or OCR text.")
+            parent = filed_under(connection, row)
+            if parent:
+                add_issue(record, "warning", "part_without_text_evidence",
+                          f"Page {stored['page_number']} has no text; a person filed it as part of {parent}.")
+            else:
+                add_issue(record, "error", "page_without_text_evidence", f"Page {stored['page_number']} has no native or OCR text.")
     if "embedded_image_ocr" in str(row["extraction_strategy"]) and not any(str(page["ocr_text"] or "").strip() for page in pages):
         add_issue(record, "error", "declared_ocr_missing", "Document declares embedded-image OCR but stores no OCR text.")
     return pages, page_numbers
@@ -128,13 +146,19 @@ def check_report_coverage(
 
 
 def check_observations(
-    record: dict[str, object], row: sqlite3.Row, observations: list[sqlite3.Row], page_numbers: list[int]
+    record: dict[str, object], row: sqlite3.Row, observations: list[sqlite3.Row], page_numbers: list[int],
+    pages: list[sqlite3.Row] | None = None,
 ) -> None:
     # A copy set aside as another document's duplicate gives its values to
     # the kept one (pipeline.mark_document_duplicate); it holds none.
     if (row["clinical_type"] in STRUCTURED_TYPES and row["status"] != "result_not_present" and not observations
             and not row["duplicate_of_document_id"]):
-        add_issue(record, "error", "structured_results_missing", "A final structured report has no observations.")
+        # Synevo's package summary re-prints the main report's values as
+        # infographics; the parser reads none of it on purpose (COMPANION_SUMMARY).
+        if any(SYNEVO_SUMMARY_FOOTER.search(str(page["native_text"] or "")) for page in pages or []):
+            add_issue(record, "warning", "companion_summary", "A package summary; its values are read from the main report.")
+        else:
+            add_issue(record, "error", "structured_results_missing", "A final structured report has no observations.")
     for observation in observations:
         values = int(observation["value_numeric"] is not None) + int(observation["value_text"] is not None)
         if values != 1:
@@ -157,8 +181,11 @@ def check_missing_findings(
            WHERE d.patient_id=? AND d.id<>? AND f.finding_date=? LIMIT 1""",
         (row["patient_id"], row["id"], study_date),
     ).fetchone()
+    parent = filed_under(connection, row)
     if covered:
         add_issue(record, "warning", "clinical_finding_covered_elsewhere", f"Same study on {study_date} is filed from another document.")
+    elif parent and connection.execute("SELECT 1 FROM clinical_findings WHERE document_id=? LIMIT 1", (parent,)).fetchone():
+        add_issue(record, "warning", "clinical_finding_in_parent", f"A person filed this as part of {parent}, which holds the finding.")
     else:
         add_issue(record, "error", "clinical_finding_missing", "Narrative/visual document has no first-class finding.")
 
@@ -200,7 +227,7 @@ def validate_document(
     record["pages"] = actual_pages
     record["observations"] = len(observations)
     record["clinical_findings"] = len(findings)
-    check_observations(record, row, observations, page_numbers)
+    check_observations(record, row, observations, page_numbers, pages)
     check_findings(record, connection, row, findings, pages, page_numbers)
 
     task = connection.execute(

@@ -145,6 +145,14 @@ def test_titles_are_built_from_the_document_never_from_a_filename(tmp_path: Path
         assert "Expert Hospital" not in title
         assert web.display_document_title("vact", "immunization_record", filename="vact.pdf") == "Vaccination card"
         assert web.display_document_title("Lipid panel", "laboratory") == "Lipid panel"
+        # A chest X-ray is named by what it examined, not by the dose it printed.
+        dose = "effective-radiation-dose\tradiation_exposure\tEffective radiation dose"
+        assert web._title_subjects(dose, "lungs", "radiology_xray") == web._title_subjects(None, "lungs", "radiology_xray")
+        assert web._title_subjects(dose, "lungs", "radiology_xray")
+        assert "Effective radiation dose" not in web.display_document_title(
+            "Рентгенографія ОГК", "radiology_xray",
+            subjects=web._title_subjects(dose, "lungs", "radiology_xray"), date="2025-09-16",
+        )
     finally:
         reset_locale(token)
 
