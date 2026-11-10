@@ -310,9 +310,145 @@ def test_detail_shows_effects_linked_to_the_chart_and_the_reference_link(world, 
     page = owner.get(f"/medicines/{factor_id}")
     assert page.status_code == 200
     assert f'href="/metrics/{LDL_ID}"' in page.text
-    assert "Official instruction at tabletki.ua" in page.text
+    info = re.search(r'<a\s[^>]*data-med-info[^>]*>(.*?)</a>', page.text, re.S)
+    assert info is not None
+    assert f'href="/medicines/{factor_id}/instruction"' in info.group(0)
+    assert info.group(1).strip() == "Instruction for use"
     assert "https://tabletki.ua/uk/Диокор/8311/" in page.text
     assert_no_missing_keys(page.text)
+
+
+INSTRUCTION = {
+    "url": "https://tabletki.ua/uk/Диокор/8311/",
+    "sections": [["Склад", "валсартан, гідрохлоротіазид"],
+                 ["Спосіб застосування", "Дорослим призначають 80 мг один раз на добу."]],
+    "atc": ["C09DA03"],
+    "shown_for": "Диокор 80 мг",
+    "fetched_at": "2026-11-01T10:00:00+00:00",
+    "details": {
+        "via": "api",
+        "facts": [["substance", ["валсартан", "гідрохлоротіазид"]], ["form", ["таблетки"]]],
+        "warnings": [["Вагітні", "forbidden", "заборонено"], ["Діабетики", "caution", "Під наглядом лікаря"]],
+    },
+}
+
+
+def use_instruction(monkeypatch, reference: dict | None = INSTRUCTION) -> None:
+    """The reference lookup answers with ``reference``; nothing reaches the site."""
+    monkeypatch.setattr(drugref, "cached_instruction", lambda connection, name, code="", **_kw: reference)
+
+
+def join_reference_jobs() -> None:
+    for job_id in list(factor_jobs._JOBS):
+        factor_jobs.join(job_id)
+
+
+def test_the_instruction_page_shows_the_stored_instruction_and_its_facts(world, clients, monkeypatch):
+    use_instruction(monkeypatch)
+    owner = clients("alpha@example.test")
+    factor_id = factor_id_of(create_entry(world, owner))
+    page = owner.get(f"/medicines/{factor_id}/instruction")
+    assert page.status_code == 200
+    assert 'id="med-instruction"' in page.text
+    assert "Instruction for medical use" in page.text
+    assert "Спосіб застосування" in page.text
+    assert "Active substance" in page.text and "валсартан" in page.text
+    assert "Вагітні" in page.text and "not allowed" in page.text
+    assert "Під наглядом лікаря" in page.text
+    assert_no_missing_keys(page.text)
+
+
+def test_the_instruction_page_renders_the_sections_when_there_are_no_product_facts(world, clients, monkeypatch):
+    use_instruction(monkeypatch, {**INSTRUCTION, "details": {}})
+    owner = clients("alpha@example.test")
+    factor_id = factor_id_of(create_entry(world, owner))
+    page = owner.get(f"/medicines/{factor_id}/instruction")
+    assert page.status_code == 200
+    assert 'id="med-instruction"' in page.text and "Спосіб застосування" in page.text
+    assert "Active substance" not in page.text
+
+
+def test_a_remark_that_opens_with_the_state_shows_only_what_it_adds(world, clients, monkeypatch):
+    warnings = [["Водії", "caution", "з обережністю, можливо запаморочення і слабкість"],
+                ["Діти", "caution", "з 6-ти років"], ["Вагітні", "forbidden", "заборонено"]]
+    use_instruction(monkeypatch, {**INSTRUCTION, "details": {"warnings": warnings}})
+    owner = clients("alpha@example.test")
+    factor_id = factor_id_of(create_entry(world, owner))
+    page = owner.get(f"/medicines/{factor_id}/instruction")
+    assert page.status_code == 200
+    assert ('<strong>Водії</strong>: with caution <span class="muted">(можливо запаморочення і слабкість)</span>'
+            in page.text)
+    assert "з обережністю, можливо" not in page.text
+    assert '<strong>Діти</strong>: with caution <span class="muted">(з 6-ти років)</span>' in page.text
+    assert "<strong>Вагітні</strong>: not allowed</span>" in page.text
+
+
+def test_the_instruction_page_is_404_without_a_reference_or_for_another_person(world, clients, monkeypatch):
+    use_instruction(monkeypatch)
+    alpha = clients("alpha@example.test")
+    without = factor_id_of(create_entry(world, alpha, reference_name="", reference_code=""))
+    assert alpha.get(f"/medicines/{without}/instruction").status_code == 404
+
+    linked = factor_id_of(create_entry(world, alpha))
+    bravo = clients("bravo@example.test")
+    assert bravo.get(f"/medicines/{linked}/instruction").status_code == 404
+
+
+def test_with_the_lookup_switched_off_the_page_reads_the_stored_copy_only(world, clients, monkeypatch):
+    owner = clients("alpha@example.test")
+    factor_id = factor_id_of(create_entry(world, owner))
+    join_reference_jobs()  # the save's own lookup ends before the fake below is set
+    with connect(world.settings) as connection:
+        connection.execute(
+            "INSERT INTO drug_references(source, url, shown_for, atc_codes, sections_json, fetched_at, details_json) "
+            "VALUES ('tabletki', ?, 'Диокор 80 мг', 'C09DA03', ?, ?, '')",
+            (INSTRUCTION["url"], json.dumps(INSTRUCTION["sections"], ensure_ascii=False), utc_now()),
+        )
+        drugref.set_enabled(connection, False)
+        connection.commit()
+
+    def must_not_look_up(*_args, **_kwargs):
+        raise AssertionError("the lookup ran while it is switched off")
+
+    monkeypatch.setattr(drugref, "cached_instruction", must_not_look_up)
+    page = owner.get(f"/medicines/{factor_id}/instruction")
+    assert page.status_code == 200
+    assert "Спосіб застосування" in page.text
+
+
+def test_a_share_viewer_reads_the_instruction_of_the_owners_entry(world, clients, monkeypatch):
+    use_instruction(monkeypatch)
+    alpha = clients("alpha@example.test")
+    factor_id = factor_id_of(create_entry(world, alpha))
+    alpha.post("/profile/shares", data={"email": "bravo@example.test", "csrf_token": csrf(world, alpha)})
+    bravo = clients("bravo@example.test")
+    bravo.post("/profile/view", data={"owner_user_id": world.alpha, "csrf_token": csrf(world, bravo)})
+    page = bravo.get(f"/medicines/{factor_id}/instruction")
+    assert page.status_code == 200 and 'id="med-instruction"' in page.text
+
+
+def test_saving_a_linked_entry_stores_its_instruction_and_fills_what_it_lacks(world, clients, monkeypatch):
+    def cache(connection, name, code="", **_kw):
+        connection.execute(
+            "INSERT OR REPLACE INTO drug_references(source, url, shown_for, atc_codes, sections_json, fetched_at, details_json) "
+            "VALUES ('tabletki', ?, ?, 'C09DA03', ?, ?, ?)",
+            (INSTRUCTION["url"], INSTRUCTION["shown_for"], json.dumps(INSTRUCTION["sections"], ensure_ascii=False),
+             utc_now(), json.dumps(INSTRUCTION["details"], ensure_ascii=False)),
+        )
+        return INSTRUCTION
+
+    monkeypatch.setattr(drugref, "cached_instruction", cache)
+    owner = clients("alpha@example.test")
+    empty = factor_id_of(create_entry(world, owner, substance="", atc_code=""))
+    kept = factor_id_of(create_entry(world, owner, name="Диокор Плюс", substance="my words", atc_code="C09CA03"))
+    assert "reference" in [job["kind"] for job in factor_jobs._JOBS.values()]
+    join_reference_jobs()
+
+    assert row_of(world, empty)["substance"] == "валсартан, гідрохлоротіазид"
+    assert row_of(world, empty)["atc_code"] == "C09DA03"
+    assert row_of(world, kept)["substance"] == "my words" and row_of(world, kept)["atc_code"] == "C09CA03"
+    with connect(world.settings) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM drug_references").fetchone()[0] == 1
 
 
 def test_edit_and_save_changes_the_entry(world, clients):

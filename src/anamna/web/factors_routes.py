@@ -343,6 +343,27 @@ def _new_page(request: Request, w: _Wiring, kind: str):
                               action=_MEDICINES, back_url=_MEDICINES, back_label=t("med.title"))
 
 
+def _keep_reference(settings, owner_id: str, factor_id: str) -> None:
+    """Read and store the instruction of a linked entry in the background, and fill what the entry lacks from it.
+
+    A save never waits for the reference site: this runs as a job nobody polls.
+    """
+    def work() -> dict:
+        with connect(settings) as connection:
+            row = factors.get(connection, owner_id, factor_id, today=date.today())
+            if row is None or not row["reference_name"] or not drugref.enabled(connection):
+                return {}
+            reference = drugref.cached_instruction(
+                connection, row["reference_name"], row["reference_code"] or "", **drugref.fetch_options(connection),
+            )
+            if reference is not None:
+                factors.fill_from_reference(connection, owner_id, factor_id, reference)
+            connection.commit()
+        return {}
+
+    factor_jobs.start(owner_id, work, kind="reference", key=factor_id)
+
+
 def _create(request: Request, w: _Wiring, user, form):
     today = date.today()
     values, problem = factors.clean(form, today=today)
@@ -363,6 +384,8 @@ def _create(request: Request, w: _Wiring, user, form):
         w.audit(user["id"], user["id"], "factor.create", "factor", factor_id, {"kind": values["kind"]},
                 connection=connection)
         connection.commit()
+    if values["reference_name"]:
+        _keep_reference(w.settings, user["id"], factor_id)
     return _redirect(f"/medicines/{factor_id}?saved=created")
 
 
@@ -517,6 +540,81 @@ def _edit_page(request: Request, w: _Wiring, factor_id: str, suggest: str):
         )
 
 
+_FACT_KEYS_SHOWN = ("substance", "inn", "form", "dosage", "pack", "sale", "group", "atc", "registration", "maker")
+_WARNING_STATES_SHOWN = ("allowed", "caution", "forbidden", "free")
+#: A remark that only repeats the state says nothing more.
+_PLAIN_REMARKS = frozenset({"дозволено", "заборонено", "з обережністю", "немає обмежень"})
+
+
+def _remark_beyond_state(remark: str) -> str:
+    """The part of a remark that says more than the state itself."""
+    folded = remark.casefold()
+    if folded in _PLAIN_REMARKS:
+        return ""
+    for plain in _PLAIN_REMARKS:
+        if folded.startswith(plain + ","):
+            return remark[len(plain) + 1:].strip()
+    return remark
+
+
+def _reference_facts(details) -> list[dict]:
+    facts = details.get("facts") if isinstance(details, dict) else None
+    shown = []
+    for fact in facts if isinstance(facts, list) else []:
+        if not (isinstance(fact, list) and len(fact) == 2 and fact[0] in _FACT_KEYS_SHOWN
+                and isinstance(fact[1], list)):
+            continue
+        values = [value.strip() for value in fact[1] if isinstance(value, str) and value.strip()]
+        if values:
+            shown.append({"key": fact[0], "values": values})
+    return shown
+
+
+def _reference_warnings(details) -> list[dict]:
+    warnings = details.get("warnings") if isinstance(details, dict) else None
+    shown = []
+    for item in warnings if isinstance(warnings, list) else []:
+        if not (isinstance(item, list) and len(item) == 3 and all(isinstance(part, str) for part in item)):
+            continue
+        subject, state, remark = (part.strip() for part in item)
+        if not subject or state not in _WARNING_STATES_SHOWN:
+            continue
+        shown.append({
+            "subject": subject, "state": state,
+            "remark": _remark_beyond_state(remark),
+        })
+    return shown
+
+
+def _instruction_page(request: Request, w: _Wiring, factor_id: str):
+    user = w.require_user(request)
+    owner = w.record_user(request, user)
+    today = date.today()
+    locale = get_locale()
+    with connect(w.settings) as connection:
+        row = _owned_factor(connection, owner["id"], factor_id, today)
+        if not row["reference_name"]:
+            raise HTTPException(404)
+        lookup_on = drugref.enabled(connection)
+        if lookup_on:
+            instruction = drugref.cached_instruction(
+                connection, row["reference_name"], row["reference_code"] or "", **drugref.fetch_options(connection),
+            )
+            connection.commit()
+        else:
+            instruction = drugref.stored_instruction(connection, row["reference_name"], row["reference_code"] or "")
+        metric_ids = _metric_ids(connection, owner["id"])
+        names = _concept_names(connection)
+    entry = factors_view.card(row, locale=locale, today=today, metric_ids=metric_ids, concept_names=names)
+    details = (instruction or {}).get("details") or {}
+    fetched_on = format_date_localized(instruction["fetched_at"]) if instruction and instruction.get("fetched_at") else ""
+    return w.templates.TemplateResponse(request, "medicine_instruction.html", w.template_context(
+        request, active="medicines", factor=entry, instruction=instruction,
+        facts=_reference_facts(details), warnings=_reference_warnings(details),
+        fetched_on=fetched_on, lookup_on=lookup_on,
+    ))
+
+
 def _add_effect(connection, user_id: str, factor_id: str, form) -> RedirectResponse:
     base = f"/medicines/{factor_id}"
     label = " ".join(str(form.get("label") or "").split())[:200]
@@ -548,6 +646,8 @@ def _act(request: Request, w: _Wiring, user, factor_id: str, form) -> RedirectRe
             w.audit(user["id"], user["id"], "factor.update", "factor", factor_id, {"kind": values["kind"]},
                     connection=connection)
             connection.commit()
+            if values["reference_name"]:
+                _keep_reference(w.settings, user["id"], factor_id)
             return _redirect(f"{base}?saved=saved")
         if action == "stop":
             factors.stop(connection, user["id"], factor_id, today)
@@ -617,6 +717,10 @@ def register_routes(app, settings, *, templates, template_context, require_user,
     @app.get("/medicines/{factor_id}/edit", response_class=HTMLResponse)
     def edit_page(request: Request, factor_id: str, suggest: str = ""):
         return _edit_page(request, w, factor_id, suggest)
+
+    @app.get("/medicines/{factor_id}/instruction", response_class=HTMLResponse)
+    def instruction_page(request: Request, factor_id: str):
+        return _instruction_page(request, w, factor_id)
 
     @app.post("/medicines/{factor_id}")
     async def factor_action(request: Request, factor_id: str):

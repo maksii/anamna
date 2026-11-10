@@ -47,3 +47,28 @@ def empty_sign_in_meters():
     security._attempts.clear()
     yield
     security._attempts.clear()
+
+
+@pytest.fixture(autouse=True)
+def reference_site_is_never_called(monkeypatch):
+    """Saving a linked medicine reads its instruction on a background job.  No
+    test may reach the reference site: one that needs a reply fakes the network
+    under `drugref._open` (`urllib.request.build_opener`), `drugref._open`
+    itself or `drugref.cached_instruction`.  The jobs a test started are waited
+    for before the guard is lifted, so none of them calls the real site after
+    the test."""
+    import urllib.request
+
+    from anamna import drugref, factor_jobs
+
+    real_open, real_opener = drugref._open, urllib.request.build_opener
+
+    def guarded(*args, **kwargs):
+        if urllib.request.build_opener is real_opener:
+            raise drugref.DrugRefError("the reference site is not called from tests")
+        return real_open(*args, **kwargs)
+
+    monkeypatch.setattr(drugref, "_open", guarded)
+    yield
+    for job_id in list(factor_jobs._JOBS):
+        factor_jobs.join(job_id, timeout=10)

@@ -14,13 +14,21 @@ from pathlib import Path
 from anamna import chat, drugref, factors
 from anamna.db import connect, utc_now
 from anamna.web import app as web
-from anamna.web.chat_routes import build_tools, profile_summary
+from anamna.web.chat_routes import _medicine_card_lines, _stored_details, build_tools, profile_summary
 
 from test_chat import _other_person
 from test_web_panels import build
 
 SOURCE_URL = "https://tabletki.ua/uk/Coumadin/12345/"
 SECTIONS = [["Показання", "Профілактика тромбозів"], ["Дозування", "2.5 мг щодня"]]
+PRODUCT_CARD = {
+    "via": "api",
+    "facts": [["substance", ["варфарин"]], ["dosage", ["варфарин: 5 мг"]], ["form", ["таблетки"]],
+              ["maker", ["Фармак"]], ["secret", ["not a fact the assistant is shown"]]],
+    "warnings": [["Дорослі", "allowed", "дозволено"], ["Діабетики", "caution", "з обережністю"],
+                 ["Вагітні", "forbidden", "Можна лише за призначенням"], ["Печінка", "free", ""],
+                 ["Нирки", "bogus", "not a state the assistant is shown"]],
+}
 
 
 def _add(settings, owner: str, **fields) -> str:
@@ -31,12 +39,12 @@ def _add(settings, owner: str, **fields) -> str:
         return factors.create(db, owner, f"patient-{owner}", values)
 
 
-def _store_instruction(settings, url: str, sections: list[list[str]]) -> None:
+def _store_instruction(settings, url: str, sections: list[list[str]], details: dict | None = None) -> None:
     with connect(settings) as db:
         db.execute(
-            "INSERT INTO drug_references(source, url, shown_for, atc_codes, sections_json, fetched_at) "
-            "VALUES ('tabletki', ?, 'Warfarin', 'B01AA03', ?, ?)",
-            (url, json.dumps(sections, ensure_ascii=False), utc_now()),
+            "INSERT INTO drug_references(source, url, shown_for, atc_codes, sections_json, fetched_at, details_json) "
+            "VALUES ('tabletki', ?, 'Warfarin', 'B01AA03', ?, ?, ?)",
+            (url, json.dumps(sections, ensure_ascii=False), utc_now(), json.dumps(details or {}, ensure_ascii=False)),
         )
 
 
@@ -176,3 +184,48 @@ def test_another_persons_medicine_id_is_not_found(tmp_path: Path):
     assert _run(settings, owner, {"medicine_id": f"m:{other_factor}"}) == "No such medicine or factor."
     assert _run(settings, owner, {"medicine_id": other_factor, "section": "дозування"}) == (
         "No such medicine or factor.")
+
+
+def test_get_medicines_with_a_stored_product_card_gives_its_facts_and_who_may_take_it(tmp_path: Path):
+    settings, owner, _client = build(tmp_path)
+    factor_id = _add(settings, owner, reference_name="Coumadin", reference_code="12345", started_on="2025-01-01")
+    _store_instruction(settings, SOURCE_URL, SECTIONS, PRODUCT_CARD)
+    lines = _run(settings, owner, {"medicine_id": f"m:{factor_id}"}).splitlines()
+    assert lines[-2] == (
+        "product facts (tabletki.ua product card): active substance: варфарин; strength: варфарин: 5 мг; "
+        "form: таблетки; manufacturer: Фармак")
+    assert lines[-1] == (
+        "who may take it (a summary by tabletki.ua, not the official instruction): Дорослі: allowed; "
+        "Діабетики: with caution; Вагітні: not allowed (Можна лише за призначенням); Печінка: no restrictions")
+    assert "secret" not in "\n".join(lines) and "Нирки" not in "\n".join(lines)
+
+
+def test_get_medicines_without_product_facts_adds_neither_line(tmp_path: Path):
+    settings, owner, _client = build(tmp_path)
+    factor_id = _add(settings, owner, reference_name="Coumadin", reference_code="12345")
+    _store_instruction(settings, SOURCE_URL, SECTIONS)
+    text = _run(settings, owner, {"medicine_id": f"m:{factor_id}"})
+    assert "product facts" not in text and "who may take it" not in text
+
+
+def test_a_remark_that_opens_with_the_state_is_cut_to_what_it_adds(tmp_path: Path):
+    settings, owner, _client = build(tmp_path)
+    factor_id = _add(settings, owner, reference_name="Coumadin", reference_code="12345")
+    warnings = [["Водії", "caution", "з обережністю, можливо запаморочення і слабкість"],
+                ["Діти", "caution", "з 6-ти років"], ["Вагітні", "forbidden", "заборонено"]]
+    _store_instruction(settings, SOURCE_URL, SECTIONS, {"warnings": warnings})
+    lines = _run(settings, owner, {"medicine_id": f"m:{factor_id}"}).splitlines()
+    assert lines[-1] == (
+        "who may take it (a summary by tabletki.ua, not the official instruction): "
+        "Водії: with caution (можливо запаморочення і слабкість); Діти: with caution (з 6-ти років); "
+        "Вагітні: not allowed")
+
+
+def test_a_product_card_line_is_cut_to_1500_characters_and_a_bad_column_reads_as_empty():
+    line = _medicine_card_lines({"facts": [["substance", ["а" * 2000]]]})
+    assert line.startswith("\nproduct facts (tabletki.ua product card): active substance: аа")
+    assert len(line) == 1 + 1500
+    assert _medicine_card_lines({}) == ""
+    assert _stored_details("{not json") == {}
+    assert _stored_details("[1, 2]") == {}
+    assert _stored_details(None) == {}

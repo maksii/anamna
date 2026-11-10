@@ -7645,6 +7645,9 @@ def admin_ai(
     config = ai_settings(settings)
     with connect(settings) as connection:
         drug_lookup = drugref.enabled(connection)
+        drug_lookup_mode = drugref.mode(connection)
+        drug_lookup_token_source = drugref.token_source(connection)
+        drug_lookup_token_value = drugref.token(connection) if drug_lookup_token_source == "settings" else ""
     tested_task = task if task in AI_TASKS else ""
     usage = usage_summary(settings)
     for item in usage["recent"]:
@@ -7658,6 +7661,9 @@ def admin_ai(
             ai=config,
             ai_on=ai_active(settings),
             drug_lookup=drug_lookup,
+            drug_lookup_mode=drug_lookup_mode,
+            drug_lookup_token_tail=drug_lookup_token_value[-6:] if drug_lookup_token_value else "",
+            drug_lookup_token_source=drug_lookup_token_source,
             drug_lookup_paused_minutes=math.ceil(drugref.paused_seconds() / 60),
             # Enough of each key to recognise it, never enough to use it.
             key_tails={
@@ -7699,10 +7705,18 @@ async def admin_ai_save(request: Request):
     # when the AI part of the form is refused. An unticked box is absent from
     # the form, which switches it off.
     drug_lookup = "drug_lookup" in form
+    drug_lookup_mode = str(form.get("drug_lookup_mode") or "page")
+    drug_lookup_token_new = str(form.get("drug_lookup_token") or "")
+    clear_drug_lookup_token = form.get("clear_drug_lookup_token") == "1"
 
     def save_drug_lookup() -> None:
         with connect(settings) as connection:
             drugref.set_enabled(connection, drug_lookup)
+            drugref.set_mode(connection, drug_lookup_mode)
+            if clear_drug_lookup_token:
+                drugref.set_token(connection, "")
+            elif drug_lookup_token_new:
+                drugref.set_token(connection, drug_lookup_token_new)
 
     await run_in_threadpool(save_drug_lookup)
     parsed = parse_ai_admin_form(form)
@@ -7716,7 +7730,7 @@ async def admin_ai_save(request: Request):
     # The keys themselves must never reach the audit log; only which changed.
     await run_in_threadpool(
         _audit, settings, admin["id"], admin["id"], "admin_ai_changed", "app_settings", "ai",
-        {**audit, "data_collection": data_collection, "drug_lookup": drug_lookup},
+        {**audit, "data_collection": data_collection, "drug_lookup": drug_lookup, "drug_lookup_mode": drug_lookup_mode},
     )
     return RedirectResponse("/admin/ai?done=saved", status_code=303)
 

@@ -71,6 +71,11 @@ Garmin Personal API keys), `ANAMNA_OPENWEARABLES_URL`, `ANAMNA_OPENWEARABLES_API
 `ANAMNA_TELEGRAM_BOT_USERNAME`, `ANAMNA_TELEGRAM_WEBHOOK_SECRET`, `PAPERLESS_URL`, and the AI keys
 `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`.
 
+The medicine reference reads instructions from the public pages of tabletki.ua and needs nothing.
+`ANAMNA_TABLETKI_TOKEN`, a token issued by tabletki.ua, lets an administrator switch it to their API
+on the AI settings page: that also brings the active substance, the form, the dosage and who may
+take the medicine.
+
 ## First run
 
 On an empty database every page leads to `/setup`, which creates the administrator account and

@@ -78,6 +78,28 @@
       </label>
       <p class="tiny muted" id="drug-lookup-hint">{{ t('admin.drug_lookup_help') }} {{ t('admin.drug_lookup_manners') }}</p>
       {% if drug_lookup_paused_minutes %}<p class="alert neutral" role="status">{{ t('admin.drug_lookup_paused', minutes=drug_lookup_paused_minutes) }}</p>{% endif %}
+      <label>{{ t('admin.drug_lookup_mode_label') }}
+        <select name="drug_lookup_mode" aria-describedby="drug-lookup-mode-hint">
+          <option value="page" {{ 'selected' if drug_lookup_mode == 'page' else '' }}>{{ t('admin.drug_lookup_mode_page') }}</option>
+          <option value="api" {{ 'selected' if drug_lookup_mode == 'api' else '' }}>{{ t('admin.drug_lookup_mode_api') }}</option>
+        </select>
+      </label>
+      <p class="tiny muted" id="drug-lookup-mode-hint">{{ t('admin.drug_lookup_mode_help') }}</p>
+      <label>{{ t('admin.drug_lookup_token_label') }}
+        <input name="drug_lookup_token" type="password" autocomplete="off"
+               placeholder="{% if drug_lookup_token_tail %}...{{ drug_lookup_token_tail }}{% endif %}"
+               aria-describedby="drug-lookup-token-hint">
+      </label>
+      <p class="tiny muted" id="drug-lookup-token-hint">
+        {% if drug_lookup_token_tail %}{{ t('admin.drug_lookup_token_saved', tail=drug_lookup_token_tail) }}{% elif drug_lookup_token_source == 'environment' %}{{ t('admin.drug_lookup_token_env') }}{% else %}{{ t('admin.drug_lookup_token_missing') }}{% endif %}
+        {{ t('admin.drug_lookup_token_help') }}
+      </p>
+      {% if drug_lookup_token_tail %}
+      <label>
+        <input type="checkbox" name="clear_drug_lookup_token" value="1">
+        {{ t('admin.drug_lookup_token_clear') }}
+      </label>
+      {% endif %}
     </fieldset>
 
     <fieldset class="ai-fieldset">

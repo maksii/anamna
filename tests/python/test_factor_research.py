@@ -103,7 +103,7 @@ def sent_payload(calls: list[dict]) -> dict:
 
 
 def use_reference(monkeypatch, reference: dict | None = REFERENCE) -> None:
-    monkeypatch.setattr(drugref, "cached_instruction", lambda connection, name, code="": reference)
+    monkeypatch.setattr(drugref, "cached_instruction", lambda connection, name, code="", **_kw: reference)
 
 
 def test_a_quote_found_in_the_instruction_survives_with_other_case_and_spacing(tmp_path: Path, monkeypatch):
@@ -215,7 +215,7 @@ def test_without_a_reference_the_source_is_none_and_no_quote_survives(tmp_path: 
     settings = make_database(tmp_path)
     stub_model(settings, monkeypatch, card())
 
-    def must_not_fetch(connection, name, code=""):
+    def must_not_fetch(connection, name, code="", **_kw):
         raise AssertionError("a factor without a reference name was looked up")
 
     monkeypatch.setattr(drugref, "cached_instruction", must_not_fetch)
@@ -296,7 +296,7 @@ def test_ai_switched_off_raises_unavailable_before_any_lookup(tmp_path: Path, mo
     stub_model(settings, monkeypatch, card())
     ai.save_ai_settings(settings, {"ai_enabled": "0"})
 
-    def must_not_fetch(connection, name, code=""):
+    def must_not_fetch(connection, name, code="", **_kw):
         raise AssertionError("a lookup ran with AI off")
 
     monkeypatch.setattr(drugref, "cached_instruction", must_not_fetch)
@@ -343,7 +343,7 @@ def test_research_commits_the_cached_reference_before_the_model_call_takes_its_l
         )
     stub_model(settings, monkeypatch, card())
 
-    def cache_without_commit(connection, name, code=""):
+    def cache_without_commit(connection, name, code="", **_kw):
         connection.execute(
             "INSERT INTO drug_references (source, url, shown_for, atc_codes, sections_json, fetched_at) "
             "VALUES (?, ?, ?, 'C09DA03', ?, '2026-01-01T00:00:00+00:00')",
@@ -362,7 +362,23 @@ def test_research_commits_the_cached_reference_before_the_model_call_takes_its_l
         assert connection.execute("SELECT COUNT(*) FROM ai_usage WHERE ok = 1").fetchone()[0] == 1
 
 
-REGIMEN_QUOTE = "Дорослим призначають 80 мг один раз на добу."
+def test_research_reads_the_reference_with_the_administrators_fetch_options(tmp_path: Path, monkeypatch):
+    settings = make_database(tmp_path)
+    stub_model(settings, monkeypatch, card())
+    monkeypatch.setattr(drugref, "fetch_options", lambda connection: {"use_api": True, "api_token": "tok-test"})
+    seen: list[dict] = []
+
+    def cached(connection, name, code="", **kwargs):
+        seen.append({"name": name, "code": code, **kwargs})
+        return REFERENCE
+
+    monkeypatch.setattr(drugref, "cached_instruction", cached)
+    with connect(settings) as connection:
+        factor_research.research(settings, connection, factor_for(), locale="uk")
+    assert seen == [{"name": "Диокор", "code": "8311", "use_api": True, "api_token": "tok-test"}]
+
+
+REGIMEN_QUOTE ="Дорослим призначають 80 мг один раз на добу."
 HAYSTACK = factor_research._normal(" ".join(text for _, text in REFERENCE["sections"]))
 
 

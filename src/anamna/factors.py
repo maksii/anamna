@@ -177,9 +177,13 @@ def _posted(form: Mapping[str, Any], key: str) -> str:
     return str(form.get(key) or "").strip()
 
 
-def _atc_code(form: Mapping[str, Any]) -> str:
-    atc = re.sub(r"\s+", "", str(form.get("atc_code") or "")).upper()
+def _atc_text(text: Any) -> str:
+    atc = re.sub(r"\s+", "", str(text or "")).upper()
     return atc if _ATC.fullmatch(atc) else ""
+
+
+def _atc_code(form: Mapping[str, Any]) -> str:
+    return _atc_text(form.get("atc_code"))
 
 
 def _point_status(form: Mapping[str, Any], started: date | None, today: date) -> str:
@@ -369,6 +373,53 @@ def update(connection: sqlite3.Connection, owner_id: str, factor_id: str, values
         (*row.values(), factor_id, owner_id),
     )
     _add_ai_effects(connection, owner_id, factor_id, values.get("ai_effects", []))
+    return True
+
+
+def _reference_substance(reference: Mapping[str, Any]) -> str:
+    details = reference.get("details")
+    facts = details.get("facts") if isinstance(details, dict) else None
+    for fact in facts if isinstance(facts, list) else []:
+        if isinstance(fact, list) and len(fact) == 2 and fact[0] == "substance" and isinstance(fact[1], list):
+            values = [value.strip() for value in fact[1] if isinstance(value, str) and value.strip()]
+            return _cut(", ".join(values), SHORT)
+    return ""
+
+
+def _reference_atc(reference: Mapping[str, Any]) -> str:
+    codes = reference.get("atc")
+    for item in codes if isinstance(codes, list) else []:
+        atc = _atc_text(item)
+        if atc:
+            return atc
+    return ""
+
+
+def fill_from_reference(connection: sqlite3.Connection, owner_user_id: str, factor_id: str, reference: dict) -> bool:
+    """Fill an entry's empty active substance and ATC code from its stored instruction.
+
+    Only empty fields are filled, and only for an entry that still points at a
+    reference. The text is the reference's own, never a model's: it is not
+    recorded among the AI fields. Returns True when something was written.
+    """
+    substance = _reference_substance(reference)
+    atc = _reference_atc(reference)
+    row = connection.execute(
+        "SELECT substance, atc_code, reference_name FROM factors WHERE id=? AND owner_user_id=?",
+        (factor_id, owner_user_id),
+    ).fetchone()
+    if row is None or not row["reference_name"]:
+        return False
+    fill_substance = bool(substance) and not (row["substance"] or "")
+    fill_atc = bool(atc) and not (row["atc_code"] or "")
+    if not (fill_substance or fill_atc):
+        return False
+    connection.execute(
+        "UPDATE factors SET substance = CASE WHEN COALESCE(substance, '') = '' THEN ? ELSE substance END, "
+        "atc_code = CASE WHEN COALESCE(atc_code, '') = '' THEN ? ELSE atc_code END, updated_at = ? "
+        "WHERE id = ? AND owner_user_id = ?",
+        (substance or row["substance"], atc or row["atc_code"], utc_now(), factor_id, owner_user_id),
+    )
     return True
 
 

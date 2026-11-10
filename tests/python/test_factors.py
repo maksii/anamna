@@ -910,3 +910,57 @@ def test_chat_detail_without_an_id_lists_every_factor(db):
 def test_chat_detail_does_not_show_another_users_factor(db):
     factor_id = add(db, db.alpha, db.alpha_patient)
     assert factors.chat_detail(db.connection, db.beta, today=TODAY, factor_id=factor_id) == "No such medicine or factor."
+
+
+# --- fill_from_reference: an empty field takes the instruction's own text -----
+
+REFERENCE_FACTS = {
+    "url": "https://tabletki.ua/uk/Coumadin/", "sections": [], "atc": ["B01AA03"], "shown_for": "Coumadin",
+    "fetched_at": "2026-01-01T00:00:00+00:00",
+    "details": {"via": "api", "facts": [["substance", ["warfarin", "lactose"]], ["atc", ["B01AA03"]]], "warnings": []},
+}
+
+
+def test_fill_from_reference_takes_the_empty_substance_and_atc_code(db):
+    factor_id = add(db, db.alpha, db.alpha_patient, reference_name="Coumadin")
+    assert factors.fill_from_reference(db.connection, db.alpha, factor_id, REFERENCE_FACTS) is True
+    row = fetch(db, factor_id)
+    assert (row["substance"], row["atc_code"]) == ("warfarin, lactose", "B01AA03")
+    assert row["ai_fields"] == ()
+
+
+def test_fill_from_reference_fills_only_the_field_that_is_empty(db):
+    factor_id = add(db, db.alpha, db.alpha_patient, reference_name="Coumadin", substance="my words")
+    assert factors.fill_from_reference(db.connection, db.alpha, factor_id, REFERENCE_FACTS) is True
+    row = fetch(db, factor_id)
+    assert (row["substance"], row["atc_code"]) == ("my words", "B01AA03")
+
+
+def test_fill_from_reference_cuts_the_substance_to_the_clean_limit(db):
+    factor_id = add(db, db.alpha, db.alpha_patient, reference_name="Coumadin")
+    long_facts = {"details": {"facts": [["substance", ["w" * 300]]]}, "atc": []}
+    assert factors.fill_from_reference(db.connection, db.alpha, factor_id, long_facts) is True
+    assert fetch(db, factor_id)["substance"] == "w" * 200
+
+
+def test_fill_from_reference_ignores_a_malformed_atc_code(db):
+    factor_id = add(db, db.alpha, db.alpha_patient, reference_name="Coumadin")
+    malformed = {**REFERENCE_FACTS, "atc": ["B01AA0", "warfarin"]}
+    assert factors.fill_from_reference(db.connection, db.alpha, factor_id, malformed) is True
+    row = fetch(db, factor_id)
+    assert row["atc_code"] == "" and row["substance"] == "warfarin, lactose"
+
+
+def test_fill_from_reference_returns_false_when_nothing_would_change(db):
+    factor_id = add(db, db.alpha, db.alpha_patient, reference_name="Coumadin", substance="warfarin", atc_code="B01AA03")
+    assert factors.fill_from_reference(db.connection, db.alpha, factor_id, REFERENCE_FACTS) is False
+    assert factors.fill_from_reference(db.connection, db.alpha, "no-such-id", REFERENCE_FACTS) is False
+    assert factors.fill_from_reference(db.connection, db.alpha, factor_id, {"details": {"facts": "x"}, "atc": "B01AA03"}) is False
+
+
+def test_fill_from_reference_leaves_an_entry_without_a_reference_or_another_owners_alone(db):
+    factor_id = add(db, db.alpha, db.alpha_patient)
+    assert factors.fill_from_reference(db.connection, db.alpha, factor_id, REFERENCE_FACTS) is False
+    named = add(db, db.alpha, db.alpha_patient, reference_name="Coumadin")
+    assert factors.fill_from_reference(db.connection, db.beta, named, REFERENCE_FACTS) is False
+    assert fetch(db, named)["substance"] == ""

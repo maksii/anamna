@@ -601,9 +601,71 @@ def _medicine_reference(connection, entry):
     if not entry["reference_url"]:
         return None
     return connection.execute(
-        "SELECT sections_json FROM drug_references WHERE source = 'tabletki' AND url = ?",
+        "SELECT sections_json, details_json FROM drug_references WHERE source = 'tabletki' AND url = ?",
         (entry["reference_url"],),
     ).fetchone()
+
+
+_PRODUCT_FACT_LABELS = {
+    "substance": "active substance", "inn": "international name (INN)", "form": "form",
+    "dosage": "strength", "pack": "pack size", "sale": "how it is sold", "group": "pharmacological group",
+    "atc": "ATC group", "registration": "registration in Ukraine", "maker": "manufacturer",
+}
+_PRODUCT_STATE_LABELS = {
+    "allowed": "allowed", "caution": "with caution", "forbidden": "not allowed", "free": "no restrictions",
+}
+#: A remark that only repeats the state says nothing more (the same set as the instruction page).
+_PLAIN_REMARKS = frozenset({"дозволено", "заборонено", "з обережністю", "немає обмежень"})
+_CARD_LINE_CHARS = 1500
+
+
+def _remark_beyond_state(remark: str) -> str:
+    """The part of a remark that says more than the state itself."""
+    folded = remark.casefold()
+    if folded in _PLAIN_REMARKS:
+        return ""
+    for plain in _PLAIN_REMARKS:
+        if folded.startswith(plain + ","):
+            return remark[len(plain) + 1:].strip()
+    return remark
+
+
+def _stored_details(raw) -> dict:
+    try:
+        parsed = json.loads(raw or "{}")
+    except (TypeError, ValueError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _medicine_card_lines(details: dict) -> str:
+    """The product card's facts and who-may-take-it summary, as lines for the assistant; "" when there are none."""
+    facts = []
+    for item in details.get("facts") if isinstance(details.get("facts"), list) else []:
+        if (isinstance(item, list) and len(item) == 2 and isinstance(item[0], str)
+                and item[0] in _PRODUCT_FACT_LABELS and isinstance(item[1], list)):
+            values = [value.strip() for value in item[1] if isinstance(value, str) and value.strip()]
+            if values:
+                facts.append(f"{_PRODUCT_FACT_LABELS[item[0]]}: {', '.join(values)}")
+    warnings = []
+    for item in details.get("warnings") if isinstance(details.get("warnings"), list) else []:
+        if not (isinstance(item, list) and len(item) == 3 and all(isinstance(part, str) for part in item)):
+            continue
+        subject, state, remark = (part.strip() for part in item)
+        if not subject or state not in _PRODUCT_STATE_LABELS:
+            continue
+        text = f"{subject}: {_PRODUCT_STATE_LABELS[state]}"
+        beyond = _remark_beyond_state(remark)
+        if beyond:
+            text += f" ({beyond})"
+        warnings.append(text)
+    lines = []
+    if facts:
+        lines.append("product facts (tabletki.ua product card): " + "; ".join(facts))
+    if warnings:
+        lines.append("who may take it (a summary by tabletki.ua, not the official instruction): "
+                     + "; ".join(warnings))
+    return "".join("\n" + line[:_CARD_LINE_CHARS] for line in lines)
 
 
 def _medicine_section(section: str, stored: bool, sections: list) -> str:
@@ -629,9 +691,9 @@ def _tool_get_medicines(connection, owner_id: str, args: dict) -> str:
         return "No such medicine or factor."
     reference = _medicine_reference(connection, entry)
     if reference is None:
-        sections = []
+        sections, details = [], {}
     else:
-        sections = json.loads(reference[0])
+        sections, details = json.loads(reference[0]), _stored_details(reference[1])
     section = _text(args, "section", 80).casefold()
     if section:
         return _medicine_section(section, reference is not None, sections)
@@ -639,7 +701,7 @@ def _tool_get_medicines(connection, owner_id: str, args: dict) -> str:
     if sections:
         out += ("\ninstruction sections (official instruction for medical use, tabletki.ua): "
                 + "; ".join(str(title) for title, _body in sections))
-    return out
+    return out + _medicine_card_lines(details)
 
 
 def _schema(**properties: tuple[str, str]) -> dict:

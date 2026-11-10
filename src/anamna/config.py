@@ -42,6 +42,7 @@ def load_integration_environment(path: Path | None = None) -> None:
         "telegram-bot-token": "ANAMNA_TELEGRAM_BOT_TOKEN",
         "telegram-bot-name": "ANAMNA_TELEGRAM_BOT_USERNAME",
         "openwearables-token": "ANAMNA_OPENWEARABLES_WEBHOOK_TOKEN",
+        "TABLETKI_TOKEN": "ANAMNA_TABLETKI_TOKEN",
     }
     allowed = set(aliases.values()) | {"ANAMNA_TELEGRAM_WEBHOOK_SECRET"}
     env_path = path or ROOT / ".env"

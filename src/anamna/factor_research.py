@@ -266,7 +266,8 @@ def research(settings, connection: sqlite3.Connection, factor: dict, *, locale: 
     reference = None
     if factor.get("reference_name") and drugref.enabled(connection):
         reference = drugref.cached_instruction(
-            connection, factor["reference_name"], factor.get("reference_code") or ""
+            connection, factor["reference_name"], factor.get("reference_code") or "",
+            **drugref.fetch_options(connection),
         )
     haystack = _normal(" ".join(text for _, text in reference["sections"])) if reference else ""
     analytes = _analytes(connection)

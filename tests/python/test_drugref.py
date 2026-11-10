@@ -410,6 +410,73 @@ def test_instruction_of_a_page_without_sections_is_empty_not_an_error(monkeypatc
     assert result["shown_for"] == ""
 
 
+def test_text_keeps_a_bare_less_than_and_greater_than():
+    fragment = (
+        "<p>кліренсом креатиніну &lt; 10 мл/хв</p>"
+        "<p>кліренсом креатиніну < 10 мл/хв та діаліз. Для пацієнтів > 10 мл/хв корекція не потрібна.</p>"
+    )
+    text = drugref._text(fragment)
+    assert "< 10 мл/хв та діаліз" in text
+    assert "> 10 мл/хв корекція" in text
+    assert "<p>" not in text
+
+
+def test_text_still_removes_real_tags_attributes_and_comments():
+    assert drugref._text('<p class="x">a <b>b</b><!-- note --> c<br/>d</p>') == "a b c\nd"
+
+
+def test_a_table_row_becomes_one_line_with_its_cells_separated_by_bars():
+    row = (
+        "<table><tr><td><p>Haemophilus influenzae</p></td><td><p>≤1</p></td>"
+        "<td><p>-</p></td><td><p>&gt; 1</p></td></tr></table>"
+    )
+    assert drugref._text(row) == "Haemophilus influenzae | ≤1 | - | > 1"
+    assert drugref._text(row.replace("&gt;", ">")) == "Haemophilus influenzae | ≤1 | - | > 1"
+
+
+def test_two_rows_give_two_lines_and_a_header_row_of_th_cells_works_the_same():
+    table = (
+        "<table><tr><th>Antibiotic</th><th>MIC</th></tr>"
+        "<tr><td>Ampicillin</td><td>≤1</td></tr></table>"
+    )
+    assert drugref._text(table) == "Antibiotic | MIC\nAmpicillin | ≤1"
+
+
+def test_two_paragraphs_or_a_line_break_in_one_cell_stay_on_the_rows_line():
+    table = "<table><tr><td><p>first</p><p>second</p></td><td>x<br>y</td></tr></table>"
+    assert drugref._text(table) == "first second | x y"
+
+
+def test_an_empty_last_cell_leaves_no_dangling_bar_and_a_bar_mid_line_stays():
+    assert drugref._text("<table><tr><td>Ampicillin</td><td></td></tr></table>") == "Ampicillin"
+    assert drugref._text("<table><tr><td>a | b</td><td>c</td></tr></table>") == "a | b | c"
+
+
+def test_text_outside_tables_comes_out_as_before():
+    assert drugref._text("<p>a</p><p>b <b>c</b></p>") == "a\nb c"
+    assert drugref._text("<p>x<br>y</p>") == "x\ny"
+    assert (
+        drugref._text("<p>Before.</p><table><tr><td>a</td><td>b</td></tr></table><p>After.</p>")
+        == "Before.\na | b\nAfter."
+    )
+
+
+def test_a_bare_less_than_in_an_instruction_section_survives_the_page_parse(monkeypatch):
+    page = (
+        '<html><section><h2 id="instr-desktop_0" data-index="instr_cont_0">Особливості</h2>'
+        ' <div id="instr_cont_0" class="product-instructions-text">'
+        ' <p>Пацієнтам із кліренсом креатиніну < 10 мл/хв та пацієнтам, яким проводять діаліз, '
+        "тому валсартан слід застосовувати з обережністю. Для пацієнтів із кліренсом креатиніну "
+        "> 10 мл/хв корекція дози не потрібна.</p>"
+        " </div> </section></html>"
+    )
+    monkeypatch.setattr(drugref, "_open", lambda url, data=None: page)
+    result = drugref.instruction_page("Валсартан-Тева")
+    text = result["sections"][0][1]
+    assert "кліренсом креатиніну < 10 мл/хв та пацієнтам" in text
+    assert "кліренсом креатиніну > 10 мл/хв корекція дози" in text
+
+
 def test_page_url_quotes_cyrillic_and_appends_a_numeric_code():
     url = drugref.page_url("Диокор-соло-80", "8311")
     assert url == BASE + "/uk/" + urllib.parse.quote("Диокор-соло-80", safe="") + "/8311/"
@@ -496,10 +563,26 @@ def test_cached_instruction_stores_serves_from_the_cache_and_refetches_when_old(
 
         old = (datetime.now(UTC) - timedelta(days=drugref.CACHE_DAYS + 1)).isoformat()
         connection.execute("UPDATE drug_references SET fetched_at = ?", (old,))
-        assert drugref.cached_instruction(connection, "Валсартан-Тева") == first
+        assert without_time(drugref.cached_instruction(connection, "Валсартан-Тева")) == without_time(first)
         assert len(fetches) == 2
         fetched_at = connection.execute("SELECT fetched_at FROM drug_references").fetchone()[0]
         assert fetched_at != old
+
+
+def test_migration_67_marks_copies_stored_before_it_as_old(tmp_path: Path, monkeypatch):
+    settings = settings_for(tmp_path)
+    migrate(settings)
+    monkeypatch.setattr(drugref, "_open", lambda url, data=None: PAGE)
+    with connect(settings) as connection:
+        assert drugref.cached_instruction(connection, "Валсартан-Тева") is not None
+        # Back to the schema before migration 67: no details column, no version row.
+        connection.execute("DELETE FROM schema_migrations WHERE version = 67")
+        connection.execute("ALTER TABLE drug_references DROP COLUMN details_json")
+        connection.commit()
+    migrate(settings)
+    with connect(settings) as connection:
+        fetched_at = connection.execute("SELECT fetched_at FROM drug_references").fetchone()[0]
+    assert fetched_at == "2000-01-01T00:00:00+00:00"
 
 
 def test_a_failed_fetch_or_an_empty_page_returns_none_and_stores_nothing(tmp_path: Path, monkeypatch):
@@ -536,6 +619,11 @@ def cache_then_age(connection, monkeypatch, days=200):
     return cached, old
 
 
+def without_time(found):
+    """The instruction without the date it was stored: two reads of one copy differ only there."""
+    return {key: value for key, value in found.items() if key != "fetched_at"}
+
+
 def fetched_at_of(connection):
     return connection.execute("SELECT fetched_at FROM drug_references").fetchone()[0]
 
@@ -551,7 +639,7 @@ def test_stale_cache_is_used_when_the_fetch_fails(tmp_path: Path, monkeypatch):
 
         monkeypatch.setattr(drugref, "_open", down)
         result = drugref.cached_instruction(connection, "Валсартан-Тева")
-        assert result == cached
+        assert without_time(result) == without_time(cached)
         assert result["sections"][0][0] == "Склад"
         assert result["atc"] == ["C09DA03", "C09CA03"]
         assert result["shown_for"] == cached["shown_for"]
@@ -568,7 +656,7 @@ def test_stale_cache_is_used_while_lookups_are_paused(tmp_path: Path, monkeypatc
             raise DrugRefPaused(60)
 
         monkeypatch.setattr(drugref, "_open", paused)
-        assert drugref.cached_instruction(connection, "Валсартан-Тева") == cached
+        assert without_time(drugref.cached_instruction(connection, "Валсартан-Тева")) == without_time(cached)
         assert fetched_at_of(connection) == old
 
 
@@ -578,7 +666,7 @@ def test_stale_cache_is_used_when_the_page_has_no_sections(tmp_path: Path, monke
     with connect(settings) as connection:
         cached, old = cache_then_age(connection, monkeypatch)
         monkeypatch.setattr(drugref, "_open", lambda url, data=None: "<html>no sections</html>")
-        assert drugref.cached_instruction(connection, "Валсартан-Тева") == cached
+        assert without_time(drugref.cached_instruction(connection, "Валсартан-Тева")) == without_time(cached)
         assert fetched_at_of(connection) == old
 
 
@@ -623,3 +711,199 @@ def test_broken_stale_row_gives_none_when_the_fetch_fails(tmp_path: Path, monkey
         assert drugref.cached_instruction(connection, "Валсартан-Тева") is None
         monkeypatch.setattr(drugref, "_open", lambda url, data=None: PAGE)
         assert drugref.cached_instruction(connection, "Валсартан-Тева")["sections"][0][0] == "Склад"
+
+
+CARD_ID = "13634"
+CARD_NAME = "Диокор-соло-160"
+CARD = {
+    "goodsIntCode": CARD_ID,
+    "tradenameLink": CARD_NAME,
+    "tradeName": "Діокор соло 160",
+    "goodsName": "Діокор соло 160 таблетки, в/плів. обол. по 160 мг №30 (10х3)",
+    "instructionByParts": [{"id": "1", "title": "Склад", "anchor": "Склад", "order": 1,
+                            "html": "<p><i>діюча речовина:</i> валсартан;</p>"}],
+    "dfp": {"ATCFull": ["C09CA03"]},
+    "characteristics": [
+        {"name": "Діючі речовини", "values": [{"name": "валсартан", "code": None}]},
+        {"name": "Форма випуску", "values": [{"name": "таблетки, в/плів. обол.", "code": None}]},
+        {"name": "Дозування", "values": [{"name": "валсартан: 160 мг", "code": None}]},
+        {"name": "Кількість в упаковці", "values": [{"name": "30 шт", "code": None}]},
+        {"name": "Умови продажу", "values": [{"name": "за рецептом", "code": None}]},
+        {"name": "Фармгрупа", "values": [{"name": "Прості препарати антагоністів ангіотензину ІІ.", "code": "571"}]},
+        {"name": "АТХ-група", "values": [{"name": "C09CA03 Валсартан", "code": "C09CA03"}]},
+        {"name": "МНН", "values": [{"name": "Valsartan", "code": "715"}]},
+        {"name": "Реєстрація", "values": [{"name": "UA/11341/01/01 от 30/10/2020", "code": None}]},
+        {"name": "Виробник", "values": [{"name": "ТОВ «Фарма Старт», Україна.", "code": ""}]},
+        {"name": "Форма випуску", "values": [{"name": "таблетки", "code": None}]},
+        {"name": "Діюча речовина", "values": [{"name": "валсартан", "code": None}]},
+    ],
+    "goodsWarning": {"title": "Особливості застосування", "items": [
+        {"allowed": 1, "remark": "дозволено", "subject": "Дорослі"},
+        {"allowed": 2, "remark": "з обережністю", "subject": "Діабетики"},
+        {"allowed": 0, "remark": "заборонено", "subject": "Вагітні"},
+        {"allowed": -1, "remark": "Немає обмежень", "subject": "Приймати"},
+    ]},
+}
+
+
+def card_reply(**changes):
+    return json.dumps({**CARD, **changes}, ensure_ascii=False)
+
+
+def fake_site(monkeypatch, card=None, page=PAGE):
+    """Fakes _open: the card endpoint answers ``card`` (a body, or an exception to raise), other addresses ``page``.
+
+    Returns the list of (url, headers) the calls were made with.
+    """
+    calls = []
+    card = card_reply() if card is None else card
+
+    def fake_open(url, data=None, headers=None):
+        calls.append((url, headers))
+        if url.startswith(API):
+            if isinstance(card, BaseException):
+                raise card
+            return card
+        return page
+
+    monkeypatch.setattr(drugref, "_open", fake_open)
+    return calls
+
+
+def test_the_card_request_carries_the_token_and_the_product_code(monkeypatch):
+    calls = fake_site(monkeypatch)
+    drugref.instruction_api(CARD_NAME, CARD_ID, api_token="секрет")
+    ((url, headers),) = calls
+    assert headers["AppApiToken"] == "секрет"
+    assert "id=13634" in url
+    assert "withContentPlus=false" in url
+
+
+def test_the_card_is_not_asked_without_a_product_code_or_a_token(monkeypatch):
+    def refuse(url, data=None, headers=None):
+        raise AssertionError("the card was requested")
+
+    monkeypatch.setattr(drugref, "_open", refuse)
+    with pytest.raises(DrugRefError):
+        drugref.instruction_api(CARD_NAME, "", api_token="секрет")
+    with pytest.raises(DrugRefError):
+        drugref.instruction_api(CARD_NAME, CARD_ID, api_token="")
+
+
+def test_a_card_about_another_product_or_another_page_is_refused(monkeypatch):
+    fake_site(monkeypatch, card=card_reply(goodsIntCode="99999"))
+    with pytest.raises(DrugRefError):
+        drugref.instruction_api(CARD_NAME, CARD_ID, api_token="t")
+    fake_site(monkeypatch, card=card_reply(tradenameLink="Інший-препарат"))
+    with pytest.raises(DrugRefError):
+        drugref.instruction_api(CARD_NAME, CARD_ID, api_token="t")
+
+
+def test_a_good_card_gives_the_instruction_the_atc_codes_and_the_product_facts(monkeypatch):
+    fake_site(monkeypatch)
+    result = drugref.instruction_api(CARD_NAME, CARD_ID, api_token="t")
+    assert result["url"] == BASE + "/uk/" + CARD_NAME + "/13634/"
+    assert result["sections"] == [["Склад", "діюча речовина: валсартан;"]]
+    assert result["atc"] == ["C09CA03"]
+    assert result["shown_for"] == CARD["goodsName"]
+    details = result["details"]
+    assert details["via"] == "api"
+    assert [key for key, _ in details["facts"]] == [
+        "substance", "form", "dosage", "pack", "sale", "group", "atc", "inn", "registration", "maker",
+    ]
+    assert dict(details["facts"])["form"] == ["таблетки, в/плів. обол."]
+    assert details["warnings"] == [
+        ["Дорослі", "allowed", "дозволено"],
+        ["Діабетики", "caution", "з обережністю"],
+        ["Вагітні", "forbidden", "заборонено"],
+        ["Приймати", "free", "Немає обмежень"],
+    ]
+
+
+def test_the_page_is_read_when_the_card_fails_and_a_trade_name_never_asks_the_card(monkeypatch):
+    calls = fake_site(monkeypatch, card=DrugRefError("URLError"))
+    result = drugref.instruction("Валсартан-Тева", CARD_ID, api_token="t", use_api=True)
+    assert result["sections"][0][0] == "Склад"
+    assert result["details"] == {"via": "page"}
+    assert [url.startswith(API) for url, _ in calls] == [True, False]
+
+    calls = fake_site(monkeypatch)
+    result = drugref.instruction("Валсартан-Тева", "", api_token="t", use_api=True)
+    assert [url.startswith(API) for url, _ in calls] == [False]
+    assert result["details"] == {}
+
+
+def test_the_cache_keeps_the_card_details_and_serves_them_without_a_request(tmp_path: Path, monkeypatch):
+    settings = settings_for(tmp_path)
+    migrate(settings)
+    fake_site(monkeypatch)
+    with connect(settings) as connection:
+        fetched = drugref.cached_instruction(connection, CARD_NAME, CARD_ID, use_api=True, api_token="t")
+        assert fetched["details"]["via"] == "api"
+        fetched_at, details_json = connection.execute(
+            "SELECT fetched_at, details_json FROM drug_references").fetchone()
+        assert fetched_at == fetched["fetched_at"]
+        assert json.loads(details_json)["via"] == "api"
+
+        def refuse(url, data=None, headers=None):
+            raise AssertionError("the site was asked again")
+
+        monkeypatch.setattr(drugref, "_open", refuse)
+        assert drugref.stored_instruction(connection, CARD_NAME, CARD_ID) == fetched
+        assert drugref.stored_instruction(connection, "Невідомий", CARD_ID) is None
+
+
+def test_a_fresh_page_copy_is_read_once_more_through_the_card_and_no_further(tmp_path: Path, monkeypatch):
+    settings = settings_for(tmp_path)
+    migrate(settings)
+    calls = fake_site(monkeypatch)
+    with connect(settings) as connection:
+        def details_json():
+            return connection.execute("SELECT details_json FROM drug_references").fetchone()[0]
+
+        drugref.cached_instruction(connection, CARD_NAME, CARD_ID)
+        assert details_json() == ""
+        assert [url.startswith(API) for url, _ in calls] == [False]
+
+        drugref.cached_instruction(connection, CARD_NAME, CARD_ID, use_api=True, api_token="t")
+        assert [url.startswith(API) for url, _ in calls] == [False, True]
+        assert json.loads(details_json())["via"] == "api"
+
+        drugref.cached_instruction(connection, CARD_NAME, CARD_ID, use_api=True, api_token="t")
+        assert len(calls) == 2
+
+        connection.execute("UPDATE drug_references SET details_json = ?", ('{"via": "page"}',))
+        drugref.cached_instruction(connection, CARD_NAME, CARD_ID, use_api=True, api_token="t")
+        assert len(calls) == 2
+
+        connection.execute("UPDATE drug_references SET details_json = ''")
+        drugref.cached_instruction(connection, CARD_NAME, CARD_ID)
+        assert len(calls) == 2
+
+
+def test_the_token_is_the_saved_one_else_the_environment_one(tmp_path: Path, monkeypatch):
+    settings = settings_for(tmp_path)
+    migrate(settings)
+    monkeypatch.delenv(drugref.TOKEN_ENV, raising=False)
+    with connect(settings) as connection:
+        assert drugref.token(connection) == ""
+        assert drugref.token_source(connection) == ""
+
+        monkeypatch.setenv(drugref.TOKEN_ENV, "env-token")
+        assert drugref.token(connection) == "env-token"
+        assert drugref.token_source(connection) == "environment"
+
+        drugref.set_token(connection, "saved-token")
+        assert drugref.token(connection) == "saved-token"
+        assert drugref.token_source(connection) == "settings"
+
+
+def test_the_api_mode_without_a_token_falls_back_to_the_page(tmp_path: Path, monkeypatch):
+    settings = settings_for(tmp_path)
+    migrate(settings)
+    monkeypatch.delenv(drugref.TOKEN_ENV, raising=False)
+    with connect(settings) as connection:
+        drugref.set_mode(connection, drugref.MODE_API)
+        assert drugref.fetch_options(connection) == {"use_api": False, "api_token": ""}
+        drugref.set_token(connection, "saved-token")
+        assert drugref.fetch_options(connection) == {"use_api": True, "api_token": "saved-token"}

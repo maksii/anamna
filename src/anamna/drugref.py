@@ -4,14 +4,14 @@ A person records a medicine. This module finds its page on the site and keeps
 the official instruction for medical use in the ``drug_references`` cache.
 
 Search goes to the open search endpoint of the site's application API. The
-instruction is read from the public page of the medicine. The product-card
-endpoint of that same API answers 403 without the application's own token, and
-this module does not send that token.
+instruction is read from the public page of the medicine: that is the default
+and needs nothing. With a token that tabletki.ua issued (``ANAMNA_TABLETKI_TOKEN``
+or the admin page) an administrator can choose the product-card endpoint of the
+same API instead. It gives the instruction in parts and the product's facts: the
+active substance, the form, the dosage, who may take it. The card is addressed
+by a product code, so an entry linked to a trade name alone is read from the page.
 
-The module identifies itself with the project's User-Agent. It caches searches
-for 15 minutes and instructions for 90 days. It sends at most 30 requests a
-minute and never retries. It stops calling for as long as the site asks through
-HTTP 429 or 503 (with Retry-After), and for 15 minutes after an HTTP 403.
+The module identifies itself with the project's User-Agent on searches and page fetches. The card endpoint is called with the header set tabletki.ua expects from a client of that API. It caches searches for 15 minutes and instructions for 90 days. It sends at most 30 requests a minute and never retries. It stops calling for as long as the site asks through HTTP 429 or 503 (with Retry-After), and for 15 minutes after an HTTP 403.
 
 Only the public reference text crosses the wire: the search text and the page
 name, never anything from the person's record.
@@ -24,6 +24,7 @@ import html
 import http.client
 import json
 import math
+import os
 import re
 import sqlite3
 import threading
@@ -42,6 +43,15 @@ BASE = "https://tabletki.ua"
 API = "https://app.tabletki.ua/api/app/v1/"
 _ALLOWED = (BASE + "/", API)
 SETTING = "drug_lookup_enabled"  # app_settings key; absent or "1" means on, "0" means off
+MODE_SETTING = "drug_lookup_mode"  # "page" (default) or "api"
+TOKEN_SETTING = "drug_lookup_token"  # app API token for the "api" mode
+TOKEN_ENV = "ANAMNA_TABLETKI_TOKEN"  # the token tabletki.ua issued; a value saved on the admin page wins
+MODE_PAGE = "page"
+MODE_API = "api"
+_API_CARD = API + "ProductCard/card"
+_API_APP_VERSION = "4.1.694"
+_API_PLATFORM = "Android"
+_API_DEFAULT_TOKEN = ""
 TIMEOUT = 10
 MAX_BYTES = 3_000_000
 CACHE_DAYS = 90
@@ -60,6 +70,7 @@ _BAD_REFERENCE_CHARS = ("/", "\\", "?", "#", "%")
 _DIGITS = re.compile(r"[0-9]+")
 _ATC_BLOCK = re.compile(r'"ATCFull":\[([^\]]*)\]')
 _ATC_CODE = re.compile(r'"([A-Z]\d{2}[A-Z]{2}\d{2})"')
+_ATC_BARE = re.compile(r"[A-Z]\d{2}[A-Z]{2}\d{2}")
 _SHOWN_FOR = re.compile(r"Інструкція вказана для «([^»]+)»")
 _SECTION = re.compile(
     r'<h2 id="instr-desktop_(\d+)"[^>]*>(.*?)</h2>\s*<div id="instr_cont_\1"[^>]*>(.*?)</div>\s*</section>',
@@ -92,6 +103,14 @@ _INTERNATIONAL_UNITS = (
     ("доза", "dose"),
     ("доз", "dose"),
 )
+#: The characteristics kept from a product card, by the label the site prints.
+_FACT_KEYS = {
+    "Діючі речовини": "substance", "Діюча речовина": "substance", "МНН": "inn",
+    "Форма випуску": "form", "Дозування": "dosage", "Кількість в упаковці": "pack",
+    "Умови продажу": "sale", "Фармгрупа": "group", "АТХ-група": "atc",
+    "Реєстрація": "registration", "Виробник": "maker",
+}
+_WARNING_STATES = {1: "allowed", 2: "caution", 0: "forbidden", -1: "free"}
 
 _lock = threading.Lock()
 _now = time.monotonic
@@ -124,13 +143,50 @@ def enabled(connection: sqlite3.Connection) -> bool:
     return row is None or row[0] != "0"
 
 
-def set_enabled(connection: sqlite3.Connection, on: bool) -> None:
-    """Upserts the switch; the caller commits."""
+def mode(connection: sqlite3.Connection) -> str:
+    row = connection.execute("SELECT value FROM app_settings WHERE key = ?", (MODE_SETTING,)).fetchone()
+    return row[0] if row and row[0] in (MODE_PAGE, MODE_API) else MODE_PAGE
+
+
+def token(connection: sqlite3.Connection) -> str:
+    """The API token: the one saved on the admin page, else the one in the server's environment."""
+    row = connection.execute("SELECT value FROM app_settings WHERE key = ?", (TOKEN_SETTING,)).fetchone()
+    return (row[0] if row and row[0] else "") or os.environ.get(TOKEN_ENV, "").strip()
+
+
+def token_source(connection: sqlite3.Connection) -> str:
+    """Where the token comes from: "settings", "environment" or ""."""
+    row = connection.execute("SELECT value FROM app_settings WHERE key = ?", (TOKEN_SETTING,)).fetchone()
+    if row and row[0]:
+        return "settings"
+    return "environment" if os.environ.get(TOKEN_ENV, "").strip() else ""
+
+
+def fetch_options(connection: sqlite3.Connection) -> dict:
+    """The keyword arguments for cached_instruction, as the administrator set them."""
+    api_token = token(connection) if mode(connection) == MODE_API else ""
+    return {"use_api": bool(api_token), "api_token": api_token}
+
+
+def _upsert(connection: sqlite3.Connection, key: str, value: str) -> None:
     connection.execute(
         "INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?) "
         "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
-        (SETTING, "1" if on else "0", utc_now()),
+        (key, value, utc_now()),
     )
+
+
+def set_enabled(connection: sqlite3.Connection, on: bool) -> None:
+    """Upserts the switch; the caller commits."""
+    _upsert(connection, SETTING, "1" if on else "0")
+
+
+def set_mode(connection: sqlite3.Connection, value: str) -> None:
+    _upsert(connection, MODE_SETTING, value if value in (MODE_PAGE, MODE_API) else MODE_PAGE)
+
+
+def set_token(connection: sqlite3.Connection, value: str) -> None:
+    _upsert(connection, TOKEN_SETTING, value.strip())
 
 
 def reset_state() -> None:
@@ -378,14 +434,25 @@ def _readable(url: str) -> str:
     return urllib.parse.unquote(url)
 
 
+#: A tag or a comment. A bare "<" in running text («кліренс креатиніну < 10 мл/хв») is not one:
+#: a tag starts with a letter, or with a slash and a letter, right after the "<".
+_TAG = re.compile(r"<!--.*?-->|</?[A-Za-z][^<>]*>", re.S)
+#: One table row, so the line breaks inside its cells can become spaces.
+_ROW = re.compile(r"(?is)<tr\b.*?</tr>")
+_BREAK_IN_ROW = re.compile(r"(?i)<\s*(?:br|/p|/li|/div|/h\d)\s*/?>")
+
+
 def _text(fragment: str) -> str:
+    fragment = _ROW.sub(lambda row: _BREAK_IN_ROW.sub(" ", row.group(0)), fragment)
     fragment = re.sub(r"(?i)<\s*(br|/p|/li|/tr|/h\d)\s*/?>", "\n", fragment)
     fragment = re.sub(r"(?i)</t[dh]>", " | ", fragment)
-    plain = html.unescape(re.sub(r"<[^>]+>", "", fragment))
-    return re.sub(r"[ \t\xa0]+", " ", re.sub(r"\n\s*\n+", "\n", plain)).strip()
+    plain = html.unescape(_TAG.sub("", fragment))
+    plain = re.sub(r"[ \t\xa0]+", " ", re.sub(r"\n\s*\n+", "\n", plain))
+    return re.sub(r"(?: ?\| ?)+(?=\n|$)", "", plain).strip()
 
 
-def instruction(reference_name: str, code: str = "") -> dict:
+def instruction_page(reference_name: str, code: str = "") -> dict:
+    """Fetch instruction by scraping the public HTML page."""
     url = page_url(reference_name, code)
     page = _open(url)
     sections = []
@@ -405,7 +472,148 @@ def instruction(reference_name: str, code: str = "") -> dict:
         "sections": sections,
         "atc": atc,
         "shown_for": shown.group(1) if shown else "",
+        "details": {},
     }
+
+
+def _api_headers(api_token: str = "") -> dict:
+    """The headers the app's DefaultHeadersInterceptor sends on every request."""
+    return {
+        "Accept": "application/json",
+        "User-Agent": "okhttp/4.12.0",
+        "Lang": "uk",
+        "deviceOS": _API_PLATFORM,
+        "deviceOSversion": "14",
+        "appVersion": _API_APP_VERSION,
+        "Platform": _API_PLATFORM,
+        "AppApiToken": api_token or _API_DEFAULT_TOKEN,
+        "Sleep": "false",
+        "adid": "00000000-0000-0000-0000-000000000000",
+    }
+
+
+def _same_page(a, b: str) -> bool:
+    return urllib.parse.unquote(str(a or "")).casefold() == urllib.parse.unquote(b).casefold()
+
+
+def instruction_api(reference_name: str, code: str = "", *, api_token: str = "") -> dict:
+    """The instruction and the product facts from the product card of the site's API.
+
+    Needs the token tabletki.ua issued and a product code: the card is addressed
+    by the product, and the reply is refused unless it names that product and page.
+    """
+    url = _readable(page_url(reference_name, code))          # also refuses an unusable name
+    if not _DIGITS.fullmatch(code):
+        raise DrugRefError("the card needs a product code")
+    if not api_token:
+        raise DrugRefError("the card needs a token")
+    query = urllib.parse.urlencode({"name": reference_name, "id": code, "withContentPlus": "false"})
+    reply = _open(_API_CARD + "?" + query, headers=_api_headers(api_token))
+    try:
+        payload = json.loads(reply)
+    except ValueError as exc:
+        raise DrugRefError("card reply is not JSON") from exc
+    if not isinstance(payload, dict):
+        raise DrugRefError("card reply is not an object")
+    if str(payload.get("goodsIntCode") or "") != code or not _same_page(payload.get("tradenameLink"), reference_name):
+        raise DrugRefError("the card is for another product")
+    return {
+        "url": url,
+        "sections": _parse_instruction_parts(payload.get("instructionByParts")),
+        "atc": _parse_atc_from_card(payload),
+        "shown_for": _text(str(payload.get("goodsName") or payload.get("tradeName") or "")),
+        "details": _card_details(payload),
+    }
+
+
+def _card_facts(payload: dict) -> list[list]:
+    facts: list[list] = []
+    seen: set[str] = set()
+    for item in payload.get("characteristics") or []:
+        key = _FACT_KEYS.get(str(item.get("name") or "").strip()) if isinstance(item, dict) else None
+        if key is None or key in seen:
+            continue
+        values = []
+        for value in item.get("values") or []:
+            text = _text(str(value.get("name") or ""))[:300] if isinstance(value, dict) else ""
+            if text and text not in values:
+                values.append(text)
+        if values:
+            seen.add(key)
+            facts.append([key, values[:10]])
+    return facts
+
+
+def _card_warnings(payload: dict) -> list[list]:
+    warnings: list[list] = []
+    block = payload.get("goodsWarning")
+    for item in (block.get("items") if isinstance(block, dict) else None) or []:
+        if not isinstance(item, dict):
+            continue
+        state = _WARNING_STATES.get(item.get("allowed")) if isinstance(item.get("allowed"), int) else None
+        subject = _text(str(item.get("subject") or ""))[:120]
+        if state and subject:
+            warnings.append([subject, state, _text(str(item.get("remark") or ""))[:200]])
+    return warnings[:20]
+
+
+def _card_details(payload: dict) -> dict:
+    """What the card says about the product besides the instruction: facts by key, and who may take it."""
+    return {"via": "api", "facts": _card_facts(payload), "warnings": _card_warnings(payload)}
+
+
+def _parse_instruction_parts(parts) -> list[list[str]]:
+    if not isinstance(parts, list):
+        return []
+    items = [part for part in parts if isinstance(part, dict)]
+    if items and all(isinstance(part.get("order"), int) for part in items):
+        items.sort(key=lambda part: part["order"])
+    sections: list[list[str]] = []
+    for part in items:
+        title = _text(str(part.get("title") or ""))
+        body = _text(str(part.get("html") or ""))
+        if body:
+            sections.append([title, body])
+    return sections
+
+
+def _parse_atc_from_card(payload: dict) -> list[str]:
+    atc: list[str] = []
+    # dfp.ATCFull is the cleanest source: ["M01AE01"]
+    dfp = payload.get("dfp")
+    if isinstance(dfp, dict):
+        raw = dfp.get("ATCFull")
+        if isinstance(raw, list):
+            for item in raw:
+                if isinstance(item, str) and _ATC_BARE.fullmatch(item) and item not in atc:
+                    atc.append(item)
+    if atc:
+        return atc
+    # Fallback: characteristics where name contains "АТХ"
+    for char in payload.get("characteristics") or []:
+        if not isinstance(char, dict):
+            continue
+        if "АТХ" not in (char.get("name") or ""):
+            continue
+        for val in char.get("values") or []:
+            if isinstance(val, dict):
+                code_str = val.get("code")
+                if isinstance(code_str, str) and _ATC_BARE.fullmatch(code_str) and code_str not in atc:
+                    atc.append(code_str)
+    return atc
+
+
+def instruction(reference_name: str, code: str = "", *, api_token: str = "", use_api: bool = False) -> dict:
+    """The instruction: from the product card when the API is chosen and can answer for this entry, else from the page."""
+    if use_api and api_token and _DIGITS.fullmatch(code):
+        try:
+            return instruction_api(reference_name, code, api_token=api_token)
+        except DrugRefError:
+            # No card, or a card about another product: the public page is the reference.
+            fetched = instruction_page(reference_name, code)
+            fetched["details"] = {"via": "page"}   # tried the card; do not try again until the copy is old
+            return fetched
+    return instruction_page(reference_name, code)
 
 
 def _fresh(fetched_at: str) -> bool:
@@ -424,10 +632,29 @@ def _from_cache(url: str, row: tuple) -> dict:
         "sections": json.loads(row[2]),
         "atc": [code_ for code_ in row[1].split(",") if code_],
         "shown_for": row[0],
+        "fetched_at": row[3],
+        "details": json.loads(row[4]) if row[4] else {},
     }
 
 
-def cached_instruction(connection: sqlite3.Connection, reference_name: str, code: str = "") -> dict | None:
+def stored_instruction(connection: sqlite3.Connection, reference_name: str, code: str = "") -> dict | None:
+    """The stored copy, whatever its age. Asks nothing of the site. None when there is none or the name is unusable."""
+    try:
+        url = _readable(page_url(reference_name, code))
+        row = connection.execute(
+            "SELECT shown_for, atc_codes, sections_json, fetched_at, details_json FROM drug_references "
+            "WHERE source = ? AND url = ?",
+            (SOURCE, url),
+        ).fetchone()
+        return _from_cache(url, row) if row is not None else None
+    except (DrugRefError, sqlite3.Error, ValueError):
+        return None
+
+
+def cached_instruction(
+    connection: sqlite3.Connection, reference_name: str, code: str = "",
+    *, use_api: bool = False, api_token: str = "",
+) -> dict | None:
     """The instruction from the cache, or fetched and stored (the caller commits).
 
     Never raises. When the page cannot be fetched or parses to no sections, an
@@ -437,30 +664,35 @@ def cached_instruction(connection: sqlite3.Connection, reference_name: str, code
     try:
         url = _readable(page_url(reference_name, code))
         row = connection.execute(
-            "SELECT shown_for, atc_codes, sections_json, fetched_at FROM drug_references "
+            "SELECT shown_for, atc_codes, sections_json, fetched_at, details_json FROM drug_references "
             "WHERE source = ? AND url = ?",
             (SOURCE, url),
         ).fetchone()
-        if row is not None and _fresh(row[3]):
+        # A copy read from the page before the card was switched on is read once more through the card.
+        card_wanted = bool(use_api and api_token and _DIGITS.fullmatch(code))
+        if row is not None and _fresh(row[3]) and not (card_wanted and not row[4]):
             return _from_cache(url, row)
         try:
-            fetched = instruction(reference_name, code)
+            fetched = instruction(reference_name, code, use_api=use_api, api_token=api_token)
         except DrugRefError:
             fetched = None
         if fetched is None or not fetched["sections"]:
             return _from_cache(url, row) if row is not None else None
+        stored_at = utc_now()
         connection.execute(
             "INSERT OR REPLACE INTO drug_references "
-            "(source, url, shown_for, atc_codes, sections_json, fetched_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "(source, url, shown_for, atc_codes, sections_json, fetched_at, details_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
                 SOURCE,
                 fetched["url"],
                 fetched["shown_for"],
                 ",".join(fetched["atc"]),
                 json.dumps(fetched["sections"], ensure_ascii=False),
-                utc_now(),
+                stored_at,
+                json.dumps(fetched["details"], ensure_ascii=False) if fetched["details"] else "",
             ),
         )
-        return fetched
+        return {**fetched, "fetched_at": stored_at}
     except (DrugRefError, sqlite3.Error, ValueError):
         return None

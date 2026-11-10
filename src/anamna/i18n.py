@@ -257,6 +257,8 @@ def format_date_localized(value: str | None, fallback_key: str = "date.unknown")
 JS_KEYS = (
     "med.lookup.none", "med.lookup.unavailable", "med.lookup.trade_name", "med.lookup.linked",
     "med.lookup.searching", "med.lookup.paused",
+    # The instruction dialog (medicine_info.js).
+    "med.info.loading", "med.info.close",
     # The site-wide progress bar (busy.js).
     "busy.loading",
     # The question before a destructive form is sent (busy.js).

@@ -36,7 +36,12 @@
     </p>
     <h1>{{ factor.name }}{% if factor.strength %} <small>{{ factor.strength }}</small>{% endif %}</h1>
     {% if factor.substance %}<p class="an-med-hero__substance">{{ factor.substance }}{% if factor.atc_code %} · <abbr title="{{ t('med.field.atc_help') }}">{{ t('med.field.atc') }}</abbr> {{ factor.atc_code }}{% endif %}</p>{% endif %}
-    {% if factor.reference_url %}<p class="an-med-hero__site"><a class="an-med-link" href="{{ factor.reference_url }}" target="_blank" rel="noreferrer noopener">{{ t('med.reference.open_site') }} <span aria-hidden="true">↗</span></a></p>{% endif %}
+    {% if factor.reference_url %}
+    <p class="an-med-hero__site">
+      <a class="secondary" data-med-info href="{{ factor.url }}/instruction">{{ t('med.info.open') }}</a>
+      <a class="an-med-link" href="{{ factor.reference_url }}" target="_blank" rel="noreferrer noopener">{{ t('med.reference.open_site') }} <span aria-hidden="true">↗</span></a>
+    </p>
+    {% endif %}
   </div>
   {% if can_edit %}
   <div class="an-med-hero__actions">
@@ -130,7 +135,7 @@
   <p class="muted">{{ t('med.detail.reference_empty') }}</p>
   {% endif %}
   {% if factor.reference_url %}
-  <p><a class="an-med-link" href="{{ factor.reference_url }}" target="_blank" rel="noreferrer noopener">{{ t('med.reference.link') }}</a></p>
+  <p><a class="an-med-link" data-med-info href="{{ factor.url }}/instruction">{{ t('med.info.open') }}</a></p>
   {% endif %}
   {% if can_edit %}
   <div class="an-med-actions">
@@ -140,4 +145,5 @@
   <p class="an-field-help">{{ t('med.ai.lead') if ai_ready else t('med.form.research_off') }}</p>
   {% endif %}
 </section>
+<script src="{{ asset('medicine_info.js') }}" defer></script>
 {% endblock %}
