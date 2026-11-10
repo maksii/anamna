@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ t('token.admin_title') }}{% endblock %}
 {% block content %}
+{% include "_admin_tabs.html" %}
 
 <section class="page-head">
   <div>
@@ -31,6 +32,5 @@
   {{ tokens_ui.create_form(token_kinds, csrf_token, 'admin', people) }}
 </section>
 
-<p class="muted"><a href="/admin/users">{{ t('token.back_to_people') }}</a></p>
 
 {% endblock %}

@@ -48,6 +48,7 @@
      data-one="{{ t('upload.selected_one', count='{count}') }}"
      data-few="{{ t('upload.selected_few', count='{count}') }}"
      data-many="{{ t('upload.selected_many', count='{count}') }}">{{ t('upload.selected_none') }}</p>
+  <p id="an-upload-status" class="visually-hidden" role="status"></p>
 
   <progress class="an-upload__bar" id="an-upload-bar" max="100" value="0" hidden aria-label="{{ t('upload.bar_label') }}"></progress>
 
@@ -70,11 +71,11 @@
 </form>
 
 <details class="panel an-page-disclosure" id="processing" data-upload-disclosure data-queue-active="{{ queue_active }}"{% if queue_active or queue_failed %} open{% endif %}
-         data-open-label="{{ t('intake.open_result') }}">
+         data-open-label="{{ t('intake.open_result') }}" data-msg-stalled="{{ t('upload.status_stalled') }}">
   <summary>
     <span><strong>{{ t('intake.heading') }}</strong></span>
     <span class="an-queue__totals">
-      <span id="an-queue-summary"
+      <span id="an-queue-summary" role="status"
             data-template="{{ t('intake.summary', active='{active}', done='{done}', failed='{failed}') }}"
         >{{ t('intake.summary', active=queue_active, done=queue_done, failed=queue_failed) }}</span>
       <span class="pill an-pill--bad" id="an-queue-failed-pill"{% if not queue_failed %} hidden{% endif %}>{{ queue_failed_text }}</span>
@@ -88,7 +89,7 @@
       same rule to every poll. -#}
   {% set queue_keep = 5 %}
   {% set ns = namespace(finished=0) %}
-  <ul class="an-queue" id="an-queue" aria-live="polite" aria-busy="{{ 'true' if queue_active else 'false' }}" data-keep="{{ queue_keep }}">
+  <ul class="an-queue" id="an-queue" aria-busy="{{ 'true' if queue_active else 'false' }}" data-keep="{{ queue_keep }}">
     {% for job in queue %}
     {% if job.finished %}{% set ns.finished = ns.finished + 1 %}{% endif %}
     <li class="an-queue__item is-{{ job.tone }}" data-job="{{ job.id }}"{% if job.finished %} data-finished{% if ns.finished > queue_keep %} hidden{% endif %}{% endif %}>

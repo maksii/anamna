@@ -21,7 +21,13 @@ import re
 import zipfile
 from xml.etree import ElementTree
 
+from .common import LabSyncError
+
 logger = logging.getLogger("anamna.labsync")
+
+#: Largest uncompressed member of a lab-supplied .docx that is read; a zip
+#: bomb or an oversized picture is refused as an unreadable document.
+MAX_MEMBER_BYTES = 50 * 1024 * 1024
 
 CLINIC = "Лікарня «Експерт» · Expert Hospital"
 #: The record's fields in the order a consultation reads, with the labels the
@@ -45,7 +51,7 @@ _FALLBACK = "{http://schemas.openxmlformats.org/markup-compatibility/2006}Fallba
 
 def _number(text: object) -> str:
     """«1.0000 саше» as the clinic means it: «1 саше» (its system pads to four places)."""
-    return re.sub(r"(\d+)\.(\d*?)0+(?!\d)", lambda m: m[1] + ("." + m[2] if m[2] else ""), str(text or "").strip())
+    return re.sub(r"(?<!\d)(\d\d*+)\.((?:0*+[1-9])*+)0++(?!\d)", lambda m: m[1] + ("." + m[2] if m[2] else ""), str(text or "").strip())
 
 
 def _medication(item: dict) -> str:
@@ -146,40 +152,54 @@ def is_docx(data: bytes) -> bool:
         return False
 
 
+def _collect_paragraphs(node, inside: list | None, lines: list[str]) -> None:
+    """Walk ``node``: its text goes into ``inside``, and each paragraph is
+    appended to ``lines`` once its text is complete."""
+    if node.tag == _FALLBACK:
+        return
+    if node.tag == f"{_W}p":
+        parts: list[str] = []
+        for child in node:
+            _collect_paragraphs(child, parts, lines)
+        lines.append("".join(parts))
+        return
+    if inside is not None:
+        if node.tag == f"{_W}t":
+            inside.append(node.text or "")
+        elif node.tag == f"{_W}tab":
+            inside.append(" ")
+        elif node.tag in (f"{_W}br", f"{_W}cr"):
+            inside.append("\n")
+    for child in node:
+        _collect_paragraphs(child, inside, lines)
+
+
 def _paragraphs(element) -> list[str]:
     """Each paragraph's text in reading order.  A text box is stored twice
     (the drawing and its legacy fallback); the fallback is skipped."""
     lines: list[str] = []
-
-    def walk(node, inside: list | None):
-        if node.tag == _FALLBACK:
-            return
-        if node.tag == f"{_W}p":
-            parts: list[str] = []
-            for child in node:
-                walk(child, parts)
-            lines.append("".join(parts))
-            return
-        if inside is not None:
-            if node.tag == f"{_W}t":
-                inside.append(node.text or "")
-            elif node.tag == f"{_W}tab":
-                inside.append(" ")
-            elif node.tag in (f"{_W}br", f"{_W}cr"):
-                inside.append("\n")
-        for child in node:
-            walk(child, inside)
-
-    walk(element, None)
+    _collect_paragraphs(element, None, lines)
     return lines
+
+
+def _member(archive: zipfile.ZipFile, name: str) -> bytes:
+    """One member's bytes, refused when it declares or decompresses past the limit."""
+    if archive.getinfo(name).file_size > MAX_MEMBER_BYTES:
+        raise LabSyncError("labsync.error_pdf")
+    with archive.open(name) as member:
+        # The declared size is the lab's header; the read itself stays bounded.
+        data = member.read(MAX_MEMBER_BYTES + 1)
+    if len(data) > MAX_MEMBER_BYTES:
+        raise LabSyncError("labsync.error_pdf")
+    return data
 
 
 def docx_pdf(data: bytes, name: str) -> bytes:
     """A Word document's text and pictures as a PDF."""
     archive = zipfile.ZipFile(io.BytesIO(data))
-    lines = _paragraphs(ElementTree.fromstring(archive.read("word/document.xml")))
+    lines = _paragraphs(ElementTree.fromstring(_member(archive, "word/document.xml")))
     text = re.sub(r"\n{3,}", "\n\n", "\n".join(line.rstrip() for line in lines)).strip()
-    images = [archive.read(item) for item in sorted(archive.namelist())
+    images = [_member(archive, item) for item in sorted(archive.namelist())
               if item.startswith("word/media/") and item.lower().endswith((".png", ".jpg", ".jpeg"))]
     label = f"«{name}»" if name else ""
     note = ("note", f"Перетворено Anamna з файлу Word {label}, виданого Лікарнею «Експерт». / Converted by Anamna "

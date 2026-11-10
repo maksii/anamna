@@ -15,7 +15,7 @@ def _require_webhook_secret(service, actual: str) -> None:
     """Authenticate before reading the body."""
     cfg = service.config()
     expected = service.webhook_secret()
-    if not cfg["enabled"] or cfg["mode"] != "webhook" or not expected or not hmac.compare_digest(actual, expected):
+    if not cfg["enabled"] or cfg["mode"] != "webhook" or not expected or not hmac.compare_digest(actual.encode("utf-8"), expected.encode("utf-8")):
         raise HTTPException(403)
 
 

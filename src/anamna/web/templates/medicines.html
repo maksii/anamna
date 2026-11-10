@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{#- Imports live outside the block: the `card` macro below is defined outside
+    `{% block content %}` and would not see an import made inside it. -#}
+{% from "_components.html" import plural_t, empty_state with context %}
+{% from "_factors.html" import effect_chip with context %}
+{% block title %}{{ t('med.title') }}{% endblock %}
+
+{% set can_edit = csrf_token and not guest and not viewing %}
+
+{#- One entry. The line at the foot is its period on the page's shared time
+    scale, so the stacked cards read as a timeline: what overlapped with what.
+    The same period is in words above it; the line is never the only carrier. -#}
+{% macro card(item) -%}
+<li class="an-med-card" data-status="{{ item.status }}">
+  <div class="an-med-card__main">
+    <h3><a href="{{ item.url }}">{{ item.name }}</a>{% if item.strength %} <small>{{ item.strength }}</small>{% endif %}</h3>
+    <p class="an-med-card__meta">
+      {% if item.kind != 'medicine' %}<span class="pill">{{ item.kind_label }}</span>{% endif %}
+      {% if item.dose_line %}<span>{{ item.dose_line }}</span>{% endif %}
+      <span>{% if item.approximate %}<abbr title="{{ t('med.approx') }}">≈</abbr> {% endif %}{{ item.period_text }}{% if item.duration_text %} · {{ item.duration_text }}{% endif %}</span>
+    </p>
+    {% if item.reason %}<p class="an-med-card__reason">{{ item.reason }}</p>{% endif %}
+    {% if item.effects %}
+    <details class="an-med-fx">
+      <summary>
+        <span class="an-med-effects">
+          {% for effect in item.effects[:4] %}{{ effect_chip(effect) }}{% endfor %}
+          {% if item.effects|length > 4 %}<span class="an-med-effects__more">{{ t('med.effects_more', count=item.effects|length - 4) }}</span>{% endif %}
+        </span>
+        <span class="an-med-fx__toggle">{{ plural_t('med.card.effects_all', item.effects|length) }}</span>
+      </summary>
+      <ul class="an-med-fx__list" aria-label="{{ t('med.detail.effects_heading') }}">
+        {% for effect in item.effects %}
+        <li>{{ effect_chip(effect, link=true) }}{% if effect.origin == 'ai' %} <span class="an-ai-tag" title="{{ t('med.ai_tag_help') }}">{{ t('med.ai_tag') }}</span>{% endif %}{% if effect.note %}<span class="an-med-fx__note">{{ effect.note }}</span>{% endif %}</li>
+        {% endfor %}
+      </ul>
+    </details>
+    {% endif %}
+    {% if can_edit or item.reference_url %}
+    <div class="an-med-card__actions">
+      {% if item.reference_url %}<a class="secondary" data-med-info href="{{ item.url }}/instruction" aria-label="{{ t('med.info.open_aria', name=item.name) }}">{{ t('med.info.open') }}</a>{% endif %}
+      {% if can_edit %}
+      <a class="secondary" href="{{ item.url }}/edit" aria-label="{{ t('med.card.edit_aria', name=item.name) }}">{{ t('med.card.edit') }}</a>
+      <form action="{{ item.url }}" method="post" data-confirm="{{ t('med.remove_confirm', name=item.name) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="action" value="remove">
+        <button class="secondary" type="submit" aria-label="{{ t('med.card.remove_aria', name=item.name) }}">{{ t('med.card.remove') }}</button>
+      </form>
+      {% endif %}
+    </div>
+    {% endif %}
+  </div>
+  {% if item.bar %}
+  <svg class="an-med-track" viewBox="0 0 1000 12" preserveAspectRatio="none" role="img" aria-label="{{ item.bar.title }}">
+    <title>{{ item.bar.title }}</title>
+    <rect class="an-med-track__rail" x="0" y="5" width="1000" height="2"/>
+    {% if item.bar.point %}
+    <rect class="an-med-track__point" x="{{ item.bar.x0 }}" y="1" width="6" height="10"/>
+    {% else %}
+    <rect class="an-med-track__bar{% if item.approximate %} is-approximate{% endif %}" x="{{ item.bar.x0 }}" y="3" width="{{ item.bar.width }}" height="6"/>
+    {% endif %}
+  </svg>
+  {% endif %}
+</li>
+{%- endmacro %}
+
+{% block content %}
+<section class="an-med-head" aria-labelledby="med-heading">
+  <div>
+    <h1 id="med-heading">{{ t('med.heading') }}</h1>
+    <p class="an-med-lead">{{ t('med.lead') }}</p>
+  </div>
+  {% if can_edit %}
+  <div class="an-med-head__actions">
+    {% if can_find %}<a class="secondary an-med-add" href="/medicines/found">{{ t('med.found.open') }}</a>{% endif %}
+    {% if groups %}<a class="primary an-med-add" href="/medicines/new">{{ t('med.add') }}</a>{% endif %}
+  </div>
+  {% endif %}
+</section>
+
+{% if error %}<div class="alert error" role="alert">{{ error }}</div>{% endif %}
+{% if saved %}<div class="alert" role="status">{{ saved }}</div>{% endif %}
+{% if can_edit and found_count %}<p class="alert neutral an-med-found-note"><a class="an-med-link" href="/medicines/found">{{ plural_t('med.found.waiting', found_count) }}</a></p>{% endif %}
+
+{% if groups %}
+{#- A filter is worth its row only when there is more than one kind to choose. -#}
+{% if filters|length > 2 %}
+<nav class="an-med-filter" aria-label="{{ t('med.filter_label') }}">
+  {% for item in filters %}
+  <a href="{{ item.url }}"{% if item.active %} aria-current="page"{% endif %}>{{ item.label }} <span>{{ item.count }}</span></a>
+  {% endfor %}
+</nav>
+{% endif %}
+
+{% if scale %}
+<div class="an-med-scale" role="img" aria-label="{{ t('med.axis_aria', start=scale.start_text) }}">
+  {% for tick in scale.ticks %}<span>{{ tick }}</span>{% endfor %}
+</div>
+{% endif %}
+
+{% for group in groups %}
+<section class="an-med-group" aria-labelledby="med-group-{{ group.key }}">
+  <h2 id="med-group-{{ group.key }}">{{ group.label }} <span class="an-med-count">{{ group.entries|length }}</span></h2>
+  <ul class="an-med-list">
+    {% for item in group.entries %}{{ card(item) }}{% endfor %}
+  </ul>
+</section>
+{% endfor %}
+
+{% elif can_edit %}
+{{ empty_state(t('med.empty_title'), t('med.empty_body'), 2, '/medicines/new', t('med.add')) }}
+<ul class="an-med-kinds">
+  {% for key, label in kinds %}
+  <li><a href="/medicines/new?kind={{ key }}"><strong>{{ label }}</strong><span>{{ t('med.kind_help.' ~ key) }}</span></a></li>
+  {% endfor %}
+</ul>
+{% else %}
+{{ empty_state(t('med.empty_title'), t('med.empty_viewer'), 2) }}
+{% endif %}
+<script src="{{ asset('medicine_info.js') }}" defer></script>
+{% endblock %}

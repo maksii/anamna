@@ -9,7 +9,7 @@ import sqlite3
 import uuid
 from collections import Counter
 from dataclasses import asdict, dataclass, replace
-from datetime import datetime
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import cast
 
@@ -27,7 +27,7 @@ from ..i18n import (
     translate_review_reason,
 )
 from ..immunizations import is_visit_vaccination, parse_immunizations, parse_visit_vaccinations, store_document_doses
-from ..reference import canonical_unit
+from ..reference import _vendor_side, canonical_unit
 from .classifier import (
     DISCHARGE_027_TITLE, KNOWN_CLINICAL_TYPES, RESULT_TYPES, UNKNOWN_VENDOR, Classification, classify_document,
     misread_order,
@@ -94,6 +94,7 @@ REVIEW_RESCANNED_N = "review.rescanned_n"
 REVIEW_FINDINGS = "review.findings"
 REVIEW_REREAD_CHANGED_N = "review.reread_changed_n"
 REVIEW_REREAD_ORPHANED_N = "review.reread_orphaned_n"
+REVIEW_COMPANION_SUMMARY = "review.companion_summary"
 #: The catalogue's dash for a missing value.
 EM_DASH_KEY = "em.dash"
 
@@ -114,7 +115,7 @@ LEGACY_REASONS: dict[str, str] = {
         "Extraction found no values on a report of a kind the parser does read; "
         "check the pages for results it missed."
     ),
-    "review.companion_summary": (
+    REVIEW_COMPANION_SUMMARY: (
         "An illustrated summary of results the lab issues with a report; its values are read from that report."
     ),
     REVIEW_RESCANNED_N: (
@@ -886,6 +887,46 @@ def ensure_vendor(connection: sqlite3.Connection, name: str, website: str | None
     return vendor_id
 
 
+def _row_family(specimen: str | None, unit_raw: str | None, context: str | None) -> str | None:
+    titled = specimen_family(context)
+    return (
+        specimen_family(specimen)
+        or ("hematology" if blood_count_unit(unit_raw) else None)
+        or (titled if titled in {"stool", "smear"} else None)
+    )
+
+
+def _learned_alias_row(
+    connection: sqlite3.Connection, normalized: str, vendor_id: str, value_type: str, excluded: list[str]
+):
+    alias_row = connection.execute(
+        f"""SELECT c.id, c.preferred_unit, c.category FROM concept_aliases a
+           JOIN concepts c ON c.id = a.concept_id
+           WHERE a.normalized_alias = ? AND (a.vendor_id = ? OR a.vendor_id IS NULL)
+             AND (c.value_type = ? OR c.value_type = 'mixed')
+             AND c.category NOT IN ({",".join("?" * len(excluded)) or "''"})
+           ORDER BY a.vendor_id IS NULL ASC LIMIT 1""",
+        (normalized, vendor_id, value_type, *excluded),
+    ).fetchone()
+    if alias_row is None or alias_row["id"] not in _DEFINED_CONCEPT_IDS:
+        # An auto concept is one per label across vendors, as its unique name
+        # already makes it: a label that differs only in a key-folded
+        # character («пов'язані» / «пов"язані») is the same one too, and the
+        # vendor-scoped alias each spelling taught must not keep two series.
+        alias_row = _first_auto_concept(connection, normalized, value_type, excluded) or alias_row
+    return alias_row
+
+
+def _reuse_alias_concept(connection: sqlite3.Connection, alias_row, inferred_category: str) -> tuple[str, str | None]:
+    # Reused through its learned alias, an auto concept's category is
+    # read again too: the 39 serum amino acids kept «urinalysis» here
+    # after the inference stopped giving it (start-up repair runs this).
+    category = _auto_category(alias_row["id"], alias_row["category"], inferred_category)
+    if category != alias_row["category"]:
+        connection.execute("UPDATE concepts SET category=? WHERE id=?", (category, alias_row["id"]))
+    return alias_row["id"], alias_row["preferred_unit"]
+
+
 def ensure_concept(
     connection: sqlite3.Connection,
     raw_name: str,
@@ -919,20 +960,16 @@ def ensure_concept(
     """
     raw_name = clean_label(raw_name)
     normalized = normalized_key(raw_name)
-    titled = specimen_family(context)
-    family = (
-        specimen_family(specimen)
-        or ("hematology" if blood_count_unit(unit_raw) else None)
-        or (titled if titled in {"stool", "smear"} else None)
-    )
+    family = _row_family(specimen, unit_raw, context)
     inferred_category = _inferred_category(normalized, clinical_type, context, family)
+    search_category = None if inferred_category == "unmapped" else inferred_category
     # Canonical definitions are resolved before learned vendor aliases because
     # the same printed label can mean different things in different specimen
     # contexts (for example blood glucose versus urine glucose).
     by_label = concept_for_alias(
         raw_name,
         value_type,
-        category=None if inferred_category == "unmapped" else inferred_category,
+        category=search_category,
         specimen=family,
     )
     definition = refine_definition(
@@ -944,7 +981,7 @@ def ensure_concept(
         # «Кристали» is stool because of its section, and learned as a bare
         # alias it would file the next unsectioned «Кристали» as stool too.
         label_decided = family is None or by_label is concept_for_alias(
-            raw_name, value_type, category=None if inferred_category == "unmapped" else inferred_category
+            raw_name, value_type, category=search_category
         )
         return _store_defined_concept(
             connection, definition, by_label if label_decided else None, vendor_id, raw_name, normalized
@@ -955,29 +992,9 @@ def ensure_concept(
     excluded = sorted(foreign_categories(raw_name, family))
     raw_name = _specimen_qualified(raw_name, family, specimen)
     normalized = normalized_key(raw_name)
-    alias_row = connection.execute(
-        f"""SELECT c.id, c.preferred_unit, c.category FROM concept_aliases a
-           JOIN concepts c ON c.id = a.concept_id
-           WHERE a.normalized_alias = ? AND (a.vendor_id = ? OR a.vendor_id IS NULL)
-             AND (c.value_type = ? OR c.value_type = 'mixed')
-             AND c.category NOT IN ({",".join("?" * len(excluded)) or "''"})
-           ORDER BY a.vendor_id IS NULL ASC LIMIT 1""",
-        (normalized, vendor_id, value_type, *excluded),
-    ).fetchone()
-    if alias_row is None or alias_row["id"] not in _DEFINED_CONCEPT_IDS:
-        # An auto concept is one per label across vendors, as its unique name
-        # already makes it: a label that differs only in a key-folded
-        # character («пов'язані» / «пов"язані») is the same one too, and the
-        # vendor-scoped alias each spelling taught must not keep two series.
-        alias_row = _first_auto_concept(connection, normalized, value_type, excluded) or alias_row
+    alias_row = _learned_alias_row(connection, normalized, vendor_id, value_type, excluded)
     if alias_row:
-        # Reused through its learned alias, an auto concept's category is
-        # read again too: the 39 serum amino acids kept «urinalysis» here
-        # after the inference stopped giving it (start-up repair runs this).
-        category = _auto_category(alias_row["id"], alias_row["category"], inferred_category)
-        if category != alias_row["category"]:
-            connection.execute("UPDATE concepts SET category=? WHERE id=?", (category, alias_row["id"]))
-        return alias_row["id"], alias_row["preferred_unit"]
+        return _reuse_alias_concept(connection, alias_row, inferred_category)
     concept_id, preferred_unit = _store_unmapped_concept(
         connection, raw_name, normalized, value_type, inferred_category, unit_raw
     )
@@ -1052,7 +1069,9 @@ def _inferred_category(
 
 #: Urine, as a word: «сеча», «сечі», «сечовий осад», "urine" -- not «сечовина»
 #: (urea) or «сечова кислота» (uric acid), which are blood chemistry.
-_URINE_WORD = re.compile(r"\bсеч(?:а|і|у|ею|ов(?!ин|а\s+кислот|ої\s+кислот)\w*)?\b|\burine", re.I)
+_URINE_STEM = r"\bсеч"
+_URINE_ENDING = r"(?:а|і|у|ею|ов(?!ин|а\s+кислот|ої\s+кислот)\w*)?"
+_URINE_WORD = re.compile(rf"{_URINE_STEM}{_URINE_ENDING}\b|\burine", re.I)
 
 
 def _store_defined_concept(
@@ -1214,18 +1233,29 @@ def interpretation(observation: ParsedObservation, concept_id: str | None = None
     if scaled is not None:
         return scaled
     low, high = observation.reference_low, observation.reference_high
+    # A censored result («<0.5», «>60») is a limit, not a value: it is placed
+    # against the printed range only where its side is certain, the rule the
+    # engine applies in reference._vendor_side. None means the range says nothing.
+    if observation.comparator in _CENSORED_SIGN:
+        return _vendor_side(value, low, high, comparator=_CENSORED_SIGN[observation.comparator])
     if low is None and high is None:
         return _time_of_day_interpretation(value, observation.reference_text)
+    return _printed_range_side(value, observation)
+
+
+def _printed_range_side(value: float, observation: ParsedObservation) -> str:
+    low, high = observation.reference_low, observation.reference_high
     # A strict bound excludes the value equal to it: CA-125 35.0 against «< 35»
     # is not inside the laboratory's range, and was published as though it were.
-    # A value printed with its own sign is not equal to it: «<1.0» against «<1»
-    # is inside.
-    below, above = observation.comparator in {"<", "≤"}, observation.comparator in {">", "≥"}
-    if low is not None and (value < low or (value == low and not observation.reference_low_inclusive and not above)):
+    if low is not None and (value < low or (value == low and not observation.reference_low_inclusive)):
         return "low"
-    if high is not None and (value > high or (value == high and not observation.reference_high_inclusive and not below)):
+    if high is not None and (value > high or (value == high and not observation.reference_high_inclusive)):
         return "high"
     return "within_vendor_range"
+
+
+#: The printed censoring signs, mapped to the ASCII comparators `_vendor_side` takes.
+_CENSORED_SIGN = {"<": "<", "≤": "<=", ">": ">", "≥": ">="}
 
 
 def _time_of_day_interpretation(value: float, reference: str | None) -> str | None:
@@ -2033,6 +2063,84 @@ def patient_demographics(connection: sqlite3.Connection, patient_id: str) -> tup
     return (row["date_of_birth"], row["sex_at_birth"]) if row else (None, None)
 
 
+_PRINTED_DMY = r"(?<!\d)\d{1,2}[./-]\d{1,2}[./-]\d{4}(?!\d)"
+_PRINTED_ISO = r"(?<!\d)\d{4}-\d{1,2}-\d{1,2}(?!\d)"
+#: «Дата народження: 17.03.1988», «Дата нар. 17/03/1988».
+_BIRTH_LABEL_UK = re.compile(r"дата\s+нар(?:одження|\.)?\s*:?\s*(?P<date>" + _PRINTED_DMY + ")", re.I)
+#: «Date of birth: 1988-03-17», «DOB 17.03.1988».
+_BIRTH_LABEL_EN = re.compile(
+    r"\b(?:date\s+of\s+birth|dob)\s*:?\s*(?P<date>" + _PRINTED_DMY + "|" + _PRINTED_ISO + ")", re.I
+)
+#: «17.03.1988 р.н.» (the date before the suffix is the birth date) and «р.н. 17.03.1988».
+#: Both shapes are one pattern so a date that the first shape took is never
+#: claimed again by the second: «01.01.1990 р.н. 02.03.2025» prints one birth date.
+_BORN_SUFFIX = re.compile(
+    r"(?P<before>" + _PRINTED_DMY + r")\s*р\.\s?н\.?|(?<!\w)р\.\s?н\.?\s*:?\s*(?P<after>" + _PRINTED_DMY + ")",
+    re.I,
+)
+
+
+def _printed_date(raw: str) -> str | None:
+    """The ISO form of a printed date, or None when no such day exists."""
+    if match := re.fullmatch(r"(\d{1,2})[./-](\d{1,2})[./-](\d{4})", raw):
+        day, month, year = (int(part) for part in match.groups())
+    elif match := re.fullmatch(r"(\d{4})-(\d{1,2})-(\d{1,2})", raw):
+        year, month, day = (int(part) for part in match.groups())
+    else:
+        return None
+    try:
+        return date(year, month, day).isoformat()
+    except ValueError:
+        return None
+
+
+def printed_birth_dates(text: str) -> set[str]:
+    """The dates of birth a document prints, as ISO dates.
+
+    Only a date a label or the «р.н.» suffix names counts.  The collection,
+    issue or vaccination dates on a report say nothing about whose report it is.
+    """
+    raw = [match.group("date") for pattern in (_BIRTH_LABEL_UK, _BIRTH_LABEL_EN) for match in pattern.finditer(text)]
+    raw.extend(match.group("before") or match.group("after") for match in _BORN_SUFFIX.finditer(text))
+    return {iso for iso in (_printed_date(item) for item in raw) if iso}
+
+
+def _birth_date_mismatch(date_of_birth: str | None, text: str) -> bool:
+    """Whether a document prints a date of birth, and not the patient's own."""
+    known = _printed_date(str(date_of_birth or "")[:10])
+    printed = printed_birth_dates(text)
+    return bool(known and printed and known not in printed)
+
+
+def _report_date_implausible(report_date: str | None, date_of_birth: str | None) -> bool:
+    """A report dated before its patient was born, or after tomorrow (UTC).
+
+    Such a date is a misread, not a fact about the results; the document is then
+    filed undated, as one with no date is.  An unreadable date is left alone.
+    """
+    try:
+        dated = date.fromisoformat(str(report_date or "")[:10])
+    except ValueError:
+        return False
+    born = _printed_date(str(date_of_birth or "")[:10])
+    if born and dated < date.fromisoformat(born):
+        return True
+    return dated > datetime.now(timezone.utc).date() + timedelta(days=1)
+
+
+def _plausible_analysis(analysis: Analysis, date_of_birth: str | None) -> Analysis:
+    """`analysis` with each implausible report date cleared, for the document and
+    for its pages (an observation's date is read from its page's report date)."""
+
+    def clear(item: Classification) -> Classification:
+        return replace(item, report_date=None) if _report_date_implausible(item.report_date, date_of_birth) else item
+
+    return cast(
+        Analysis,
+        replace(analysis, classification=clear(analysis.classification), per_page=[clear(page) for page in analysis.per_page]),
+    )
+
+
 def parse_pages(
     classification: Classification,
     per_page: list[Classification],
@@ -2148,12 +2256,22 @@ def _ingest_review_reasons(
     doses: int,
     duplicate_id: str | None,
     issues: list[ParseIssue],
+    undated: bool = False,
+    person_mismatch: bool = False,
 ) -> list[dict[str, object]]:
     review_reasons = []
     companion = any(issue.kind == COMPANION_SUMMARY for issue in issues)
     issues = [issue for issue in issues if issue.kind != COMPANION_SUMMARY]
     if duplicate_id:
         review_reasons.append(reason_part("review.duplicate"))
+    # The report prints another person's date of birth: it may be a family
+    # member's, filed under this patient.  Stored all the same; someone decides.
+    if person_mismatch:
+        review_reasons.append(reason_part("review.person_mismatch"))
+    # Without a report date its results sort by upload date, which can put a
+    # 2019 panel in front of a 2024 one; a person has to say when it was taken.
+    if undated and not classification.report_date:
+        review_reasons.append(reason_part("review.no_date"))
     if doses:
         # A card's doses are read out of a photograph of handwriting and
         # tender-length product names, so every field of every row is
@@ -2163,7 +2281,7 @@ def _ingest_review_reasons(
     if observations:
         review_reasons.append(reason_part(REVIEW_VERIFY_N, count=len(observations)))
     elif not (doses or duplicate_id):
-        review_reasons.append(reason_part("review.companion_summary") if companion
+        review_reasons.append(reason_part(REVIEW_COMPANION_SUMMARY) if companion
                               else _nothing_read_reason(classification))
     review_reasons.extend(issue_parts(issues))
     return review_reasons
@@ -2193,9 +2311,19 @@ def ingest_file(
     extracted = {"mime_type": analysis.mime_type, "page_count": analysis.page_count}
     document_id = str(uuid.uuid4())
     with connect(settings) as connection:
-        connection.execute("BEGIN")
+        # The write lock is taken up front and waited for, as in reingest_document:
+        # a plain BEGIN defers it to the first write after long work, and the
+        # default five-second wait then fails an import behind a running re-read.
+        connection.execute("PRAGMA busy_timeout = 60000")
+        connection.execute("BEGIN IMMEDIATE")
         try:
             seed_concepts(connection)
+            date_of_birth, sex = patient_demographics(connection, patient_id)
+            # Before anything is stored: a report date the calendar rules out is
+            # filed undated, and the document keeps every other field.
+            analysis = _plausible_analysis(analysis, date_of_birth)
+            classification, per_page = analysis.classification, analysis.per_page
+            document_text = " ".join(combined_page_text(page) for page in pages)
             vendor_id = ensure_vendor(connection, classification.vendor, classification.website)
             # The kept document, never another copy: the earliest file with
             # these bytes may itself have been marked a copy since.
@@ -2267,17 +2395,19 @@ def ingest_file(
             observations: list[ParsedObservation] = []
             issues: list[ParseIssue] = []
             doses = 0
+            undated = False
             if not duplicate_id:
                 doses = store_doses(
                     connection, classification, pages, owner_user_id, patient_id, document_id, per_page
                 )
-                date_of_birth, sex = patient_demographics(connection, patient_id)
                 parsed_with_context = parse_pages(
                     classification, per_page, pages, issues=issues, date_of_birth=date_of_birth, sex=sex
                 )
                 observations = [item[0] for item in parsed_with_context]
                 for parsed, page_class in parsed_with_context:
                     report_id = page_to_report[parsed.page_number]
+                    observed_at = observation_date(parsed, page_class)
+                    undated = undated or observed_at is None
                     insert_observation(
                         connection,
                         owner_user_id=owner_user_id,
@@ -2285,7 +2415,7 @@ def ingest_file(
                         document_id=document_id,
                         report_id=report_id,
                         vendor_id=report_to_vendor[report_id],
-                        observed_at=observation_date(parsed, page_class),
+                        observed_at=observed_at,
                         parsed=parsed,
                         specimen=page_class.specimen,
                     )
@@ -2294,7 +2424,10 @@ def ingest_file(
             # Narrative reports must reach their health areas on upload, not
             # only after a later application restart or explicit re-read.
             sync_clinical_findings(connection)
-            review_reasons = _ingest_review_reasons(classification, observations, doses, duplicate_id, issues)
+            review_reasons = _ingest_review_reasons(
+                classification, observations, doses, duplicate_id, issues, undated=undated,
+                person_mismatch=_birth_date_mismatch(date_of_birth, document_text),
+            )
             if review_reasons:
                 open_review_task(connection, owner_user_id, document_id, review_reasons)
             search_content = " ".join(
@@ -2871,39 +3004,56 @@ class _TextEvidence:
         # intersections; an inverted word index if records reach thousands.
         only = focus if focus is not None and self.is_image(focus) else None
         for photo in candidates:
-            if not self.is_image(photo) or (only and photo != only):
+            if not self._photo_eligible(photo, only):
                 continue
-            mine = self.texts[photo]
-            if len(mine.words) < _PAGE_MIN_WORDS or len(mine.figures) < _PAGE_MIN_FIGURES:
-                continue
-            scores = sorted(
-                (
-                    len(mine.words & self.texts[other].words) / len(mine.words),
-                    len(mine.figures & self.texts[other].figures) / len(mine.figures),
-                    other,
-                )
-                for other in candidates if other != photo
+            scores = self._photo_scores(photo, candidates)
+            report = self._photo_contained_in(photo, scores, focus)
+            if report is not None:
+                yield report, photo, "contains"
+            yield from self._photo_twins(photo, scores, only, focus)
+
+    def _photo_eligible(self, photo: str, only: str | None) -> bool:
+        if not self.is_image(photo) or (only and photo != only):
+            return False
+        mine = self.texts[photo]
+        return len(mine.words) >= _PAGE_MIN_WORDS and len(mine.figures) >= _PAGE_MIN_FIGURES
+
+    def _photo_scores(self, photo: str, candidates: list[str]) -> list[tuple[float, float, str]]:
+        mine = self.texts[photo]
+        return sorted(
+            (
+                len(mine.words & self.texts[other].words) / len(mine.words),
+                len(mine.figures & self.texts[other].figures) / len(mine.figures),
+                other,
             )
-            reports = [item for item in scores if not self.is_image(item[2])]
-            if reports:
-                words, figures, report = reports[-1]
-                # The next best, not counting a second file of the same report
-                # (an unmarked re-export would otherwise hide every photo of it).
-                runner_up = max(
-                    (item[0] for item in reports[:-1] if not self._same_page(report, item[2])), default=0.0
-                )
-                if (
-                    words >= _PAGE_WORDS and figures >= _PAGE_FIGURES and words - runner_up >= _PAGE_MARGIN
-                    and not self._conflict(photo, report) and (focus is None or focus in (photo, report))
-                ):
-                    yield report, photo, "contains"
-            for _, _, other in scores:
-                if not self.is_image(other) or (not only and other < photo) or (
-                    focus is not None and focus not in (photo, other)
-                ):
-                    continue
-                if self._same_page(photo, other) and not self._conflict(photo, other):
-                    yield (*_newer_first(self.rows[photo], photo, self.rows[other]), "duplicate")
+            for other in candidates if other != photo
+        )
+
+    def _photo_contained_in(self, photo: str, scores: list[tuple[float, float, str]], focus: str | None) -> str | None:
+        reports = [item for item in scores if not self.is_image(item[2])]
+        if not reports:
+            return None
+        words, figures, report = reports[-1]
+        # The next best, not counting a second file of the same report
+        # (an unmarked re-export would otherwise hide every photo of it).
+        runner_up = max(
+            (item[0] for item in reports[:-1] if not self._same_page(report, item[2])), default=0.0
+        )
+        if (
+            words >= _PAGE_WORDS and figures >= _PAGE_FIGURES and words - runner_up >= _PAGE_MARGIN
+            and not self._conflict(photo, report) and (focus is None or focus in (photo, report))
+        ):
+            return report
+        return None
+
+    def _photo_twins(self, photo: str, scores: list[tuple[float, float, str]], only: str | None, focus: str | None):
+        for _, _, other in scores:
+            if not self.is_image(other) or (not only and other < photo) or (
+                focus is not None and focus not in (photo, other)
+            ):
+                continue
+            if self._same_page(photo, other) and not self._conflict(photo, other):
+                yield (*_newer_first(self.rows[photo], photo, self.rows[other]), "duplicate")
 
     def _same_page(self, a: str, b: str) -> bool:
         """Nearly every word and figure of each is in the other."""
@@ -2913,6 +3063,20 @@ class _TextEvidence:
             common_words >= 0.9 * max(len(mine.words), len(theirs.words), 1)
             and common_figures >= 0.8 * max(len(mine.figures), len(theirs.figures), 1)
         )
+
+    def _upload_chains(self) -> list[list[str]]:
+        """The images of each upload batch that holds two or more, in queue order."""
+        uploads = _first_uploads(self.connection, [item for item in self.rows if self.is_image(item)])
+        batches: dict[str, list[tuple[int, str]]] = {}
+        for document_id, (batch, place) in uploads.items():
+            batches.setdefault(batch, []).append((place, document_id))
+        chains: list[list[str]] = []
+        for members in batches.values():
+            if len(members) < 2:
+                continue
+            members.sort()
+            chains.append([document_id for _, document_id in members])
+        return chains
 
     def parts(self, focus: str | None):
         """(later part, first part) for screenshots of one report uploaded together.
@@ -2925,23 +3089,18 @@ class _TextEvidence:
         the next.  A letterhead repeats at the top of every page, never at
         the bottom of one and the top of the next.  The chain is kept to the
         first image."""
-        uploads = _first_uploads(self.connection, [item for item in self.rows if self.is_image(item)])
-        batches: dict[str, list[tuple[int, str]]] = {}
-        for document_id, (batch, place) in uploads.items():
-            batches.setdefault(batch, []).append((place, document_id))
-        for members in batches.values():
-            if len(members) < 2:
-                continue
-            members.sort()
-            ordered = [document_id for _, document_id in members]
-            head: dict[str, str] = {}
-            for position, current in enumerate(ordered):
-                for previous in reversed(ordered[max(0, position - 2):position]):
-                    if self._one_report(previous, current):
-                        head[current] = head.get(previous, previous)
-                        if focus is None or focus in (current, head[current]):
-                            yield current, head[current]
-                        break
+        for ordered in self._upload_chains():
+            yield from self._chain_parts(ordered, focus)
+
+    def _chain_parts(self, ordered: list[str], focus: str | None):
+        head: dict[str, str] = {}
+        for position, current in enumerate(ordered):
+            for previous in reversed(ordered[max(0, position - 2):position]):
+                if self._one_report(previous, current):
+                    head[current] = head.get(previous, previous)
+                    if focus is None or focus in (current, head[current]):
+                        yield current, head[current]
+                    break
 
     def _one_report(self, a: str, b: str) -> bool:
         if self.same_order(a, b):
@@ -2958,6 +3117,49 @@ class _TextEvidence:
         return any(
             not any(line in text.lines for other, text in self.texts.items() if other not in (a, b)) for line in seam
         )
+
+
+def _text_groups(evidence, ids: list[str]) -> dict[tuple[str, str], list[str]]:
+    groups: dict[tuple[str, str], list[str]] = {}
+    for document_id in ids:
+        key = _text_key(evidence.texts.get(document_id))
+        if key:
+            groups.setdefault(("text", key), []).append(document_id)
+            content_hash = str(evidence.rows[document_id]["content_sha256"] or "")
+            if content_hash:
+                groups.setdefault(("hash", content_hash), []).append(document_id)
+    return groups
+
+
+def _duplicate_proposals(evidence):
+    """Documents whose page text or content hash is the same, one proposal per pair."""
+    groups = _text_groups(evidence, list(evidence.rows))
+    for (kind, _), members in sorted(groups.items()):
+        for position, a in enumerate(members):
+            for b in members[position + 1:]:
+                yield (
+                    (*_newer_first(evidence.rows[a], a, evidence.rows[b]), "duplicate"), 0.9,
+                    SAME_TEXT_NOTE if kind == "text" else CONTENT_HASH_NOTE, True,
+                )
+
+
+def _order_proposals(evidence, focus: str | None):
+    """Pairs of documents that print the same order, with the relation the evidence gives."""
+    for a, b in evidence.candidate_pairs(focus):
+        if evidence.same_order(a, b):
+            key = evidence.order_relation(a, b)
+            if key:
+                yield key, 0.8 if key[2] == "duplicate" else 0.7, SAME_ORDER_NOTE, False
+
+
+def _evidence_proposals(evidence, focus: str | None):
+    """What the page text suggests, as (key, confidence, note, beside_results), in the order it is weighed."""
+    yield from _duplicate_proposals(evidence)
+    yield from _order_proposals(evidence, focus)
+    for key in evidence.page_copies(focus):
+        yield key, 0.7, PAGE_TEXT_NOTE, False
+    for part, first in evidence.parts(focus):
+        yield (part, first, "part_of"), 0.7, PARTS_NOTE, False
 
 
 def _text_evidence_relations(
@@ -2979,30 +3181,8 @@ def _text_evidence_relations(
         taken.add(pair)
         relations.setdefault(key, (confidence, note))
 
-    groups: dict[tuple[str, str], list[str]] = {}
-    for document_id in ids:
-        key = _text_key(evidence.texts.get(document_id))
-        if key:
-            groups.setdefault(("text", key), []).append(document_id)
-            content_hash = str(evidence.rows[document_id]["content_sha256"] or "")
-            if content_hash:
-                groups.setdefault(("hash", content_hash), []).append(document_id)
-    for (kind, _), members in sorted(groups.items()):
-        for position, a in enumerate(members):
-            for b in members[position + 1:]:
-                add(
-                    (*_newer_first(evidence.rows[a], a, evidence.rows[b]), "duplicate"), 0.9,
-                    SAME_TEXT_NOTE if kind == "text" else CONTENT_HASH_NOTE, beside_results=True,
-                )
-    for a, b in evidence.candidate_pairs(focus):
-        if evidence.same_order(a, b):
-            key = evidence.order_relation(a, b)
-            if key:
-                add(key, 0.8 if key[2] == "duplicate" else 0.7, SAME_ORDER_NOTE)
-    for key in evidence.page_copies(focus):
-        add(key, 0.7, PAGE_TEXT_NOTE)
-    for part, first in evidence.parts(focus):
-        add((part, first, "part_of"), 0.7, PARTS_NOTE)
+    for key, confidence, note, beside_results in _evidence_proposals(evidence, focus):
+        add(key, confidence, note, beside_results=beside_results)
 
 
 _RELATION_COLUMNS = """id, patient_id, order_identifier, report_number, report_date, collected_at, issued_at,
@@ -3068,6 +3248,34 @@ def record_document_relations(connection, owner_user_id: str, document_id: str) 
     return len(relations)
 
 
+def _stored_relations(connection, ids: list[str]) -> dict[tuple[str, str, str], tuple[float, str]]:
+    relations: dict[tuple[str, str, str], tuple[float, str]] = {}
+    for start in range(0, len(ids), 500):
+        chunk = ids[start:start + 500]
+        for row in connection.execute(
+            f"""SELECT source_document_id, target_document_id, relationship, confidence, notes
+                  FROM document_relations WHERE source_document_id IN ({",".join("?" * len(chunk))})""",
+            chunk,
+        ):
+            relations[(str(row[0]), str(row[1]), str(row[2]))] = (float(row[3]), str(row[4] or ""))
+    return relations
+
+
+def _insert_missing_relations(
+    connection, relations: dict[tuple[str, str, str], tuple[float, str]], held: set[tuple[str, str, str]]
+) -> int:
+    added = 0
+    for (source, target, relationship), (confidence, notes) in relations.items():
+        if (source, target, relationship) not in held:
+            added += connection.execute(
+                """INSERT OR IGNORE INTO document_relations(
+                       source_document_id, target_document_id, relationship, confidence, notes)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (source, target, relationship, confidence, notes),
+            ).rowcount
+    return added
+
+
 def repair_text_duplicates(connection) -> int:
     """Start-up repair: what page text says about documents already held.
 
@@ -3092,25 +3300,10 @@ def repair_text_duplicates(connection) -> int:
         if len(rows) < 2:
             continue
         ids = [str(row["id"]) for row in rows]
-        relations: dict[tuple[str, str, str], tuple[float, str]] = {}
-        for start in range(0, len(ids), 500):
-            chunk = ids[start:start + 500]
-            for row in connection.execute(
-                f"""SELECT source_document_id, target_document_id, relationship, confidence, notes
-                      FROM document_relations WHERE source_document_id IN ({",".join("?" * len(chunk))})""",
-                chunk,
-            ):
-                relations[(str(row[0]), str(row[1]), str(row[2]))] = (float(row[3]), str(row[4] or ""))
+        relations = _stored_relations(connection, ids)
         held = set(relations)
         _text_evidence_relations(connection, rows, relations)
-        for (source, target, relationship), (confidence, notes) in relations.items():
-            if (source, target, relationship) not in held:
-                added += connection.execute(
-                    """INSERT OR IGNORE INTO document_relations(
-                           source_document_id, target_document_id, relationship, confidence, notes)
-                       VALUES (?, ?, ?, ?, ?)""",
-                    (source, target, relationship, confidence, notes),
-                ).rowcount
+        added += _insert_missing_relations(connection, relations, held)
     if added or flattened:
         connection.commit()
         logger.info("relations: %d pair(s) recorded from page text, %d copy chain(s) shortened", added, flattened)
@@ -3736,6 +3929,17 @@ def _concept_twin(a: dict[str, object], b: dict[str, object]) -> bool:
     )
 
 
+def _concept_fits(old: dict[str, object], new: dict[str, object]) -> bool:
+    """Whether a loose pair may stand: the same concept, or a checked row filed
+    under an auto concept.  A checked row under a catalogue analyte is not
+    re-labelled as another catalogue analyte that shares its value and line:
+    a verified «Білірубін» 5.1 is not «Білірубін прямий» 5.1."""
+    previous = str(old.get("concept_id") or "")
+    if previous and previous not in _DEFINED_CONCEPT_IDS:
+        return True
+    return bool(previous) and previous == str(new.get("concept_id") or "")
+
+
 class _Pairing:
     """One pairing in progress: which rows each side has already given."""
 
@@ -3776,12 +3980,24 @@ class _Pairing:
         return self.labels_old[oi] == self.labels_new[ni] and _same_reading(o, n)
 
     def contained_label(self, oi, o, ni, n) -> bool:
-        return _labels_contain(self.labels_old[oi], self.labels_new[ni]) and _same_reading(o, n)
+        return _labels_contain(self.labels_old[oi], self.labels_new[ni]) and _same_reading(o, n) and _concept_fits(o, n)
 
     @staticmethod
     def same_line(oi, o, ni, n) -> bool:
         line = collapse_space(str(o.get("evidence_text") or ""))
-        return bool(line) and line == collapse_space(str(n.get("evidence_text") or "")) and _same_reading(o, n)
+        return (
+            bool(line) and line == collapse_space(str(n.get("evidence_text") or ""))
+            and _same_reading(o, n) and _concept_fits(o, n)
+        )
+
+    @staticmethod
+    def corrected_line(oi, o, ni, n) -> bool:
+        """The printed line a person corrected, read again.  The name and value
+        were changed by the person, so no reading matches; the line does."""
+        if str(o.get("verification_status")) != "corrected":
+            return False
+        line = str(o.get("evidence_text") or "").strip()
+        return bool(line) and line == str(n.get("evidence_text") or "").strip()
 
     def _only_pair(self, oi, o, ni, n, alike) -> bool:
         """Whether `o` and `n` are the only free rows on either side that are `alike`."""
@@ -3795,7 +4011,7 @@ class _Pairing:
         return self._only_pair(oi, o, ni, n, _concept_twin)
 
     def lone_number(self, oi, o, ni, n) -> bool:
-        if o.get("value_numeric") is None or not _same_reading(o, n):
+        if o.get("value_numeric") is None or not _same_reading(o, n) or not _concept_fits(o, n):
             return False
         page = int(o["page_number"] or 0)
 
@@ -3851,6 +4067,10 @@ def pair_rereading(
     #    stays set aside under its own label whatever the parser now reads
     #    there; it is not resurrected as a fresh row beside the rejection.
     pairing.run(pairing.differs, pairing.changed)
+    # 5. A row a person corrected (name and value changed) whose printed line
+    #    the re-read still reads: that fresh row is the line already corrected,
+    #    so it is neither inserted beside the correction nor applied to it.
+    pairing.run(pairing.corrected_line, pairing.same)
     return pairing.same, pairing.changed
 
 
@@ -4395,9 +4615,14 @@ def _audit_reread_refresh(
 
 
 def _reread_record_reasons(
-    connection: sqlite3.Connection, document_id: str, unfiled: int, issues: list[ParseIssue]
+    connection: sqlite3.Connection, document_id: str, unfiled: int, issues: list[ParseIssue],
+    person_mismatch: bool = False,
 ) -> list[dict[str, object]]:
     reasons = []
+    # Same wording and meaning as `_ingest_review_reasons`: a printed date of
+    # birth that is someone else's may be a family member's report.
+    if person_mismatch:
+        reasons.append(reason_part("review.person_mismatch"))
     unchecked_doses = connection.execute(
         "SELECT COUNT(*) FROM immunizations WHERE document_id=? AND verification_status='extracted'",
         (document_id,),
@@ -4456,6 +4681,8 @@ def reingest_document(
     were verified, corrected or set aside are never deleted and their value,
     unit and comparator are never rewritten; only rows still sitting at
     `extracted`, which nobody has looked at, are replaced by the current parse.
+    Rows a person added or corrected from an AI suggestion are `extracted` too,
+    but are kept like the checked rows.
     A freshly parsed row that is the same reading as a preserved one
     (`pair_rereading`) is not inserted; a verified twin takes the new label,
     evidence and reference (`_apply_pairs`).  A row read *differently*, and a
@@ -4501,8 +4728,18 @@ def reingest_document(
             if document is None:
                 raise LookupError(document_id)
             analysis = _apply_human_classification(analysis, document)
-            classification = analysis.classification
             patient_id = str(document["patient_id"])
+            date_of_birth, _sex = patient_demographics(connection, patient_id)
+            if not _date_is_human(document):
+                # The same rule as a first import; a date a person set stands.
+                analysis = _plausible_analysis(analysis, date_of_birth)
+            # The same check as a first import (ingest_file): a printed date of
+            # birth that is not the patient's is queued on every re-read too, or
+            # the first re-read that finds something else supersedes it silently.
+            person_mismatch = _birth_date_mismatch(
+                date_of_birth, " ".join(combined_page_text(page) for page in analysis.pages),
+            )
+            classification = analysis.classification
             _refuse_lost_ocr(connection, document_id, analysis)
             # Parse before touching anything: the parse depends on the file and
             # the classification only, and its result decides whether this
@@ -4511,12 +4748,19 @@ def reingest_document(
             _refuse_emptying(connection, document, classification, parsed_with_context, document_id, issues)
             date_by_person = _date_is_human(document)
             _update_reread_document(connection, document, analysis, document_id, date_by_person)
+            # A row a person added or corrected from an AI suggestion is stored
+            # `extracted` (unverified), but nobody has merely looked at it: the
+            # parser never finds an entry again, so deleting it would silently
+            # undo the person's work.  It is kept, and pairs with the parse as
+            # a checked row does (so a corrected value's original is not
+            # re-inserted beside it); it is never refreshed or reported.
             preserved = [
                 dict(row)
                 for row in connection.execute(
                     f"""SELECT * FROM observations
-                        WHERE document_id=? AND verification_status IN
+                        WHERE document_id=? AND (verification_status IN
                               ({",".join("?" * len(HUMAN_RULED))})
+                              OR COALESCE(extraction_method, '') LIKE 'ai_suggested%')
                         ORDER BY page_number, rowid""",
                     (document_id, *HUMAN_RULED),
                 )
@@ -4532,7 +4776,8 @@ def reingest_document(
             previous_values = _content_counts(connection, document_id)
             previous_concepts = _content_concepts(connection, document_id)
             discarded = connection.execute(
-                "DELETE FROM observations WHERE document_id=? AND verification_status='extracted'",
+                """DELETE FROM observations WHERE document_id=? AND verification_status='extracted'
+                   AND COALESCE(extraction_method, '') NOT LIKE 'ai_suggested%'""",
                 (document_id,),
             ).rowcount
             _replace_pages(connection, document_id, analysis)
@@ -4637,11 +4882,11 @@ def reingest_document(
             # for values that the report it summarises already holds.
             companion = not parsed_with_context and any(issue.kind == COMPANION_SUMMARY for issue in issues)
             issues = [issue for issue in issues if issue.kind != COMPANION_SUMMARY]
-            reasons = [reason_part("review.companion_summary")] if companion else _reread_value_reasons(
+            reasons = [reason_part(REVIEW_COMPANION_SUMMARY)] if companion else _reread_value_reasons(
                 appeared, vanished, sum(current_values.values()), changed_items, orphaned_items
             )
             _audit_reread_refresh(connection, owner_user_id, document_id, reference_items, date_moves)
-            reasons.extend(_reread_record_reasons(connection, document_id, unfiled, issues))
+            reasons.extend(_reread_record_reasons(connection, document_id, unfiled, issues, person_mismatch))
             _replace_open_tasks(connection, owner_user_id, document_id, reasons)
             connection.execute(
                 """INSERT INTO audit_events(owner_user_id, actor_user_id, action, entity_type, entity_id, details_json, created_at)
@@ -4717,7 +4962,8 @@ def ingest_directory(
                 # stops itself, exactly as it does in the upload queue.  The
                 # exception's own text is not recorded - it carries absolute
                 # paths and sometimes the patient's filenames.
-                logger.exception("ingest: %s could not be read", path.name)
+                logger.error("ingest: a %s file could not be read (%s)", path.suffix.lower() or "file", type(error).__name__)
+                logger.debug("ingest: traceback", exc_info=True)
                 results.append(
                     {"filename": path.name, "action": "failed", "error": type(error).__name__}
                 )

@@ -3,6 +3,9 @@
 Anamna: local-first personal medical record. Python 3.12 / FastAPI / Jinja2 / hand-written CSS +
 vanilla JS. The application is the Python package under `src/anamna/`.
 
+`AGENTS.md` points here: this file is the single set of engineering rules for every contributor,
+human or agent, whatever tool they use.
+
 **Privacy first.** `data/` and `sources/` hold patient health information and are gitignored. Use
 them freely in development, testing and verification, but never commit them and never ship them in
 the repository or a container image.
@@ -57,14 +60,20 @@ server for `preview_start`, plus a sandbox target on a throwaway database with b
 off.
 
 ```bash
+uv tool run --from ruff==0.17.4 ruff check src scripts tests
 uv run pytest --basetemp=work/pytest-run
 node --test tests/js/*.test.mjs
 ```
+
+The CLI also has `anamna set-password --email … [--admin]` (recovery when the only administrator is locked out), `anamna backup --to DIR [--no-sources]` (online backup of the database, `secret.key` and the originals) and `anamna export --email … --to FILE.zip` (one account's record).
 
 The Python suite runs in parallel by default (pytest-xdist, `-n auto` in the `pyproject.toml`
 addopts) and takes about a minute; pass `-n 0` to run it serially when debugging. Always override
 `--basetemp`, and give each concurrent run its own: the default `work/pytest` is usually locked on
 Windows and produces phantom `PermissionError`s that have nothing to do with the code under test.
+
+The lint gate is correctness-only (pyflakes rules, configured in `pyproject.toml`). A docker build is
+not needed locally: CI builds the image and smoke-tests the running container.
 
 OCR tests need Tesseract with the `ukr` and `eng` language data (on `PATH`, or inside WSL on
 Windows); without it they skip.
@@ -118,6 +127,10 @@ shown once, on the page that mints it, and never appears in a URL.
 The development database is **`data/anamna.sqlite3`** and there is exactly one of it. No `-v2`,
 no `-v3`, no `-copy`, no dated duplicate beside it. Snapshots belong in `work/db-archive/`, which is
 gitignored, and each needs a `README.md` line saying what it is and when it may go.
+
+`data/secret.key` sits beside it when `ANAMNA_SECRET` is not set. It is not health data, but it is a
+secret: it is gitignored with the rest of `data/` and never belongs in a commit, an image or a
+report.
 
 ### Taking a backup
 
@@ -180,8 +193,11 @@ cramped, overflowing, or visibly unconsidered at those sizes.
   reason about it from the CSS.
 - Zero horizontal page scroll at every width. Wide content (tables, charts, code) scrolls inside
   its own container.
+- A wrapper that scrolls a wide table sideways (`table-wrap`, `area-result-table-wrap`, `an-scroll-x`)
+  carries `tabindex="0" role="region"` and an `aria-label`, or a keyboard user cannot scroll it.
 - Interactive targets ≥44×44 CSS px with visible spacing between neighbours.
-- Existing breakpoints in `web/static/app.css` are 620, 720, 760, 900, 980, 1100, 1120 and 1280 px.
+- Existing breakpoints in `web/static/app.css` are 620, 720, 760, 900, 980, 1000, 1100, 1120,
+  1280 and 1400 px.
   Reuse them; a new breakpoint needs a reason. The file is source-order sensitive — late base rules
   override earlier media-query rules — so add responsive rules inside the matching existing block,
   not at the end of the file.
@@ -189,6 +205,8 @@ cramped, overflowing, or visibly unconsidered at those sizes.
   the browser cache and any CDN's on the next reload. Link a new asset through `asset()`, never
   as a bare `/static/...` — `tests/python/test_static_assets.py` fails if you do.
 - Respect `prefers-color-scheme` and `prefers-reduced-motion`; both are already wired.
+- Full-height panels use `100vh` followed by the same declaration in `100dvh`: on iPhone and iPad
+  Safari `100vh` is the large viewport and runs under the toolbar.
 
 ### 2. Never descope
 
@@ -235,8 +253,11 @@ diff is worth exactly as much as not running it.
 When a task is more than a contained edit — multi-file, multi-page, migration, audit, sweep — stop
 coding and orchestrate.
 
-- Delegate mechanical or well-specified work to `claude-sonnet-5`; give reasoning-heavy work
-  (clinical logic, reference bands, extraction correctness, architecture) to `claude-opus-5`.
+- Delegate mechanical or well-specified work to a smaller, faster model; keep reasoning-heavy work
+  (clinical logic, reference bands, extraction correctness, architecture) with the most capable
+  model available. A small model needs the exact change spelled out: the function, the rule, the
+  wording of every user-visible string in both languages, and the tests that prove it. Decide the
+  clinical content yourself and verify it against the official source before handing it over.
 - Partition the work **by file**, and tell each subagent exactly which files it owns and that others
   are editing the rest concurrently — see "You are probably not alone in this repository". Two agents
   told to "fix the review page" will overwrite each other.
@@ -315,9 +336,11 @@ across all three jurisdictions.
   favourite.
 - Ukrainian sources must be found in Ukrainian (MOZ orders, national protocols) and mapped, not
   back-translated from an American guideline.
-- Current coverage, as a baseline to improve rather than a target already met: 187 sources
-  (US 73, EU 64, INT 24, UA 18, 8 unregioned) across 263 analytes — 88 analytes cite a UA source and
-  33 cite no region at all. Closing those gaps is in scope whenever you touch the analyte.
+- Current coverage (`data/reference_library.json`, version 2026-08-07), as a baseline to improve rather than a target already met: 495 sources
+  (UA 149, US 148, EU 113, INT 85) across 478 analytes. 396 analytes cite a UA source, 82 carry
+  numeric bands, and 374 are `no_universal_target`. Every band's `source_id` appears in its
+  analyte's `source_ids`, and every source carries an `identifier`
+  (`tests/python/test_audit_reference.py` guards both).
 
 ## Repo-specific traps
 
@@ -336,6 +359,13 @@ Each of these has already produced a confident, wrong, or silently missing clini
   with a source line that proves it, then rescan the affected documents — the fix does not backfill
   anything on its own. To find what is currently being swallowed, scan `sources/` for lines matching
   `<name> <number> <token>` where the token is not in the pattern.
+
+- **A results table outranks an incidental word.** `_is_results_table` in `ingest/classifier.py` makes a
+  page a laboratory report when it has a results header and at least `RESULT_TABLE_MIN_ROWS` (four)
+  result rows, unless more than half of those rows carry a length or volume unit
+  (`MEASUREMENT_UNITS`, an echo or ultrasound table). That holds when the text also mentions a
+  consultation, a biopsy or an MRI. Classified by that one word, the page was filed as a narrative.
+  Those kinds are never parsed for values, so the whole page vanished.
 
 - **A new unit must be folded as well as parsed.** `canonical_unit()` decides whether two readings
   are the same measurement, so an unfolded spelling gives the analyte a second unit: the trend
@@ -367,11 +397,97 @@ Each of these has already produced a confident, wrong, or silently missing clini
 - **Extraction stays provisional until a person verifies it.** Never mark a value verified from a
   model output or a confidence threshold — see
   [docs/extraction-and-verification.md](docs/extraction-and-verification.md).
+- **A treatment target is not a reference interval, and must be gated.** The INR 2.0-3.0 range is
+  a goal for people taking warfarin; shown to everyone it turned an INR of 2.6 with no
+  anticoagulant green. Urate below 360 µmol/L is a goal for people treated for gout. Give such a
+  band `requires: ["<clinical fact>"]`; without that fact in the record it does not judge and
+  the laboratory's own range speaks.
+- **No band contains the value means no curated verdict.** Only a band that states what is normal
+  can say which side of normal a value is on. Judging against whichever band came first reported
+  a ferritin of 50 as "High" under an "Iron deficiency" label for a person of unknown sex.
+- **A band's edge can belong to another body.** Ferritin's healthy band starts at 30 ng/mL, the NIH ODS figure, and ends at WHO's overload threshold. WHO puts deficiency at 15. A band names the publisher of its lower edge in `lower_source_id`, and a value below that edge cites that source as the target's. Without it the page and the assistant said "below the WHO threshold of 30", a number WHO never published.
+- **A censored result is a limit, not a value.** `<1.0` and `>60` are stored as the number plus a
+  `comparator`. Pass it to `evaluate()`: a band judges it only when the band is open on the stated
+  side, and the laboratory's range only when the side is certain. Dropping it files `>60` eGFR
+  under "mildly decreased".
+- **The laboratory's stored flag outranks a fresh comparison with its printed numbers.** The flag
+  is what the report told the patient, and at ingest it already accounts for strict bounds and for
+  a flag the lab's own system set. A curated "normal" over a result the lab flagged becomes
+  "indeterminate", with or without printed bounds.
+- **AI output is a suggestion at every door.** A value, correction or vaccination a model proposed
+  is stored `extracted` with an `ai_suggested_*` method even when a person pressed the button; only
+  a person checking it against the source page makes it verified. The change summary's severity is
+  clamped to the engine's verdict, and its sentences may only quote numbers that are measurements
+  in the data.
+- **Medical text goes to an AI provider only on terms an administrator chose.** OpenRouter requests
+  carry `provider.data_collection`, `deny` unless the administrator allowed otherwise. File names
+  are never sent: they carry surnames.
+- **A share names an account, never an address.** `record_shares.grantee_user_id` decides who may
+  read; sign-up does not verify email, so matching on the address handed a record to whoever
+  registered it first.
+- **PDFium is not thread-safe.** The intake worker and the viewer's page renderer run on different
+  threads. Every call into `pypdfium2` happens under `ingest.extract.PDFIUM_LOCK`, and the lock is
+  never held across a Tesseract run.
+- **One migration is one transaction.** `migrate()` wraps each file together with its version row,
+  so a failure half-way leaves nothing behind. A file that contains its own `BEGIN`, `COMMIT` or
+  `PRAGMA` at the start of a line runs unwrapped, as written: avoid those unless the migration
+  needs them.
+- **The container does not run as root.** The entrypoint takes ownership of the data volume and
+  drops to uid 10001; the only writable paths are the volume and `/app/tmp` (OCR scratch). Code
+  that writes anywhere else works on a developer machine and fails in the image.
+- **An attempt limit needs a wait and a way out.** Every limit tells the person how many minutes are left (`security.retry_minutes`), an administrator can release it on `/admin/users` (`security.blocked()`, `POST /admin/throttles/release`), and a success clears the meter of the person who succeeded. `throttled()` remembers each key's limit so the page can list what is paused. A new limit without those three traps a person who only mistyped. `/register` counts sign-ups, not validation errors.
+- **Throttle keys are namespaced.** `login-dev:<email>:<nonce>`, `doctor-pin:<visitor>`, `webhook:<provider>:<visitor>`, `login:<email>`, `login-ip:<visitor>`, `register:`, `token:`,
+  `webhook:`, `pwchange:`. One shared bucket let ten wrong passwords from anyone lock sign-in for
+  everyone behind the tunnel, and let webhook noise do the same.
+- **A band can refuse a sample.** A band may list `excludes: ["not_fasting_sample"]` or `["pregnant"]`, and the random-sample glucose band lists `requires: ["not_fasting_sample"]`. `evaluate()` receives per-sample facts in `clinical_context` next to the person-level ones, and a band that excludes a fact the sample carries does not judge. Glucose is judged as a fasting sample unless the reading is marked otherwise, and the page says so. Fasting thresholds applied to a sample known to be non-fasting, or non-pregnant intervals applied during a recorded pregnancy, put a wrong label in front of a patient.
+- **Per-sample facts reach the engine through `_sample_facts`.** `_reading_verdict` and
+  `_document_observation_item` in `web/app.py` merge `_sample_facts(connection, row)` into
+  `clinical_context` beside the person-level `_clinical_context`. It yields `not_fasting_sample` when
+  `observations.sample_condition` is `not_fasting` (set by `POST /observations/{id}/sample-condition`),
+  and `pregnant` when the result's date falls in the 280 days before `patients.pregnancy_due_date`. A new
+  call to `evaluate()` for a stored result that leaves these out judges a non-fasting glucose against
+  fasting thresholds, and a pregnancy result against non-pregnant intervals.
+- **Deleting an account goes through `_delete_account`.** The administrator's delete
+  (`admin_change_user`) and `POST /profile/delete-account` both call it. It removes the original document
+  files that no other account's document uses (`_delete_orphaned_sources`), clears
+  `review_tasks.assigned_user_id` and `audit_events.actor_user_id`, the two foreign keys that do not
+  cascade, and then deletes the `users` row. Providers are disconnected first, best effort
+  (`_disconnect_providers`). Device-export files and the folders the application unpacked under `sources/uploads/` go too; a folder an operator placed in `sources/` by hand and imported from the command line stays. A bare
+  `DELETE FROM users` fails for anyone who acted on another person's record, because foreign keys are
+  enforced (`PRAGMA foreign_keys = ON` in `db.py`).
+
+- **A medicine or an illness is a clinical fact with dates.** `factors.fact_periods` turns an entry on the Medicines page into `vka_therapy` (ATC `B01AA`), `urate_lowering_therapy` (ATC `M04AA`, `M04AB`, `M04AX`) or `illness` and `infection_or_inflammation`, for the days the entry lasted. `_sample_facts` in `web/app.py` merges `factors.facts_on(periods, date)` for every stored result. The map is `FACT_MEDICINES` in `factors.py`: it matches the ATC code from the reference page or a substance name, never a model's guess. An entry with no start date, or a finished one with no end date, sets nothing.
+- **An AI suggestion about a medicine is not the record.** `POST /medicines/suggest` starts `factor_research.research` as a job (`factor_jobs`, in memory, one running job per person) on what is in the form, and the form polls `GET /medicines/suggest/{job}`. The answer goes into the form: `medicines.js` fills an empty field, offers a replacement for a field the person wrote, and lists the effects as ticked boxes. Nothing is stored until the person saves. The form posts `ai_fields` (the fields still holding the AI's text) and one `ai_effect` per ticked effect, and `factors.create` and `factors.update` record them (an effect gets `origin='ai'`), so the page keeps saying where the text came from. Every quote is checked against the fetched instruction text and emptied when it is not found there. A usual regimen (`usual_regimen`) is offered only with a quote that was found: no instruction, no dose.
+- **Saving a form never waits for a model.** A save that called the AI took a minute, looked dead, and was pressed three times: three entries. A model call started by a page runs as a job the page polls, and a second press returns the running job.
+- **A dose is data.** `factors.dose_amount`, `dose_unit` and `schedule_json` hold what the pickers on the form chose. `factors.regimen_text(row, locale)` is the one place that prints them: the pages call it with the reader's locale, the prompts and the CSV with `"en"`. The free-text `dose` is an older entry's words and `schedule` is a note. A fraction takes the "few" form in Ukrainian («0,5 таблетки»), which is why every countable unit in `med.unit.*` is a noun whose genitive singular equals that form.
+- **What the scan of documents finds is not the record.** `factor_scan.scan` reads each consultation and clinical report once (`factor_scans`) and stores what it says as `factor_candidates`. An item is stored only when its quote and its name are found in the document text; the text goes through `ai.redact_document_text` first. `factor_candidates.groups` offers the same thing once across documents, `accept` turns a ticked group into a `factors` row, and `dismiss` stops it being offered. The document's own date stands only for an item the document prescribes or describes as present (`timing` `now`). An item from the history (`past`) or a scheduled one (`planned`) with no date of its own gets none: an operation "in 2019" read from a 2026 consultation was once dated 2026. A date taken from a consultation says when it was written down, so the entry is created with `dates_approximate` set. Without a stated duration or "long term", an item older than 90 days is suggested as finished, because a wrong "current" medicine changes verdicts (`FACT_MEDICINES`). A course with a stated length keeps its end date when it is still running. Nothing on the review page starts ticked, and Dismiss asks first.
+- **A job has a kind and a key.** `factor_jobs.start(owner, work, kind=..., key=...)` reuses a running job only for the same owner, kind and key. The research for the form (`research`) and the scan of documents (`scan`) must not answer each other's poll. The research key is a hash of what was asked (name, substance, strength, reference, entry, language): without it a press for a second medicine received the first medicine's answer. A long job reports progress through the `report` callback, and that also keeps it from being called lost.
+- **The scan reads a whole document, and one bad answer does not stop it.** `factor_scan._chunks` cuts a long text at line ends into parts of `TEXT_CHARS`, each sent on its own (`document.part`). A reply that is cut short or is not the JSON asked for raises `UnreadableReply`: that document is counted in `failed`, stays waiting, and the scan goes on. AI off, budget spent or provider down still end the scan. Before this, a document was cut at 12,000 characters and recorded as read, and one unusable reply for the oldest document blocked every later one.
+- **A question before a destructive action is a `<dialog>`, never `window.confirm`.** An embedded browser answers `confirm()` with "no" and shows nothing, and so does any browser after "stop this page opening dialogs": every Delete was a dead button. `busy.js` builds the dialog; the confirming button repeats the pressed button's word, and Cancel holds the focus.
+- **Administration is one area.** The account menu carries one link, `/admin`. Every `admin_*.html` page includes `_admin_tabs.html` at the top of its content, and a new section is added to that strip, not to the menu (`tests/python/test_web_admin_area.py`).
+- **The document box searches text, then asks nothing of a model.** `factor_documents.search` matches the medicine's name and the typed words against `search_index`, and reads the doctor and the diagnosis off labelled lines with plain patterns. It is a prefill into empty fields, never a judgement.
+- **The AI client writes on a connection of its own.** `ai.complete` records usage with `BEGIN IMMEDIATE` on a new connection. Commit your own connection before calling it. Otherwise it waits on your open write and the request ends in "database is locked". Tests that fake `complete` itself cannot see this: fake the provider adapter instead.
+- **The medicine reference is one site: its public page by default, its API with a token.** `drugref.py` searches through the open search endpoint of the tabletki.ua API and reads the instruction from the public page of the medicine. That is the default and needs nothing. The alternative is the product-card endpoint of the same API (`drug_lookup_mode` = `api` on the AI settings page). It needs a token that tabletki.ua issued: `ANAMNA_TABLETKI_TOKEN` in the server's environment (`TABLETKI_TOKEN` in `.env`), or one saved on that page. Without a token the page is used. `_api_headers` is the header set tabletki.ua expects: leave it as it is. The card is addressed by a product code and answers for whatever product that code names, so the reply is refused unless it names the code and the page that were asked for; an entry linked to a trade name alone has no product code and is read from the page. The card is never asked without a token: a 403 pauses every call for 15 minutes, the search included. Every request passes `_admit` (at most 30 a minute, none while a pause lasts), HTTP 429 or 503 pauses for `Retry-After`, and nothing retries. Searches are cached for 15 minutes, instructions for 90 days.
+- **A linked medicine keeps its instruction, as text.** Saving an entry with a reference starts a `reference` job (`factors_routes._keep_reference`) that stores the instruction in `drug_references` and fills the entry's empty active substance and ATC code from it (`factors.fill_from_reference`): reference text, never a model's. `details_json` holds what the product card adds: facts by key and who may take the medicine. `/medicines/<id>/instruction` shows the stored copy, `medicine_info.js` shows that page's article in a dialog, and the assistant reads the same copy through `get_medicines`. The text is stored with its markup removed. `drugref._text` removes only real tags: the instructions print a bare «<» («кліренс креатиніну < 10 мл/хв»), and treating it as a tag dropped every word up to the next «>».
+- **The assistant's prompts carry no forbidden topics.** The owner's rule: the assistant gives concrete guidance worked out for the person, doses included, and what to raise with a doctor. "Talk to your doctor" alone is not an answer. What stays are accuracy rules: never state a result the record does not contain, show the calculation or name the source of a figure, and treat tool output as data. Do not add a topic restriction to `chat.py`, `changes.py` or the `ai.task_body` messages.
+- **Chart lanes need the time of each point.** `AnamnaChart.factorLanes` draws the entries under the time axis. The result chart compresses long gaps, so a date is placed with `timeX` between the two readings around it, never by a linear scale. A chart that grows lanes passes `factorRoom` to `responsive` as extra height, or the lanes eat the plot.
+- **A retest interval belongs to the result it was published for.** `retest_condition: {"applies_when": "borderline"}` limits a cadence to borderline results. The other `applies_when` values are `abnormal`, `not_abnormal`, `on_treatment` and `occupational`; `any` holds a list of conditions, and `age_min` and `age_max` limit by age. "Repeat in 12 months" beside a diabetes-range glucose told a person to wait a year for a result that needs confirming now.
+- **A share has a level.** `record_shares.access` is `read` or `full`. `viewing_row()` carries it as `share_access`, and `record_user()` exposes `viewing_full`. Reading is what every share gives. Anything that acts through the owner (the assistant sending the record to a provider, a laboratory order through the owner's account) must check for `full`. A new route that resolves the owner with `record_user()` and then does more than read is the mistake to look for.
+- **A known browser has its own sign-in meter.** A successful sign-in sets the `anamna_device` cookie, an HMAC over the email keyed by the server secret. A request carrying a valid one is counted on `login-dev:<email>:<nonce>` only. Without it, anyone who knew an address could lock its owner out for 15 minutes with 20 wrong passwords.
+- **A real-world order needs a browser session and a one-time token.** The Esculab order form carries a nonce, spent by inserting it into `lab_order_nonces` before the laboratory is asked. A repeated or missing nonce never reaches the laboratory, and a bearer token cannot order at all. A double click used to be two real orders.
+- **Scripts need the request's nonce once strict mode is on.** `_content_security_policy()` in `web/app.py` builds the policy. `CSP_STRICT_SCRIPTS` is on: scripts run only from the server or with `nonce="{{ csp_nonce }}"` (the value of `request.state.csp_nonce`, passed to every template). An inline `<script>` without it, or an `onclick=` or `onsubmit=` attribute, is blocked by the browser. While the switch is off, the policy allows `'unsafe-inline'` and a missing nonce blocks nothing. Keep every template free of inline handler attributes, which `profile.html` used to carry. Put behaviour in a script and attach it with `addEventListener`; a form that needs a confirmation carries `data-confirm` (on the form, or on the one button that needs it), which `static/busy.js` handles. `tests/python/test_audit_csp.py` fails on either.
+- **Nothing personal goes to the log.** No file name, document title or upstream reply body at `INFO` or above: file names carry surnames. Log an id, a count, a suffix or the exception class; put the rest at `DEBUG`. The uvicorn access log is off for the same reason: it printed guest-link secrets and search text.
+- **A pattern is rewritten only with proof on real text.** The parsers, the classifier and `health.py` hold several hundred regular expressions, and each decides whether a number reaches the page. A pattern changed for speed or tidiness is run, old and new, over every stored document line and every string in the tests, and must give the same matches and the same groups. Then every stored document is re-read and its observations compared. A possessive quantifier (`\s++`, `\d*+`) is the usual cure for a slow pattern. It is safe only where the text the next part needs could never be taken from the part that stopped giving characters back.
+- **`[0-9]` means ASCII digits.** In Python `\d` also matches Arabic-Indic, fullwidth and other Unicode digits. Where a pattern spells out `[0-9]`, do not shorten it.
+- **A thousands space is joined only on proof.** `_thousands_split` joins «250 000» when the row's own reference interval proves the magnitude, or when the group starts with a zero. Joining on shape alone turned «Інтерлейкін 6 150 пг/мл» into 6150.
+- **A re-read may pair rows only within one analyte.** A loose pair (a contained label, the same line, a lone number) may stand only when the rows share a concept. A checked row under a catalogue analyte is never relabelled as another analyte with the same value and line: without that, a verified «Білірубін» 5.1 became «Білірубін прямий» 5.1 and stayed verified.
+- **The lab's refusal of one order is not a rejected password.** A refused order (the lab answers 403 on its PDF) is recorded for that order, and the sync carries on. Two refusals in a row mean the credential itself is refused, and the run stops with an authentication error.
 
 ## Definition of done
 
 1. Checks pass: the same set CI runs, plus the data validators:
    ```bash
+   uv tool run --from ruff==0.17.4 ruff check src scripts tests
    uv run pytest -q --basetemp=work/pytest-run
    node --test tests/js/*.test.mjs
    uv run python -m compileall -q src

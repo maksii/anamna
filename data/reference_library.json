@@ -501,7 +501,7 @@
       "publisher": "American Heart Association",
       "name": "Understanding Blood Pressure Readings (blood pressure category table)",
       "url": "https://www.heart.org/en/health-topics/high-blood-pressure/understanding-blood-pressure-readings",
-      "identifier": null,
+      "identifier": "AHA web page: Understanding Blood Pressure Readings",
       "reviewed_at": "2026-08-03",
       "official": true
     },
@@ -521,7 +521,7 @@
       "publisher": "American Heart Association",
       "name": "All About Heart Rate (Pulse)",
       "url": "https://www.heart.org/en/health-topics/high-blood-pressure/the-facts-about-high-blood-pressure/all-about-heart-rate-pulse",
-      "identifier": null,
+      "identifier": "AHA web page: All About Heart Rate (Pulse)",
       "reviewed_at": "2026-08-03",
       "official": true
     },
@@ -541,7 +541,7 @@
       "publisher": "Agency for Healthcare Research and Quality",
       "name": "Emergency Severity Index (ESI): A Triage Tool for Emergency Departments (danger-zone vital signs for adults)",
       "url": "https://www.ahrq.gov/patient-safety/settings/emergency-dept/esi.html",
-      "identifier": null,
+      "identifier": "AHRQ web page: Emergency Severity Index (ESI): A Triage Tool for Emergency Departments",
       "reviewed_at": "2026-08-03",
       "official": true
     },
@@ -851,7 +851,7 @@
       "publisher": "American Thyroid Association, Laboratory Services Committee",
       "name": "Standardization and Harmonization (ATA Laboratory Services Library, 2019)",
       "url": "https://www.thyroid.org/wp-content/uploads/publications/lab-services/ata-harmonization-standardization.pdf",
-      "identifier": null,
+      "identifier": "ATA Laboratory Services Library: Standardization and Harmonization (2019, PDF)",
       "reviewed_at": "2026-08-03",
       "official": true
     },
@@ -907,7 +907,7 @@
       "publisher": "Centers for Disease Control and Prevention",
       "name": "Adult BMI Categories",
       "url": "https://www.cdc.gov/bmi/adult-calculator/bmi-categories.html",
-      "identifier": null,
+      "identifier": "CDC web page: Adult BMI Categories",
       "reviewed_at": "2026-08-03",
       "official": true
     },
@@ -1517,7 +1517,7 @@
       "publisher": "European Centre for Disease Prevention and Control (ECDC)",
       "name": "Vaccine Scheduler: vaccine schedules in all countries of the EU/EEA",
       "url": "https://vaccine-schedule.ecdc.europa.eu/",
-      "identifier": "ECDC Vaccine Scheduler, adult and child schedules across 29 diseases; tetanus/diphtheria adult booster every 10 years",
+      "identifier": "ECDC Vaccine Scheduler, adult and child schedules across 29 diseases, listed country by country; adult tetanus/diphtheria boosters differ between member states",
       "reviewed_at": "2026-08-07",
       "official": true,
       "kind": "guideline",
@@ -2205,7 +2205,7 @@
       "publisher": "U.S. Food and Drug Administration",
       "name": "Pulse Oximeters: accuracy and limitations (device information and safety communication)",
       "url": "https://www.fda.gov/medical-devices/products-and-medical-procedures/pulse-oximeters",
-      "identifier": null,
+      "identifier": "FDA web page: Pulse Oximeters",
       "reviewed_at": "2026-08-03",
       "official": true
     },
@@ -4370,7 +4370,7 @@
       "publisher": "National Cancer Institute (NIH)",
       "name": "Tumor Markers (fact sheet, reviewed 7 December 2023)",
       "url": "https://www.cancer.gov/about-cancer/diagnosis-staging/diagnosis/tumor-markers-fact-sheet",
-      "identifier": null,
+      "identifier": "NCI fact sheet: Tumor Markers (reviewed 7 December 2023)",
       "reviewed_at": "2026-11-07",
       "official": true,
       "kind": "patient_information",
@@ -4382,7 +4382,7 @@
       "publisher": "National Cancer Institute (NIH)",
       "name": "Tumor Markers in Common Use (reviewed 7 December 2023)",
       "url": "https://www.cancer.gov/about-cancer/diagnosis-staging/diagnosis/tumor-markers-list",
-      "identifier": null,
+      "identifier": "NCI web page: Tumor Markers in Common Use (reviewed 7 December 2023)",
       "reviewed_at": "2026-11-07",
       "official": true,
       "kind": "patient_information",
@@ -4415,7 +4415,7 @@
       "publisher": "National Heart, Lung, and Blood Institute (NIH)",
       "name": "Clinical Guidelines on the Identification, Evaluation, and Treatment of Overweight and Obesity in Adults",
       "url": "https://www.nhlbi.nih.gov/files/docs/guidelines/ob_gdlns.pdf",
-      "identifier": null,
+      "identifier": "NIH Publication No. 98-4083 (September 1998)",
       "reviewed_at": "2026-08-03",
       "official": true
     },
@@ -4790,7 +4790,7 @@
       "publisher": "National Institutes of Health, Office of Dietary Supplements",
       "name": "Vitamin B12 - Health Professional Fact Sheet",
       "url": "https://ods.od.nih.gov/factsheets/VitaminB12-HealthProfessional/",
-      "identifier": null,
+      "identifier": "NIH ODS Health Professional Fact Sheet: Vitamin B12",
       "reviewed_at": "2026-08-03",
       "official": true,
       "source_access": "ods.od.nih.gov returns HTTP 403 to scripted fetches. Text read through a plain-text rendering of this exact URL."
@@ -4801,7 +4801,7 @@
       "publisher": "National Institutes of Health, Office of Dietary Supplements",
       "name": "Calcium - Health Professional Fact Sheet",
       "url": "https://ods.od.nih.gov/factsheets/Calcium-HealthProfessional/",
-      "identifier": null,
+      "identifier": "NIH ODS Health Professional Fact Sheet: Calcium",
       "reviewed_at": "2026-08-03",
       "official": true,
       "source_access": "ods.od.nih.gov returns HTTP 403 to scripted fetches. Text read through a plain-text rendering of this exact URL."
@@ -4812,7 +4812,7 @@
       "publisher": "National Institutes of Health, Office of Dietary Supplements",
       "name": "Folate - Health Professional Fact Sheet",
       "url": "https://ods.od.nih.gov/factsheets/Folate-HealthProfessional/",
-      "identifier": null,
+      "identifier": "NIH ODS Health Professional Fact Sheet: Folate",
       "reviewed_at": "2026-08-03",
       "official": true,
       "source_access": "ods.od.nih.gov returns HTTP 403 to scripted fetches (Cloudflare). Text read through a plain-text rendering of this exact URL."
@@ -4823,7 +4823,7 @@
       "publisher": "National Institutes of Health, Office of Dietary Supplements",
       "name": "Iron - Health Professional Fact Sheet",
       "url": "https://ods.od.nih.gov/factsheets/Iron-HealthProfessional/",
-      "identifier": null,
+      "identifier": "NIH ODS Health Professional Fact Sheet: Iron",
       "reviewed_at": "2026-08-03",
       "official": true,
       "source_access": "ods.od.nih.gov returns HTTP 403 to scripted fetches. Text read through a plain-text rendering of this exact URL."
@@ -4834,7 +4834,7 @@
       "publisher": "National Institutes of Health, Office of Dietary Supplements",
       "name": "Magnesium - Health Professional Fact Sheet",
       "url": "https://ods.od.nih.gov/factsheets/Magnesium-HealthProfessional/",
-      "identifier": null,
+      "identifier": "NIH ODS Health Professional Fact Sheet: Magnesium",
       "reviewed_at": "2026-08-03",
       "official": true,
       "source_access": "ods.od.nih.gov returns HTTP 403 to scripted fetches. Text read through a plain-text rendering of this exact URL."
@@ -4845,7 +4845,7 @@
       "publisher": "National Institutes of Health, Office of Dietary Supplements",
       "name": "Potassium - Health Professional Fact Sheet",
       "url": "https://ods.od.nih.gov/factsheets/Potassium-HealthProfessional/",
-      "identifier": null,
+      "identifier": "NIH ODS Health Professional Fact Sheet: Potassium",
       "reviewed_at": "2026-08-03",
       "official": true,
       "source_access": "ods.od.nih.gov returns HTTP 403 to scripted fetches. Text read through a plain-text rendering of this exact URL."
@@ -4856,7 +4856,7 @@
       "publisher": "National Institutes of Health, Office of Dietary Supplements",
       "name": "Vitamin D - Health Professional Fact Sheet (carries the NASEM/Food and Nutrition Board 25(OH)D cut-off table)",
       "url": "https://ods.od.nih.gov/factsheets/VitaminD-HealthProfessional/",
-      "identifier": null,
+      "identifier": "NIH ODS Health Professional Fact Sheet: Vitamin D",
       "reviewed_at": "2026-08-03",
       "official": true,
       "source_access": "ods.od.nih.gov returns HTTP 403 to scripted fetches. Text read through a plain-text rendering of this exact URL."
@@ -5077,7 +5077,7 @@
       "publisher": "U.S. Department of Health and Human Services (ODPHP)",
       "name": "Physical Activity Guidelines for Americans, 2nd edition (2018)",
       "url": "https://odphp.health.gov/sites/default/files/2019-09/Physical_Activity_Guidelines_2nd_edition.pdf",
-      "identifier": null,
+      "identifier": "Physical Activity Guidelines for Americans, 2nd edition. Washington, DC: U.S. Department of Health and Human Services; 2018",
       "reviewed_at": "2026-08-03",
       "official": true
     },
@@ -5148,7 +5148,7 @@
       "publisher": "Royal College of Physicians (UK)",
       "name": "National Early Warning Score (NEWS) 2: standardising the assessment of acute-illness severity in the NHS (updated report of a working party, 2017)",
       "url": "https://www.rcp.ac.uk/media/a4ibkkbf/news2-final-report_0_0.pdf",
-      "identifier": null,
+      "identifier": "Royal College of Physicians. National Early Warning Score (NEWS) 2: updated report of a working party. London: RCP; 2017",
       "reviewed_at": "2026-08-03",
       "official": true
     },
@@ -5627,7 +5627,7 @@
       "publisher": "World Health Organization",
       "name": "Obesity and overweight (fact sheet)",
       "url": "https://www.who.int/news-room/fact-sheets/detail/obesity-and-overweight",
-      "identifier": null,
+      "identifier": "WHO fact sheet: Obesity and overweight",
       "reviewed_at": "2026-08-03",
       "official": true
     },
@@ -5669,7 +5669,7 @@
       "publisher": "World Health Organization",
       "name": "Waist circumference and waist-hip ratio: report of a WHO expert consultation, Geneva, 8-11 December 2008",
       "url": "https://iris.who.int/server/api/core/bitstreams/ca408ade-05c9-4b7c-8967-6ee5b5e0ccd8/content",
-      "identifier": null,
+      "identifier": "WHO. Waist circumference and waist-hip ratio: report of a WHO expert consultation, Geneva, 8-11 December 2008",
       "reviewed_at": "2026-08-03",
       "official": true
     },
@@ -5807,7 +5807,7 @@
         "UA"
       ],
       "agreement": "divergent",
-      "divergence_note": "This is the classic vitamin D disagreement, and it runs inside the United States rather than across the Atlantic. The US Food and Nutrition Board of NASEM (formerly IOM), reported by NIH ODS, sets risk of deficiency below 30 nmol/L (12 ng/mL), possible inadequacy at 30-50 nmol/L (12-20 ng/mL), adequacy for practically everyone at or above 50 nmol/L (20 ng/mL), and possible harm above 125 nmol/L (50 ng/mL), particularly above 150 nmol/L (60 ng/mL). EFSA (2016) independently reached the same number: it considers a serum 25(OH)D concentration of 50 nmol/L (20 ng/mL) a suitable target value for all population groups and set the adult Adequate Intake of 15 micrograms/day to achieve it. So the US Academies and the EU regulator agree at 20 ng/mL. The Endocrine Society's 2011 clinical practice guideline is the outlier: it defines deficiency as below 20 ng/mL (50 nmol/L), insufficiency as 21-29 ng/mL (52.5-72.5 nmol/L) and recommends a target above 30 ng/mL (75 nmol/L). The Endocrine Society's 2024 guideline then stepped back from thresholds altogether: it found no clinical trial evidence supporting routine 25(OH)D screening in the general population and no clear evidence defining an optimal target level for disease prevention, and it suggests against routine 25(OH)D testing in the populations it considered. Both the NASEM/EFSA bands and the Endocrine Society 2011 bands are encoded below, each with its own source, so a result between 20 and 30 ng/mL is shown as adequate by one and insufficient by the other. Unit note: this record reports ng/mL; multiply by 2.496 for nmol/L.",
+      "divergence_note": "This is the classic vitamin D disagreement, and it runs inside the United States rather than across the Atlantic. The US Food and Nutrition Board of NASEM (formerly IOM), reported by NIH ODS, sets risk of deficiency below 30 nmol/L (12 ng/mL), possible inadequacy at 30-50 nmol/L (12-20 ng/mL), adequacy for practically everyone at or above 50 nmol/L (20 ng/mL), and possible harm above 125 nmol/L (50 ng/mL), particularly above 150 nmol/L (60 ng/mL). EFSA (2016) independently reached the same number: it considers a serum 25(OH)D concentration of 50 nmol/L (20 ng/mL) a suitable target value for all population groups and set the adult Adequate Intake of 15 micrograms/day to achieve it. So the US Academies and the EU regulator agree at 20 ng/mL. The Endocrine Society's 2011 clinical practice guideline is the outlier: it defines deficiency as below 20 ng/mL (50 nmol/L), insufficiency as 21-29 ng/mL (52.5-72.5 nmol/L) and recommends a target above 30 ng/mL (75 nmol/L). The Endocrine Society's 2024 guideline then stepped back from thresholds altogether: it found no clinical trial evidence supporting routine 25(OH)D screening in the general population and no clear evidence defining an optimal target level for disease prevention, and it suggests against routine 25(OH)D testing in the populations it considered. Both the NASEM/EFSA bands and the Endocrine Society 2011 bands are encoded below, each with its own source, so a result between 20 and 30 ng/mL is shown as adequate by one and insufficient by the other. Unit note: this record reports ng/mL; multiply by 2.496 for nmol/L. The Endocrine Society's 2011 cut-offs (deficient below 20, insufficient 20-30 ng/mL) are described here but no longer judge a result, because its 2024 guideline withdrew them.",
       "bands": [
         {
           "label": "Deficient (US Food and Nutrition Board / NASEM)",
@@ -5870,51 +5870,6 @@
           "corroborated_by": [],
           "note": "Above 125 nmol/L, particularly above 150 nmol/L (60 ng/mL). Almost always caused by supplements.",
           "notes_uk": "Понад 125 нмоль/л, особливо понад 150 нмоль/л (60 нг/мл). Майже завжди це наслідок приймання добавок."
-        },
-        {
-          "label": "Deficient (Endocrine Society 2011)",
-          "lower": null,
-          "upper": 20.0,
-          "lower_inclusive": true,
-          "upper_inclusive": false,
-          "interpretation": "low",
-          "sex": null,
-          "age_min": 18,
-          "age_max": null,
-          "source_id": "endocrine-society-vitd-2011",
-          "corroborated_by": [],
-          "note": "Endocrine Society 2011: 25(OH)D below 20 ng/mL (50 nmol/L).",
-          "notes_uk": "Ендокринологічне товариство, 2011: 25(OH)D нижче 20 нг/мл (50 нмоль/л)."
-        },
-        {
-          "label": "Insufficient (Endocrine Society 2011)",
-          "lower": 20.0,
-          "upper": 30.0,
-          "lower_inclusive": true,
-          "upper_inclusive": false,
-          "interpretation": "borderline_low",
-          "sex": null,
-          "age_min": 18,
-          "age_max": null,
-          "source_id": "endocrine-society-vitd-2011",
-          "corroborated_by": [],
-          "note": "Endocrine Society 2011: 21-29 ng/mL (52.5-72.5 nmol/L). This is the band the US Academies and EFSA call adequate.",
-          "notes_uk": "Ендокринологічне товариство, 2011: 21-29 нг/мл (52,5-72,5 нмоль/л). Національні академії США та EFSA вважають цей діапазон достатнім."
-        },
-        {
-          "label": "Sufficient (Endocrine Society 2011)",
-          "lower": 30.0,
-          "upper": null,
-          "lower_inclusive": true,
-          "upper_inclusive": true,
-          "interpretation": "normal",
-          "sex": null,
-          "age_min": 18,
-          "age_max": null,
-          "source_id": "endocrine-society-vitd-2011",
-          "corroborated_by": [],
-          "note": "Endocrine Society 2011 target: above 30 ng/mL (75 nmol/L). The Society's 2024 guideline no longer endorses a target concentration and suggests against routine 25(OH)D testing in people without an established indication.",
-          "notes_uk": "Цільовий рівень Ендокринологічного товариства (2011): понад 30 нг/мл (75 нмоль/л). Настанова Товариства 2024 року вже не підтримує жодного цільового рівня й радить не визначати 25(OH)D рутинно, якщо немає встановлених показань."
         }
       ],
       "short_description": "This measures the storage form of vitamin D, which the body makes in skin from sunlight and takes in from food and supplements. Officialdom is split on what counts as enough: the US Academies and EFSA both settle on 20 ng/mL (50 nmol/L), while the Endocrine Society's 2011 guideline set the bar at 30 ng/mL (75 nmol/L) and its 2024 guideline stopped naming a target at all and advised against routine testing.",
@@ -5929,10 +5884,7 @@
           "Deficient (US Food and Nutrition Board / NASEM)": "Дефіцит (NASEM, США)",
           "At risk of inadequacy (US Food and Nutrition Board / NASEM)": "Ризик недостатності (NASEM, США)",
           "Adequate for bone and overall health (US Food and Nutrition Board / NASEM and EFSA)": "Достатньо для кісток і загального здоров’я (NASEM і EFSA)",
-          "Above the level linked to potential adverse effects": "Вище рівня, за якого можливі побічні ефекти",
-          "Deficient (Endocrine Society 2011)": "Дефіцит (Ендокринологічне товариство, 2011)",
-          "Insufficient (Endocrine Society 2011)": "Недостатність (Ендокринологічне товариство, 2011)",
-          "Sufficient (Endocrine Society 2011)": "Достатній рівень (Ендокринологічне товариство, 2011)"
+          "Above the level linked to potential adverse effects": "Вище рівня, за якого можливі побічні ефекти"
         }
       }
     },
@@ -6382,7 +6334,7 @@
           "upper_inclusive": false,
           "interpretation": "negative",
           "sex": "any",
-          "age_min": 18,
+          "age_min": null,
           "age_max": null,
           "source_id": "sige-class-2018",
           "note": "ImmunoCAP class scale (0-6). It grades the amount of specific IgE, not how severe an allergy is.",
@@ -6397,7 +6349,7 @@
           "upper_inclusive": false,
           "interpretation": "positive",
           "sex": "any",
-          "age_min": 18,
+          "age_min": null,
           "age_max": null,
           "source_id": "sige-class-2018",
           "note": "ImmunoCAP class scale (0-6). It grades the amount of specific IgE, not how severe an allergy is.",
@@ -6412,7 +6364,7 @@
           "upper_inclusive": false,
           "interpretation": "positive",
           "sex": "any",
-          "age_min": 18,
+          "age_min": null,
           "age_max": null,
           "source_id": "sige-class-2018",
           "note": "ImmunoCAP class scale (0-6). It grades the amount of specific IgE, not how severe an allergy is.",
@@ -6427,7 +6379,7 @@
           "upper_inclusive": false,
           "interpretation": "positive",
           "sex": "any",
-          "age_min": 18,
+          "age_min": null,
           "age_max": null,
           "source_id": "sige-class-2018",
           "note": "ImmunoCAP class scale (0-6). It grades the amount of specific IgE, not how severe an allergy is.",
@@ -6442,7 +6394,7 @@
           "upper_inclusive": false,
           "interpretation": "positive",
           "sex": "any",
-          "age_min": 18,
+          "age_min": null,
           "age_max": null,
           "source_id": "sige-class-2018",
           "note": "ImmunoCAP class scale (0-6). It grades the amount of specific IgE, not how severe an allergy is.",
@@ -6457,7 +6409,7 @@
           "upper_inclusive": false,
           "interpretation": "positive",
           "sex": "any",
-          "age_min": 18,
+          "age_min": null,
           "age_max": null,
           "source_id": "sige-class-2018",
           "note": "ImmunoCAP class scale (0-6). It grades the amount of specific IgE, not how severe an allergy is.",
@@ -6472,7 +6424,7 @@
           "upper_inclusive": true,
           "interpretation": "positive",
           "sex": "any",
-          "age_min": 18,
+          "age_min": null,
           "age_max": null,
           "source_id": "sige-class-2018",
           "note": "ImmunoCAP class scale (0-6). It grades the amount of specific IgE, not how severe an allergy is.",
@@ -6487,7 +6439,7 @@
           "upper_inclusive": true,
           "interpretation": "positive",
           "sex": "any",
-          "age_min": 18,
+          "age_min": null,
           "age_max": null,
           "source_id": "fda-immunocap-k122197",
           "note": "FDA 510(k) K122197: 'The expected value is negative (<0.35 kUA/L) for a specific allergen in a non-allergic person. The manufacturer recommends a cut-off of 0.35 kUA/L. Each laboratory should [establish its own reference values].' Some laboratories, including the one that produced this record, report a lower limit of quantitation of 0.1 kUA/L and use 0.3 kUA/L as their negative threshold.",
@@ -6503,7 +6455,7 @@
           "upper_inclusive": false,
           "interpretation": "negative",
           "sex": null,
-          "age_min": 18,
+          "age_min": null,
           "age_max": null,
           "source_id": "madx-alex2-ifu",
           "corroborated_by": [],
@@ -6520,7 +6472,7 @@
           "upper_inclusive": false,
           "interpretation": "positive",
           "sex": null,
-          "age_min": 18,
+          "age_min": null,
           "age_max": null,
           "source_id": "madx-alex2-ifu",
           "corroborated_by": [],
@@ -6562,7 +6514,17 @@
           "Class 5 - very high": "Шкала класів ImmunoCAP (0-6). Клас показує кількість специфічних IgE, а не тяжкість алергії.",
           "Class 6 - very high": "Шкала класів ImmunoCAP (0-6). Клас показує кількість специфічних IgE, а не тяжкість алергії."
         }
-      }
+      },
+      "source_ids": [
+        "fda-immunocap-k122197",
+        "madx-alex2-ifu",
+        "sige-class-2018"
+      ],
+      "regions_covered": [
+        "INT",
+        "US"
+      ],
+      "agreement": "concordant"
     },
     {
       "concept_id": "a6e7ce0c-2a6a-52c7-a552-2f1fb23d5742",
@@ -7429,7 +7391,7 @@
           "lower": null,
           "upper": 1.25,
           "lower_inclusive": true,
-          "upper_inclusive": false,
+          "upper_inclusive": true,
           "interpretation": "low",
           "sex": null,
           "age_min": 18,
@@ -7445,7 +7407,7 @@
           "label": "Desirable",
           "lower": 1.25,
           "upper": null,
-          "lower_inclusive": true,
+          "lower_inclusive": false,
           "upper_inclusive": false,
           "interpretation": "normal",
           "sex": null,
@@ -8079,7 +8041,7 @@
       "bands": [
         {
           "label": "Normal fasting glucose (ADA / Ukraine)",
-          "lower": null,
+          "lower": 3.9,
           "upper": 5.6,
           "lower_inclusive": true,
           "upper_inclusive": false,
@@ -8095,8 +8057,12 @@
             "dec-kn-diabet-2024",
             "esc-2023-cvd-diabetes"
           ],
-          "note": "Threshold applies only to a fasting sample - no caloric intake for at least 8 hours. This record does not capture fasting status, so it cannot be confirmed that this value was taken fasting; a non-fasting sample cannot be read against this band at all.",
-          "notes_uk": "Поріг діє лише для аналізу натще, тобто після щонайменше 8 годин без калорій. У цьому записі не вказано, чи аналіз здавали натще, тож підтвердити це неможливо. Результат, отриманий не натще, за цим діапазоном оцінювати взагалі не можна."
+          "note": "Threshold applies only to a fasting sample - no caloric intake for at least 8 hours. This record does not capture fasting status, so it cannot be confirmed that this value was taken fasting; a non-fasting sample cannot be read against this band at all. The band starts at 3.9 mmol/L (70 mg/dL), which the ADA Standards of Care describe as the threshold for the body's hormonal response to falling glucose in people without diabetes; a lower result is shown as below the normal fasting range.",
+          "excludes": [
+            "not_fasting_sample",
+            "pregnant"
+          ],
+          "notes_uk": "Поріг діє лише для аналізу натще, тобто після щонайменше 8 годин без калорій. У цьому записі не вказано, чи аналіз здавали натще, тож підтвердити це неможливо. Результат, отриманий не натще, за цим діапазоном оцінювати взагалі не можна. Смуга починається з 3,9 ммоль/л (70 мг/дл): у Стандартах ADA це поріг, за якого в людей без діабету запускається гормональна відповідь на зниження глюкози; нижчий результат показано як нижчий за норму натще."
         },
         {
           "label": "Prediabetes - impaired fasting glucose (ADA / Ukraine)",
@@ -8117,6 +8083,10 @@
             "esc-2023-cvd-diabetes"
           ],
           "note": "Threshold applies only to a fasting sample (no calories for at least 8 hours), which this record does not confirm. WHO does not recognise this band below 6.1 mmol/L - see the divergence note.",
+          "excludes": [
+            "not_fasting_sample",
+            "pregnant"
+          ],
           "notes_uk": "Поріг діє лише для аналізу натще (щонайменше 8 годин без калорій), а в цьому записі не вказано, чи аналіз здавали натще. ВООЗ не визнає цей діапазон нижче 6,1 ммоль/л, докладніше в примітці про розбіжності."
         },
         {
@@ -8139,11 +8109,15 @@
             "nice-ph38"
           ],
           "note": "Threshold applies only to a fasting sample (no calories for at least 8 hours), which this record does not confirm. Diagnosis requires a second abnormal test unless there is unequivocal hyperglycaemia. This 7.0 mmol/L line is the one point all sources agree on.",
+          "excludes": [
+            "not_fasting_sample",
+            "pregnant"
+          ],
           "notes_uk": "Поріг діє лише для аналізу натще (щонайменше 8 годин без калорій), а в цьому записі не вказано, чи аналіз здавали натще. Щоб установити діагноз, потрібен ще один аналіз із відхиленням, якщо немає однозначної гіперглікемії. Межа 7,0 ммоль/л єдина, щодо якої згодні всі джерела."
         },
         {
           "label": "Normal fasting glucose (WHO)",
-          "lower": null,
+          "lower": 3.9,
           "upper": 6.1,
           "lower_inclusive": true,
           "upper_inclusive": false,
@@ -8157,8 +8131,12 @@
             "who-classification-2019",
             "esc-2023-cvd-diabetes"
           ],
-          "note": "Threshold applies only to a fasting sample (no calories for at least 8 hours), which this record does not confirm. WHO reviewed and rejected the ADA's lower 5.6 mmol/L cut-point, so values from 5.6 up to 6.1 are normal under WHO and prediabetic under the ADA.",
-          "notes_uk": "Поріг діє лише для аналізу натще (щонайменше 8 годин без калорій), а в цьому записі не вказано, чи аналіз здавали натще. ВООЗ розглянула нижчу межу ADA 5,6 ммоль/л і відхилила її, тому значення від 5,6 до 6,1 за ВООЗ нормальні, а за ADA відповідають предіабету."
+          "note": "Threshold applies only to a fasting sample (no calories for at least 8 hours), which this record does not confirm. WHO reviewed and rejected the ADA's lower 5.6 mmol/L cut-point, so values from 5.6 up to 6.1 are normal under WHO and prediabetic under the ADA. The band starts at 3.9 mmol/L (70 mg/dL), which the ADA Standards of Care describe as the threshold for the body's hormonal response to falling glucose in people without diabetes; a lower result is shown as below the normal fasting range.",
+          "excludes": [
+            "not_fasting_sample",
+            "pregnant"
+          ],
+          "notes_uk": "Поріг діє лише для аналізу натще (щонайменше 8 годин без калорій), а в цьому записі не вказано, чи аналіз здавали натще. ВООЗ розглянула нижчу межу ADA 5,6 ммоль/л і відхилила її, тому значення від 5,6 до 6,1 за ВООЗ нормальні, а за ADA відповідають предіабету. Смуга починається з 3,9 ммоль/л (70 мг/дл): у Стандартах ADA це поріг, за якого в людей без діабету запускається гормональна відповідь на зниження глюкози; нижчий результат показано як нижчий за норму натще."
         },
         {
           "label": "Impaired fasting glucose (WHO)",
@@ -8176,6 +8154,10 @@
             "esc-2023-cvd-diabetes"
           ],
           "note": "Threshold applies only to a fasting sample (no calories for at least 8 hours), which this record does not confirm. WHO's full IFG definition also requires a 2-hour post-load glucose below 7.8 mmol/L where an oral glucose tolerance test has been done.",
+          "excludes": [
+            "not_fasting_sample",
+            "pregnant"
+          ],
           "notes_uk": "Поріг діє лише для аналізу натще (щонайменше 8 годин без калорій), а в цьому записі не вказано, чи аналіз здавали натще. Повне визначення порушеної глікемії натще за ВООЗ вимагає ще й того, щоб глюкоза через 2 години після навантаження була нижчою за 7,8 ммоль/л, якщо робили пероральний глюкозотолерантний тест."
         },
         {
@@ -8196,11 +8178,15 @@
             "moz-nakaz-1300-2024"
           ],
           "note": "Threshold applies only to a fasting sample (no calories for at least 8 hours), which this record does not confirm. Identical to the ADA and Ukrainian threshold.",
+          "excludes": [
+            "not_fasting_sample",
+            "pregnant"
+          ],
           "notes_uk": "Поріг діє лише для аналізу натще (щонайменше 8 годин без калорій), а в цьому записі не вказано, чи аналіз здавали натще. Збігається з порогом ADA та українського протоколу."
         },
         {
           "label": "Not at high risk on fasting glucose (NICE, UK)",
-          "lower": null,
+          "lower": 3.9,
           "upper": 5.5,
           "lower_inclusive": true,
           "upper_inclusive": false,
@@ -8210,8 +8196,12 @@
           "age_max": null,
           "source_id": "nice-ph38",
           "corroborated_by": [],
-          "note": "Threshold applies only to a fasting sample (no calories for at least 8 hours), which this record does not confirm. NICE's band is a risk-stratification trigger for offering a prevention programme, not a diagnostic category.",
-          "notes_uk": "Поріг діє лише для аналізу натще (щонайменше 8 годин без калорій), а в цьому записі не вказано, чи аналіз здавали натще. Діапазон NICE лише сигналізує, що людині варто запропонувати програму профілактики; це не діагностична категорія."
+          "note": "Threshold applies only to a fasting sample (no calories for at least 8 hours), which this record does not confirm. NICE's band is a risk-stratification trigger for offering a prevention programme, not a diagnostic category. The band starts at 3.9 mmol/L (70 mg/dL), which the ADA Standards of Care describe as the threshold for the body's hormonal response to falling glucose in people without diabetes; a lower result is shown as below the normal fasting range.",
+          "excludes": [
+            "not_fasting_sample",
+            "pregnant"
+          ],
+          "notes_uk": "Поріг діє лише для аналізу натще (щонайменше 8 годин без калорій), а в цьому записі не вказано, чи аналіз здавали натще. Діапазон NICE лише сигналізує, що людині варто запропонувати програму профілактики; це не діагностична категорія. Смуга починається з 3,9 ммоль/л (70 мг/дл): у Стандартах ADA це поріг, за якого в людей без діабету запускається гормональна відповідь на зниження глюкози; нижчий результат показано як нижчий за норму натще."
         },
         {
           "label": "High risk of type 2 diabetes - non-diabetic hyperglycaemia (NICE, UK)",
@@ -8226,6 +8216,10 @@
           "source_id": "nice-ph38",
           "corroborated_by": [],
           "note": "Threshold applies only to a fasting sample (no calories for at least 8 hours), which this record does not confirm. NICE pairs this band with a risk-assessment score and with an offer of an intensive lifestyle-change programme; it is not a diagnosis of prediabetes.",
+          "excludes": [
+            "not_fasting_sample",
+            "pregnant"
+          ],
           "notes_uk": "Поріг діє лише для аналізу натще (щонайменше 8 годин без калорій), а в цьому записі не вказано, чи аналіз здавали натще. NICE оцінює цей діапазон разом із ризиком за шкалою і пропонує інтенсивну програму зміни способу життя; це не діагноз предіабету."
         },
         {
@@ -8243,14 +8237,43 @@
             "esc-2023-cvd-diabetes"
           ],
           "note": "Threshold applies only to a fasting sample (no calories for at least 8 hours), which this record does not confirm. NICE directs a second blood test in an asymptomatic person before type 2 diabetes is confirmed.",
+          "excludes": [
+            "not_fasting_sample",
+            "pregnant"
+          ],
           "notes_uk": "Поріг діє лише для аналізу натще (щонайменше 8 годин без калорій), а в цьому записі не вказано, чи аналіз здавали натще. Перш ніж підтвердити цукровий діабет 2 типу в людини без симптомів, NICE вимагає повторного аналізу крові."
+        },
+        {
+          "label": "Diabetes range for a random (non-fasting) sample (ADA / WHO / Ukraine)",
+          "lower": 11.1,
+          "upper": null,
+          "lower_inclusive": true,
+          "upper_inclusive": false,
+          "interpretation": "high",
+          "sex": null,
+          "age_min": 18,
+          "age_max": null,
+          "source_id": "ada-soc-2026",
+          "corroborated_by": [
+            "niddk-diabetes-tests",
+            "who-idf-2006",
+            "moz-nakaz-1300-2024"
+          ],
+          "note": "A random plasma glucose of 11.1 mmol/L (200 mg/dL) or more is a diabetes criterion when classic symptoms of high blood glucose are present. Without symptoms it is confirmed by a fasting glucose, an HbA1c or a repeat test on another day.",
+          "requires": [
+            "not_fasting_sample"
+          ],
+          "excludes": [
+            "pregnant"
+          ],
+          "notes_uk": "Глюкоза плазми 11,1 ммоль/л (200 мг/дл) і вище у випадковому зразку є критерієм діабету за наявності класичних симптомів високого рівня глюкози. Без симптомів його підтверджують глюкозою натще, HbA1c або повторним аналізом в інший день."
         }
       ],
       "short_description": "Blood glucose is the amount of sugar circulating in the blood. The fasting value - measured after at least 8 hours without calories - is the standard screening measure, and every threshold below assumes that fasting condition.",
       "why_it_matters": "A fasting value drifting above the normal range is the earliest routine signal that the body is handling sugar less well, years before symptoms appear.",
       "retest_interval_months": 12,
       "retest_condition": {
-        "applies_when": "abnormal"
+        "applies_when": "borderline"
       },
       "retest_rationale": "Annual retesting in prediabetes is the common position of the ADA Standards of Care 2026, the Ukrainian МОЗ protocol (наказ № 1300 of 24.07.2024: 'Пацієнтів з предіабетом ... слід тестувати щорічно') and NICE PH38, which tells clinicians to offer people at high risk a blood test at least once a year, preferably the same test type each time. For a genuinely normal result the interval is longer: USPSTF says screening every 3 years may be reasonable, and the Ukrainian protocol says at minimum every 3 years, shortened if risk factors worsen. 12 months is recorded here because a value in the disputed 5.6-6.1 band is treated as prediabetes by the US and Ukrainian sources that govern this record.",
       "uk": {
@@ -8266,7 +8289,8 @@
           "Diabetes range, fasting (WHO)": "Діабетичний рівень натще (ВООЗ)",
           "Not at high risk on fasting glucose (NICE, UK)": "Без високого ризику за глікемією натще (NICE, Велика Британія)",
           "High risk of type 2 diabetes - non-diabetic hyperglycaemia (NICE, UK)": "Високий ризик ЦД 2 типу: недіабетична гіперглікемія (NICE, Велика Британія)",
-          "Possible type 2 diabetes - repeat test required (NICE, UK)": "Можливий ЦД 2 типу: потрібен повторний аналіз (NICE, Велика Британія)"
+          "Possible type 2 diabetes - repeat test required (NICE, UK)": "Можливий ЦД 2 типу: потрібен повторний аналіз (NICE, Велика Британія)",
+          "Diabetes range for a random (non-fasting) sample (ADA / WHO / Ukraine)": "Діабетичний рівень у випадковому зразку, не натще (ADA / ВООЗ / Україна)"
         },
         "retest_rationale": "Повторювати аналіз щороку при предіабеті радять і ADA Standards of Care 2026, і український протокол МОЗ (наказ № 1300 від 24.07.2024: «Пацієнтів з предіабетом ... слід тестувати щорічно»), і NICE PH38: він радить лікарям пропонувати людям із високим ризиком аналіз крові щонайменше раз на рік, бажано щоразу того самого типу. Якщо результат справді нормальний, інтервал довший: USPSTF вважає, що скринінгу кожні 3 роки може бути досить, а український протокол радить повторювати аналіз щонайменше раз на 3 роки, а якщо фактори ризику посилюються, то частіше. Тут указано 12 місяців, бо значення в спірному діапазоні 5,6-6,1 ммоль/л американські та українські джерела, на які спирається цей запис, вважають предіабетом."
       }
@@ -8726,7 +8750,7 @@
           "lower": 1.0,
           "upper": 3.0,
           "lower_inclusive": true,
-          "upper_inclusive": false,
+          "upper_inclusive": true,
           "interpretation": "normal",
           "sex": null,
           "age_min": 18,
@@ -8739,8 +8763,8 @@
           "label": "High cardiovascular risk (hs-CRP)",
           "lower": 3.0,
           "upper": 10.0,
-          "lower_inclusive": true,
-          "upper_inclusive": false,
+          "lower_inclusive": false,
+          "upper_inclusive": true,
           "interpretation": "borderline_high",
           "sex": null,
           "age_min": 18,
@@ -8753,7 +8777,7 @@
           "label": "Acute-phase response: cardiovascular risk tiers do not apply",
           "lower": 10.0,
           "upper": null,
-          "lower_inclusive": true,
+          "lower_inclusive": false,
           "upper_inclusive": false,
           "interpretation": "high",
           "sex": null,
@@ -8848,7 +8872,7 @@
           "lower": 1.15,
           "upper": 1.3,
           "lower_inclusive": true,
-          "upper_inclusive": false,
+          "upper_inclusive": true,
           "interpretation": "normal",
           "sex": null,
           "age_min": 18,
@@ -8862,8 +8886,8 @@
           "label": "Hypercalcaemia (ionised)",
           "lower": 1.3,
           "upper": 2.0,
-          "lower_inclusive": true,
-          "upper_inclusive": false,
+          "lower_inclusive": false,
+          "upper_inclusive": true,
           "interpretation": "high",
           "sex": null,
           "age_min": 18,
@@ -8877,7 +8901,7 @@
           "label": "Hypercalcaemic crisis (ionised)",
           "lower": 2.0,
           "upper": null,
-          "lower_inclusive": true,
+          "lower_inclusive": false,
           "upper_inclusive": true,
           "interpretation": "critical_high",
           "sex": null,
@@ -9558,7 +9582,7 @@
           "lower": 90,
           "upper": 120,
           "lower_inclusive": true,
-          "upper_inclusive": false,
+          "upper_inclusive": true,
           "interpretation": "high",
           "sex": null,
           "age_min": 18,
@@ -9577,7 +9601,7 @@
           "label": "Hypertensive crisis (US, AHA/ACC)",
           "lower": 120,
           "upper": null,
-          "lower_inclusive": true,
+          "lower_inclusive": false,
           "upper_inclusive": true,
           "interpretation": "critical_high",
           "sex": null,
@@ -9890,7 +9914,14 @@
         "short_description": "Гучність звуку, що доходить до вуха: з навколишнього середовища або через навушники.",
         "why_it_matters": "Пошкодження слуху від гучного звуку залежить і від гучності, і від тривалості впливу. Воно накопичується й не відновлюється.",
         "name": "Вплив шуму довкілля"
-      }
+      },
+      "source_ids": [
+        "who-itu-safe-listening"
+      ],
+      "regions_covered": [
+        "INT"
+      ],
+      "agreement": "single_source"
     },
     {
       "concept_id": "eosinophils",
@@ -10005,8 +10036,8 @@
           "lower": 1.5,
           "upper": 5.0,
           "lower_inclusive": true,
-          "upper_inclusive": false,
-          "interpretation": "critical_high",
+          "upper_inclusive": true,
+          "interpretation": "high",
           "sex": null,
           "age_min": 18,
           "age_max": null,
@@ -10021,7 +10052,7 @@
           "label": "Severe hypereosinophilia",
           "lower": 5.0,
           "upper": null,
-          "lower_inclusive": true,
+          "lower_inclusive": false,
           "upper_inclusive": true,
           "interpretation": "critical_high",
           "sex": null,
@@ -10039,7 +10070,7 @@
       "why_it_matters": "This is the form of the eosinophil measurement every clinical definition is written against - allergy, asthma, parasitology and haematology all use the absolute count, never the percentage. A normal-looking percentage beside a high white cell count can hide a genuinely raised eosinophil count, and the reverse. The count also has real thresholds behind it: a sustained figure above 1.5 x10^9/L is the point at which eosinophils are assumed capable of injuring the heart, lungs, skin or nerves, and organ assessment follows.",
       "retest_interval_months": 2,
       "retest_condition": {
-        "applies_when": "abnormal"
+        "applies_when": "borderline"
       },
       "retest_rationale": "Настанова 00308 asks for the clinical picture and a morning eosinophil count to be rechecked every 1-2 months while the count sits between 0,4 and 0,5 x10^9/L in someone without symptoms. Above that, EAACI/ICOG-EO require a second measurement at least two weeks after the first before hypereosinophilia is called - eosinophil counts swing with time of day, infection and treatment, so one value is never the finding.",
       "uk": {
@@ -10156,7 +10187,7 @@
         {
           "label": "Below the recommended weekly amount (daily equivalent)",
           "lower": null,
-          "upper": 21,
+          "upper": 21.43,
           "lower_inclusive": true,
           "upper_inclusive": false,
           "interpretation": "low",
@@ -10173,8 +10204,8 @@
         },
         {
           "label": "Meets the recommended weekly amount (daily equivalent)",
-          "lower": 21,
-          "upper": 43,
+          "lower": 21.43,
+          "upper": 42.86,
           "lower_inclusive": true,
           "upper_inclusive": false,
           "interpretation": "normal",
@@ -10191,7 +10222,7 @@
         },
         {
           "label": "Additional benefit range (300+ min/week daily equivalent)",
-          "lower": 43,
+          "lower": 42.86,
           "upper": null,
           "lower_inclusive": true,
           "upper_inclusive": true,
@@ -10302,7 +10333,7 @@
           "lower": 30.0,
           "upper": 200.0,
           "lower_inclusive": true,
-          "upper_inclusive": false,
+          "upper_inclusive": true,
           "interpretation": "normal",
           "sex": "male",
           "age_min": 18,
@@ -10311,14 +10342,15 @@
           "corroborated_by": [
             "nih-ods-iron"
           ],
-          "note": "Between the deficiency thresholds and the WHO overload-risk threshold for men.",
-          "notes_uk": "Значення між порогами дефіциту та порогом ВООЗ, з якого для чоловіків починається ризик перевантаження залізом."
+          "note": "From the 30 micrograms/L below which NIH ODS says iron deficiency is suggested, up to the WHO overload-risk threshold. WHO's own deficiency threshold is 15 micrograms/L.",
+          "notes_uk": "Від 30 мкг/л, нижче яких, за NIH ODS, можливий дефіцит заліза, до порога ВООЗ, з якого починається ризик перевантаження залізом. Власний поріг дефіциту ВООЗ становить 15 мкг/л.",
+          "lower_source_id": "nih-ods-iron"
         },
         {
           "label": "Possible risk of iron overload (men and non-menstruating women)",
           "lower": 200.0,
           "upper": null,
-          "lower_inclusive": true,
+          "lower_inclusive": false,
           "upper_inclusive": true,
           "interpretation": "high",
           "sex": "male",
@@ -10334,7 +10366,7 @@
           "lower": 30.0,
           "upper": 150.0,
           "lower_inclusive": true,
-          "upper_inclusive": false,
+          "upper_inclusive": true,
           "interpretation": "normal",
           "sex": "female",
           "age_min": 18,
@@ -10343,14 +10375,30 @@
           "corroborated_by": [
             "nih-ods-iron"
           ],
-          "note": "Between the deficiency thresholds and the WHO overload-risk threshold for menstruating women.",
-          "notes_uk": "Значення між порогами дефіциту та порогом ВООЗ, з якого для жінок із менструаціями починається ризик перевантаження залізом."
+          "note": "From the 30 micrograms/L below which NIH ODS says iron deficiency is suggested, up to the WHO overload-risk threshold. WHO's own deficiency threshold is 15 micrograms/L.",
+          "notes_uk": "Від 30 мкг/л, нижче яких, за NIH ODS, можливий дефіцит заліза, до порога ВООЗ, з якого починається ризик перевантаження залізом. Власний поріг дефіциту ВООЗ становить 15 мкг/л.",
+          "lower_source_id": "nih-ods-iron"
         },
         {
-          "label": "Possible risk of iron overload (women. WHO menstruating-women threshold, applied to all female profiles)",
+          "label": "Above the WHO threshold for menstruating women, not above the one for non-menstruating women",
           "lower": 150.0,
+          "upper": 200.0,
+          "lower_inclusive": false,
+          "upper_inclusive": true,
+          "interpretation": "borderline_high",
+          "sex": "female",
+          "age_min": 18,
+          "age_max": null,
+          "source_id": "who-ferritin-2020",
+          "corroborated_by": [],
+          "note": "WHO 2020 gives two thresholds for apparently healthy adults: above 150 µg/L for menstruating women and above 200 µg/L for men and non-menstruating women. The record does not say which applies, so the range between them is shown as borderline rather than as a risk of iron overload.",
+          "notes_uk": "ВООЗ (2020) наводить два пороги для практично здорових дорослих: понад 150 мкг/л для жінок із менструаціями і понад 200 мкг/л для чоловіків та жінок без менструацій. У картці не зазначено, який із них стосується цієї людини, тому проміжок між ними показано як межовий, а не як ризик перевантаження залізом."
+        },
+        {
+          "label": "Possible risk of iron overload (women)",
+          "lower": 200.0,
           "upper": null,
-          "lower_inclusive": true,
+          "lower_inclusive": false,
           "upper_inclusive": true,
           "interpretation": "high",
           "sex": "female",
@@ -10358,14 +10406,14 @@
           "age_max": null,
           "source_id": "who-ferritin-2020",
           "corroborated_by": [],
-          "note": "WHO 2020, conditional recommendation, low certainty of evidence: a ferritin exceeding 150 micrograms/L in menstruating women who are otherwise healthy may indicate a risk of iron overload. WHO's threshold for men and non-menstruating women is 200 micrograms/L. This record does not know menstrual status, so the stricter menstruating-women threshold is applied to every female profile: for a non-menstruating woman a value between 150 and 200 micrograms/L is above this band but still within WHO's threshold for her group.",
-          "notes_uk": "ВООЗ 2020 (умовна рекомендація, низька достовірність доказів): феритин понад 150 мкг/л у практично здорових жінок із менструаціями може вказувати на ризик перевантаження залізом. Для чоловіків і жінок без менструацій поріг ВООЗ становить 200 мкг/л. Anamna не знає, чи є в жінки менструації, тому для всіх жінок застосовує суворіший поріг. Для жінки без менструацій значення від 150 до 200 мкг/л вийде за межу цього діапазону, але залишиться в межах порогу ВООЗ для її групи."
+          "note": "WHO 2020, conditional recommendation with low certainty of evidence: a ferritin exceeding 200 micrograms/L in men and non-menstruating women who are otherwise healthy may indicate a risk of iron overload. Because ferritin is an acute-phase reactant that also rises with inflammation, infection, liver disease, alcohol and recent illness, a single value a little over the threshold is weak evidence on its own and is normally checked against transferrin saturation and a repeat measurement.",
+          "notes_uk": "ВООЗ 2020 (умовна рекомендація, низька достовірність доказів): феритин понад 200 мкг/л у практично здорових чоловіків і жінок без менструацій може вказувати на ризик перевантаження залізом. Але як білок гострої фази феритин підвищується також за запалення, інфекції, хвороб печінки, після алкоголю та нещодавньої хвороби. Тож одне значення, трохи вище за поріг, саме по собі мало що доводить: зазвичай його перевіряють за насиченням трансферину залізом і повторним аналізом."
         },
         {
           "label": "Possible risk of iron overload in the presence of illness",
           "lower": 500.0,
           "upper": null,
-          "lower_inclusive": true,
+          "lower_inclusive": false,
           "upper_inclusive": true,
           "interpretation": "high",
           "sex": null,
@@ -10396,7 +10444,8 @@
           "Possible risk of iron overload (men and non-menstruating women)": "Можливий ризик перевантаження залізом (чоловіки та жінки без менструацій)",
           "Iron stores not depleted (women)": "Запаси заліза достатні (жінки)",
           "Possible risk of iron overload in the presence of illness": "Можливий ризик перевантаження залізом (на тлі хвороби)",
-          "Possible risk of iron overload (women. WHO menstruating-women threshold, applied to all female profiles)": "Можливий ризик перевантаження залізом (жінки; поріг ВООЗ для жінок із менструаціями застосовано до всіх)"
+          "Above the WHO threshold for menstruating women, not above the one for non-menstruating women": "Вище порогу ВООЗ для жінок із менструаціями, але не вище порогу для жінок без менструацій",
+          "Possible risk of iron overload (women)": "Можливий ризик перевантаження залізом (жінки)"
         }
       }
     },
@@ -10439,7 +10488,7 @@
           "lower": 1.5,
           "upper": 4.0,
           "lower_inclusive": true,
-          "upper_inclusive": false,
+          "upper_inclusive": true,
           "interpretation": "normal",
           "sex": null,
           "age_min": 18,
@@ -10453,7 +10502,7 @@
           "label": "Above the reference interval",
           "lower": 4.0,
           "upper": null,
-          "lower_inclusive": true,
+          "lower_inclusive": false,
           "upper_inclusive": false,
           "interpretation": "high",
           "sex": null,
@@ -10642,11 +10691,8 @@
       ],
       "short_description": "Serum folate shows how much folate (vitamin B9) is circulating at the moment of the blood draw, so it tracks recent intake rather than long-term stores. Two official yardsticks exist and they differ: WHO's older haematological one (deficiency below 3 ng/mL, possible deficiency 3-5.9 ng/mL) and WHO's and EFSA's metabolic one (below 10 nmol/L, or about 4.4 ng/mL, homocysteine starts to rise). Red-cell folate is the better measure of stores.",
       "why_it_matters": "Folate is needed to build DNA and red blood cells, and a result between about 3 and 4.4 ng/mL falls in the zone that one official criterion calls adequate and two others call insufficient.",
-      "retest_interval_months": 3,
-      "retest_condition": {
-        "applies_when": "abnormal"
-      },
-      "retest_rationale": "Serum folate responds within weeks to a change in intake, so a repeat after about three months, read together with red-cell folate and homocysteine, distinguishes a one-off low reading from sustained low folate status.",
+      "retest_interval_months": null,
+      "retest_rationale": null,
       "uk": {
         "name": "Фолати сироватки крові",
         "short_description": "Показує, скільки фолатів (вітаміну B9) було в крові на момент забору. Тому аналіз більше говорить про те, скільки фолатів ви нещодавно отримали з їжею, ніж про їхні запаси. Офіційних критеріїв два, і вони не збігаються: давніший гематологічний критерій ВООЗ (дефіцит нижче 3 нг/мл, можливий дефіцит 3-5,9 нг/мл) і метаболічний критерій ВООЗ та EFSA (нижче 10 нмоль/л, тобто приблизно 4,4 нг/мл, починає зростати гомоцистеїн). Запаси краще показують фолати в еритроцитах.",
@@ -10657,8 +10703,7 @@
           "Normal range": "Нормальний рівень",
           "Elevated": "Підвищений рівень",
           "Below the concentration associated with functional folate adequacy": "Нижче рівня функціональної достатності фолатів"
-        },
-        "retest_rationale": "Фолати в сироватці змінюються вже за кілька тижнів після зміни харчування. Тому повторний аналіз приблизно через три місяці разом із фолатами еритроцитів і гомоцистеїном покаже, чи низький результат був випадковим, чи фолатів стабільно бракує."
+        }
       }
     },
     {
@@ -11020,7 +11065,7 @@
           "lower": null,
           "upper": 1.0,
           "lower_inclusive": true,
-          "upper_inclusive": false,
+          "upper_inclusive": true,
           "interpretation": "low",
           "sex": null,
           "age_min": 18,
@@ -11035,7 +11080,7 @@
           "label": "Not low",
           "lower": 1.0,
           "upper": null,
-          "lower_inclusive": true,
+          "lower_inclusive": false,
           "upper_inclusive": false,
           "interpretation": "normal",
           "sex": null,
@@ -11048,7 +11093,7 @@
         {
           "label": "Low (US classification)",
           "lower": null,
-          "upper": 1.0,
+          "upper": 1.03,
           "lower_inclusive": true,
           "upper_inclusive": false,
           "interpretation": "low",
@@ -11061,7 +11106,7 @@
         },
         {
           "label": "Not low (US classification)",
-          "lower": 1.0,
+          "lower": 1.03,
           "upper": 1.55,
           "lower_inclusive": true,
           "upper_inclusive": false,
@@ -11228,7 +11273,14 @@
         "short_description": "Гучність звуку, який доходить до вуха з навушників або з навколишнього середовища.",
         "why_it_matters": "Наскільки гучний звук шкодить слуху, залежить і від гучності, і від того, як довго ви його слухаєте. Ця шкода накопичується і не минає.",
         "name": "Вплив звуку в навушниках"
-      }
+      },
+      "source_ids": [
+        "who-itu-safe-listening"
+      ],
+      "regions_covered": [
+        "INT"
+      ],
+      "agreement": "single_source"
     },
     {
       "concept_id": "heart-rhythm",
@@ -11379,7 +11431,7 @@
           "lower": 39.5,
           "upper": 50.0,
           "lower_inclusive": true,
-          "upper_inclusive": false,
+          "upper_inclusive": true,
           "interpretation": "normal",
           "sex": "male",
           "age_min": 18,
@@ -11395,7 +11447,7 @@
           "label": "Above the reference interval",
           "lower": 50.0,
           "upper": null,
-          "lower_inclusive": true,
+          "lower_inclusive": false,
           "upper_inclusive": false,
           "interpretation": "high",
           "sex": "male",
@@ -11419,14 +11471,17 @@
           "corroborated_by": [
             "nchs-sr11-247"
           ],
-          "note": null
+          "note": null,
+          "excludes": [
+            "pregnant"
+          ]
         },
         {
           "label": "Within the reference interval",
           "lower": 34.8,
           "upper": 45.9,
           "lower_inclusive": true,
-          "upper_inclusive": false,
+          "upper_inclusive": true,
           "interpretation": "normal",
           "sex": "female",
           "age_min": 18,
@@ -11436,13 +11491,16 @@
             "nchs-sr11-247"
           ],
           "note": "NORIP reports erythrocyte volume fraction as 0.348-0.459 L/L; converted to percent.",
+          "excludes": [
+            "pregnant"
+          ],
           "notes_uk": "NORIP наводить об’ємну частку еритроцитів 0,348-0,459 л/л; ми перерахували її у відсотки."
         },
         {
           "label": "Above the reference interval",
           "lower": 45.9,
           "upper": null,
-          "lower_inclusive": true,
+          "lower_inclusive": false,
           "upper_inclusive": false,
           "interpretation": "high",
           "sex": "female",
@@ -11450,7 +11508,10 @@
           "age_max": null,
           "source_id": "norip-haem-2004",
           "corroborated_by": [],
-          "note": null
+          "note": null,
+          "excludes": [
+            "pregnant"
+          ]
         }
       ],
       "short_description": "Haematocrit is the fraction of blood volume occupied by red cells, reported as a percentage.",
@@ -11559,7 +11620,7 @@
           "lower": 134,
           "upper": 170,
           "lower_inclusive": true,
-          "upper_inclusive": false,
+          "upper_inclusive": true,
           "interpretation": "normal",
           "sex": "male",
           "age_min": 15,
@@ -11575,7 +11636,7 @@
           "label": "Above the Nordic reference interval",
           "lower": 170,
           "upper": null,
-          "lower_inclusive": true,
+          "lower_inclusive": false,
           "upper_inclusive": false,
           "interpretation": "high",
           "sex": "male",
@@ -11601,6 +11662,9 @@
             "moz-nakaz-709-2015"
           ],
           "note": "Non-pregnant. Pregnancy uses lower cutoffs: <110 g/L in the first and third trimesters, <105 g/L in the second.",
+          "excludes": [
+            "pregnant"
+          ],
           "notes_uk": "Для жінок, які не вагітні. Під час вагітності пороги нижчі: <110 г/л у першому й третьому триместрах, <105 г/л у другому."
         },
         {
@@ -11617,7 +11681,10 @@
           "corroborated_by": [
             "moz-nakaz-709-2015"
           ],
-          "note": null
+          "note": null,
+          "excludes": [
+            "pregnant"
+          ]
         },
         {
           "label": "Mild anaemia (WHO), below the Nordic reference interval",
@@ -11634,7 +11701,10 @@
             "moz-nakaz-709-2015",
             "norip-haem-2004"
           ],
-          "note": null
+          "note": null,
+          "excludes": [
+            "pregnant"
+          ]
         },
         {
           "label": "Mild anaemia by WHO, inside the Nordic reference interval",
@@ -11651,6 +11721,9 @@
             "norip-haem-2004"
           ],
           "note": "The strip where WHO and NORIP disagree: anaemia by WHO, above NORIP's 2.5th percentile of 117 g/L.",
+          "excludes": [
+            "pregnant"
+          ],
           "notes_uk": "Тут ВООЗ і NORIP розходяться: за ВООЗ це анемія, але значення вище 2,5-го процентиля NORIP (117 г/л)."
         },
         {
@@ -11658,7 +11731,7 @@
           "lower": 120,
           "upper": 153,
           "lower_inclusive": true,
-          "upper_inclusive": false,
+          "upper_inclusive": true,
           "interpretation": "normal",
           "sex": "female",
           "age_min": 15,
@@ -11668,13 +11741,16 @@
             "who-anaemia-2024"
           ],
           "note": "NORIP 2.5th-97.5th percentile for Nordic women aged 18-90.",
+          "excludes": [
+            "pregnant"
+          ],
           "notes_uk": "Інтервал NORIP від 2,5-го до 97,5-го процентиля для скандинавських жінок віком 18-90 років."
         },
         {
           "label": "Above the Nordic reference interval",
           "lower": 153,
           "upper": null,
-          "lower_inclusive": true,
+          "lower_inclusive": false,
           "upper_inclusive": false,
           "interpretation": "high",
           "sex": "female",
@@ -11682,7 +11758,10 @@
           "age_max": 65,
           "source_id": "norip-haem-2004",
           "corroborated_by": [],
-          "note": null
+          "note": null,
+          "excludes": [
+            "pregnant"
+          ]
         }
       ],
       "short_description": "Haemoglobin is the oxygen-carrying protein inside red blood cells; its concentration in whole blood is the number used to define anaemia.",
@@ -11749,6 +11828,9 @@
             "dec-kn-diabet-2024"
           ],
           "note": "Values are NGSP/DCCT percent, not IFCC mmol/mol; the two are related by a master equation with a non-zero intercept, not by a conversion factor. Unlike the fasting-glucose thresholds, HbA1c does not require fasting. Requires an NGSP-certified, DCCT-standardised assay; unreliable in haemoglobinopathies, anaemia, recent transfusion, pregnancy and altered red-cell turnover.",
+          "excludes": [
+            "pregnant"
+          ],
           "notes_uk": "Значення у відсотках NGSP/DCCT, а не в ммоль/моль IFCC. Ці шкали пов’язує основне рівняння з ненульовим вільним членом, а не простий коефіцієнт. На відміну від глюкози натще, HbA1c можна здавати не натще. Потрібен метод, сертифікований NGSP і стандартизований за DCCT. Результат ненадійний при гемоглобінопатіях, анемії, нещодавньому переливанні крові, вагітності та зміненому темпі оновлення еритроцитів."
         },
         {
@@ -11769,6 +11851,9 @@
             "dec-kn-diabet-2024"
           ],
           "note": "NGSP/DCCT percent, equivalent to 39-47 mmol/mol on the IFCC scale via the master equation - do not convert with a plain factor. WHO recognises no HbA1c band here at all, and NICE's high-risk band starts higher, at 6.0%. HbA1c does not require fasting.",
+          "excludes": [
+            "pregnant"
+          ],
           "notes_uk": "Відсотки NGSP/DCCT; за основним рівнянням це 39-47 ммоль/моль за шкалою IFCC. Не перераховуйте простим коефіцієнтом. ВООЗ тут жодного діапазону HbA1c не виділяє, а діапазон високого ризику NICE починається вище, з 6,0%. HbA1c можна здавати не натще."
         },
         {
@@ -11791,6 +11876,9 @@
             "nice-ph38"
           ],
           "note": "NGSP/DCCT percent; 6.5% corresponds to 48 mmol/mol IFCC. This is the one threshold on which the ADA, WHO, NICE, ESC and the Ukrainian protocol all agree. Requires an NGSP-certified assay and confirmation on a second test. HbA1c does not require fasting.",
+          "excludes": [
+            "pregnant"
+          ],
           "notes_uk": "Відсотки NGSP/DCCT; 6,5% відповідає 48 ммоль/моль IFCC. Це єдиний поріг, з яким згодні ADA, ВООЗ, NICE, ESC та український протокол. Потрібні метод, сертифікований NGSP, і підтвердження повторним аналізом. HbA1c можна здавати не натще."
         },
         {
@@ -11806,6 +11894,9 @@
           "source_id": "who-hba1c-2011",
           "corroborated_by": [],
           "note": "WHO concluded there is insufficient evidence to make any formal recommendation on interpreting HbA1c below 6.5% (48 mmol/mol), so it publishes no prediabetes band. Shown as 'normal' only because WHO offers no abnormal category here - it is an absence of a WHO position, not a WHO reassurance. A value of 5.7-6.4% would be prediabetes under the ADA and the Ukrainian protocol.",
+          "excludes": [
+            "pregnant"
+          ],
           "notes_uk": "ВООЗ дійшла висновку, що доказів замало для будь-якої офіційної рекомендації щодо HbA1c нижче 6,5% (48 ммоль/моль), тому діапазону предіабету не публікує. Ми позначаємо цей діапазон як «норма» лише тому, що ВООЗ не пропонує тут жодної категорії відхилення. Це відсутність позиції ВООЗ, а не її запевнення, що все гаразд. Значення 5,7-6,4% за ADA та українським протоколом означало б предіабет."
         },
         {
@@ -11826,6 +11917,9 @@
             "moz-nakaz-1300-2024"
           ],
           "note": "6.5% = 48 mmol/mol IFCC. WHO adds that a value below 6.5% does not exclude diabetes diagnosed by glucose testing, and that the assay must be quality-assured and standardised to the international reference values.",
+          "excludes": [
+            "pregnant"
+          ],
           "notes_uk": "6,5% = 48 ммоль/моль IFCC. ВООЗ додає, що значення нижче 6,5% не виключає діабету, встановленого за глюкозою, а метод має проходити контроль якості й бути стандартизованим за міжнародними референтними значеннями."
         },
         {
@@ -11841,6 +11935,9 @@
           "source_id": "nice-ph38",
           "corroborated_by": [],
           "note": "NICE reports HbA1c in IFCC mmol/mol; below 42 mmol/mol here, quoted by NICE itself as 6.0% NGSP. NICE's band is a prevention trigger, not a diagnosis.",
+          "excludes": [
+            "pregnant"
+          ],
           "notes_uk": "NICE подає HbA1c у ммоль/моль IFCC; тут нижче 42 ммоль/моль, що, за самим NICE, дорівнює 6,0% NGSP. Діапазони NICE є підставою для профілактики, а не діагнозом."
         },
         {
@@ -11856,6 +11953,9 @@
           "source_id": "nice-ph38",
           "corroborated_by": [],
           "note": "NICE's high-risk band is 42-47 mmol/mol, which NICE itself glosses as 6.0-6.4%; it is narrower than the ADA's 5.7-6.4% prediabetes band. Trigger for an intensive lifestyle-change programme, not a diagnosis.",
+          "excludes": [
+            "pregnant"
+          ],
           "notes_uk": "Діапазон високого ризику NICE становить 42-47 ммоль/моль, або, за самим NICE, 6,0-6,4%. Він вужчий за діапазон предіабету ADA (5,7-6,4%). Це привід для інтенсивної програми зміни способу життя, а не діагноз."
         },
         {
@@ -11873,6 +11973,9 @@
             "esc-2023-cvd-diabetes"
           ],
           "note": "48 mmol/mol IFCC = 6.5% NGSP. NICE directs a second blood test in an asymptomatic person before type 2 diabetes is confirmed.",
+          "excludes": [
+            "pregnant"
+          ],
           "notes_uk": "48 ммоль/моль IFCC = 6,5% NGSP. NICE передбачає повторний аналіз крові в людини без симптомів, перш ніж підтвердити цукровий діабет 2 типу."
         }
       ],
@@ -11880,7 +11983,7 @@
       "why_it_matters": "It smooths out day-to-day swings, so it shows a longer-run trend that a single fasting glucose cannot.",
       "retest_interval_months": 12,
       "retest_condition": {
-        "applies_when": "abnormal"
+        "applies_when": "borderline"
       },
       "retest_rationale": "ADA Standards of Care 2026 and the Ukrainian МОЗ protocol (наказ № 1300 of 24.07.2024) both call for at least annual testing in people with prediabetes, the Ukrainian text naming HbA1c >= 5.7% explicitly; NICE PH38 independently asks for a blood test at least once a year for people at high risk, preferably the same test type each time. Where results are normal the Ukrainian protocol and USPSTF both extend the interval to about 3 years, shortened if risk factors worsen.",
       "uk": {
@@ -12726,21 +12829,6 @@
       "divergence_note": null,
       "bands": [
         {
-          "label": "Not taking a vitamin K antagonist",
-          "lower": null,
-          "upper": 2.0,
-          "lower_inclusive": true,
-          "upper_inclusive": false,
-          "interpretation": "normal",
-          "sex": null,
-          "age_min": 18,
-          "age_max": null,
-          "source_id": "who-trs979-annex6-2013",
-          "corroborated_by": [],
-          "note": "The INR exists so prothrombin times mean the same thing everywhere: each thromboplastin carries an International Sensitivity Index calibrated against the WHO international standard, and the ratio is referenced to the mean normal prothrombin time of the local population. By construction a person with normal clotting and no anticoagulant sits close to 1.0. This band is wide because the next officially published boundary is the therapeutic range; a value clearly above 1.0 in someone not on an anticoagulant is not 'normal' by default and needs clinical interpretation (liver disease, vitamin K deficiency, factor deficiency).",
-          "notes_uk": "МНВ створили для того, щоб протромбіновий час означав одне й те саме будь-де. Кожен тромбопластин має міжнародний індекс чутливості, відкалібрований за міжнародним стандартом ВООЗ, а відношення рахують до середнього нормального протромбінового часу місцевого населення. Тому в людини з нормальним згортанням крові, яка не приймає антикоагулянтів, МНВ близьке до 1,0. Діапазон такий широкий, бо наступна офіційна межа вже належить до терапевтичного діапазону. Значення помітно вище за 1,0 у людини без антикоагулянтів не можна за замовчуванням вважати «нормою»: його має оцінити лікар (можливі причини: хвороби печінки, нестача вітаміну К, дефіцит факторів згортання)."
-        },
-        {
           "label": "Vitamin K antagonist therapeutic range",
           "lower": 2.0,
           "upper": 3.0,
@@ -12755,7 +12843,10 @@
             "acc-aha-af-2023"
           ],
           "note": "This band applies only to someone actually taking warfarin or another vitamin K antagonist. ESC and ACC/AHA both target 2.0-3.0 for atrial fibrillation and most venous thromboembolism indications; some mechanical valves are targeted higher. Both also judge control by time spent in range rather than by any one reading.",
-          "notes_uk": "Цей діапазон стосується лише тих, хто справді приймає варфарин або інший антагоніст вітаміну К. І ESC, і ACC/AHA ставлять ціль 2,0-3,0 при фібриляції передсердь і більшості показань, пов’язаних із венозною тромбоемболією; для деяких механічних клапанів ціль вища. Обидві настанови оцінюють якість лікування за тим, скільки часу МНВ тримається в терапевтичному діапазоні, а не за окремим аналізом."
+          "notes_uk": "Цей діапазон стосується лише тих, хто справді приймає варфарин або інший антагоніст вітаміну К. І ESC, і ACC/AHA ставлять ціль 2,0-3,0 при фібриляції передсердь і більшості показань, пов’язаних із венозною тромбоемболією; для деяких механічних клапанів ціль вища. Обидві настанови оцінюють якість лікування за тим, скільки часу МНВ тримається в терапевтичному діапазоні, а не за окремим аналізом.",
+          "requires": [
+            "vka_therapy"
+          ]
         },
         {
           "label": "Above the vitamin K antagonist therapeutic range",
@@ -12771,7 +12862,10 @@
           "corroborated_by": [
             "acc-aha-af-2023"
           ],
-          "note": null
+          "note": null,
+          "requires": [
+            "vka_therapy"
+          ]
         }
       ],
       "short_description": "The INR converts a prothrombin time into an internationally comparable ratio using the reagent's International Sensitivity Index, which is why it, and not the raw seconds, is the coagulation number that transfers between laboratories and countries.",
@@ -12783,7 +12877,6 @@
         "short_description": "МНВ перераховує протромбіновий час у відношення, яке можна порівнювати в усьому світі, з урахуванням міжнародного індексу чутливості (МІЧ) реагенту. Тому між лабораторіями й країнами порівнюють саме МНВ, а не час у секундах.",
         "why_it_matters": "За МНВ підбирають дозу антагоністів вітаміну К (наприклад, варфарину). У людини, яка їх не приймає, МНВ загалом показує, як швидко працює зовнішній шлях згортання крові.",
         "band_labels": {
-          "Not taking a vitamin K antagonist": "Без антагоністів вітаміну К",
           "Vitamin K antagonist therapeutic range": "Терапевтичний діапазон для антагоністів вітаміну К",
           "Above the vitamin K antagonist therapeutic range": "Вище терапевтичного діапазону для антагоністів вітаміну К"
         }
@@ -13215,7 +13308,7 @@
         {
           "label": "Optimal (US classification)",
           "lower": null,
-          "upper": 2.6,
+          "upper": 2.59,
           "lower_inclusive": true,
           "upper_inclusive": false,
           "interpretation": "optimal",
@@ -13228,8 +13321,8 @@
         },
         {
           "label": "Near or above optimal (US classification)",
-          "lower": 2.6,
-          "upper": 3.4,
+          "lower": 2.59,
+          "upper": 3.36,
           "lower_inclusive": true,
           "upper_inclusive": false,
           "interpretation": "normal",
@@ -13242,8 +13335,8 @@
         },
         {
           "label": "Borderline high (US classification)",
-          "lower": 3.4,
-          "upper": 4.1,
+          "lower": 3.36,
+          "upper": 4.14,
           "lower_inclusive": true,
           "upper_inclusive": false,
           "interpretation": "borderline_high",
@@ -13256,8 +13349,8 @@
         },
         {
           "label": "High (US classification)",
-          "lower": 4.1,
-          "upper": 4.9,
+          "lower": 4.14,
+          "upper": 4.91,
           "lower_inclusive": true,
           "upper_inclusive": false,
           "interpretation": "high",
@@ -13270,7 +13363,7 @@
         },
         {
           "label": "Very high (US classification)",
-          "lower": 4.9,
+          "lower": 4.91,
           "upper": null,
           "lower_inclusive": true,
           "upper_inclusive": false,
@@ -15562,7 +15655,7 @@
           "lower_inclusive": true,
           "upper_inclusive": false,
           "interpretation": "critical_low",
-          "sex": "male",
+          "sex": null,
           "age_min": 18,
           "age_max": null,
           "source_id": "nice-ng24",
@@ -15576,7 +15669,7 @@
           "lower_inclusive": true,
           "upper_inclusive": false,
           "interpretation": "critical_low",
-          "sex": "male",
+          "sex": null,
           "age_min": 18,
           "age_max": null,
           "source_id": "nice-ng24",
@@ -15591,7 +15684,7 @@
           "lower_inclusive": true,
           "upper_inclusive": false,
           "interpretation": "low",
-          "sex": "male",
+          "sex": null,
           "age_min": 18,
           "age_max": null,
           "source_id": "ash-itp-2019",
@@ -15644,48 +15737,6 @@
           "corroborated_by": [],
           "note": "A persistently raised platelet count needs a cause; a single value does not diagnose thrombocythaemia.",
           "notes_uk": "Якщо кількість тромбоцитів стійко підвищена, потрібно з’ясувати причину; одне значення не є підставою для діагнозу тромбоцитемії."
-        },
-        {
-          "label": "Prophylactic platelet transfusion threshold (NICE NG24)",
-          "lower": null,
-          "upper": 10,
-          "lower_inclusive": true,
-          "upper_inclusive": false,
-          "interpretation": "critical_low",
-          "sex": "female",
-          "age_min": 18,
-          "age_max": null,
-          "source_id": "nice-ng24",
-          "corroborated_by": [],
-          "note": null
-        },
-        {
-          "label": "Transfusion threshold with clinically significant bleeding (NICE NG24)",
-          "lower": 10,
-          "upper": 30,
-          "lower_inclusive": true,
-          "upper_inclusive": false,
-          "interpretation": "critical_low",
-          "sex": "female",
-          "age_min": 18,
-          "age_max": null,
-          "source_id": "nice-ng24",
-          "corroborated_by": [],
-          "note": null
-        },
-        {
-          "label": "Thrombocytopenia below the ASH ITP diagnostic threshold",
-          "lower": 30,
-          "upper": 100,
-          "lower_inclusive": true,
-          "upper_inclusive": false,
-          "interpretation": "low",
-          "sex": "female",
-          "age_min": 18,
-          "age_max": null,
-          "source_id": "ash-itp-2019",
-          "corroborated_by": [],
-          "note": null
         },
         {
           "label": "Below the European reference interval",
@@ -16118,7 +16169,7 @@
           "notes_uk": "Верхня межа 100 збігається з українським визначенням синусової тахікардії (Настанова 00057: частота понад 100 ударів за хвилину)."
         },
         {
-          "label": "Below the usual resting range (bradycardia)",
+          "label": "Below 60 bpm (can be normal in fit people)",
           "lower": null,
           "upper": 60,
           "lower_inclusive": true,
@@ -16135,7 +16186,7 @@
           "notes_uk": "За шкалою NEWS2 пульс 51-90 оцінюють у нуль балів, тож частота 50-59 трапляється часто і нерідко буває нормою, особливо в тренованих дорослих. Українська Настанова 00062 проводить межу брадикардії нижче, на рівні 50 уд/хв, і вважає брадикардію здорового серця доброякісною, якщо вона не спричиняє непритомності, переднепритомних станів чи серцевої недостатності."
         },
         {
-          "label": "Above the usual resting range (tachycardia)",
+          "label": "Above 100 bpm at rest",
           "lower": 100,
           "upper": null,
           "lower_inclusive": false,
@@ -16160,8 +16211,8 @@
       "uk": {
         "band_labels": {
           "Normal resting heart rate": "Нормальна ЧСС у спокої",
-          "Below the usual resting range (bradycardia)": "Нижче звичайної ЧСС у спокої (брадикардія)",
-          "Above the usual resting range (tachycardia)": "Вище звичайної ЧСС у спокої (тахікардія)"
+          "Below 60 bpm (can be normal in fit people)": "Нижче 60 уд./хв (у тренованих людей може бути нормою)",
+          "Above 100 bpm at rest": "Понад 100 уд./хв у спокої"
         },
         "short_description": "Частота серцевих скорочень (ЧСС) у спокої: скільки разів серце скорочується за хвилину, коли тіло відпочиває.",
         "why_it_matters": "Якщо ЧСС у спокої стійко виходить за звичні межі, причиною може бути рівень тренованості, ліки, хвороба щитоподібної залози, гарячка, зневоднення або порушення ритму. У добре тренованих людей вона нерідко тримається нижче 60 уд/хв, і це не проблема.",
@@ -16601,6 +16652,9 @@
           "source_id": "who-folate-2015",
           "corroborated_by": [],
           "note": "WHO 2015: red-cell folate should be above 400 ng/mL (906 nmol/L) in women of reproductive age. WHO states explicitly that this is a population-level indicator and must not be used to predict an individual's risk of a neural-tube-defect-affected pregnancy. WHO recommends no serum folate threshold for this purpose.",
+          "requires": [
+            "planning_pregnancy"
+          ],
           "notes_uk": "ВООЗ 2015: у жінок репродуктивного віку фолат в еритроцитах має бути вище 400 нг/мл (906 нмоль/л). ВООЗ прямо наголошує, що це орієнтир для населення загалом і за ним не можна прогнозувати, чи матиме плід конкретної жінки дефект нервової трубки. Порогу сироваткового фолату для цієї мети ВООЗ не рекомендує."
         },
         {
@@ -16616,6 +16670,9 @@
           "source_id": "who-folate-2015",
           "corroborated_by": [],
           "note": "Population-level indicator only.",
+          "requires": [
+            "planning_pregnancy"
+          ],
           "notes_uk": "Орієнтир лише для населення загалом, а не для окремої людини."
         }
       ],
@@ -16681,10 +16738,9 @@
           "sex": null,
           "age_min": null,
           "age_max": null,
-          "source_id": "aafp-urinalysis",
+          "source_id": "eflm-urinalysis-2023",
           "corroborated_by": [
-            "eflm-urinalysis-2023",
-            "kdigo-ckd-2024"
+            "aafp-urinalysis"
           ],
           "note": "'The presence of renal tubule cells indicates significant renal pathology' (AFP urinalysis review). EFLM lists where they are found: glomerulonephritides, nephrotic syndrome, metabolic storage diseases such as Fabry disease, acute tubular necrosis, acute interstitial nephritis and acute rejection of a kidney transplant; in heavy proteinuria they appear as lipid-laden 'oval fat bodies'. EFLM also notes that in hospitalised patients the presence of renal tubular cells or casts predicts worsening acute kidney injury with performance comparable to modern biomarkers such as urinary NGAL, and that they help distinguish upper from lower urinary tract infection. KDIGO 2024 counts urine sediment abnormalities among the markers of kidney damage that define chronic kidney disease. A raised count is a reason to look at kidney function and the rest of the sediment, not a diagnosis on its own.",
           "notes_uk": "«Наявність клітин ниркових канальців свідчить про значну ниркову патологію» (огляд AFP щодо загального аналізу сечі). EFLM перелічує стани, за яких їх знаходять: гломерулонефрити, нефротичний синдром, метаболічні хвороби накопичення, як-от хвороба Фабрі, гострий тубулярний некроз, гострий інтерстиційний нефрит і гостре відторгнення пересадженої нирки; при вираженій протеїнурії ці клітини, навантажені ліпідами, мають вигляд «овальних жирових тілець». EFLM також зазначає, що в госпіталізованих пацієнтів клітини ниркових канальців або циліндри передбачають погіршення гострого пошкодження нирок так само точно, як сучасні біомаркери, наприклад NGAL у сечі, і допомагають відрізнити інфекцію верхніх сечових шляхів від інфекції нижніх. KDIGO 2024 відносить зміни сечового осаду до маркерів пошкодження нирок, за якими визначають хронічну хворобу нирок. Підвищена кількість є приводом оцінити функцію нирок і решту осаду, а не діагнозом."
@@ -16692,11 +16748,8 @@
       ],
       "short_description": "Cells shed from the lining of the kidney tubules - RTEC, renal tubular epithelial cells - counted in the urine sediment. The distinction from the squamous epithelial cells reported on the same page is the whole point of the test: squamous cells are large, irregular cells from the skin and genital tract whose presence 'suggests contamination' of the sample, whereas renal tubule cells can only have come from the kidney itself, and their presence 'indicates significant renal pathology'. EFLM lists the settings in which they appear: acute tubular necrosis, acute interstitial nephritis, glomerulonephritis, nephrotic syndrome, rejection of a transplanted kidney, and Fabry disease. They are also part of what KDIGO means by the urine sediment abnormalities that count as markers of kidney damage. Counts in health sit markedly below 10 x 10^6/L (10 cells/µL), low enough that EFLM declines to publish a firm upper limit and recommends reporting it as 'below the limit of quantitation' instead.",
       "why_it_matters": "This is the line that separates a contaminated sample from a damaged kidney. Squamous cells mean the specimen needs collecting again; tubular cells mean the tubules themselves are shedding, and that is worth a serum creatinine, an eGFR and a look at the rest of the sediment.",
-      "retest_interval_months": 3,
-      "retest_condition": {
-        "applies_when": "abnormal"
-      },
-      "retest_rationale": "There is no screening schedule for a sediment particle. An unexpected finding is repeated on a properly collected fresh mid-stream specimen within days - EFLM notes these cells are lost during storage and transfer, so a delayed sample can also produce a falsely reassuring count - and any persistent finding is followed with kidney function testing rather than by repeating the microscopy indefinitely. Three months reflects the KDIGO convention that an abnormality must persist for more than three months to define chronic kidney disease.",
+      "retest_interval_months": null,
+      "retest_rationale": null,
       "uk": {
         "name": "Клітини ниркового епітелію в сечі",
         "short_description": "Клітини, що злущилися з вистилки ниркових канальців (RTEC, renal tubular epithelial cells), підраховані в осаді сечі. Увесь сенс аналізу в тому, щоб відрізнити їх від плоского епітелію з того самого бланка. Плоскі клітини великі, неправильної форми, потрапляють зі шкіри та статевих шляхів, і їхня наявність «свідчить про забруднення» зразка. Клітини ниркових канальців можуть походити лише із самої нирки, і їхня наявність «вказує на суттєву ниркову патологію». EFLM перелічує стани, за яких вони з’являються: гострий канальцевий некроз, гострий інтерстиційний нефрит, гломерулонефрити, нефротичний синдром, відторгнення пересадженої нирки, хвороба Фабрі. KDIGO також зараховує такі зміни осаду сечі до маркерів ураження нирок. У здорових людей цих клітин значно менше за 10 × 10⁶/л (10 кл/мкл), настільки мало, що EFLM свідомо не публікує чіткої верхньої межі й радить писати «нижче межі кількісного визначення».",
@@ -16704,8 +16757,7 @@
         "band_labels": {
           "Below 10 cells/µL - the health-associated range": "Менше 10 кл/мкл (як у здорових людей)",
           "10 cells/µL or more - above the health-associated concentration": "10 кл/мкл і більше (вище, ніж у здорових)"
-        },
-        "retest_rationale": "Планового графіка для частинок осаду сечі немає. Несподівану знахідку перевіряють упродовж кількох днів у правильно зібраній свіжій середній порції сечі. EFLM зазначає, що ці клітини руйнуються під час зберігання й перевезення зразка, тож проба, яку довго не досліджували, може дати хибно заспокійливий результат. Стійку знахідку далі відстежують аналізами функції нирок, а не нескінченним повторенням мікроскопії. Три місяці взято з KDIGO: щоб говорити про хронічну хворобу нирок, відхилення має зберігатися понад три місяці."
+        }
       }
     },
     {
@@ -17670,20 +17722,15 @@
       ],
       "short_description": "Whether blood was found in the stool. Bleeding heavy enough to see is described by its appearance - NIDDK lists black tarry stool and dark or bright red blood mixed with stool among the signs of acute gastrointestinal bleeding - while 'occult' bleeding is, in NIDDK's words, blood in an amount 'too small for you or your doctor to see'. That hidden bleeding is what stool blood testing is for, and it is the basis of colorectal cancer screening in all three jurisdictions: the USPSTF and the American Cancer Society specify an annual high-sensitivity faecal immunochemical test (FIT) from age 45 to 75, the EU Council Recommendation of 2022 specifies FIT for ages 50 to 74, and Ukraine's МОЗ order № 1368 (2024) requires primary care to offer a stool occult blood test or FIT every two years from 50 to 75, and annually to those with risk factors. A positive result is not a diagnosis of cancer - haemorrhoids, fissures and polyps all bleed - but every guideline consulted answers it the same way: colonoscopy.",
       "why_it_matters": "This is the one line in a stool report that has been shown in randomised trials to reduce deaths, because it finds bowel cancer and its precursors while they are still silent - and its whole value depends on the positive result being followed by a colonoscopy rather than a second stool test.",
-      "retest_interval_months": 12,
-      "retest_condition": {
-        "age_min": 45,
-        "age_max": 75
-      },
-      "retest_rationale": "Annual is the US position (USPSTF 2021 and ACS: high-sensitivity FIT every year, ages 45-75). Ukraine's МОЗ order № 1368 sets two years for population screening at ages 50-75 and one year for people with a risk factor, so a Ukrainian reader on the population pathway is on a 24-month schedule; the shorter interval is recorded here because it is the one that never under-screens, and the divergence is stated explicitly rather than averaged away.",
+      "retest_interval_months": null,
+      "retest_rationale": null,
       "uk": {
         "name": "Кров у калі",
         "short_description": "Чи знайдено кров у калі. Кровотечу, яку видно оком, описують за виглядом: NIDDK серед ознак гострої шлунково-кишкової кровотечі називає чорний дьогтеподібний кал і темну чи яскраво-червону кров у калі. Натомість «прихована» кровотеча, за формулюванням NIDDK, означає кров у кількості, «замалій, щоб ви чи ваш лікар її побачили». Саме для пошуку прихованої кровотечі й роблять цей аналіз, і на ньому побудовано скринінг колоректального раку в усіх трьох юрисдикціях. USPSTF та Американське онкологічне товариство радять високочутливий фекальний імунохімічний тест (ФІТ) щороку у віці 45-75 років, Рекомендація Ради ЄС 2022 року передбачає ФІТ у віці 50-74 роки, а наказ МОЗ України № 1368 (2024) зобов’язує первинну ланку скеровувати на аналіз калу на приховану кров або ФІТ кожні 2 роки у віці 50-75 років і щороку за наявності факторів ризику. Позитивний результат не є діагнозом раку, адже кровоточити можуть і геморой, і тріщини, і поліпи. Але всі розглянуті настанови радять у відповідь на нього одне: колоноскопію.",
         "why_it_matters": "Це єдиний рядок аналізу калу, для якого рандомізовані дослідження довели зниження смертності: він виявляє рак кишківника та передракові зміни, поки вони ще не дають симптомів. Уся його цінність залежить від того, чи після позитивного результату буде колоноскопія, а не повторний аналіз калу.",
         "band_labels": {
           "Not detected - the expected finding": "Не виявлено (очікуваний результат)"
-        },
-        "retest_rationale": "Щорічний інтервал відповідає позиції США (USPSTF 2021 та ACS: високочутливий FIT щороку у віці 45-75 років). Наказ МОЗ України № 1368 для популяційного скринінгу у віці 50-75 років встановлює інтервал два роки, а за наявності фактора ризику один рік. Тож якщо ви проходите звичайний скринінг в Україні, ваш графік становить 24 місяці. Тут записано коротший інтервал, бо з ним обстеження ніколи не буде недостатнім, а розбіжність названо прямо, без усереднення."
+        }
       }
     },
     {
@@ -18813,7 +18860,7 @@
           "lower": 140,
           "upper": 180,
           "lower_inclusive": true,
-          "upper_inclusive": false,
+          "upper_inclusive": true,
           "interpretation": "high",
           "sex": null,
           "age_min": 18,
@@ -18832,7 +18879,7 @@
           "label": "Hypertensive crisis (US, AHA/ACC)",
           "lower": 180,
           "upper": null,
-          "lower_inclusive": true,
+          "lower_inclusive": false,
           "upper_inclusive": true,
           "interpretation": "critical_high",
           "sex": null,
@@ -19165,12 +19212,15 @@
           "interpretation": "low",
           "sex": null,
           "age_min": 18,
-          "age_max": null,
+          "age_max": 80,
           "source_id": "eta-subclinical-2013",
           "corroborated_by": [
             "ata-hypothyroidism-2014"
           ],
           "note": "A low TSH is followed up with free T4 and free T3 before anything is concluded.",
+          "excludes": [
+            "pregnant"
+          ],
           "notes_uk": "Якщо ТТГ знижений, перш ніж робити висновки, визначають вільний Т4 і вільний Т3."
         },
         {
@@ -19182,12 +19232,15 @@
           "interpretation": "normal",
           "sex": null,
           "age_min": 18,
-          "age_max": null,
+          "age_max": 80,
           "source_id": "eta-subclinical-2013",
           "corroborated_by": [
             "ata-hypothyroidism-2014"
           ],
           "note": "ETA 2013: 'the reference range for serum TSH in the general adult population is between 0.4 and 4.0 mU/l'. ATA 2014 uses the same figures: 'a value within the reference range (0.4-4.0 mIU/L) should be considered the therapeutic target'. Neither body adopted the proposed narrowing of the upper limit to 2.5 mIU/L: 2.5 appears in both documents only as a treatment target for people already on levothyroxine (ETA: 'a stable serum TSH in the lower half of the reference range (0.4-2.5 mU/l)') and, in the ATA documents, as a pre-conception and first-trimester pregnancy target. The interval is also assay-dependent; this record's own laboratory prints 0.27-4.2 mIU/L.",
+          "excludes": [
+            "pregnant"
+          ],
           "notes_uk": "ETA 2013: «референтний інтервал ТТГ у сироватці крові в загальній дорослій популяції становить від 0,4 до 4,0 мОд/л». ATA 2014 наводить ті самі значення: «значення в межах референтного інтервалу (0,4-4,0 мМО/л) слід вважати терапевтичною метою». Жодна з цих організацій не прийняла пропозиції звузити верхню межу до 2,5 мМО/л. Значення 2,5 трапляється в обох документах лише як ціль лікування для людей, які вже приймають левотироксин (ETA: «стабільний ТТГ у сироватці в нижній половині референтного інтервалу (0,4-2,5 мОд/л)»), а в документах ATA ще й як ціль перед зачаттям і в першому триместрі вагітності. Інтервал також залежить від методу визначення: лабораторія цього результату друкує 0,27-4,2 мМО/л."
         },
         {
@@ -19199,12 +19252,15 @@
           "interpretation": "borderline_high",
           "sex": null,
           "age_min": 18,
-          "age_max": null,
+          "age_max": 80,
           "source_id": "eta-subclinical-2013",
           "corroborated_by": [
             "nice-ng145"
           ],
           "note": "ETA 2013 defines 'mildly increased TSH levels (4.0-10.0 mU/l)', which is about 90% of all raised TSH results, and requires a repeat measurement 2-3 months later before any diagnosis. Age matters here: ETA states 'there is a widening of the reference range for serum TSH with increasing age, such that a mild TSH elevation (4.0-7.0 mU/l) in the elderly (>80 years old) should be considered as a physiological adaptation to aging', and ATA 2014 recommendation 6a states 'normal serum thyrotropin ranges are higher in older populations (such as those over 65 years)'. NHANES III found TSH increases with age in the disease-free population.",
+          "excludes": [
+            "pregnant"
+          ],
           "notes_uk": "ETA 2013 виділяє «помірно підвищений рівень ТТГ (4,0-10,0 мОд/л)», на який припадає близько 90% усіх підвищених результатів ТТГ, і вимагає повторити вимірювання через 2-3 місяці, перш ніж ставити будь-який діагноз. Тут важить вік. ETA зазначає, що «з віком референтний інтервал ТТГ у сироватці розширюється, тож помірне підвищення ТТГ (4,0-7,0 мОд/л) у людей похилого віку (>80 років) слід розглядати як фізіологічну адаптацію до старіння», а рекомендація 6a ATA 2014 зазначає, що «нормальні значення тиреотропіну в сироватці вищі в старших популяціях (наприклад, у людей віком понад 65 років)». За даними NHANES III, у людей без захворювань ТТГ з віком зростає."
         },
         {
@@ -19216,12 +19272,95 @@
           "interpretation": "high",
           "sex": null,
           "age_min": 18,
+          "age_max": 80,
+          "source_id": "eta-subclinical-2013",
+          "corroborated_by": [
+            "nice-ng145"
+          ],
+          "note": "ETA 2013 defines the second category as 'more severely increased TSH value (>10.0 mU/l)'. NICE NG145 uses the same figure as its treatment threshold, considering levothyroxine when TSH is 10 mIU/L or higher on two occasions three months apart.",
+          "excludes": [
+            "pregnant"
+          ],
+          "notes_uk": "ETA 2013 називає другу категорію «значніше підвищений рівень ТТГ (>10,0 мОд/л)». NICE NG145 використовує те саме значення як поріг лікування: левотироксин розглядають, якщо ТТГ становить 10 мМО/л або більше у двох вимірюваннях з інтервалом у три місяці."
+        },
+        {
+          "label": "Below reference interval (age 80 and over)",
+          "lower": null,
+          "upper": 0.4,
+          "lower_inclusive": true,
+          "upper_inclusive": false,
+          "interpretation": "low",
+          "sex": null,
+          "age_min": 80,
+          "age_max": null,
+          "source_id": "eta-subclinical-2013",
+          "corroborated_by": [
+            "ata-hypothyroidism-2014"
+          ],
+          "note": "A low TSH is followed up with free T4 and free T3 before anything is concluded.",
+          "excludes": [
+            "pregnant"
+          ],
+          "notes_uk": "Якщо ТТГ знижений, перш ніж робити висновки, визначають вільний Т4 і вільний Т3."
+        },
+        {
+          "label": "Reference interval (age 80 and over)",
+          "lower": 0.4,
+          "upper": 7.0,
+          "lower_inclusive": true,
+          "upper_inclusive": false,
+          "interpretation": "normal",
+          "sex": null,
+          "age_min": 80,
+          "age_max": null,
+          "source_id": "eta-subclinical-2013",
+          "corroborated_by": [
+            "ata-hypothyroidism-2014"
+          ],
+          "note": "ETA 2013: a mild TSH elevation (4.0-7.0 mU/L) in people over 80 years old should be considered a physiological adaptation to ageing.",
+          "excludes": [
+            "pregnant"
+          ],
+          "notes_uk": "ETA (2013): незначне підвищення ТТГ (4,0-7,0 мМО/л) у людей, старших за 80 років, слід вважати фізіологічним пристосуванням до старіння."
+        },
+        {
+          "label": "Mildly elevated (age 80 and over)",
+          "lower": 7.0,
+          "upper": 10.0,
+          "lower_inclusive": true,
+          "upper_inclusive": false,
+          "interpretation": "borderline_high",
+          "sex": null,
+          "age_min": 80,
+          "age_max": null,
+          "source_id": "eta-subclinical-2013",
+          "corroborated_by": [
+            "ata-hypothyroidism-2014"
+          ],
+          "note": "ETA 2013: a mild TSH elevation (4.0-7.0 mU/L) in people over 80 years old should be considered a physiological adaptation to ageing.",
+          "excludes": [
+            "pregnant"
+          ],
+          "notes_uk": "ETA (2013): незначне підвищення ТТГ (4,0-7,0 мМО/л) у людей, старших за 80 років, слід вважати фізіологічним пристосуванням до старіння."
+        },
+        {
+          "label": "Markedly elevated (age 80 and over)",
+          "lower": 10.0,
+          "upper": null,
+          "lower_inclusive": true,
+          "upper_inclusive": false,
+          "interpretation": "high",
+          "sex": null,
+          "age_min": 80,
           "age_max": null,
           "source_id": "eta-subclinical-2013",
           "corroborated_by": [
             "nice-ng145"
           ],
           "note": "ETA 2013 defines the second category as 'more severely increased TSH value (>10.0 mU/l)'. NICE NG145 uses the same figure as its treatment threshold, considering levothyroxine when TSH is 10 mIU/L or higher on two occasions three months apart.",
+          "excludes": [
+            "pregnant"
+          ],
           "notes_uk": "ETA 2013 називає другу категорію «значніше підвищений рівень ТТГ (>10,0 мОд/л)». NICE NG145 використовує те саме значення як поріг лікування: левотироксин розглядають, якщо ТТГ становить 10 мМО/л або більше у двох вимірюваннях з інтервалом у три місяці."
         }
       ],
@@ -19229,7 +19368,7 @@
       "why_it_matters": "It is the most sensitive single test of thyroid function, because small changes in thyroid hormone produce large changes in TSH.",
       "retest_interval_months": 3,
       "retest_condition": {
-        "applies_when": "abnormal"
+        "applies_when": "borderline"
       },
       "retest_rationale": "The ETA advises repeating a raised TSH after a 2-3 month interval, once any transient illness has resolved, before treating it as a real finding; NICE likewise asks for two measurements three months apart.",
       "uk": {
@@ -19240,7 +19379,11 @@
           "Below reference interval": "Нижче референтного інтервалу",
           "Reference interval (adults)": "Референтний інтервал (дорослі)",
           "Mildly elevated": "Помірно підвищений",
-          "Markedly elevated": "Значно підвищений"
+          "Markedly elevated": "Значно підвищений",
+          "Reference interval (age 80 and over)": "Референтний інтервал (вік від 80 років)",
+          "Mildly elevated (age 80 and over)": "Незначно підвищений (вік від 80 років)",
+          "Below reference interval (age 80 and over)": "Нижче референтного інтервалу (вік від 80 років)",
+          "Markedly elevated (age 80 and over)": "Значно підвищений (вік від 80 років)"
         },
         "retest_rationale": "Якщо ТТГ підвищений, ETA радить повторити аналіз через 2-3 місяці, коли мине будь-яка тимчасова хвороба, і лише тоді вважати відхилення справжнім. NICE так само вимагає двох вимірювань з інтервалом три місяці."
       }
@@ -19476,7 +19619,7 @@
         {
           "label": "Desirable (US classification)",
           "lower": null,
-          "upper": 5.2,
+          "upper": 5.17,
           "lower_inclusive": true,
           "upper_inclusive": false,
           "interpretation": "normal",
@@ -19489,8 +19632,8 @@
         },
         {
           "label": "Borderline high (US classification)",
-          "lower": 5.2,
-          "upper": 6.2,
+          "lower": 5.17,
+          "upper": 6.21,
           "lower_inclusive": true,
           "upper_inclusive": false,
           "interpretation": "borderline_high",
@@ -19503,7 +19646,7 @@
         },
         {
           "label": "High (US classification)",
-          "lower": 6.2,
+          "lower": 6.21,
           "upper": null,
           "lower_inclusive": true,
           "upper_inclusive": false,
@@ -19840,8 +19983,8 @@
         },
         {
           "label": "Borderline high",
-          "lower": 1.7,
-          "upper": 2.3,
+          "lower": 1.69,
+          "upper": 2.26,
           "lower_inclusive": true,
           "upper_inclusive": false,
           "interpretation": "borderline_high",
@@ -19855,8 +19998,8 @@
         },
         {
           "label": "High",
-          "lower": 2.3,
-          "upper": 5.6,
+          "lower": 2.26,
+          "upper": 5.65,
           "lower_inclusive": true,
           "upper_inclusive": false,
           "interpretation": "high",
@@ -19872,7 +20015,7 @@
         },
         {
           "label": "Very high",
-          "lower": 5.6,
+          "lower": 5.65,
           "upper": 11.3,
           "lower_inclusive": true,
           "upper_inclusive": false,
@@ -20151,7 +20294,10 @@
           "source_id": "eular-gout-2016",
           "corroborated_by": [],
           "note": "EULAR advises against holding serum urate below 3 mg/dl (180 µmol/L) long term in people on urate-lowering therapy. This is a caution about treatment, not a deficiency state in an untreated person.",
-          "notes_uk": "EULAR не радить тривало утримувати рівень сечової кислоти в сироватці нижче 3 мг/дл (180 мкмоль/л) у людей, які отримують уратознижувальну терапію. Це застереження щодо лікування, а не ознака дефіциту в людини, яка не лікується."
+          "notes_uk": "EULAR не радить тривало утримувати рівень сечової кислоти в сироватці нижче 3 мг/дл (180 мкмоль/л) у людей, які отримують уратознижувальну терапію. Це застереження щодо лікування, а не ознака дефіциту в людини, яка не лікується.",
+          "requires": [
+            "urate_lowering_therapy"
+          ]
         },
         {
           "label": "180-360 µmol/L - at or below the gout treat-to-target level",
@@ -20168,7 +20314,10 @@
             "eular-gout-2016"
           ],
           "note": "Both ACR 2020 and EULAR 2016 set <6 mg/dl (<360 µmol/L) as the serum urate target for people treated for gout. It is a treatment target, not a population reference limit; no official body publishes a health-based reference interval for serum urate.",
-          "notes_uk": "І ACR 2020, і EULAR 2016 встановлюють для людей, які лікуються з приводу подагри, цільовий рівень сечової кислоти в сироватці <6 мг/дл (<360 мкмоль/л). Це ціль лікування, а не популяційна референтна межа; жодна офіційна установа не публікує референтного інтервалу сечової кислоти в сироватці, заснованого на критеріях здоров’я."
+          "notes_uk": "І ACR 2020, і EULAR 2016 встановлюють для людей, які лікуються з приводу подагри, цільовий рівень сечової кислоти в сироватці <6 мг/дл (<360 мкмоль/л). Це ціль лікування, а не популяційна референтна межа; жодна офіційна установа не публікує референтного інтервалу сечової кислоти в сироватці, заснованого на критеріях здоров’я.",
+          "requires": [
+            "urate_lowering_therapy"
+          ]
         },
         {
           "label": "360-405 µmol/L - above the gout treatment target, below the saturation point",
@@ -20185,7 +20334,10 @@
             "acr-gout-2020"
           ],
           "note": "Urate in this band exceeds the level gout treatment aims for but is still below the point at which monosodium urate stops dissolving.",
-          "notes_uk": "У цьому діапазоні рівень сечової кислоти вищий за ціль лікування подагри, але ще нижчий за точку, вище якої моноурат натрію перестає розчинятися."
+          "notes_uk": "У цьому діапазоні рівень сечової кислоти вищий за ціль лікування подагри, але ще нижчий за точку, вище якої моноурат натрію перестає розчинятися.",
+          "requires": [
+            "urate_lowering_therapy"
+          ]
         },
         {
           "label": "405 µmol/L (6.8 mg/dl) and above - urate above the saturation point of monosodium urate",
@@ -20220,7 +20372,7 @@
           "405 µmol/L (6.8 mg/dl) and above - urate above the saturation point of monosodium urate": "405 мкмоль/л (6,8 мг/дл) і вище: вище точки насичення моноурату натрію"
         }
       },
-      "jurisdiction_note": "Настанова 00451 «Подагра і псевдоподагра»: «Рівень сечової кислоти плазми повинен бути нижче 360 мкмоль/л або, при тяжкому перебігу захворювання, нижче 300 мкмоль/л для пришвидшення розчинення накопичених уратів.» Настанова також рекомендує призначати уратознижувальну терапію після першого нападу подагри, якщо пацієнт молодший 40 років або рівень сечової кислоти перевищує 480 мкмоль/л; алопуринол титрують до цілі <360 мкмоль/л. / Ukraine takes a side in the disagreement this analyte already records. The library notes that EULAR (2016) adds a lower target of under 300 umol/L for severe gout and that ACR (2020) explicitly broke with EULAR and refused to specify such thresholds. MOZ 00451 states both the 360 umol/L target and the 300 umol/L severe-disease target, so Ukraine follows the European position, not the American one. It also contributes a threshold neither of the recorded sources gives: 480 umol/L, above which urate-lowering therapy is indicated after a first attack. That cut point falls inside the existing 405-and-above band, so the replacement below splits it rather than moving it. The patient's value on this report, 361 umol/L, sits one unit above the treat-to-target level that all three jurisdictions share. A Ukrainian source states a different interval; it is recorded here rather than substituted, so the recorded band and the disagreement are both visible."
+      "jurisdiction_note": "Настанова 00451 «Подагра і псевдоподагра»: «Рівень сечової кислоти плазми повинен бути нижче 360 мкмоль/л або, при тяжкому перебігу захворювання, нижче 300 мкмоль/л для пришвидшення розчинення накопичених уратів.» Настанова також рекомендує призначати уратознижувальну терапію після першого нападу подагри, якщо пацієнт молодший 40 років або рівень сечової кислоти перевищує 480 мкмоль/л; алопуринол титрують до цілі <360 мкмоль/л. / Ukraine takes a side in the disagreement this analyte already records. The library notes that EULAR (2016) adds a lower target of under 300 umol/L for severe gout and that ACR (2020) explicitly broke with EULAR and refused to specify such thresholds. MOZ 00451 states both the 360 umol/L target and the 300 umol/L severe-disease target, so Ukraine follows the European position, not the American one. It also contributes a threshold neither of the recorded sources gives: 480 umol/L, above which urate-lowering therapy is indicated after a first attack. That cut point falls inside the existing 405-and-above band. It is recorded here as the level at which the Ukrainian guideline starts treatment after a first attack; it is not encoded as a band, because it does not apply to a person who has not had gout. The patient's value on this report, 361 umol/L, sits one unit above the treat-to-target level that all three jurisdictions share. A Ukrainian source states a different interval; it is recorded here rather than substituted, so the recorded band and the disagreement are both visible."
     },
     {
       "concept_id": "urine-amorphous-phosphates",
@@ -23013,7 +23165,7 @@
           "upper_inclusive": true,
           "interpretation": "low",
           "sex": null,
-          "age_min": 18,
+          "age_min": 65,
           "age_max": null,
           "source_id": "ewgsop2-2019",
           "corroborated_by": [
@@ -23023,14 +23175,14 @@
           "notes_uk": "EWGSOP2 (Європа) та Sarcopenia Definitions and Outcomes Consortium (США, фінансування NIH) незалежно дійшли того самого порогу низької швидкості ходьби: 0,8 м/с. Тут швидкість зберігається в км/год, тож поріг становить 0,8 × 3,6 = 2,88 км/год. Обидва пороги визначили в людей старшого віку на короткій дистанції з вимірюванням часу. Носимий пристрій оцінює всю повсякденну ходьбу, зокрема неквапливу прогулянку з пакетами покупок, тому низьке середньодобове значення у здорової молодшої людини зазвичай пояснюється тим, як вона йшла, а не фізичним обмеженням."
         },
         {
-          "label": "At or above the slow-gait cut-off",
+          "label": "Above the slow-gait cut-off",
           "lower": 2.88,
           "upper": null,
           "lower_inclusive": false,
           "upper_inclusive": true,
           "interpretation": "normal",
           "sex": null,
-          "age_min": 18,
+          "age_min": 65,
           "age_max": null,
           "source_id": "ewgsop2-2019",
           "corroborated_by": [
@@ -23050,7 +23202,7 @@
         "why_it_matters": "Звичайна швидкість ходьби належить до найкращих простих ознак, за якими прогнозують збереження самостійності й виживаність у літніх людей. Тому вона входить до європейського та американського визначень саркопенії (вікової втрати м’язової маси й сили).",
         "band_labels": {
           "Slow gait speed (0.8 m/s cut-off)": "Низька швидкість ходьби (поріг 0,8 м/с)",
-          "At or above the slow-gait cut-off": "На рівні порогу або вище"
+          "Above the slow-gait cut-off": "Вище порогу повільної ходи"
         }
       }
     },

@@ -30,13 +30,13 @@
   <label class="an-token-secret">
     <span>{{ t('token.secret') }}</span>
     <input value="{{ new_token.secret }}" readonly spellcheck="false"
-           onfocus="this.select()">
+           data-action="select-all">
   </label>
   {% if new_token.kind == 'guest' or new_token.kind == 'agent' %}
   <label class="an-token-secret">
     <span>{{ t('token.link') }}</span>
     <input value="{{ token_base }}/t/{{ new_token.secret }}" readonly spellcheck="false"
-           onfocus="this.select()">
+           data-action="select-all">
   </label>
   {% endif %}
   {% if new_token.kind == 'api' or new_token.kind == 'agent' %}
@@ -111,7 +111,6 @@
       {% endif %}
       {#- Revoking closes the sessions the credential opened, so it asks first. -#}
       <form action="/tokens/{{ token.id }}" method="post"
-            onsubmit="return confirm(this.dataset.confirm)"
             data-confirm="{{ t('token.revoke_confirm') }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="action" value="revoke">
@@ -143,7 +142,7 @@
   {#- A guest link must lapse, so its expiry is required rather than
       explained; the server refuses one without it all the same. -#}
   <label>{{ t('token.kind') }}
-    <select name="kind" onchange="this.form.expires_on.required = this.value === 'guest'">
+    <select name="kind" data-action="token-kind">
       {% for kind in token_kinds %}
       <option value="{{ kind }}">{{ t('token.kind_' ~ kind) }}</option>
       {% endfor %}

@@ -32,6 +32,7 @@
 
   <h3 class="an-corr-subhead">{{ t('corr.suggested_heading') }}</h3>
   {% if correlation.suggestions %}
+  <p class="tiny muted">{{ t('corr.suggested_note') }}</p>
   <ul class="an-corr-cards">
     {% for item in correlation.suggestions %}
     <li>
@@ -133,7 +134,7 @@
       <p>{{ t('corr.explain_what') }}</p>
 
       <h4>{{ t('corr.scale_heading') }}</h4>
-      <div class="table-wrap">
+      <div class="table-wrap" tabindex="0" role="region" aria-label="{{ t('corr.scale_heading') }}">
         <table>
           <thead>
             <tr>
@@ -173,12 +174,12 @@
   </details>
 </details>
 
-<script type="application/json" id="corr-data">{{ correlation.boot|tojson }}</script>
+<script type="application/json" nonce="{{ csp_nonce }}" id="corr-data">{{ correlation.boot|tojson }}</script>
 {#- The same band the chart above draws, handed in rather than read back out of
     that chart's own script tag: on both pages that tag is emitted below this
     one, so a DOM lookup here would always come back empty. -#}
-<script type="application/json" id="corr-band">{{ (chart_band or none)|tojson }}</script>
-<script>
+<script type="application/json" nonce="{{ csp_nonce }}" id="corr-band">{{ (chart_band or none)|tojson }}</script>
+<script nonce="{{ csp_nonce }}">
 (() => {
   const C = globalThis.AnamnaChart;
   const anchorFor = (order, last) => {

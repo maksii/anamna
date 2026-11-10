@@ -24,7 +24,7 @@ the whole table and vacuums, a documented maintenance step.
     uv run python -m anamna.openwearables_archive verify
     uv run python -m anamna.openwearables_archive fingerprint OUT.json [--db PATH]
     uv run python -m anamna.openwearables_archive compare BEFORE.json AFTER.json
-    uv run python -m anamna.openwearables_archive reclaim
+    uv run python -m anamna.openwearables_archive reclaim --yes
 """
 from __future__ import annotations
 
@@ -493,6 +493,15 @@ def reclaim(settings: Settings) -> dict:
     return result | {"file_bytes_after": after["file_bytes"], "free_bytes_after": after["free_bytes"]}
 
 
+def _convert_all(settings: Settings, out) -> dict:
+    cursor = convert_step(settings, budget=5.0)
+    while cursor:
+        with connect(settings) as db:
+            print(json.dumps({"cursor_day": cursor[3], "totals": totals(db)}), file=out, flush=True)
+        cursor = convert_step(settings, budget=5.0, cursor=cursor)
+    return {"done": True}
+
+
 def main(argv: list[str]) -> int:
     command = argv[0] if argv else "status"
     settings = get_settings()
@@ -500,13 +509,17 @@ def main(argv: list[str]) -> int:
         settings = replace(settings, database_path=Path(argv[argv.index("--db") + 1]))
     out = sys.stdout
     if command == "convert":
-        cursor = convert_step(settings, budget=5.0)
-        while cursor:
-            with connect(settings) as db:
-                print(json.dumps({"cursor_day": cursor[3], "totals": totals(db)}), file=out, flush=True)
-            cursor = convert_step(settings, budget=5.0, cursor=cursor)
-        result = {"done": True}
+        result = _convert_all(settings, out)
     elif command == "reclaim":
+        if "--yes" not in argv:
+            # Reclaim drops a table and vacuums the live file: a backup comes first.
+            print(
+                "Refusing to reclaim without --yes. Take a backup first: "
+                f"python -c \"import sqlite3;sqlite3.connect('{settings.database_path}')"
+                ".backup(sqlite3.connect('backup.sqlite3'))\"",
+                file=sys.stderr,
+            )
+            return 2
         result = reclaim(settings)
     elif command == "compare":
         result = compare(json.loads(Path(argv[1]).read_text()), json.loads(Path(argv[2]).read_text()))

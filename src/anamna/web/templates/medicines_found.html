@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% from "_components.html" import plural_t with context %}
+{% block title %}{{ t('med.found.title') }}{% endblock %}
+
+{#- One thing the documents say, as the person reviews it. The passage it was
+    read from is always shown. Nothing starts ticked: the tick is the person's
+    word, and a pre-ticked list was one press of Dismiss away from losing all. -#}
+{% macro found_item(item, index, tickable=true) -%}
+<li class="an-found-item">
+  <label class="an-med-check">
+    <input type="checkbox" name="key" value="{{ item.key }}">
+    <span>
+      <strong class="an-found-item__name">{{ item.name }}{% if item.strength %} <small>{{ item.strength }}</small>{% endif %}</strong>
+      <span class="an-found-item__meta">
+        <span class="pill">{{ item.kind_label }}</span>
+        {% if item.how %}<span>{{ item.how }}</span>{% endif %}
+        <span>{{ item.when_text }}</span>
+      </span>
+      {% if item.reason %}<span class="an-found-item__reason">{{ item.reason }}</span>{% endif %}
+    </span>
+  </label>
+  <blockquote class="an-med-quote"><span>{{ t('med.doc.says') }}</span> <q>{{ item.quote }}</q></blockquote>
+  <p class="an-found-item__docs">
+    {% for document in item.documents %}<a class="an-med-link" href="/documents/{{ document.id }}">{{ document.label }}</a>{% endfor %}
+  </p>
+  {% if tickable and not item.is_point %}
+  <div class="an-med-field an-found-item__status">
+    <label for="found-status-{{ index }}">{{ t('med.found.status') }}</label>
+    <select id="found-status-{{ index }}" name="status:{{ item.key }}" aria-label="{{ t('med.found.status_aria', name=item.name) }}">
+      {% for key in statuses %}<option value="{{ key }}"{% if item.suggested_status == key %} selected{% endif %}>{{ t('med.status_option.' ~ key) }}</option>{% endfor %}
+    </select>
+  </div>
+  {% endif %}
+</li>
+{%- endmacro %}
+
+{% block content %}
+<nav class="an-med-crumb" aria-label="{{ t('med.title') }}"><a href="/medicines"><span aria-hidden="true">←</span> {{ t('med.title') }}</a></nav>
+<header class="an-med-head">
+  <div>
+    <h1>{{ t('med.found.title') }}</h1>
+    <p class="an-med-lead">{{ t('med.found.lead') }}</p>
+  </div>
+</header>
+
+{% if error %}<div class="alert error" role="alert">{{ error }}</div>{% endif %}
+{% if saved %}<div class="alert" role="status">{{ saved }}</div>{% endif %}
+
+<section class="panel an-med-panel an-found-scan" aria-labelledby="found-scan" data-found-scan data-job="{{ job }}"
+         data-progress="{{ t('med.found.progress') }}" data-starting="{{ t('med.found.starting') }}"
+         data-error-disabled="{{ t('med.ai.error_disabled') }}" data-error-budget="{{ t('med.ai.error_budget') }}"
+         data-error-provider_error="{{ t('med.ai.error_provider_error') }}" data-error-truncated="{{ t('med.ai.error_truncated') }}"
+         data-error-in_progress="{{ t('med.ai.error_in_progress') }}" data-error-lost="{{ t('med.ai.error_lost') }}">
+  <h2 id="found-scan">{{ t('med.found.scan_heading') }}</h2>
+  {% if not counts.documents %}
+  <p>{{ t('med.found.no_documents') }}</p>
+  {% elif counts.waiting %}
+  <p>{{ t_plural('med.found.unread', counts.waiting, total=counts.documents) }}</p>
+  {% else %}
+  <p>{{ plural_t('med.found.all_read', counts.documents) }}</p>
+  {% endif %}
+  {% if not ai_ready %}
+  <p class="alert neutral">{{ t('med.found.ai_off') }}</p>
+  {% elif counts.waiting or job %}
+  <form class="an-med-actions" action="/medicines/found/scan" method="post" data-found-start>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button class="primary" type="submit">{{ t('med.found.scan') }}</button>
+  </form>
+  <p class="an-med-ai__status" role="status" aria-live="polite" data-found-status hidden></p>
+  <p class="an-field-help">{{ t('med.found.sent') }}</p>
+  {% endif %}
+</section>
+
+{% if fresh %}
+<form class="an-found-form" action="/medicines/found" method="post" data-found-form>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <section aria-labelledby="found-list">
+    <h2 id="found-list">{{ t('med.found.list_heading') }} <span class="an-med-count">{{ fresh|length }}</span></h2>
+    <p class="an-med-section__lead">{{ t('med.found.list_lead') }}</p>
+    <label class="an-med-check an-found-all"><input type="checkbox" data-found-all><span>{{ t('med.found.select_all') }}</span></label>
+    <ul class="an-found-list">
+      {% for item in fresh %}{{ found_item(item, loop.index) }}{% endfor %}
+    </ul>
+  </section>
+  <div class="an-med-actions an-found-actions">
+    <button class="primary" type="submit" name="action" value="accept" data-busy="{{ t('med.saving') }}">{{ t('med.found.add') }}</button>
+    <button class="secondary" type="submit" name="action" value="dismiss" data-confirm="{{ t('med.found.dismiss_confirm') }}">{{ t('med.found.dismiss') }}</button>
+  </div>
+</form>
+{% elif counts.documents and not counts.waiting and not job %}
+<p class="muted">{{ t('med.found.nothing') }}</p>
+{% endif %}
+
+{% if existing %}
+<details class="an-found-existing">
+  <summary>{{ plural_t('med.found.existing', existing|length) }}</summary>
+  <form action="/medicines/found" method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <ul class="an-found-list">
+      {% for item in existing %}{{ found_item(item, 'x' ~ loop.index, tickable=false) }}{% endfor %}
+    </ul>
+    <div class="an-med-actions"><button class="secondary" type="submit" name="action" value="dismiss" data-confirm="{{ t('med.found.dismiss_confirm') }}">{{ t('med.found.dismiss') }}</button></div>
+  </form>
+</details>
+{% endif %}
+
+<script src="{{ asset('medicine_scan.js') }}" defer></script>
+{% endblock %}

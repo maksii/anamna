@@ -11,7 +11,6 @@ import hashlib
 import hmac
 import json
 import logging
-import os
 import re
 import sqlite3
 import tempfile
@@ -120,7 +119,7 @@ def verify_signature(body: bytes, headers, secrets: list[str], *, now: float | N
             continue
         expected = base64.b64encode(hmac.new(_secret_bytes(secret), signed, hashlib.sha256).digest()).decode()
         for signature in signatures:
-            valid |= hmac.compare_digest(expected, signature)
+            valid |= hmac.compare_digest(expected.encode("utf-8"), signature.encode("utf-8"))
     if not valid:
         raise WebhookError("invalid_signature", 401)
     return message_id

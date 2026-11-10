@@ -50,7 +50,7 @@ def build(tmp_path: Path, monkeypatch, *, with_results: bool = True, lang: str =
         seed_concepts(connection)
         connection.execute(
             """INSERT INTO patients(id, owner_user_id, display_name, date_of_birth, sex_at_birth, created_at)
-               VALUES (?, ?, 'Test Patient', '1992-02-19', 'male', ?)""", (patient_id, user_id, utc_now()))
+               VALUES (?, ?, 'Test Patient', '1988-03-17', 'male', ?)""", (patient_id, user_id, utc_now()))
         if with_results:
             vendor_id = ensure_vendor(connection, "Esculab", None)
             source = sources / "doc.pdf"

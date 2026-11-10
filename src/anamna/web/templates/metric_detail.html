@@ -3,6 +3,7 @@
         verdict_details, trend_chip, micro_mark, empty_state, plural_t with context %}
 {% from "_correlation.html" import correlation_block with context %}
 {% from "_experience.html" import period_stats, metric_about with context %}
+{% from "_factors.html" import factor_key with context %}
 {% block title %}{{ concept_name if concept_name else concept.canonical_name|conceptfmt }} · {{ t('brand.name') }}{% endblock %}
 {% block content %}
 <link rel="stylesheet" href="{{ asset('patient-experience.css') }}">
@@ -94,6 +95,7 @@
   </ul>
   {% endif %}
   {{ period_stats() }}
+  {{ factor_key(factor_periods, 'metric') }}
   {% elif chart_points %}
   {#- One numeric result: a value, not yet a trend. Saying "no numeric trend"
       over a number reads as though the number were missing. -#}
@@ -110,7 +112,11 @@
     <span>{{ plural_t('metric.timeline', values|length) }}</span>
   </div>
   {% if mixed_sources %}<p class="an-twin-note">{{ t('twin.history_note') }}</p>{% endif %}
-  <div class="table-wrap table-wrap--stack">
+  {% if fasting_applies %}
+  <p class="muted">{{ t('glucose.assumed_fasting') }}</p>
+  {% if sample_saved %}<p class="alert" role="status">{{ t('glucose.saved') }}</p>{% endif %}
+  {% endif %}
+  <div class="table-wrap table-wrap--stack" tabindex="0" role="region" aria-label="{{ t('metric.every_result') }}">
     <table>
       <thead>
         <tr>
@@ -119,6 +125,7 @@
           <th scope="col">{{ t('metric.th_comparison') }}</th>
           <th scope="col">{{ t('metric.th_provider') }}</th>
           <th scope="col">{{ t('metric.th_trust') }}</th>
+          {% if fasting_applies %}<th scope="col">{{ t('glucose.question') }}</th>{% endif %}
         </tr>
       </thead>
       <tbody>
@@ -163,6 +170,25 @@
             {% endif %}
           </td>
           <td data-label="{{ t('metric.th_trust') }}">{% if item.is_device %}<span class="status device_measurement">{{ t('device.measurement') }}</span>{% else %}<span class="status {{ item.verification_status }}">{{ item.verification_status|statusfmt }}</span>{% endif %}</td>
+          {% if fasting_applies %}
+          {#- A device day is not a stored sample, so it has nothing to ask. -#}
+          <td data-label="{{ t('glucose.question') }}">
+            {% if item.is_device %}
+            {% elif can_mark_fasting %}
+            <form action="/observations/{{ item.id }}/sample-condition" method="post" class="an-sample-form">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <select name="condition" aria-label="{{ t('glucose.question') }}">
+                <option value="">{{ t('glucose.answer_unknown') }}</option>
+                <option value="fasting"{{ ' selected' if item.sample_condition == 'fasting' else '' }}>{{ t('glucose.answer_fasting') }}</option>
+                <option value="not_fasting"{{ ' selected' if item.sample_condition == 'not_fasting' else '' }}>{{ t('glucose.answer_not_fasting') }}</option>
+              </select>
+              <button type="submit" class="link-button">{{ t('glucose.save') }}</button>
+            </form>
+            {% elif item.fasting_state == 'fasting' %}{{ t('glucose.confirmed_fasting') }}
+            {% elif item.fasting_state == 'not_fasting' %}{{ t('glucose.marked_not_fasting') }}
+            {% endif %}
+          </td>
+          {% endif %}
         </tr>
         {% endfor %}
       </tbody>
@@ -304,9 +330,9 @@
 </div>
 
 {% if chart_points|length > 1 %}
-<script type="application/json" id="chart-data">{{ chart_points|tojson }}</script>
-<script type="application/json" id="chart-band">{{ (chart_band or none)|tojson }}</script>
-<script>
+<script type="application/json" nonce="{{ csp_nonce }}" id="chart-data">{{ chart_points|tojson }}</script>
+<script type="application/json" nonce="{{ csp_nonce }}" id="chart-band">{{ (chart_band or none)|tojson }}</script>
+<script nonce="{{ csp_nonce }}">
 (() => {
   const C = globalThis.AnamnaChart;
   const esc = globalThis.AnamnaExperience.escape;
@@ -318,6 +344,9 @@
   const i18n = globalThis.__HL_I18N__ || {};
   let range = 'all';
   let placed = [];
+  // Medicines and other entries of the person, drawn under the time axis.
+  const F = C.factorSource('metric');
+  const stamp = point => C.asDate(point.date).getTime();
   // Documents and device days on one axis: a clinic reading is drawn as a
   // square and never averaged away; device days thin per line, as before.
   const mixed = allPoints.some(point => point.source === 'device');
@@ -362,11 +391,14 @@
   const pointWhen = (point, grouped) => (grouped
     ? C.text('chart.averaged_point', {count: point.hlGroup, from: C.fullDate(C.asDate(point.hlFrom)), to: C.fullDate(C.asDate(point.hlTo))})
     : C.fullDate(C.asDate(point.date), String(point.date).includes('T')));
-  const pointNode = (point, grouped, when, shown) => {
-    if (grouped) return C.el('g', {tabindex: '0', role: 'img', 'aria-label': `${when}, ${shown} ${point.unit}`});
+  // Only the newest point takes a tab stop: every point is in the table below,
+  // and a stop per point would make the chart a long run of Tab presses.
+  const pointNode = (point, grouped, when, shown, focusable) => {
+    const tab = focusable ? '0' : '-1';
+    if (grouped) return C.el('g', {tabindex: tab, role: 'img', 'aria-label': `${when}, ${shown} ${point.unit}`});
     const verdict = point.verdict_label || point.status_label;
     const source = mixed && point.source_text ? `${point.source_text}, ` : '';
-    return C.el('a', {href: point.document_url, tabindex: '0', 'aria-label': `${when}, ${shown} ${point.unit}, ${source}${point.vendor}, ${verdict}`});
+    return C.el('a', {href: point.document_url, tabindex: tab, 'aria-label': `${when}, ${shown} ${point.unit}, ${source}${point.vendor}, ${verdict}`});
   };
   const pointMarker = (point, grouped, x, y, radius) => {
     const state = grouped ? 'none' : (point.state || 'none');
@@ -448,6 +480,11 @@
     });
   };
 
+  const factorsNow = () => {
+    const source = filterPoints();
+    return source.length ? C.factorsIn(F.list(), stamp(source[0]), stamp(source.at(-1))) : [];
+  };
+
   const draw = (W, H) => {
     const source = filterPoints();
     // The period's figures describe this measurement, never a reading taken
@@ -458,7 +495,8 @@
     const integral = source.every(point => Number.isInteger(Number(point.value)));
     const bound = side => (band?.[side] ?? null) === null ? null : Number(band[side]);
     const bandLow = bound('low'), bandHigh = bound('high');
-    const left0 = 12, right = 16, top = 26, bottom = 30;
+    const factors = factorsNow(), room = C.factorRoom(factors.length);
+    const left0 = 12, right = 16, top = 26, bottom = 30 + room;
     const plot0 = Math.max(40, W - left0 - right);
     const points = thinPoints(source, C.capacity(plot0));
     const averaged = points.length < source.length;
@@ -486,6 +524,14 @@
     const unit = C.el('text', {x: 4, y: 12, class: 'chart-axis-label chart-axis-unit', 'text-anchor': 'start'});
     unit.textContent = points[0].unit || ''; svg.append(unit);
 
+    if (room) {
+      const overflow = C.factorLanes(svg, factors, {
+        xOf: C.timeX(points.map(stamp), points.map((_, index) => xAt(index))),
+        from: stamp(source[0]), to: stamp(source.at(-1)), left, right: W - right,
+        plotTop: top, plotBottom: H - bottom, lanes: H - room + 2, more: F.more,
+      });
+      if (overflow) notes.push(overflow);
+    }
     drawTrend({points, T, xAt, yAt, H, bottom});
     if (T.breaks.length) notes.push(C.text('chart.axis_compressed'));
 
@@ -498,7 +544,7 @@
       const grouped = point.hlGroup > 1;
       const when = pointWhen(point, grouped);
       const shown = grouped ? C.num(point.value, 2) : (point.value_text || C.num(point.value, 4));
-      const node = pointNode(point, grouped, when, shown);
+      const node = pointNode(point, grouped, when, shown, index === points.length - 1);
       // 44 px target around a 12 px dot; the svg-level handler below also
       // picks the nearest point for a tap that lands between targets.
       node.append(C.el('circle', {cx: x, cy: y, r: 22, class: 'chart-hit'}));
@@ -517,7 +563,7 @@
     C.xLabels(points, stops, format).forEach((text, order) => {
       if (!text) return;
       const label = C.el('text', {
-        x: xAt(stops[order]), y: H - 9, class: 'chart-date-label',
+        x: xAt(stops[order]), y: H - 9 - room, class: 'chart-date-label',
         'text-anchor': anchorFor(order, stops.length - 1),
       });
       label.textContent = text; svg.append(label);
@@ -548,7 +594,8 @@
   const size = width => width < 560
     ? Math.max(220, Math.round(globalThis.innerWidth * 0.6))
     : Math.min(Math.round(width * 0.8), Math.max(320, Math.round(globalThis.innerHeight * 0.5)));
-  const repaint = C.responsive(svg, host, draw, size);
+  const repaint = C.responsive(svg, host, draw, size, () => C.factorRoom(factorsNow().length));
+  F.onToggle(repaint);
   document.querySelectorAll('[data-range]').forEach(button => button.addEventListener('click', () => {
     document.querySelectorAll('[data-range]').forEach(item => item.classList.remove('active'));
     button.classList.add('active'); range = button.dataset.range; tooltip.hidden = true; repaint();

@@ -16,6 +16,12 @@ from anamna.db import connect, migrate
 from anamna.ingest.pipeline import seed_concepts
 from anamna.reference import LIBRARY_PATH, evaluate
 
+# Sex-neutral groups that legitimately end at an edge: the platelet thresholds
+# below 100 (NICE NG24, ASH transfusion and ITP) are recorded once with no sex,
+# while the interval above 100 exists only per sex (Nordic NORIP), so the
+# sex-neutral group stops at 100 by design.  Only that edge is exempt.
+OPEN_ENDED_GROUPS = {("platelet-count", "any"): 100}
+
 LIBRARY = json.loads(Path(LIBRARY_PATH).read_text(encoding="utf-8"))
 SOURCES = {source["id"]: source for source in LIBRARY["sources"]}
 ANALYTES = {entry["concept_id"]: entry for entry in LIBRARY["analytes"]}
@@ -270,6 +276,9 @@ def test_no_new_holes_between_bands():
             edges = sorted({x for b in bands for x in (b["lower"], b["upper"]) if x is not None})
             probes = set(edges) | {(a + b) / 2 for a, b in zip(edges, edges[1:])}
             holes = [p for p in sorted(probes) if not covered(bands, p)]
+            open_edge = OPEN_ENDED_GROUPS.get((concept_id, key[0]))
+            if open_edge is not None and open_edge in holes:
+                holes.remove(open_edge)
             assert not holes, (concept_id, key, holes)
 
 

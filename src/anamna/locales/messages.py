@@ -129,8 +129,38 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
     "login.error": {"en": "Invalid email or password", "uk": "Неправильна адреса пошти або пароль"},
     "login.error_throttled": {
-        "en": "Too many failed sign-in attempts from this address. Wait 15 minutes and try again.",
-        "uk": "Забагато невдалих спроб входу з цієї адреси. Зачекайте 15 хвилин і спробуйте ще раз.",
+        "en": "Too many failed sign-in attempts from this network. Try again in {minutes}. An administrator can release this sooner on the Users page.",
+        "uk": "Забагато невдалих спроб входу з цієї мережі. Спробуйте знову через {minutes}. Адміністратор може зняти паузу раніше на сторінці «Користувачі».",
+    },
+    "login.error_throttled_account": {"en": "Too many failed attempts for this account. Try again in {minutes}, or sign in from a browser you have already used for this account, which is not affected. An administrator can release this sooner.", "uk": "Забагато невдалих спроб для цього облікового запису. Спробуйте знову через {minutes} або увійдіть із браузера, яким ви вже користувалися для цього запису, його пауза не стосується. Адміністратор може зняти паузу раніше."},
+    "login.error_throttled_device": {"en": "Too many wrong passwords from this browser. Try again in {minutes}. If the password is forgotten, an administrator can set a new one.", "uk": "Забагато неправильних паролів із цього браузера. Спробуйте знову через {minutes}. Якщо пароль забуто, адміністратор може встановити новий."},
+    "auth.error_cross_site": {
+        "en": "This form can only be submitted from this site.",
+        "uk": "Цю форму можна надіслати лише з цього сайту.",
+    },
+    "auth.account_deleted": {"en": "Your account and its data were deleted.", "uk": "Ваш обліковий запис і його дані видалено."},
+    "error.title": {"en": "This page cannot be shown", "uk": "Цю сторінку не вдається показати"},
+    "error.400": {
+        "en": "The request could not be understood. Go back and try again.",
+        "uk": "Запит не вдалося опрацювати. Поверніться назад і спробуйте ще раз.",
+    },
+    "error.403": {"en": "You do not have access to this page.", "uk": "У вас немає доступу до цієї сторінки."},
+    "error.404": {
+        "en": "This page was not found. Check the address or go back to the overview.",
+        "uk": "Сторінку не знайдено. Перевірте адресу або поверніться до огляду.",
+    },
+    "error.413": {"en": "The file is too large.", "uk": "Файл завеликий."},
+    "error.429": {
+        "en": "Too many requests. Wait a few minutes and try again.",
+        "uk": "Забагато запитів. Зачекайте кілька хвилин і спробуйте ще раз.",
+    },
+    "error.other": {"en": "The request could not be completed (error {status}).", "uk": "Запит не вдалося виконати (помилка {status})."},
+    "error.home": {"en": "Back to the overview", "uk": "Повернутися до огляду"},
+    "token.error_throttled": {"en": "Too many links that did not work were opened from this network. Try again in {minutes}, or ask for a fresh link.", "uk": "З цієї мережі відкрито забагато посилань, які не спрацювали. Спробуйте знову через {minutes} або попросіть нове посилання."},
+    "register.error_throttled": {"en": "Too many sign-ups from this network. Try again in {minutes}.", "uk": "Забагато реєстрацій із цієї мережі. Спробуйте знову через {minutes}."},
+    "profile.error_password_throttled": {
+        "en": "Too many wrong passwords. Try again in {minutes}. An administrator can release this sooner.",
+        "uk": "Забагато неправильних паролів. Спробуйте знову через {minutes}. Адміністратор може зняти паузу раніше.",
     },
     "login.register_prompt": {"en": "New here?", "uk": "Вперше тут?"},
     "login.register_link": {"en": "Create an account", "uk": "Створити обліковий запис"},
@@ -222,8 +252,8 @@ MESSAGES: dict[str, dict[str, str]] = {
         "uk": "Код налаштування не збігається. Скопіюйте його ще раз і повторіть спробу.",
     },
     "setup.error_throttled": {
-        "en": "Too many wrong setup codes. Wait {minutes}, then try again.",
-        "uk": "Забагато неправильних кодів налаштування. Зачекайте {minutes} і спробуйте ще раз.",
+        "en": "Too many wrong setup codes. Try again in {minutes}. Restarting the server also clears the pause.",
+        "uk": "Забагато неправильних кодів налаштування. Спробуйте знову через {minutes}. Перезапуск сервера також знімає паузу.",
     },
     "setup.error_taken": {
         "en": "This server was set up a moment ago from another browser. Sign in with that account, or ask its administrator for one.",
@@ -233,6 +263,10 @@ MESSAGES: dict[str, dict[str, str]] = {
     # Administration — accounts on this server
     "nav.admin": {"en": "People", "uk": "Користувачі"},
     "admin.title": {"en": "People · Anamna", "uk": "Користувачі · Anamna"},
+    "nav.administration": {"en": "Administration", "uk": "Адміністрування"},
+    "admin.tabs_label": {"en": "Administration sections", "uk": "Розділи адміністрування"},
+    "admin.tab_telegram": {"en": "Telegram", "uk": "Telegram"},
+    "admin.tab_labs": {"en": "Labs", "uk": "Лабораторії"},
     "admin.eyebrow": {"en": "Administration", "uk": "Адміністрування"},
     "admin.heading": {"en": "People on this server", "uk": "Користувачі цього сервера"},
     "admin.lead": {
@@ -405,6 +439,25 @@ MESSAGES: dict[str, dict[str, str]] = {
               "have nobody able to manage accounts.",
         "uk": "Це єдиний адміністратор. Спершу призначте адміністратором когось іншого, інакше на сервері не залишиться нікого, хто може керувати обліковими записами.",
     },
+    "admin.done_released": {"en": "The pause is released.", "uk": "Паузу знято."},
+    "admin.paused_heading": {"en": "Paused sign-ins and codes", "uk": "Призупинені входи та коди"},
+    "admin.paused_intro": {"en": "After too many wrong attempts the application pauses that sign-in, code or link for up to 15 minutes. A pause ends on its own. Release it here when the person should not have to wait. Restarting the server clears every pause.", "uk": "Після надто багатьох невдалих спроб застосунок призупиняє цей вхід, код або посилання щонайбільше на 15 хвилин. Пауза закінчується сама. Зніміть її тут, якщо людині не варто чекати. Перезапуск сервера знімає всі паузи."},
+    "admin.paused_none": {"en": "Nothing is paused right now.", "uk": "Зараз нічого не призупинено."},
+    "admin.paused_col_what": {"en": "What is paused", "uk": "Що призупинено"},
+    "admin.paused_col_wait": {"en": "Ends on its own in", "uk": "Закінчиться сама через"},
+    "admin.paused_release": {"en": "Release", "uk": "Зняти паузу"},
+    "admin.paused_release_all": {"en": "Release all", "uk": "Зняти всі паузи"},
+    "admin.paused_login": {"en": "Sign-in to the account {subject}", "uk": "Вхід до облікового запису {subject}"},
+    "admin.paused_login_ip": {"en": "Sign-in from the address {subject}", "uk": "Вхід з адреси {subject}"},
+    "admin.paused_login_dev": {"en": "Sign-in to {subject} from one of its own browsers", "uk": "Вхід до {subject} з одного з його браузерів"},
+    "admin.paused_token": {"en": "Guest links opened from the address {subject}", "uk": "Гостьові посилання, відкриті з адреси {subject}"},
+    "admin.paused_doctor": {"en": "Doctor codes entered from the address {subject}", "uk": "Коди для лікаря, введені з адреси {subject}"},
+    "admin.paused_doctor_all": {"en": "Doctor codes, for everyone", "uk": "Коди для лікаря, для всіх"},
+    "admin.paused_setup": {"en": "Setup codes from the address {subject}", "uk": "Коди налаштування з адреси {subject}"},
+    "admin.paused_register": {"en": "Sign-ups from the address {subject}", "uk": "Реєстрації з адреси {subject}"},
+    "admin.paused_pwchange": {"en": "Password check on the profile of {subject}", "uk": "Перевірка пароля у профілі {subject}"},
+    "admin.paused_webhook": {"en": "Device webhooks: {subject}", "uk": "Вебхуки пристроїв: {subject}"},
+    "admin.paused_other": {"en": "Other: {subject}", "uk": "Інше: {subject}"},
     "admin.done_added": {"en": "Account created", "uk": "Обліковий запис створено"},
     "admin.done_blocked": {"en": "Account blocked", "uk": "Обліковий запис заблоковано"},
     "admin.done_unblocked": {"en": "Account unblocked", "uk": "Обліковий запис розблоковано"},
@@ -472,6 +525,36 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Password must contain at least 10 characters",
         "uk": "Пароль має містити щонайменше 10 символів",
     },
+    "profile.email_heading": {"en": "Sign-in email", "uk": "Електронна адреса для входу"},
+    "profile.email_new": {"en": "New email", "uk": "Нова адреса"},
+    "profile.email_button": {"en": "Change email", "uk": "Змінити адресу"},
+    "profile.email_saved": {"en": "Sign-in email changed.", "uk": "Адресу для входу змінено."},
+    "profile.error_email_taken": {"en": "Another account already uses this email.", "uk": "Цю адресу вже використовує інший обліковий запис."},
+    "profile.error_email_invalid": {"en": "Enter a valid email address.", "uk": "Введіть правильну електронну адресу."},
+    "profile.error_email_password": {"en": "The password is not correct. The email was not changed.", "uk": "Пароль неправильний. Адресу не змінено."},
+    "profile.export_heading": {"en": "Download my data", "uk": "Завантажити мої дані"},
+    "profile.export_lead": {
+        "en": "A ZIP archive with every original file you uploaded and your results, vaccinations and device data as CSV tables.",
+        "uk": "ZIP-архів з усіма оригінальними файлами, які ви завантажили, а також результатами, щепленнями й даними пристроїв у таблицях CSV.",
+    },
+    "profile.export_button": {"en": "Download ZIP", "uk": "Завантажити ZIP"},
+    "profile.delete_heading": {"en": "Delete my account", "uk": "Видалити мій обліковий запис"},
+    "profile.delete_lead": {
+        "en": "This deletes your account, your record, every uploaded file and every connection to laboratories and devices on this server. It cannot be undone. Download your data first if you want to keep it.",
+        "uk": "Це видалить ваш обліковий запис, картку, усі завантажені файли й усі підключення до лабораторій і пристроїв на цьому сервері. Скасувати це неможливо. Якщо хочете зберегти дані, спершу завантажте їх.",
+    },
+    "profile.delete_password": {"en": "Your password", "uk": "Ваш пароль"},
+    "profile.delete_confirm_email": {"en": "Type your email to confirm", "uk": "Щоб підтвердити, введіть свою електронну адресу"},
+    "profile.delete_button": {"en": "Delete my account and all my data", "uk": "Видалити мій обліковий запис і всі дані"},
+    "profile.error_delete_password": {"en": "The password is not correct. Nothing was deleted.", "uk": "Пароль неправильний. Нічого не видалено."},
+    "profile.error_delete_email": {
+        "en": "The email does not match your account. Nothing was deleted.",
+        "uk": "Адреса не збігається з вашим обліковим записом. Нічого не видалено.",
+    },
+    "profile.error_delete_last_admin": {
+        "en": "You are the only administrator. Make another account an administrator first, then delete this one.",
+        "uk": "Ви єдиний адміністратор. Спершу надайте права адміністратора іншому обліковому запису, а потім видаляйте цей.",
+    },
     "profile.sessions_heading": {"en": "Where you are signed in", "uk": "Активні сеанси"},
     "profile.sessions_lead": {
         "en": "Every browser that holds this account right now. Sign out any you do not recognise. "
@@ -536,20 +619,29 @@ MESSAGES: dict[str, dict[str, str]] = {
     "profile.sharing_eyebrow": {"en": "Access", "uk": "Доступ"},
     "profile.sharing_heading": {"en": "Who can view my record", "uk": "Хто може переглядати мою картку"},
     "profile.sharing_lead": {
-        "en": "People on this list can open your record read-only after signing in with their own account.",
-        "uk": "Люди з цього списку бачать вашу картку без права змін, коли входять у свій обліковий запис.",
+        "en": "Give another account on this server access to your record. Read only lets them see everything you see. Full access also lets them ask the assistant about your record and order laboratory tests for you through your laboratory account. They can never change your record.",
+        "uk": "Надайте іншому обліковому запису на цьому сервері доступ до вашої картки. «Лише перегляд» дає змогу бачити все, що бачите ви. «Повний доступ» додатково дозволяє ставити помічникові запитання про вашу картку й замовляти для вас аналізи через ваш обліковий запис лабораторії. Змінювати вашу картку вони не можуть ніколи.",
     },
     "profile.shares_empty": {
         "en": "No one else can view your record.",
         "uk": "Ніхто інший не може переглядати вашу картку.",
     },
     "profile.share_email": {"en": "Email to allow", "uk": "Ел. пошта людини"},
-    "profile.share_add": {"en": "Allow viewing", "uk": "Дозволити перегляд"},
+    "profile.share_add": {"en": "Share", "uk": "Надати доступ"},
     "profile.share_remove": {"en": "Remove", "uk": "Закрити доступ"},
+    "profile.share_level": {"en": "Access", "uk": "Доступ"},
+    "profile.share_level_read": {"en": "Read only", "uk": "Лише перегляд"},
+    "profile.share_level_full": {"en": "Full access", "uk": "Повний доступ"},
+    "profile.share_level_change": {"en": "Change access", "uk": "Змінити доступ"},
+    "profile.share_level_saved": {"en": "Access changed.", "uk": "Доступ змінено."},
     "profile.error_share_email": {"en": "Enter a valid email", "uk": "Введіть правильну адресу ел. пошти"},
     "profile.error_share_self": {
         "en": "You already have access to your own record",
         "uk": "Це ваша картка, доступ до неї у вас уже є",
+    },
+    "profile.error_share_unknown": {
+        "en": "No account here uses that address. The person needs an account on this server first; ask the administrator to add them, then share again.",
+        "uk": "На цьому сервері немає облікового запису з такою адресою. Спершу людині потрібен обліковий запис: попросіть адміністратора додати її, а потім поділіться ще раз.",
     },
     "profile.shared_with_me_eyebrow": {"en": "Shared with me", "uk": "Доступні мені"},
     "profile.shared_with_me_heading": {"en": "Records shared with me", "uk": "Картки, до яких мені надали доступ"},
@@ -562,6 +654,10 @@ MESSAGES: dict[str, dict[str, str]] = {
     "viewing.banner": {
         "en": "Viewing {name}'s record (read-only)",
         "uk": "Ви переглядаєте картку: {name} (лише перегляд)",
+    },
+    "viewing.banner_full": {
+        "en": "Viewing {name}'s record (full access: you can ask the assistant and order tests for them, but not change the record)",
+        "uk": "Ви переглядаєте картку: {name} (повний доступ: можна ставити запитання помічникові й замовляти аналізи, але не змінювати картку)",
     },
     "viewing.back": {"en": "Return to my record", "uk": "Повернутися до моєї картки"},
 
@@ -647,8 +743,8 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
     "profile.activity_level": {"en": "Activity level", "uk": "Рівень активності"},
     "profile.activity_level_hint": {
-        "en": "Bands follow the WHO Guidelines on physical activity and sedentary behaviour (2020), which set 150-300 minutes of moderate activity a week for adults. Training raises creatine kinase, haematocrit and resting heart rate in ways that look abnormal without this context.",
-        "uk": "Рівні відповідають настановам ВООЗ щодо фізичної активності та малорухливої поведінки (2020): дорослим рекомендовано 150-300 хвилин помірної активності на тиждень. Тренування підвищують креатинкіназу й гематокрит і змінюють пульс у спокої так, що без цього контексту результати схожі на відхилення.",
+        "en": "Bands follow the WHO Guidelines on physical activity and sedentary behaviour (2020), which set 150-300 minutes of moderate activity a week for adults. Training raises creatine kinase, lowers resting heart rate and can shift haemoglobin and haematocrit, so results can look abnormal without this context.",
+        "uk": "Рівні відповідають настановам ВООЗ щодо фізичної активності та малорухливої поведінки (2020): дорослим рекомендовано 150-300 хвилин помірної активності на тиждень. Тренування підвищують креатинкіназу, знижують пульс у спокої й можуть змінювати гемоглобін та гематокрит, тож без цього контексту результати можуть виглядати як відхилення.",
     },
     "profile.activity_level_sedentary": {"en": "Sedentary: little or no exercise", "uk": "Сидячий: майже без навантажень"},
     "profile.activity_level_light": {"en": "Light: occasional walking or light exercise", "uk": "Легкий: часом ходьба або легкі вправи"},
@@ -668,16 +764,16 @@ MESSAGES: dict[str, dict[str, str]] = {
     "profile.skin_type_VI": {"en": "VI: never burns, deeply pigmented", "uk": "VI: ніколи не обгорає, шкіра темно пігментована"},
     "profile.smoking_status": {"en": "Smoking", "uk": "Куріння"},
     "profile.smoking_status_hint": {
-        "en": "The never / former / current categories used by WHO and the US CDC. Smoking shifts the reference range for haemoglobin, white cells and CRP, and it is the single strongest modifier of cardiovascular risk scores.",
-        "uk": "Категорії «ніколи / раніше / зараз», якими користуються ВООЗ і CDC (США). Куріння зміщує референтний інтервал гемоглобіну, лейкоцитів і СРБ і з усіх окремих чинників найсильніше впливає на шкали серцево-судинного ризику.",
+        "en": "The never / former / current categories used by WHO and the US CDC. Smoking shifts the reference range for haemoglobin, white cells and CRP, and it is one of the strongest modifiable contributors to cardiovascular risk.",
+        "uk": "Категорії «ніколи / раніше / зараз», якими користуються ВООЗ і CDC (США). Куріння зміщує референтний інтервал гемоглобіну, лейкоцитів і СРБ і є одним із найсильніших чинників серцево-судинного ризику, на які можна вплинути.",
     },
     "profile.smoking_status_never": {"en": "Never smoked", "uk": "Ніколи не курив(-ла)"},
     "profile.smoking_status_former": {"en": "Former smoker", "uk": "Курив(-ла) раніше"},
     "profile.smoking_status_current": {"en": "Currently smokes", "uk": "Курю зараз"},
     "profile.alcohol_use": {"en": "Alcohol", "uk": "Алкоголь"},
     "profile.alcohol_use_hint": {
-        "en": "Bands follow the WHO drinking-risk categories. Alcohol raises GGT, MCV and triglycerides directly, so a result read without it can send someone to a liver clinic for a Friday night.",
-        "uk": "Рівні відповідають категоріям ризику вживання алкоголю за ВООЗ. Алкоголь напряму підвищує ГГТ, MCV і тригліцериди, тож без цього контексту через один п’ятничний вечір людину можуть відправити до гепатолога.",
+        "en": "Bands follow the WHO drinking-risk categories. Alcohol raises GGT (gamma-glutamyl transferase), MCV (mean red-cell volume) and triglycerides directly, so a result read without it can look like liver disease.",
+        "uk": "Рівні відповідають категоріям ризику вживання алкоголю за ВООЗ. Алкоголь напряму підвищує ГГТ (гамма-глутамілтрансферазу), MCV (середній об’єм еритроцита) і тригліцериди, тож без цього контексту результат може скидатися на хворобу печінки.",
     },
     "profile.alcohol_use_none": {"en": "None", "uk": "Не вживаю"},
     "profile.alcohol_use_occasional": {"en": "Occasional: a few times a month", "uk": "Зрідка: кілька разів на місяць"},
@@ -687,13 +783,18 @@ MESSAGES: dict[str, dict[str, str]] = {
     # and ApoB goals are defined per category; without one they never judge.
     "profile.cv_risk_category": {"en": "Cardiovascular risk category", "uk": "Категорія серцево-судинного ризику"},
     "profile.cv_risk_category_hint": {
-        "en": "As assessed by your doctor (SCORE2 in Europe, PREVENT in the US). Leave blank if unknown.",
-        "uk": "Як оцінив ваш лікар (SCORE2 у Європі, PREVENT у США). Якщо не знаєте, залиште порожнім.",
+        "en": "As assessed by your doctor (SCORE2, the European Systematic Coronary Risk Estimation 2, or PREVENT, the American Heart Association's risk equations). Leave blank if unknown.",
+        "uk": "Як оцінив ваш лікар (SCORE2, європейська шкала Systematic Coronary Risk Estimation 2, або PREVENT, рівняння ризику Американської асоціації серця). Якщо не знаєте, залиште порожнім.",
     },
     "profile.cv_risk_category_low": {"en": "Low", "uk": "Низький"},
     "profile.cv_risk_category_moderate": {"en": "Moderate", "uk": "Помірний"},
     "profile.cv_risk_category_high": {"en": "High", "uk": "Високий"},
     "profile.cv_risk_category_very_high": {"en": "Very high", "uk": "Дуже високий"},
+    "profile.pregnancy_due_date": {"en": "Expected due date (if pregnant)", "uk": "Очікувана дата пологів (якщо ви вагітні)"},
+    "profile.pregnancy_due_date_hint": {
+        "en": "Results taken during a recorded pregnancy are not judged against intervals written for people who are not pregnant. Clear the date to remove it.",
+        "uk": "Результати, отримані під час зазначеної вагітності, не оцінюються за інтервалами для невагітних. Щоб прибрати її, очистьте дату.",
+    },
 
     # Access credentials
     "nav.admin_tokens": {"en": "Access credentials", "uk": "Ключі доступу"},
@@ -836,8 +937,8 @@ MESSAGES: dict[str, dict[str, str]] = {
         "uk": "Код не підійшов. Перевірте з пацієнтом усі 6 цифр. Код діє лише один раз і лише {minutes}; якщо час минув, попросіть пацієнта створити новий.",
     },
     "doctor.error_throttled": {
-        "en": "Too many incorrect codes were entered, so codes are paused for safety. Wait {minutes}, then try again with a fresh code from the patient.",
-        "uk": "Забагато неправильних спроб, тому з міркувань безпеки введення кодів тимчасово призупинено. Зачекайте {minutes} і спробуйте ще раз із новим кодом від пацієнта.",
+        "en": "Too many wrong codes, so code entry is paused. Try again in {minutes} with a fresh code from the patient. If you cannot wait, ask the patient to share a link instead of a code.",
+        "uk": "Забагато неправильних кодів, тому введення кодів призупинено. Спробуйте знову через {minutes} зі свіжим кодом від пацієнта. Якщо чекати не можна, попросіть пацієнта поділитися посиланням замість коду.",
     },
     "doctor.patient_hint": {
         "en": "Are you the patient? Sign in and open Profile, then Sharing, to create a code.",
@@ -924,8 +1025,6 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Choose the record it opens first: a credential is bound to one account and cannot be moved to another.",
         "uk": "Спершу оберіть картку, яку він відкриває: ключ прив’язаний до одного облікового запису й не переноситься на інший.",
     },
-    "token.admin_link": {"en": "Manage access credentials", "uk": "Керувати ключами доступу"},
-    "token.back_to_people": {"en": "Back to accounts", "uk": "Назад до облікових записів"},
     "token.list_count": {"en": "{count} credentials", "uk": "Ключів: {count}"},
     "token.list_count_one": {"en": "{count} credential", "uk": "{count} ключ"},
     "token.list_count_few": {"en": "{count} credentials", "uk": "{count} ключі"},
@@ -1009,6 +1108,33 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
     "dashboard.device_through": {"en": "Devices through {date}", "uk": "Дані з пристроїв до {date}"},
     "dashboard.medical_through": {"en": "Medical results through {date}", "uk": "Медичні результати до {date}"},
+    "dashboard.welcome_heading": {"en": "Your record is empty", "uk": "Ваша картка ще порожня"},
+    "dashboard.welcome_lead": {
+        "en": "Anamna reads results out of your medical documents and device exports, shows each one beside its history and a cited reference range, and keeps the original page next to every value so you can check it.",
+        "uk": "Anamna зчитує результати з ваших медичних документів і експортів із пристроїв, показує кожен поруч з історією та референтним діапазоном із посиланням на джерело і зберігає сторінку оригіналу біля кожного значення, щоб ви могли його звірити.",
+    },
+    "dashboard.welcome_upload": {"en": "Add documents or a device export", "uk": "Додати документи або експорт із пристрою"},
+    "dashboard.welcome_upload_hint": {
+        "en": "PDF files, photos and scans of lab reports, or an Apple Health, Garmin or Oura export.",
+        "uk": "PDF-файли, фото й скани результатів аналізів або експорт з Apple Health, Garmin чи Oura.",
+    },
+    "dashboard.welcome_connect": {"en": "Connect a lab account or a wearable", "uk": "Під’єднати кабінет лабораторії або пристрій"},
+    "dashboard.welcome_connect_hint": {
+        "en": "Results and readings then arrive on their own.",
+        "uk": "Тоді результати й показники надходитимуть самі.",
+    },
+    "dashboard.welcome_connect_admin": {
+        "en": "Lab accounts and wearables appear there once you turn them on under Administration.",
+        "uk": "Кабінети лабораторій і пристрої з’являться там, щойно ви ввімкнете їх у розділі «Адміністрування».",
+    },
+    "dashboard.welcome_profile": {
+        "en": "Check your date of birth and sex at birth",
+        "uk": "Перевірити дату народження і стать при народженні",
+    },
+    "dashboard.welcome_profile_hint": {
+        "en": "Many reference ranges depend on them.",
+        "uk": "Від них залежать багато референтних діапазонів.",
+    },
     "dashboard.snapshot_empty": {"en": "No structured measurements yet", "uk": "Структурованих вимірювань ще немає"},
     "dashboard.coverage_short": {"en": "{covered}/{total} health areas", "uk": "{covered}/{total} сфер здоров’я"},
     "dashboard.flags_short": {"en": "{count} areas to review", "uk": "{count} сфер до перегляду"},
@@ -1144,16 +1270,16 @@ MESSAGES: dict[str, dict[str, str]] = {
         "uk": "Зчитано з документа автоматично, людина ще не звірила.",
     },
     "finding.explain.colorectal_polyp": {
-        "en": "A polyp is a small growth on the lining of the bowel. Adenomas, serrated adenomas included, are polyps that can slowly turn into bowel cancer over many years, which is why removing them counts as cancer prevention. After removal, guidelines set the next colonoscopy by how many polyps there were, their size and type, and whether dysplasia (precancerous change in the cells) was found: from 3 years (a serrated polyp of 10 mm or more, one with dysplasia, or a traditional serrated adenoma) to 5-10 years or a return to routine screening (one or two small ones without dysplasia). The report asks for its result to be read with your clinical data. Ask your gastroenterologist which interval applies to you.",
-        "uk": "Поліп це невелике розростання на слизовій оболонці кишки. Аденоми, зокрема зубчасті, належать до поліпів, які впродовж багатьох років можуть повільно перетворитися на рак кишки, тому їх видалення вважають профілактикою раку. Після видалення строк наступної колоноскопії за настановами залежить від кількості, розміру й типу поліпів і від того, чи знайшли дисплазію (передракові зміни клітин): від 3 років (зубчастий поліп 10 мм і більше, поліп із дисплазією або традиційна зубчаста аденома) до 5-10 років або повернення до звичайного скринінгу (один-два невеликі поліпи без дисплазії). У висновку зазначено, що результат слід оцінювати разом із клінічними даними. Запитайте гастроентеролога, який інтервал підходить саме вам.",
+        "en": "A polyp is a small growth on the lining of the bowel. Adenomas, serrated adenomas included, are polyps that can slowly turn into bowel cancer over many years, which is why removing them counts as cancer prevention. After removal, guidelines set the next colonoscopy by how many polyps there were, their size and type, and whether dysplasia (precancerous change in the cells) was found: from 3 years (a serrated polyp of 10 mm or more, one with dysplasia, or a traditional serrated adenoma) to 7-10 years in the US, or a return to routine screening in Europe (one or two small adenomas without dysplasia). The report asks for its result to be read with your clinical data. Ask your gastroenterologist which interval applies to you.",
+        "uk": "Поліп це невелике розростання на слизовій оболонці кишки. Аденоми, зокрема зубчасті, належать до поліпів, які впродовж багатьох років можуть повільно перетворитися на рак кишки, тому їх видалення вважають профілактикою раку. Після видалення строк наступної колоноскопії за настановами залежить від кількості, розміру й типу поліпів і від того, чи знайшли дисплазію (передракові зміни клітин): від 3 років (зубчастий поліп 10 мм і більше, поліп із дисплазією або традиційна зубчаста аденома) до 7-10 років за настановою США або повернення до звичайного скринінгу за європейськими настановами (один-два невеликі аденоми без дисплазії). У висновку зазначено, що результат слід оцінювати разом із клінічними даними. Запитайте гастроентеролога, який інтервал підходить саме вам.",
     },
     "finding.explain.fatty_liver": {
         "en": "The ultrasound describes diffuse changes in the liver and/or pancreas. Where the report names their type, «стеатоз» or «гепатоз» means fat build-up in the liver, «ліпоматоз» means fat in the pancreas, and «гепатомегалія» means an enlarged liver. Fatty liver found on a scan is common and is mostly linked to weight, waist size, blood sugar and blood fats. Guidelines advise a follow-up risk check - liver blood tests and a liver-scarring score such as FIB-4 (Fibrosis-4 index) - and note that losing 3-5% of body weight reduces liver fat. Ultrasound can suggest fat in the pancreas but cannot measure it reliably.",
         "uk": "УЗД описує дифузні зміни печінки та/або підшлункової залози. Якщо у висновку названо їхній тип: «стеатоз» або «гепатоз» означає накопичення жиру в печінці, «ліпоматоз» означає жир у підшлунковій залозі, а «гепатомегалія» означає збільшену печінку. Жирова печінка на УЗД трапляється часто і здебільшого пов’язана з вагою, обводом талії, рівнем цукру та жирів у крові. Настанови радять надалі оцінити ризик: зробити печінкові проби й розрахувати індекс фіброзу печінки, наприклад FIB-4 (Fibrosis-4), і зазначають, що схуднення на 3-5% маси тіла зменшує вміст жиру в печінці. УЗД може вказати на жир у підшлунковій залозі, але надійно виміряти його не може.",
     },
     "finding.explain.cholestasis": {
-        "en": "On ultrasound, «холестаз» describes bile that is thickened or slow to drain (sludge) in the gallbladder or bile ducts. Sludge forms when bile stagnates, is often found by chance and does not by itself cause gallstones. Whether it matters is judged together with symptoms and liver blood tests: alkaline phosphatase (ALP), gamma-glutamyl transferase (GGT) and bilirubin.",
-        "uk": "На УЗД словом «холестаз» описують загуслу жовч або жовч, що погано відтікає (сладж), у жовчному міхурі чи жовчних протоках. Сладж утворюється, коли жовч застоюється; його часто виявляють випадково, і сам по собі він не спричиняє жовчних каменів. Чи має це значення, оцінюють разом із симптомами та печінковими пробами: лужною фосфатазою (ЛФ), гамма-глутамілтрансферазою (ГГТ) і білірубіном.",
+        "en": "On ultrasound, «холестаз» describes bile that is thickened or slow to drain (sludge) in the gallbladder or bile ducts. Sludge forms when bile stagnates and is often found by chance. It often disappears on its own, but it can also be a step towards gallstones, so it is followed up rather than ignored. Whether it matters is judged together with symptoms and liver blood tests: alkaline phosphatase (ALP), gamma-glutamyl transferase (GGT) and bilirubin.",
+        "uk": "На УЗД словом «холестаз» описують загуслу жовч або жовч, що погано відтікає (сладж), у жовчному міхурі чи жовчних протоках. Сладж утворюється, коли жовч застоюється, і його часто виявляють випадково. Він нерідко зникає сам, але може бути етапом до утворення жовчних каменів, тому за ним стежать. Чи має це значення, оцінюють разом із симптомами та печінковими пробами: лужною фосфатазою (ЛФ), гамма-глутамілтрансферазою (ГГТ) і білірубіном.",
     },
     "finding.explain.thyroid_nodule": {
         "en": "Thyroid nodules are lumps inside the thyroid gland. They are common and usually not cancerous; colloid nodules are a benign type. TI-RADS (Thyroid Imaging Reporting and Data System) scores how suspicious a nodule looks on ultrasound: categories 1-2 look benign and need no needle biopsy, while higher categories may need one depending on size. A repeat ultrasound, as this report recommends, checks that nothing changes. See a doctor sooner if a lump grows quickly or you notice hoarseness or trouble swallowing or breathing.",
@@ -2195,6 +2321,18 @@ MESSAGES: dict[str, dict[str, str]] = {
     "review.narrative": {
         "en": "Review the narrative or visual report; no structured scalar observation was inferred automatically.",
         "uk": "Перегляньте текстовий або візуальний висновок: окремих числових значень програма автоматично не виділила.",
+    },
+    "review.no_date": {
+        "en": "No date was found on this document, so its results have no date. Add the date from the original.",
+        "uk": "У документі не знайдено дати, тож його результати не мають дати. Додайте дату з оригіналу.",
+    },
+    "review.person_mismatch": {
+        "en": "The date of birth printed on this document is not the one in your profile. Check that the document is yours before relying on its results.",
+        "uk": "Дата народження в цьому документі не збігається з датою у вашому профілі. Перш ніж покладатися на результати, перевірте, що документ ваш.",
+    },
+    "review.lab_rows_changed": {
+        "en": "The laboratory changed this order's values after the report was imported. Download the current report from the laboratory and upload it, then compare the values.",
+        "uk": "Лабораторія змінила значення в цьому замовленні після того, як звіт було імпортовано. Завантажте з лабораторії актуальний звіт, додайте його сюди й порівняйте значення.",
     },
     # A re-read writes its own reason, and it carries a version and a count, so
     # the phrase table could never match it: 132 of 217 live tasks displayed an
@@ -3242,8 +3380,8 @@ MESSAGES: dict[str, dict[str, str]] = {
         "uk": "Референтні інтервали цього показника залежать від віку, а у вашому профілі немає дати народження, тому оцінку з урахуванням віку не показуємо.",
     },
     "verdict.blocked_clinical_context": {
-        "en": "This result is interpreted in clinical context, such as why the test was ordered, so no automatic judgement is shown.",
-        "uk": "Цей результат оцінюють з урахуванням клінічної ситуації, зокрема причини, з якої призначили аналіз, тому автоматичної оцінки тут немає.",
+        "en": "Some published targets for this test apply only in a specific clinical situation, such as a particular treatment or the reason the test was ordered, so they are not applied here. Where a verdict is shown, it comes from the laboratory's own range.",
+        "uk": "Деякі опубліковані цільові значення цього показника застосовують лише в певній клінічній ситуації, наприклад під час певного лікування чи залежно від причини призначення аналізу, тому тут їх не застосовано. Якщо оцінку показано, вона ґрунтується на діапазоні самої лабораторії.",
     },
     "verdict.blocked_cv_risk_category": {
         "en": "Goals for this test depend on your cardiovascular risk category, which your record does not hold, so no goal is applied and only population cut-points judge it. Set the category your doctor assigned in your profile.",
@@ -3276,6 +3414,26 @@ MESSAGES: dict[str, dict[str, str]] = {
         "uk": "Опубліковані референтні інтервали цього показника не охоплюють стать, вказану у вашому профілі, тому оцінку не показуємо.",
     },
     "verdict.blocked_profile_link": {"en": "Add it in your profile", "uk": "Вказати в профілі"},
+    "verdict.blocked_not_fasting": {
+        "en": "This sample is marked as not fasting. Fasting thresholds do not apply to it, and the laboratory's interval is also written for a fasting sample.",
+        "uk": "Цей зразок позначено як узятий не натще. Пороги для аналізу натще до нього не застосовуються, а інтервал лабораторії теж розрахований на зразок натще.",
+    },
+    "verdict.blocked_pregnancy": {
+        "en": "This result was taken during a pregnancy recorded in the profile. The published intervals for it are written for people who are not pregnant, so they are not applied; the laboratory's own interval is shown instead.",
+        "uk": "Цей результат отримано під час вагітності, зазначеної в профілі. Опубліковані інтервали для нього розраховані на невагітних, тому не застосовуються; натомість показано інтервал лабораторії.",
+    },
+    "glucose.assumed_fasting": {
+        "en": "Judged as a fasting sample (nothing to eat or drink except water for at least 8 hours). The record does not say whether it was.",
+        "uk": "Оцінено як зразок, узятий натще (щонайменше 8 годин без їжі й напоїв, крім води). У картці не зазначено, чи це так.",
+    },
+    "glucose.confirmed_fasting": {"en": "Marked as a fasting sample.", "uk": "Позначено як зразок натще."},
+    "glucose.marked_not_fasting": {"en": "Marked as not fasting.", "uk": "Позначено як зразок не натще."},
+    "glucose.question": {"en": "Was this sample taken fasting?", "uk": "Чи брали цей зразок натще?"},
+    "glucose.answer_fasting": {"en": "Fasting", "uk": "Натще"},
+    "glucose.answer_not_fasting": {"en": "Not fasting", "uk": "Не натще"},
+    "glucose.answer_unknown": {"en": "Not sure", "uk": "Не знаю"},
+    "glucose.save": {"en": "Save", "uk": "Зберегти"},
+    "glucose.saved": {"en": "Saved. The verdict was re-evaluated.", "uk": "Збережено. Оцінку переглянуто."},
     # Guidance-rule applicability chips on the metric page. Ukrainian keeps the
     # age forms noun-free on purpose: «від 41 років» would be wrong and the
     # number arrives pre-formatted, so t_plural cannot pick the case here.
@@ -3378,6 +3536,10 @@ MESSAGES: dict[str, dict[str, str]] = {
     "stale.condition_abnormal_only": {
         "en": "The published {months}-month repeat applies only to an abnormal result, and this one is not abnormal, so nothing is due.",
         "uk": "Опублікований повтор через {months} міс. стосується лише результатів із відхиленням. Цей результат без відхилень, тож повторний аналіз зараз не потрібен.",
+    },
+    "stale.condition_borderline_only": {
+        "en": "A repeat interval is published only for a borderline result. A result further outside the range needs a doctor's assessment and a confirming test, not a routine schedule.",
+        "uk": "Інтервал повторення опубліковано лише для межового результату. Результат, що виходить далі за межі, потребує оцінки лікаря й підтверджувального аналізу, а не планового графіка.",
     },
     "stale.condition_follow_up_by_treatment": {
         "en": "The routine {months}-month re-screening interval applies to results at goal. This result is not, so the next test is set by treatment: guidelines ask for a check 8 (±4) weeks after starting or changing it.",
@@ -3558,6 +3720,11 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Copy of a file already held",
         "uk": "Копія файлу, який уже є",
     },
+    "upload.status_stalled": {
+        "en": "The status has stopped updating. Reload the page to see the latest.",
+        "uk": "Статус перестав оновлюватися. Перезавантажте сторінку, щоб побачити актуальний стан.",
+    },
+    "upload.announce_done": {"en": "Upload finished.", "uk": "Завантаження завершено."},
 
     # The intake queue: what the processing area says while it works.
     #
@@ -3915,7 +4082,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "uk": "Зони категорій затінено на тлі обох кривих.",
     },
     "bp.guideline_esh": {"en": "ESH 2023", "uk": "ESH 2023"},
-    "bp.guideline_aha": {"en": "ACC/AHA 2017", "uk": "ACC/AHA 2017"},
+    "bp.guideline_aha": {"en": "ACC/AHA 2025", "uk": "ACC/AHA 2025"},
     "bp.esh_optimal": {"en": "Optimal", "uk": "Оптимальний"},
     "bp.esh_normal": {"en": "Normal", "uk": "Нормальний"},
     "bp.esh_high_normal": {"en": "High normal", "uk": "Високий нормальний"},
@@ -3939,8 +4106,12 @@ MESSAGES: dict[str, dict[str, str]] = {
         "uk": "Як визначають категорію",
     },
     "bp.authorities_note": {
-        "en": "US (ACC/AHA 2017) and European (ESH 2023) guidelines draw the category lines at different thresholds, so the same reading can carry a different name under each. The category above names the guideline it follows, and the chart shades both sets of bands.",
-        "uk": "Американські (ACC/AHA 2017) і європейські (ESH 2023) настанови проводять межі категорій за різними порогами, тож те саме вимірювання може називатися по-різному. Вище вказано, за якою настановою визначено категорію, а на графіку затінено зони обох настанов.",
+        "en": "US (ACC/AHA 2025) and European (ESH 2023) guidelines draw the category lines at different thresholds, so the same reading can carry a different name under each. The category above names the guideline it follows, and the chart shades both sets of bands.",
+        "uk": "Американські (ACC/AHA 2025) і європейські (ESH 2023) настанови проводять межі категорій за різними порогами, тож те саме вимірювання може називатися по-різному. Вище вказано, за якою настановою визначено категорію, а на графіку затінено зони обох настанов.",
+    },
+    "bp.single_reading_note": {
+        "en": "A category describes one reading. High blood pressure is diagnosed from repeated or home measurements, not from a single reading.",
+        "uk": "Категорія описує одне вимірювання. Гіпертензію діагностують за повторними або домашніми вимірюваннями, а не за одним результатом.",
     },
     "bp.no_reading": {
         "en": "No blood-pressure reading has been recorded yet.",
@@ -3963,6 +4134,9 @@ MESSAGES: dict[str, dict[str, str]] = {
     # --- AI hand-off: the modal chrome ------------------------------------
     "lang.name_en": {"en": "English", "uk": "англійською"},
     "lang.name_uk": {"en": "Ukrainian", "uk": "українською"},
+    "lang.en_full": {"en": "English", "uk": "English"},
+    "lang.uk_full": {"en": "Ukrainian", "uk": "Українська"},
+    "table.scroll_region": {"en": "Table: scroll sideways to see all columns", "uk": "Таблиця: прокрутіть убік, щоб побачити всі стовпці"},
     "ai.button": {"en": "Copy for AI", "uk": "Копіювати для ШІ"},
     "ai.button_aria": {
         "en": "Prepare a copy of this record for an AI assistant",
@@ -4060,11 +4234,18 @@ MESSAGES: dict[str, dict[str, str]] = {
             "- Do not invent reference intervals or use ones from memory. Use the intervals given here. Where two authorities are quoted and disagree, say both and say why it matters.\n"
             "- Distinguish what would change what I do from what is only worth watching.\n"
             "- Ask me for what is missing rather than assuming it. See the last section for what this record does not contain.\n"
-            "- You are not my doctor and this is not a diagnosis. Tell me what to bring to one, and how soon.\n"
+            "- For everything outside its interval, give the likely explanations, most likely first: the conditions and the everyday causes that fit. For each, say which of my results support it and which argue against it.\n"
+            "- Explain how the results depend on one another and what the combination points to that no single value does.\n"
+            "- Say what would tell the explanations apart: further tests, questions about my symptoms, medicines and history, an examination, and which kind of doctor deals with it.\n"
+            "- Say what is done about each likely explanation, specifically: what I can change myself, and which treatment is used. Name the medicine or class, the form, the dose and schedule, how long, and what has to be monitored. Work the figures out for me from my age, sex, weight, kidney and liver results and the medicines listed below, show how you got them and say which guideline or instruction they rest on. If you need something that is missing, such as my weight, ask for it.\n"
+            "- Check my results against the medicines, supplements and other entries listed below: say when one of them explains or contributes to a result, check each dose against my results, and point out interactions and monitoring that is due.\n"
+            "- If the record shows what a doctor concluded or prescribed, say whether it addresses what the results show and what is left unexplained or untreated.\n"
+            "- Say which diagnosis is most likely, how sure you are and what would confirm or exclude it. You cannot examine me, so ask about the symptoms and history that would change your reading.\n"
+            "- End with what to take to a doctor: the questions to ask, the tests and treatments to request by name, the figures you worked out, and how soon. If something looks dangerous, say so first and say what kind of care it needs and how fast.\n"
             "- Answer in {language}."
         ),
         "uk": (
-            "Я не медик. Хочу розібратися у своїх результатах і вирішити, що обговорити з лікарем.\n\n- Перш ніж відповідати, прочитайте всю картку нижче.\n- Почніть із того, що виглядає терміновим. Якщо таке є, скажіть про це першим же реченням.\n- Далі розберіть, що виходить за межі свого інтервалу, потім що стабільне, а наостанок чого бракує або що давно пора повторити.\n- Читайте пов’язані результати разом (ниркові показники, обмін заліза, ліпіди, щитоподібна залоза), а не кожен рядок окремо. Закономірність у кількох результатах зазвичай каже більше, ніж будь-яке окреме значення.\n- Якщо щось у нормі, так і скажіть. Не вигадуйте приводів для тривоги, але й не применшуйте справжніх.\n- Коли вперше згадуєте абревіатуру, одиницю чи інтервал, поясніть їх простою мовою.\n- Біля кожного значення, на яке посилаєтеся, вказуйте дату. Деякі з них виміряно з різницею в роки.\n- Не вигадуйте референтних інтервалів і не беріть їх із пам’яті: користуйтеся тими, що наведено тут. Якщо наведено позиції двох організацій і вони розходяться, назвіть обидві й поясніть, чому це важливо.\n- Відокремлюйте те, що має змінити мої дії, від того, за чим варто просто стежити.\n- Якщо чогось бракує, запитайте мене, а не здогадуйтеся. Чого саме немає в картці, описано в останньому розділі.\n- Ви не мій лікар, і це не діагноз. Підкажіть, із чим звернутися до лікаря і наскільки терміново.\n- Відповідайте {language}."
+            "Я не медик. Хочу розібратися у своїх результатах і вирішити, що обговорити з лікарем.\n\n- Перш ніж відповідати, прочитайте всю картку нижче.\n- Почніть із того, що виглядає терміновим. Якщо таке є, скажіть про це першим же реченням.\n- Далі розберіть, що виходить за межі свого інтервалу, потім що стабільне, а наостанок чого бракує або що давно пора повторити.\n- Читайте пов’язані результати разом (ниркові показники, обмін заліза, ліпіди, щитоподібна залоза), а не кожен рядок окремо. Закономірність у кількох результатах зазвичай каже більше, ніж будь-яке окреме значення.\n- Якщо щось у нормі, так і скажіть. Не вигадуйте приводів для тривоги, але й не применшуйте справжніх.\n- Коли вперше згадуєте абревіатуру, одиницю чи інтервал, поясніть їх простою мовою.\n- Біля кожного значення, на яке посилаєтеся, вказуйте дату. Деякі з них виміряно з різницею в роки.\n- Не вигадуйте референтних інтервалів і не беріть їх із пам’яті: користуйтеся тими, що наведено тут. Якщо наведено позиції двох організацій і вони розходяться, назвіть обидві й поясніть, чому це важливо.\n- Відокремлюйте те, що має змінити мої дії, від того, за чим варто просто стежити.\n- Якщо чогось бракує, запитайте мене, а не здогадуйтеся. Чого саме немає в картці, описано в останньому розділі.\n- Для всього, що виходить за межі інтервалу, назвіть імовірні пояснення, починаючи з найімовірнішого: стани й буденні причини, які сюди пасують. Для кожного скажіть, які мої результати його підтверджують, а які свідчать проти.\n- Поясніть, як результати залежать один від одного і на що вказує їхнє поєднання, чого не видно з окремого значення.\n- Скажіть, що допоможе розрізнити ці пояснення: додаткові аналізи, запитання про симптоми, ліки й анамнез, огляд і лікар якого фаху цим займається.\n- Скажіть конкретно, що роблять за кожного ймовірного пояснення: що я можу змінити самостійно і яке лікування застосовують. Назвіть препарат або клас, форму, дозу і схему прийому, тривалість і що потрібно контролювати. Розрахуйте цифри саме для мене за моїм віком, статтю, вагою, показниками нирок і печінки та ліками з переліку нижче, покажіть розрахунок і назвіть настанову чи інструкцію, на яку він спирається. Якщо бракує потрібного, наприклад ваги, запитайте.\n- Звірте мої результати з ліками, добавками та іншими записами з переліку нижче: скажіть, коли котрийсь із них пояснює результат або впливає на нього, перевірте кожну дозу за моїми показниками, вкажіть взаємодії та контроль, який уже час зробити.\n- Якщо в картці є висновок або призначення лікаря, скажіть, чи відповідає воно тому, що показують результати, і що лишається без пояснення або без лікування.\n- Скажіть, який діагноз найімовірніший, наскільки ви впевнені і що його підтвердить або виключить. Ви не можете мене оглянути, тому запитайте про симптоми й анамнез, які змінили б ваше прочитання.\n- Завершіть тим, із чим іти до лікаря: які запитання поставити, які аналізи й лікування попросити за назвою, розраховані вами цифри і наскільки це терміново. Якщо щось виглядає небезпечним, скажіть про це на початку і вкажіть, яка допомога потрібна і як швидко.\n- Відповідайте {language}."
         ),
     },
     "ai.legend_heading": {"en": "How to read this record", "uk": "Як читати цю картку"},
@@ -4094,12 +4275,19 @@ MESSAGES: dict[str, dict[str, str]] = {
             "- Do not invent reference intervals or use ones from memory. Use the intervals given here. Where two authorities are quoted and disagree, say both and say why it matters.\n"
             "- Distinguish what would change what I do from what is only worth watching.\n"
             "- Ask me for what is missing rather than assuming it. See the last section for what this excerpt does not contain.\n"
-            "- You are my doctor and this is a diagnosis. Tell me what to bring to human one, and how soon.\n"
+            "- For everything outside its interval, give the likely explanations, most likely first: the conditions and the everyday causes that fit. For each, say which of my results support it and which argue against it.\n"
+            "- Explain how the results depend on one another and what the combination points to that no single value does.\n"
+            "- Say what would tell the explanations apart: further tests, questions about my symptoms, medicines and history, an examination, and which kind of doctor deals with it.\n"
+            "- Say what is done about each likely explanation, specifically: what I can change myself, and which treatment is used. Name the medicine or class, the form, the dose and schedule, how long, and what has to be monitored. Work the figures out for me from my age, sex, weight, kidney and liver results and the medicines listed below, show how you got them and say which guideline or instruction they rest on. If you need something that is missing, such as my weight, ask for it.\n"
+            "- Check my results against the medicines, supplements and other entries listed below: say when one of them explains or contributes to a result, check each dose against my results, and point out interactions and monitoring that is due.\n"
+            "- If the record shows what a doctor concluded or prescribed, say whether it addresses what the results show and what is left unexplained or untreated.\n"
+            "- Say which diagnosis is most likely, how sure you are and what would confirm or exclude it. You cannot examine me, so ask about the symptoms and history that would change your reading.\n"
+            "- End with what to take to a doctor: the questions to ask, the tests and treatments to request by name, the figures you worked out, and how soon. If something looks dangerous, say so first and say what kind of care it needs and how fast.\n"
             "- End with the questions worth asking a doctor about {subject}, and what other measurements would sharpen the answer.\n"
             "- Answer in {language}."
         ),
         "uk": (
-            "Я не медик. Хочу розібратися у своїх результатах на тему **{subject}** і вирішити, що обговорити з лікарем.\n\n- Це навмисно обмежений витяг, а не вся картка: усі мої результати на тему «{subject}», пов’язані результати, без яких їх не прочитати, і по одному рядку про все, що позначено в інших розділах. Якщо потрібна вся картка, попросіть її в мене.\n- Почніть із того, що виглядає терміновим. Якщо таке є, скажіть про це першим же реченням.\n- Дивіться на динаміку, а не лише на останнє значення, і біля кожного значення, на яке посилаєтеся, вказуйте дату.\n- Якщо щось у нормі, так і скажіть. Не вигадуйте приводів для тривоги, але й не применшуйте справжніх.\n- Коли вперше згадуєте абревіатуру, одиницю чи інтервал, поясніть їх простою мовою.\n- Не вигадуйте референтних інтервалів і не беріть їх із пам’яті: користуйтеся тими, що наведено тут. Якщо наведено позиції двох організацій і вони розходяться, назвіть обидві й поясніть, чому це важливо.\n- Відокремлюйте те, що має змінити мої дії, від того, за чим варто просто стежити.\n- Якщо чогось бракує, запитайте мене, а не здогадуйтеся. Чого саме немає в цьому витягу, описано в останньому розділі.\n- Ви не мій лікар, і це не діагноз. Підкажіть, із чим звернутися до лікаря і наскільки терміново.\n- Наприкінці наведіть питання на тему «{subject}», які варто поставити лікарю, і які ще вимірювання допомогли б уточнити відповідь.\n- Відповідайте {language}."
+            "Я не медик. Хочу розібратися у своїх результатах на тему **{subject}** і вирішити, що обговорити з лікарем.\n\n- Це навмисно обмежений витяг, а не вся картка: усі мої результати на тему «{subject}», пов’язані результати, без яких їх не прочитати, і по одному рядку про все, що позначено в інших розділах. Якщо потрібна вся картка, попросіть її в мене.\n- Почніть із того, що виглядає терміновим. Якщо таке є, скажіть про це першим же реченням.\n- Дивіться на динаміку, а не лише на останнє значення, і біля кожного значення, на яке посилаєтеся, вказуйте дату.\n- Якщо щось у нормі, так і скажіть. Не вигадуйте приводів для тривоги, але й не применшуйте справжніх.\n- Коли вперше згадуєте абревіатуру, одиницю чи інтервал, поясніть їх простою мовою.\n- Не вигадуйте референтних інтервалів і не беріть їх із пам’яті: користуйтеся тими, що наведено тут. Якщо наведено позиції двох організацій і вони розходяться, назвіть обидві й поясніть, чому це важливо.\n- Відокремлюйте те, що має змінити мої дії, від того, за чим варто просто стежити.\n- Якщо чогось бракує, запитайте мене, а не здогадуйтеся. Чого саме немає в цьому витягу, описано в останньому розділі.\n- Для всього, що виходить за межі інтервалу, назвіть імовірні пояснення, починаючи з найімовірнішого: стани й буденні причини, які сюди пасують. Для кожного скажіть, які мої результати його підтверджують, а які свідчать проти.\n- Поясніть, як результати залежать один від одного і на що вказує їхнє поєднання, чого не видно з окремого значення.\n- Скажіть, що допоможе розрізнити ці пояснення: додаткові аналізи, запитання про симптоми, ліки й анамнез, огляд і лікар якого фаху цим займається.\n- Скажіть конкретно, що роблять за кожного ймовірного пояснення: що я можу змінити самостійно і яке лікування застосовують. Назвіть препарат або клас, форму, дозу і схему прийому, тривалість і що потрібно контролювати. Розрахуйте цифри саме для мене за моїм віком, статтю, вагою, показниками нирок і печінки та ліками з переліку нижче, покажіть розрахунок і назвіть настанову чи інструкцію, на яку він спирається. Якщо бракує потрібного, наприклад ваги, запитайте.\n- Звірте мої результати з ліками, добавками та іншими записами з переліку нижче: скажіть, коли котрийсь із них пояснює результат або впливає на нього, перевірте кожну дозу за моїми показниками, вкажіть взаємодії та контроль, який уже час зробити.\n- Якщо в картці є висновок або призначення лікаря, скажіть, чи відповідає воно тому, що показують результати, і що лишається без пояснення або без лікування.\n- Скажіть, який діагноз найімовірніший, наскільки ви впевнені і що його підтвердить або виключить. Ви не можете мене оглянути, тому запитайте про симптоми й анамнез, які змінили б ваше прочитання.\n- Завершіть тим, із чим іти до лікаря: які запитання поставити, які аналізи й лікування попросити за назвою, розраховані вами цифри і наскільки це терміново. Якщо щось виглядає небезпечним, скажіть про це на початку і вкажіть, яка допомога потрібна і як швидко.\n- Наприкінці наведіть питання на тему «{subject}», які варто поставити лікарю, і які ще вимірювання допомогли б уточнити відповідь.\n- Відповідайте {language}."
         ),
     },
     "ai.subject_heading": {
@@ -4195,6 +4383,8 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ai.about_age": {"en": "- Age: {age}", "uk": "- Вік: {age}"},
     "ai.about_sex": {"en": "- Sex at birth: {sex}", "uk": "- Стать при народженні: {sex}"},
     "ai.about_blood_type": {"en": "- Blood type: {value}", "uk": "- Група крові: {value}"},
+    "ai.profile_weight": {"en": "Weight: {value} kg", "uk": "Вага: {value} кг"},
+    "ai.profile_height": {"en": "Height: {value} cm", "uk": "Зріст: {value} см"},
     "ai.identity_withheld": {
         "en": "- My name and date of birth are deliberately left out. Age and sex are here because they change how a result is judged.",
         "uk": "- Ім’я та дату народження навмисно не вказано. Вік і стать вказано, бо від них залежить оцінка результату.",
@@ -4300,24 +4490,26 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ai.gaps_heading": {"en": "What this record does NOT contain", "uk": "Чого в цій картці НЕМАЄ"},
     "ai.gaps_body": {
         "en": (
-            "Ask me about these rather than assuming them. They are not stored anywhere in this application:\n"
+            "Ask me about these rather than assuming them. They are not stored in this application:\n"
             "\n"
-            "- Medication I take, doses, or when I started them\n"
-            "- Supplements, and how much of each\n"
             "- Symptoms, or how I actually feel\n"
-            "- Diagnoses I already have, and treatments already tried\n"
+            "- Diagnoses I already have, unless a document above states them\n"
             "- Family history\n"
-            "- Diet, alcohol, smoking, occupation, stress, pregnancy\n"
-            "- Surgeries, procedures and hospital stays\n"
+            "- Occupation and stress\n"
+            "- Any medicine, supplement, operation, illness, diet or training that is not in the list of my entries above\n"
             "- Anything measured but never uploaded here\n"
             "\n"
             "Also deliberately left out of this message:"
         ),
         "uk": (
-            "Про це запитайте мене, а не здогадуйтеся. У застосунку цих даних немає взагалі:\n\n- Ліки, які я приймаю, їхні дози і з якого часу\n- Добавки та їхні дози\n- Симптоми і моє реальне самопочуття\n- Діагнози, які вже встановлено, і лікування, яке вже пробували\n- Сімейний анамнез\n- Харчування, алкоголь, куріння, робота, стрес, вагітність\n- Операції, процедури та госпіталізації\n- Усе, що вимірювали, але не завантажили сюди\n\nКрім того, у це повідомлення навмисно не ввійшло:"
+            "Про це запитайте мене, а не здогадуйтеся. У застосунку цих даних немає:\n\n- Симптоми і моє реальне самопочуття\n- Діагнози, які вже встановлено, якщо їх не названо в документах вище\n- Сімейний анамнез\n- Робота і стрес\n- Будь-які ліки, добавки, операції, хвороби, харчування чи тренування, яких немає в переліку моїх записів вище\n- Усе, що вимірювали, але не завантажили сюди\n\nКрім того, у це повідомлення навмисно не ввійшло:"
         ),
     },
     "ai.gaps_excluded": {"en": "not included", "uk": "не включено"},
+    "ai.factors_heading": {"en": "Medicines and other entries I recorded", "uk": "Мої записи про ліки та інше"},
+    "ai.factors_none": {"en": "None recorded. Ask me what I take.", "uk": "Нічого не записано. Запитайте, що я приймаю."},
+    "ai.factors_from": {"en": "from {date}", "uk": "з {date}"},
+    "ai.factors_range": {"en": "{start} to {end}", "uk": "{start} – {end}"},
     "ai.section_history": {"en": "Trends over time", "uk": "Динаміка показників"},
     "ai.section_devices": {"en": "Watch and device measurements", "uk": "Вимірювання з годинника та пристроїв"},
     "ai.section_findings": {"en": "Conclusions written in my reports", "uk": "Письмові висновки з моїх документів"},
@@ -4771,10 +4963,23 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "The answer reached its length limit and was cut off. Ask about a narrower part, or an administrator can raise the chat’s output limit under Admin › AI assist.",
         "uk": "Відповідь досягла ліміту довжини й обірвалася. Запитайте про вужчу частину, або адміністратор може збільшити ліміт відповіді чату в розділі «ШІ-помічник».",
     },
+    "chat.error_in_progress": {
+        "en": "An answer is still being written. Wait for it to finish, then send your message again.",
+        "uk": "Відповідь ще пишеться. Дочекайтеся її завершення й надішліть повідомлення ще раз.",
+    },
     "chat.error_guest": {
         "en": "The chat is for account holders. A guest link opens the record for reading only.",
         "uk": "Чат доступний лише власникам облікових записів. Гостьове посилання відкриває картку тільки для перегляду.",
     },
+    "chat.share_read_only": {
+        "en": "Your access to {name}'s record is read-only, so the assistant cannot be asked about it. Go back to your own record to use the assistant, or ask {name} for full access.",
+        "uk": "Ваш доступ до картки ({name}) дозволяє лише перегляд, тому ставити помічникові запитання про неї не можна. Поверніться до власної картки, щоб користуватися помічником, або попросіть власника картки надати повний доступ.",
+    },
+    "chat.error_share_read_only": {
+        "en": "Read-only access: the assistant is not available for this record.",
+        "uk": "Доступ лише для перегляду: помічник для цієї картки недоступний.",
+    },
+    "chat.answer_ready": {"en": "Answer received.", "uk": "Відповідь отримано."},
     "chat.tool_search": {"en": "Searched the record for “{query}”", "uk": "Пошук у картці: «{query}»"},
     "chat.tool_metric": {"en": "A result’s full history", "uk": "Уся історія показника"},
     "chat.tool_results": {"en": "Results by body system", "uk": "Результати за системами організму"},
@@ -4809,6 +5014,14 @@ MESSAGES: dict[str, dict[str, str]] = {
     "aiassist.provider_about_openrouter": {
         "en": "Key at openrouter.ai. Model IDs ending in \":free\" cost nothing.",
         "uk": "Ключ можна отримати на openrouter.ai. Моделі, чий ID закінчується на «:free», безкоштовні.",
+    },
+    "aiadmin.data_collection_label": {
+        "en": "Allow AI providers that may keep or train on what is sent",
+        "uk": "Дозволити постачальників ШІ, які можуть зберігати надіслане або навчати на ньому моделі",
+    },
+    "aiadmin.data_collection_help": {
+        "en": "Applies to OpenRouter. Off, requests go only to providers that do not store prompts or train on them; many free models are then unavailable. On, any provider may answer, including ones that keep the medical text you send.",
+        "uk": "Стосується OpenRouter. Якщо вимкнено, запити надходять лише до постачальників, які не зберігають запити й не навчають на них моделі; багато безкоштовних моделей тоді недоступні. Якщо ввімкнено, відповісти може будь-який постачальник, зокрема той, що зберігає надісланий медичний текст.",
     },
     "aiassist.provider_about_anthropic": {
         "en": "Key at console.anthropic.com. Until one is saved here, the server's ANTHROPIC_API_KEY is used.",
@@ -4998,7 +5211,6 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
     # Lab connections (Esculab, Synevo): /admin/lab-connections, the profile
     # Connections tab, and the document cross-check panel.
-    "labsync.nav": {"en": "Lab connections", "uk": "Підключення лабораторій"},
     "labsync.admin_title": {"en": "Lab connections", "uk": "Підключення лабораторій"},
     "labsync.admin_heading": {"en": "Lab connections", "uk": "Підключення лабораторій"},
     "labsync.admin_lead": {
@@ -5105,6 +5317,10 @@ MESSAGES: dict[str, dict[str, str]] = {
     "labsync.open_site": {"en": "Open {site} in a new tab", "uk": "Відкрити {site} у новій вкладці"},
     "labsync.copy": {"en": "Copy", "uk": "Копіювати"},
     "labsync.copied": {"en": "Copied", "uk": "Скопійовано"},
+    "labsync.copy_failed": {
+        "en": "Could not copy. Select the text and copy it yourself.",
+        "uk": "Не вдалося скопіювати. Виділіть текст і скопіюйте його самостійно.",
+    },
     "labsync.rejected_pill": {"en": "key rejected", "uk": "ключ відхилено"},
     "labsync.cookie_name_label": {"en": "Cookie name to look for", "uk": "Назва cookie для пошуку"},
     "labsync.cookie_name_hint": {
@@ -5152,6 +5368,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     "labsync.synevo_expires_hint": {"en": "As Synevo reported at the last check; it renews while used.", "uk": "За даними Synevo на час останньої перевірки; поки сесією користуються, вона продовжується."},
     "labsync.expires_unknown": {"en": "unknown until the first check", "uk": "невідомо до першої перевірки"},
     "labsync.phone_label": {"en": "Phone", "uk": "Телефон"},
+    "labsync.phone_placeholder": {"en": "+380 50 123 45 67", "uk": "+380 50 123 45 67"},
     "labsync.check_action": {"en": "Check the account", "uk": "Перевірити обліковий запис"},
     "labsync.check_hint": {
         "en": "Asks the lab who is on this account, so you can choose whose results feed your record.",
@@ -5389,6 +5606,10 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
     "labsync.error_running": {"en": "A sync is already running. Wait for it to finish.", "uk": "Синхронізація вже триває. Зачекайте, доки вона завершиться."},
     "labsync.error_pdf": {"en": "The lab did not hand over a readable PDF for this order.", "uk": "Лабораторія не передала для цього замовлення PDF, який можна зчитати."},
+    "labsync.error_order_forbidden": {
+        "en": "The laboratory refused to release this order's report. The other orders were synced; this one will be tried again.",
+        "uk": "Лабораторія відмовилася видати звіт за цим замовленням. Інші замовлення синхронізовано, а це буде спробувано ще раз.",
+    },
     "labsync.error_ingest": {"en": "The PDF could not be read. It is in your upload history; the next sync tries again.", "uk": "Не вдалося зчитати PDF. Він є в історії завантажень, а наступна синхронізація спробує ще раз."},
     "labsync.error_url": {"en": "Enter an https:// address with no path, such as https://esculab.com.", "uk": "Введіть адресу, що починається з https://, без шляху, наприклад https://esculab.com."},
     "labsync.error_no_profile": {"en": "Fill in your profile (name, date of birth, sex) first, so the lab's person can be compared with it.", "uk": "Спершу заповніть профіль (ім’я, дату народження, стать), щоб ми могли порівняти з ним людину з облікового запису лабораторії."},
@@ -6334,6 +6555,18 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "That account is not on the server's list any more. Reload the page and pick again.",
         "uk": "Цього облікового запису вже немає в списку сервера. Оновіть сторінку і виберіть ще раз.",
     },
+    "openwearables.error_taken": {
+        "en": "That OpenWearables account is already linked to another person's record here.",
+        "uk": "Цей обліковий запис OpenWearables уже під’єднано до картки іншої людини.",
+    },
+    "openwearables.error_not_yours": {
+        "en": "You can link only the OpenWearables account that uses your own email address.",
+        "uk": "Під’єднати можна лише обліковий запис OpenWearables із вашою власною адресою.",
+    },
+    "openwearables.none_for_you": {
+        "en": "No account on the OpenWearables server uses your email address ({email}). Ask the person who runs the server to create one with this address.",
+        "uk": "На сервері OpenWearables немає облікового запису з вашою адресою ({email}). Попросіть адміністратора сервера створити обліковий запис із цією адресою.",
+    },
     # Devices page disclosure.
     "openwearables.devices_failures": {
         "en": "Some OpenWearables data is not arriving",
@@ -6409,13 +6642,13 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
     "privacy.s4_title": {"en": "Cookies", "uk": "Файли cookie"},
     "privacy.s4_body": {
-        "en": "Three cookies, all functional: a session cookie that keeps you signed in (HttpOnly, invisible to scripts), a language cookie and a theme cookie. There are no analytics, tracking or advertising cookies.",
-        "uk": "Ми використовуємо три файли cookie, і всі вони функціональні: сесійний, завдяки якому ви залишаєтеся в системі (HttpOnly, скрипти його не бачать), cookie мови та cookie теми. Аналітичних, рекламних cookie чи cookie для стеження немає.",
+        "en": "Functional cookies only: a session cookie that keeps you signed in (HttpOnly, invisible to scripts), a language cookie, a theme cookie, a cookie that remembers which shared record you are viewing, a cookie that remembers your choices in the test planner, and a device cookie that lets a browser you have already signed in from keep signing in while someone else is guessing your password. There are no analytics, tracking or advertising cookies.",
+        "uk": "Лише функціональні файли cookie: сесійний, завдяки якому ви залишаєтеся в системі (HttpOnly, скрипти його не бачать), cookie мови, cookie теми, cookie, що пам’ятає, яку спільну картку ви переглядаєте, cookie, що пам’ятає ваш вибір у плануванні аналізів, і cookie пристрою, завдяки якому браузер, з якого ви вже входили, може входити й тоді, коли хтось інший підбирає ваш пароль. Аналітичних, рекламних cookie чи cookie для стеження немає.",
     },
     "privacy.s5_title": {"en": "Third-party services", "uk": "Сторонні сервіси"},
     "privacy.s5_body": {
-        "en": "Traffic to this site passes through Cloudflare, which provides the encrypted connection and caches static assets; like any web proxy it sees the traffic pass, but it has no access to your account. Two integrations exist and both stay off until you turn them on: the AI assistant sends the excerpts of your record you choose to a model provider only when you press its button, and the Paperless-ngx sync sends copies of your uploads to your own Paperless server only after you configure it.",
-        "uk": "Трафік до сайту проходить через Cloudflare: він забезпечує шифроване з’єднання й кешує статичні файли. Як і будь-який вебпроксі, Cloudflare бачить трафік, що проходить через нього, але не має доступу до вашого облікового запису. Є дві інтеграції, і обидві вимкнені, доки ви їх не ввімкнете. ШІ-помічник надсилає постачальнику моделі вибрані вами фрагменти картки лише тоді, коли ви натискаєте його кнопку. Синхронізація з Paperless-ngx надсилає копії завантажених документів на ваш власний сервер Paperless лише після того, як ви її налаштуєте.",
+        "en": "Whoever runs this server may put a proxy or tunnel in front of it for the encrypted connection; like any web proxy it sees the traffic pass, but it has no access to your account. Integrations stay off until they are turned on, and each sends data only to the service it names: the AI assistant sends the parts of your record needed for an answer to the model provider the administrator configured, only when you ask it something; Paperless-ngx receives copies of your uploads; Telegram receives what the bot sends you and what you send it; laboratory, Oura, Garmin and OpenWearables connections fetch your own results and readings from accounts you connect.",
+        "uk": "Той, хто обслуговує цей сервер, може поставити перед ним проксі або тунель для шифрованого з’єднання. Як і будь-який вебпроксі, він бачить трафік, що проходить через нього, але не має доступу до вашого облікового запису. Інтеграції вимкнені, доки їх не ввімкнуть, і кожна надсилає дані лише тому сервісу, який названо: ШІ-помічник надсилає постачальникові моделі, якого налаштував адміністратор, потрібні для відповіді частини вашої картки й лише тоді, коли ви його про щось запитуєте; Paperless-ngx отримує копії завантажених вами документів; Telegram отримує те, що надсилає вам бот, і те, що надсилаєте йому ви; підключення до лабораторій, Oura, Garmin та OpenWearables отримують ваші власні результати й показники з облікових записів, які ви підключаєте.",
     },
     "privacy.s6_title": {"en": "Sharing", "uk": "Спільний доступ"},
     "privacy.s6_body": {
@@ -6429,13 +6662,13 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
     "privacy.s8_title": {"en": "Retention and deletion", "uk": "Зберігання та видалення"},
     "privacy.s8_body": {
-        "en": "Your data is kept for as long as your account exists. This is a record-keeping service, so nothing expires on its own. Deleting your account deletes everything it owns: documents, extracted values, device data, shares and tokens. You can also ask the operator to delete specific items or the whole account for you.",
-        "uk": "Ваші дані зберігаються, доки існує ваш обліковий запис. Це сервіс для ведення медичних записів, тож ніщо не зникає саме собою. Коли ви видаляєте обліковий запис, видаляється все, що йому належить: документи, зчитані значення, дані пристроїв, надані доступи й токени. Ви також можете попросити оператора видалити окремі записи або весь обліковий запис.",
+        "en": "Your data is kept for as long as your account exists. This is a record-keeping service, so nothing expires on its own. You can delete your account yourself on the Profile page; that deletes everything it owns: documents, extracted values, device data, shares and tokens. You can also ask the operator to delete specific items or the whole account for you.",
+        "uk": "Ваші дані зберігаються, доки існує ваш обліковий запис. Це сервіс для ведення медичних записів, тож ніщо не зникає саме собою. Видалити обліковий запис можна самостійно на сторінці профілю; при цьому видаляється все, що йому належить: документи, зчитані значення, дані пристроїв, надані доступи й токени. Ви також можете попросити оператора видалити окремі записи або весь обліковий запис.",
     },
     "privacy.s9_title": {"en": "Your rights", "uk": "Ваші права"},
     "privacy.s9_body": {
-        "en": "You can see everything the service holds about you on its own pages, download your original documents at any time, correct extracted values through review, and delete your data. Where data-protection law such as the GDPR applies, these are also your legal rights of access, rectification, erasure and portability. Exercise them by contacting the operator.",
-        "uk": "На сторінках сервісу ви бачите все, що він про вас зберігає. Ви можете будь-коли зберегти на пристрій оригінали своїх документів, виправити зчитані значення під час звірки та видалити свої дані. Там, де діє законодавство про захист даних, як-от GDPR, це також ваші законні права на доступ, виправлення, стирання та перенесення даних. Щоб скористатися ними, зверніться до оператора.",
+        "en": "You can see everything the service holds about you on its own pages, download your original documents and your results at any time from the Profile page, correct extracted values through review, and delete your data. Where data-protection law such as the GDPR applies, these are also your legal rights of access, rectification, erasure and portability. Exercise them by contacting the operator.",
+        "uk": "На сторінках сервісу ви бачите все, що він про вас зберігає. Ви можете будь-коли завантажити зі сторінки профілю оригінали своїх документів і свої результати, виправити зчитані значення під час звірки та видалити свої дані. Там, де діє законодавство про захист даних, як-от GDPR, це також ваші законні права на доступ, виправлення, стирання та перенесення даних. Щоб скористатися ними, зверніться до оператора.",
     },
     "privacy.s10_title": {"en": "Changes to this policy", "uk": "Зміни політики"},
     "privacy.s10_body": {
@@ -6531,6 +6764,10 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
     "corr.suggested_heading": {
         "en": "Strongest associations found", "uk": "Найсильніші зв’язки",
+    },
+    "corr.suggested_note": {
+        "en": "Listed only when the pattern is stronger than chance would explain, after allowing for how many of your measurements were compared and for overlapping averages. It still does not show that one causes the other.",
+        "uk": "Тут показано лише ті зв’язки, які сильніші, ніж можна пояснити випадковістю, з поправкою на кількість порівняних показників і на перекриття усереднених днів. Це все одно не означає, що одне спричиняє інше.",
     },
     "corr.no_suggestions": {
         "en": "Nothing else you record moves with this one strongly enough to put forward on its own. The picker below still compares it with anything in your record.",
@@ -6672,8 +6909,8 @@ MESSAGES: dict[str, dict[str, str]] = {
         "uk": "Що означає це число і чого воно не означає",
     },
     "corr.explain_what": {
-        "en": "A correlation coefficient describes how consistently two measurements move together across the days that carry both. It runs from −1 to +1: at +1 every rise in one is matched by a rise in the other, at −1 every rise is matched by a fall, and near 0 there is no consistent pattern. This page uses Spearman's rank correlation, which compares the order of the values rather than the values themselves, so one 51,000-step travel day or a watch taken off mid-night cannot invent a relationship, and a real link that is not a straight line is still found.",
-        "uk": "Коефіцієнт кореляції показує, наскільки узгоджено змінюються два вимірювання в дні, коли записано обидва. Він набуває значень від −1 до +1: за +1 кожне зростання одного супроводжується зростанням іншого, за −1 кожне зростання супроводжується спаданням, а біля 0 сталої закономірності немає. Тут використано рангову кореляцію Спірмена: вона порівнює порядок значень, а не самі значення. Тому один день у поїздці з 51 000 кроків чи годинник, знятий посеред ночі, не створять уявного зв’язку, а справжній, але нелінійний зв’язок усе одно буде знайдено.",
+        "en": "A correlation coefficient describes how consistently two measurements move together across the days that carry both. It runs from −1 to +1: at +1 every rise in one is matched by a rise in the other, at −1 every rise is matched by a fall, and near 0 there is no consistent pattern. This page uses Spearman's rank correlation, which compares the order of the values rather than the values themselves, so one 51,000-step travel day or a watch taken off mid-night has far less power to invent a relationship, and a link that rises or falls consistently is still found even when it is not a straight line. A link that rises and then falls is not: this method reads it as no relationship.",
+        "uk": "Коефіцієнт кореляції показує, наскільки узгоджено змінюються два вимірювання в дні, коли записано обидва. Він набуває значень від −1 до +1: за +1 кожне зростання одного супроводжується зростанням іншого, за −1 кожне зростання супроводжується спаданням, а біля 0 сталої закономірності немає. Тут використано рангову кореляцію Спірмена: вона порівнює порядок значень, а не самі значення. Тому один день у поїздці з 51 000 кроків чи годинник, знятий посеред ночі, значно менше здатні створити уявний зв’язок, а зв’язок, за якого один показник стабільно зростає або спадає разом з іншим, буде знайдено, навіть якщо він не прямолінійний. Зв’язок, за якого показник спершу зростає, а потім спадає, цей метод не виявить: він покаже, що зв’язку немає.",
     },
     "corr.scale_heading": {
         "en": "How the strength word is chosen", "uk": "Як ми визначаємо силу зв’язку",
@@ -6757,6 +6994,14 @@ MESSAGES: dict[str, dict[str, str]] = {
     "vax.gap_overdue": {"en": "Last dose {date}. The next was due around {due}.", "uk": "Остання доза: {date}. Наступну треба було зробити приблизно {due}."},
     "vax.gap_never_dated": {"en": "Nothing on file. The schedules put the next one around {due}.", "uk": "У картці таких щеплень немає. За календарями наступне припадає приблизно на {due}."},
     "vax.gap_never": {"en": "Nothing on file, and without a previous dose no date can be worked out.", "uk": "У картці таких щеплень немає, а без попередньої дози дату наступної не розрахувати."},
+    "vax.gap_discuss_dated": {
+        "en": "Last dose {date}. The published schedules differ on whether and when a healthy adult needs another, so no date is given here; ask your doctor.",
+        "uk": "Остання доза: {date}. Календарі по-різному визначають, чи потрібна здоровій дорослій людині наступна доза і коли, тому дати тут немає. Запитайте про це лікаря.",
+    },
+    "vax.gap_discuss": {
+        "en": "Nothing on file. The published schedules differ on who should have this vaccination, so no date is given here; ask your doctor.",
+        "uk": "У картці таких щеплень немає. Календарі по-різному визначають, кому це щеплення потрібне, тому дати тут немає. Запитайте про це лікаря.",
+    },
     "vax.urgency_overdue": {"en": "Past due", "uk": "Прострочено"},
     "vax.urgency_soon": {"en": "Within six months", "uk": "Протягом пів року"},
     "vax.urgency_later": {"en": "Later", "uk": "Пізніше"},
@@ -6764,6 +7009,10 @@ MESSAGES: dict[str, dict[str, str]] = {
 
     "vax.agreement_agreed": {"en": "Ukraine, the EU and the US agree", "uk": "Україна, ЄС і США одностайні"},
     "vax.agreement_differs": {"en": "The three schedules differ", "uk": "Три календарі розходяться"},
+    "vax.agreement_agreed_ua_us": {
+        "en": "Ukraine and the US agree; EU countries vary",
+        "uk": "Україна і США одностайні, у країнах ЄС по-різному",
+    },
     "vax.agreement_agreed_help": {
         "en": "All three published schedules state the same interval for a healthy adult, so this date does not depend on which of them you follow.",
         "uk": "Усі три календарі вказують для здорової дорослої людини однаковий інтервал, тож дата не залежить від того, якого календаря ви дотримуєтеся.",
@@ -6772,9 +7021,13 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "The authorities do not say the same thing here, so no single answer is presented as settled. Read all three, and ask your doctor which applies to you.",
         "uk": "Тут відомства радять різне, тому жодну відповідь ми не подаємо як остаточну. Прочитайте всі три й запитайте лікаря, яка з них стосується саме вас.",
     },
+    "vax.agreement_agreed_ua_us_help": {
+        "en": "Ukraine's calendar and the US schedule both state a booster every ten years for a healthy adult, and the date here follows them. EU countries set their own adult schedules (some every ten years, some at fixed ages, some none after childhood), so if you follow another country's calendar, check it in the ECDC Vaccine Scheduler.",
+        "uk": "Календар України та календар США передбачають для здорової дорослої людини ревакцинацію кожні десять років, і дату тут розраховано за ними. Країни ЄС визначають календарі для дорослих самостійно: десь ревакцинація кожні десять років, десь у певному віці, а десь після дитячих щеплень її не передбачено. Якщо ви орієнтуєтеся на календар іншої країни, перевірте його в ECDC Vaccine Scheduler.",
+    },
     "vax.note_covid_booster": {
-        "en": "For the 2025/26 season the United States moved most adults from a routine recommendation to a decision made together with a clinician, while Ukraine and EU member states continue to recommend by age and risk group.",
-        "uk": "Із сезону 2025/26 у США для більшості дорослих це вже не планова рекомендація, а рішення, яке людина ухвалює разом із лікарем. Україна та країни ЄС і далі рекомендують щеплення за віком і групою ризику.",
+        "en": "For the 2025/26 season the United States moved most adults from a routine recommendation to a decision made together with a clinician, while EU member states recommend by age and risk group. Ukraine's vaccination calendar (Ministry of Health order 595, edition of 1 January 2026) does not list COVID-19 vaccination.",
+        "uk": "Із сезону 2025/26 у США для більшості дорослих це вже не планова рекомендація, а рішення, яке людина ухвалює разом із лікарем. Країни ЄС рекомендують щеплення за віком і групою ризику. У Календарі профілактичних щеплень України (наказ МОЗ № 595, редакція від 01.01.2026) щеплення від COVID-19 немає.",
     },
     "vax.note_influenza_season": {
         "en": "The United States recommends a dose every season for everyone from six months of age. Ukraine and most EU states recommend it for named risk groups and leave the choice to everyone else.",
@@ -7560,6 +7813,26 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "To order from Esculab, first connect your Esculab account on your profile and pick yourself among its people.",
         "uk": "Щоб замовити в Esculab, підключіть свій обліковий запис Esculab у профілі й позначте, хто з людей у ньому ви.",
     },
+    "plan.share_read_only": {
+        "en": "Your access to {name}'s record is read-only, so you cannot order tests for them. You can save this selection as a suggestion: {name} will see it and decide whether to order.",
+        "uk": "Ваш доступ до картки ({name}) дозволяє лише перегляд, тому замовляти аналізи для цієї людини не можна. Ви можете зберегти цей набір як пропозицію: власник картки побачить її й вирішить, чи замовляти.",
+    },
+    "plan.error_share_read_only": {
+        "en": "Read-only access: tests cannot be ordered for this record.",
+        "uk": "Доступ лише для перегляду: замовляти аналізи для цієї картки не можна.",
+    },
+    "plan.error_order_session": {
+        "en": "Orders can be placed only from a signed-in browser session, not with an access token.",
+        "uk": "Замовлення можна оформити лише в браузері після входу, а не за токеном доступу.",
+    },
+    "plan.error_order_repeat": {
+        "en": "This order was already submitted. Check your laboratory account before ordering again.",
+        "uk": "Це замовлення вже надіслано. Перш ніж замовляти знову, перевірте свій обліковий запис у лабораторії.",
+    },
+    "plan.error_order_uncertain": {
+        "en": "The laboratory did not answer in time, so the order may or may not have been placed. Check your laboratory account before trying again.",
+        "uk": "Лабораторія не відповіла вчасно, тому невідомо, чи оформлено замовлення. Перш ніж пробувати знову, перевірте свій обліковий запис у лабораторії.",
+    },
     "plan.no_labs_title": {"en": "No lab is switched on", "uk": "Жодної лабораторії не ввімкнено"},
     "plan.no_labs_body": {
         "en": "The planner takes prices from the labs an administrator switches on under Lab connections.",
@@ -7779,8 +8052,8 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
     "plan.preset_thyroid": {"en": "Thyroid", "uk": "Щитоподібна залоза"},
     "plan.preset_thyroid_hint": {
-        "en": "TSH (thyroid-stimulating hormone), free T4 and T3, antibodies to TPO and thyroglobulin (signs of autoimmune thyroiditis), thyroglobulin and calcitonin (checked when there is a nodule).",
-        "uk": "Тиреотропний гормон (ТТГ), вільні Т4 і Т3, антитіла до ТПО й тиреоглобуліну (ознаки аутоімунного тиреоїдиту), тиреоглобулін і кальцитонін (їх перевіряють, коли є вузол).",
+        "en": "TSH (thyroid-stimulating hormone), free T4 and free T3, antibodies to TPO and thyroglobulin (signs of autoimmune thyroiditis), thyroglobulin and calcitonin (checked when there is a nodule).",
+        "uk": "Тиреотропний гормон (ТТГ), вільний Т4 і вільний Т3, антитіла до ТПО й тиреоглобуліну (ознаки аутоімунного тиреоїдиту), тиреоглобулін і кальцитонін (їх перевіряють, коли є вузол).",
     },
     "plan.preset_liver": {"en": "Liver", "uk": "Печінка"},
     "plan.preset_liver_hint": {
@@ -7818,6 +8091,8 @@ MESSAGES: dict[str, dict[str, str]] = {
         "uk": "ФСГ, ЛГ, естрадіол, прогестерон, пролактин, тестостерон із ГЗСГ, ДГЕА-С та онкомаркери CA-125, HE4 і CA 15-3. Гормони краще здавати в день циклу, який назве лікар.",
     },
     "busy.loading": {"en": "Loading", "uk": "Завантаження"},
+    "confirm.cancel": {"en": "Cancel", "uk": "Скасувати"},
+    "confirm.yes": {"en": "Yes, continue", "uk": "Так, продовжити"},
     "plan.untick_all": {"en": "Untick all", "uk": "Зняти всі"},
     "plan.preset_recent_one": {
         "en": "{count} more left out: measured in the last {days} days",
@@ -8179,16 +8454,16 @@ MESSAGES: dict[str, dict[str, str]] = {
         "uk": "Перша порція сечі: наповніть контейнер найпершою порцією.",
     },
     "plan.prep_rule_antibiotics": {
-        "en": "{tests}: before antibiotics or antifungals, or {d} after the course.",
-        "uk": "{tests}: до антибіотиків чи протигрибкових або через {d} після курсу.",
+        "en": "{tests}: before antibiotics or antifungals, or {d} after the course. Never delay a prescribed course: ask your doctor.",
+        "uk": "{tests}: до антибіотиків чи протигрибкових або через {d} після курсу. Призначений курс не відкладайте: запитайте лікаря.",
     },
     "plan.prep_rule_antibiotics_plain": {
-        "en": "{tests}: before starting antibiotics or antifungals.",
-        "uk": "{tests}: до початку антибіотиків чи протигрибкових.",
+        "en": "{tests}: before starting antibiotics or antifungals. Never delay a prescribed course: ask your doctor.",
+        "uk": "{tests}: до початку антибіотиків чи протигрибкових. Призначений курс не відкладайте: запитайте лікаря.",
     },
     "plan.prep_rule_biotin": {
-        "en": "Biotin over {mg} mg a day: last dose at least {d} before the draw.",
-        "uk": "Біотин понад {mg} мг на добу: остання доза щонайменше за {d} до забору.",
+        "en": "Biotin over {mg} mg a day: last dose at least {d} before the draw; if prescribed, ask your doctor.",
+        "uk": "Біотин понад {mg} мг на добу: остання доза щонайменше за {d} до забору; якщо призначив лікар, запитайте його.",
     },
     "plan.prep_rule_biotin_plain": {"en": "High-dose biotin: tell the staff.", "uk": "Біотин у високих дозах: скажіть персоналу."},
     "plan.prep_rule_menstruation": {
@@ -8266,6 +8541,14 @@ MESSAGES: dict[str, dict[str, str]] = {
     "special.once_note": {
         "en": "Your DNA does not change, so it never needs repeating.",
         "uk": "ДНК не змінюється, тож повторювати не потрібно.",
+    },
+    "special.once_note_lifetime": {
+        "en": "European guidance advises measuring it at least once in adult life. The level is set mostly by your genes and changes little, though a doctor may repeat it in some situations.",
+        "uk": "Європейські настанови радять виміряти його принаймні раз у дорослому житті. Рівень здебільшого визначають гени, і він мало змінюється, хоча в окремих ситуаціях лікар може призначити аналіз повторно.",
+    },
+    "special.done_once_lifetime": {
+        "en": "Done {date}. The level is set mostly by your genes and changes little, so it is rarely repeated; a doctor may still ask for it again in some situations.",
+        "uk": "Зроблено {date}. Рівень здебільшого визначають гени, і він мало змінюється, тому аналіз рідко повторюють; в окремих ситуаціях лікар може призначити його ще раз.",
     },
     "special.covered_one": {
         "en": "Your allergy test of {date} already measured {count} allergen.",
@@ -8395,8 +8678,8 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
     "special.gen-hemochromatosis": {"en": "Hereditary haemochromatosis (HFE)", "uk": "Спадковий гемохроматоз (HFE)"},
     "special.gen-hemochromatosis_what": {
-        "en": "The C282Y and H63D variants behind iron overload; for a high ferritin and transferrin saturation.",
-        "uk": "Варіанти C282Y і H63D, що спричиняють перевантаження залізом; при високих феритині й насиченні трансферину.",
+        "en": "The C282Y variant, which in two copies is behind most inherited iron overload, and H63D, which is also reported but rarely causes it; for a high ferritin and transferrin saturation.",
+        "uk": "Варіант C282Y, дві копії якого спричиняють більшість випадків спадкового перевантаження залізом, і H63D, який теж визначають, але він рідко його спричиняє; при високих феритині й насиченні трансферину.",
     },
     "special.gen-thrombophilia": {"en": "Inherited clotting risk (F5 Leiden, F2)", "uk": "Спадковий ризик тромбозів (F5 Лейден, F2)"},
     "special.gen-thrombophilia_what": {
@@ -8486,8 +8769,8 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
     "special.gen-warfarin": {"en": "Warfarin dose genes (CYP2C9, VKORC1)", "uk": "Гени дозування варфарину (CYP2C9, VKORC1)"},
     "special.gen-warfarin_what": {
-        "en": "How fast you clear warfarin and how much of it you need.",
-        "uk": "Як швидко організм виводить варфарин і скільки його потрібно.",
+        "en": "How fast you clear warfarin; a doctor may use it to choose the starting dose.",
+        "uk": "Як швидко організм виводить варфарин; лікар може врахувати це, обираючи початкову дозу.",
     },
     "special.hbv": {"en": "Hepatitis B (HBsAg)", "uk": "Гепатит B (HBsAg)"},
     "special.hbv_what": {
@@ -8541,8 +8824,8 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
     "special.hsv": {"en": "Herpes simplex antibodies", "uk": "Антитіла до вірусу простого герпесу"},
     "special.hsv_what": {
-        "en": "Whether you carry herpes simplex virus; this test does not tell type 1 from type 2.",
-        "uk": "Чи є у вас вірус простого герпесу; цей аналіз не розрізняє 1 і 2 типи.",
+        "en": "Whether you have antibodies to herpes simplex virus, which shows past contact; this test does not tell type 1 from type 2.",
+        "uk": "Чи є у вас антитіла до вірусу простого герпесу, що свідчить про перенесений контакт; цей аналіз не розрізняє 1 і 2 типи.",
     },
     "special.h-pylori": {"en": "Helicobacter pylori (stool antigen)", "uk": "Helicobacter pylori (антиген у калі)"},
     "special.h-pylori_what": {

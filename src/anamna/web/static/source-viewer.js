@@ -7,6 +7,15 @@
   };
   const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
   const pageUrl = (template, page) => String(template || "").replace("{page}", String(page));
+  // A `disabled` button loses keyboard focus to the body at the last page, so
+  // the edge is marked with aria-disabled instead: the button keeps focus, and
+  // the click handlers below ignore it.
+  const setBlocked = (button, blocked) => {
+    if (!button) return;
+    if (blocked) button.setAttribute("aria-disabled", "true");
+    else button.removeAttribute("aria-disabled");
+  };
+  const isBlocked = (button) => button?.getAttribute("aria-disabled") === "true";
 
   function createMedia({ mime, src, pageSrc, title, page }) {
     if (String(mime).startsWith("image/") || pageSrc) {
@@ -32,6 +41,7 @@
     const pager = root.querySelector("[data-pager]");
     const input = root.querySelector("[data-page-input]");
     const totalEl = root.querySelector("[data-page-total]");
+    const pageStatus = root.querySelector("[data-page-status]");
     const prev = root.querySelector("[data-page-prev]");
     const next = root.querySelector("[data-page-next]");
     const zoomOut = root.querySelector("[data-zoom-out]");
@@ -160,8 +170,13 @@
       }
       if (totalEl) totalEl.textContent = `/ ${currentState.pages}`;
       if (pager) pager.hidden = !currentState.isPaged || currentState.pages <= 1;
-      if (prev) prev.disabled = page <= 1;
-      if (next) next.disabled = page >= currentState.pages;
+      setBlocked(prev, page <= 1);
+      setBlocked(next, page >= currentState.pages);
+      // The page change is said once, by the status line; a reload of the same
+      // page says nothing.
+      if (pageStatus && page !== previous) {
+        pageStatus.textContent = `${tr("viewer.page", "Page")} ${page} / ${currentState.pages}`;
+      }
       renderMedia(page);
       if (syncHash) history.replaceState(null, "", `#page-${page}`);
       // Only a page the reader chose: a turn the results list asked for must
@@ -192,8 +207,8 @@
     root.mark = mark;
     root.loadDocument = loadDocument;
     const byReader = { syncHash: true, source: "reader" };
-    prev?.addEventListener("click", () => setPage(page - 1, byReader));
-    next?.addEventListener("click", () => setPage(page + 1, byReader));
+    prev?.addEventListener("click", () => { if (!isBlocked(prev)) setPage(page - 1, byReader); });
+    next?.addEventListener("click", () => { if (!isBlocked(next)) setPage(page + 1, byReader); });
     input?.addEventListener("change", () => setPage(input.value, byReader));
     input?.addEventListener("keydown", (event) => {
       if (event.key === "Enter") {

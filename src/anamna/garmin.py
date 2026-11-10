@@ -940,30 +940,78 @@ def _process_permissions_item(settings: Settings, connections: dict[str, tuple[s
     return user_id
 
 
+#: A delivery that fails inside this application's own code is set aside (processed_at stamped) after this many tries, so it cannot hold up the queue.
+MAX_EVENT_ATTEMPTS = 5
+#: A delivery that fails because the provider could not be reached or answered an error is retried for about a day of scheduler passes before it is set aside; one that fails inside this application's own code is set aside after MAX_EVENT_ATTEMPTS, because retrying cannot change the outcome.
+MAX_TRANSIENT_ATTEMPTS = 300
+def _event_garmin_users(payload: dict) -> set[str]:
+    """The Garmin user ids a delivery names, so a failure can be tied to its account."""
+    return {
+        str(item["userId"])
+        for items in payload.values() if isinstance(items, list)
+        for item in items if isinstance(item, dict) and item.get("userId")
+    }
+
+
+def _record_failure(settings: Settings, row_id: int, error: str, transient: bool) -> bool:
+    """Count one failed try under the exception class name only (a message can carry a
+    URL or a value from the record). True when this try used up the limit: MAX_TRANSIENT_ATTEMPTS
+    for a provider or network failure (``transient``), MAX_EVENT_ATTEMPTS otherwise."""
+    limit = MAX_TRANSIENT_ATTEMPTS if transient else MAX_EVENT_ATTEMPTS
+    with connect(settings) as db:
+        db.execute("UPDATE provider_events SET attempts=attempts+1, last_error=? WHERE id=?", (error, row_id))
+        attempts = int(db.execute("SELECT attempts FROM provider_events WHERE id=?", (row_id,)).fetchone()[0])
+        if attempts < limit:
+            return False
+        db.execute("UPDATE provider_events SET processed_at=? WHERE id=?", (utc_now(), row_id))
+    logger.warning("garmin: delivery %s set aside after %s attempts: %s", row_id, attempts, error)
+    return True
+
+
+def _process_queued(settings: Settings, row, connections, reauth: set[str], touched: set[str]) -> bool:
+    """Process one queued delivery. True when it is done; False when it stays pending."""
+    try:
+        payload = json.loads(str(row["payload"]))
+    except json.JSONDecodeError:
+        payload = {}
+    payload = payload if isinstance(payload, dict) else {}
+    users = _event_garmin_users(payload)
+    if users & reauth:
+        return False  # the account needs a new authorization: not called again in this pass, no attempt counted
+    try:
+        touched.update(process_event(settings, payload, connections, str(row["received_at"] or "")))
+    except Exception as exc:  # noqa: BLE001 — one bad delivery must never hold up the others
+        if isinstance(exc, integrations.ReauthorizeError):
+            reauth.update(users)
+        if not _record_failure(settings, int(row["id"]), type(exc).__name__, isinstance(exc, IntegrationError)):
+            logger.warning("garmin: delivery %s failed, will retry: %s", row["id"], type(exc).__name__)
+        return False
+    return True
+
+
 def process_pending(settings: Settings) -> int:
     """Turn archived deliveries into rows, oldest first, and mark them done.
-    A delivery that fails stays pending for the next run."""
+    A delivery that fails stays pending for the next run until it has failed
+    its limit: MAX_TRANSIENT_ATTEMPTS when the provider or network failed,
+    MAX_EVENT_ATTEMPTS when this application's own code did. An account whose
+    authorization was refused is not called again in the same pass, and the
+    rest of the queue still runs."""
     with connect(settings) as db:
         rows = db.execute(
-            "SELECT id, payload, received_at FROM provider_events WHERE provider='garmin' AND processed_at IS NULL ORDER BY id"
+            "SELECT id, payload, received_at FROM provider_events WHERE provider='garmin' AND processed_at IS NULL AND attempts<? ORDER BY id",
+            (MAX_TRANSIENT_ATTEMPTS,),
         ).fetchall()
+        reauth = {str(row[0]) for row in db.execute(
+            "SELECT external_user_id FROM provider_connections WHERE provider='garmin' AND status='reauthorize' AND external_user_id<>''"
+        )}
     if not rows:
         return 0
     connections = _connections(settings)
     done: list[int] = []
     touched: set[str] = set()
     for row in rows:
-        try:
-            payload = json.loads(str(row["payload"]))
-        except json.JSONDecodeError:
-            payload = {}
-        try:
-            touched |= process_event(settings, payload if isinstance(payload, dict) else {}, connections,
-                                     str(row["received_at"] or ""))
-        except IntegrationError as exc:
-            logger.warning("garmin: delivery %s failed, will retry: %s", row["id"], exc)
-            continue
-        done.append(int(row["id"]))
+        if _process_queued(settings, row, connections, reauth, touched):
+            done.append(int(row["id"]))
     now = utc_now()
     with connect(settings) as db:
         db.executemany("UPDATE provider_events SET processed_at=? WHERE id=?", [(now, i) for i in done])
@@ -978,11 +1026,23 @@ _inflight: set[str] = set()
 _inflight_lock = threading.Lock()
 
 
-def spawn(name: str, target, *args) -> None:
+def claim(name: str) -> bool:
+    """Take the in-flight slot for `name`. False when a run under that name is already going."""
     with _inflight_lock:
         if name in _inflight:
-            return
+            return False
         _inflight.add(name)
+        return True
+
+
+def release(name: str) -> None:
+    with _inflight_lock:
+        _inflight.discard(name)
+
+
+def spawn(name: str, target, *args) -> None:
+    if not claim(name):
+        return
 
     def run() -> None:
         try:
@@ -992,8 +1052,7 @@ def spawn(name: str, target, *args) -> None:
         except Exception:  # noqa: BLE001 — background work must never take the request down
             logger.warning("garmin: background %s failed", name, exc_info=True)
         finally:
-            with _inflight_lock:
-                _inflight.discard(name)
+            release(name)
 
     threading.Thread(target=run, name=f"anamna-{name}", daemon=True).start()
 

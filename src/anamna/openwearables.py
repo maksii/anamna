@@ -41,7 +41,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import threading
 import time
 import uuid
@@ -83,6 +82,10 @@ REFRESH_SECONDS = 12 * 3600
 
 REQUEST_TIMEOUT = 30
 
+#: Largest response body read into memory.  Every answer these calls expect is
+#: JSON of a few kilobytes to a few megabytes; anything larger is not one.
+MAX_RESPONSE_BYTES = 32 * 1024 * 1024
+
 #: Server-side page maxima, measured: activity takes 400, the other cursor
 #: endpoints 100, health-scores 1000 on its own offset pagination.
 _SUMMARY_LIMIT = 400
@@ -97,8 +100,9 @@ class OpenWearablesError(Exception):
     """The server is unreachable, refused the request, or answered nonsense.
 
     ``status`` carries the HTTP code when one was received — callers branch on
-    it as an integer, never by substring-matching the message, which embeds up
-    to 300 characters of response body that can contain anything.
+    it as an integer, never by substring-matching the message. The message does
+    not carry the response body: callers log it, and a body can echo names. The
+    body is logged at DEBUG instead.
     """
 
     def __init__(self, message: str, status: int | None = None):
@@ -157,10 +161,15 @@ def _request(
     )
     try:
         with _opener.open(request, timeout=timeout) as response:
-            body = response.read()
+            body = response.read(MAX_RESPONSE_BYTES + 1)
+            if len(body) > MAX_RESPONSE_BYTES:
+                raise OpenWearablesError("openwearables: response too large")
     except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", "replace")[:300]
-        raise OpenWearablesError(f"HTTP {exc.code}: {detail}", status=exc.code) from exc
+        detail = exc.read(MAX_RESPONSE_BYTES).decode("utf-8", "replace")[:300]
+        # Callers log the message, and a server's error page can echo a name, so the
+        # body is kept out of it and logged at DEBUG only.
+        logger.debug("upstream error body: %s", detail)
+        raise OpenWearablesError(f"HTTP {exc.code}", status=exc.code) from exc
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         raise OpenWearablesError(str(exc)) from exc
     if not body:
@@ -1227,6 +1236,17 @@ def _check_sync_account(db, settings: Settings, user_id: str, expected: tuple[st
 
 def account_identity(settings: Settings, user_id: str) -> tuple[str, str, str]:
     return (_remote_user_id(settings, user_id), ow_settings(settings)["url"], str(sync_state(settings, user_id).get("link_generation", "")))
+
+
+def linked_elsewhere(settings: Settings, user_id: str, remote_user_id: str) -> bool:
+    """Whether another local account already holds this remote account.  Two
+    records fed by one person's wearable is the mix-up this integration exists
+    to prevent, whoever asks for it."""
+    with connect(settings) as db:
+        return db.execute(
+            "SELECT 1 FROM provider_connections WHERE provider=? AND external_user_id=? AND user_id<>?",
+            (PROVIDER, remote_user_id, user_id),
+        ).fetchone() is not None
 
 
 def link_account(settings: Settings, user_id: str, remote_user_id: str, remote_email: str) -> bool:

@@ -256,10 +256,10 @@ def test_expert_unit_behind_a_comma_is_split_off_the_name():
         "Клітини перехідного епітелію": (None, "не виявлено", "в п/з"),
     }
     # Folded, or they would start second series: «в п/з» is the HPF unit the
-    # app already knew, and «г/мл» joins the unitless specific gravity every
-    # other laboratory here prints.
+    # app already knew.  «г/мл» folds to no unit for specific gravity only
+    # (CONCEPT_UNIT_ALIASES), so the bare unit is kept everywhere else.
     assert canonical_unit("в п/з") == canonical_unit("per HPF")
-    assert canonical_unit("г/мл") == canonical_unit(None)
+    assert canonical_unit("г/мл") == "г/мл"
 
 
 def test_expert_wrapped_mid_label_keeps_its_code_and_unit():

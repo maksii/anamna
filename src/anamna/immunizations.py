@@ -62,9 +62,9 @@ DISEASES: dict[str, Disease] = {
         Disease("diphtheria", "Diphtheria", "A bacterial throat infection that can block the airway. Protection fades, so adults need a booster.", True),
         Disease("tetanus", "Tetanus", "Caused by bacteria entering a wound; it locks the muscles. Protection fades, so adults need a booster.", True),
         Disease("pertussis", "Whooping cough", "A bacterial cough illness, dangerous to infants. Adults are boosted mainly to protect babies around them.", True),
-        Disease("polio", "Poliomyelitis", "A virus that can paralyse. Ukraine gives inactivated and oral vaccine in infancy and at six years.", True),
+        Disease("polio", "Poliomyelitis", "A virus that can paralyse. Ukraine's calendar gives inactivated vaccine at 2, 4, 6 and 18 months and at six years.", True),
         Disease("hib", "Haemophilus influenzae type b", "A bacterium that causes meningitis in small children. Given in infancy.", True),
-        Disease("hepatitis_b", "Hepatitis B", "A virus that damages the liver over years. Given from the second day of life in Ukraine.", True),
+        Disease("hepatitis_b", "Hepatitis B", "A virus that damages the liver over years. Ukraine's current calendar starts the course at two months of age; babies whose mothers carry the virus are vaccinated in the first day of life.", True),
         Disease("hepatitis_a", "Hepatitis A", "A liver virus spread through food and water. Recommended rather than routine.", False),
         Disease("measles", "Measles", "A highly contagious virus with serious complications. Two doses give lasting protection.", True),
         Disease("mumps", "Mumps", "A virus that swells the salivary glands and can affect fertility. Given with measles and rubella.", True),
@@ -72,9 +72,12 @@ DISEASES: dict[str, Disease] = {
         Disease("varicella", "Chickenpox", "A virus most people meet in childhood; more severe in adults. Recommended, not routine.", False),
         Disease("influenza", "Seasonal influenza", "The strains circulating change every year, so protection is given once a season.", False),
         Disease("covid19", "COVID-19", "Caused by the SARS-CoV-2 coronavirus. Which adults should be revaccinated, and how often, is where the three authorities differ most.", False),
-        Disease("hpv", "Human papillomavirus", "A virus that causes cervical and other cancers. Given as a course of two or three doses.", True),
+        Disease("hpv", "Human papillomavirus", "A virus that causes cervical and other cancers. Ukraine's calendar gives one dose to girls aged 12 to 13; at other ages the course is one to three doses, depending on age, immune status and the national schedule.", False),
         Disease("pneumococcus", "Pneumococcal disease", "A bacterium causing pneumonia and meningitis; risk rises with age and with some long-term conditions.", False),
-        Disease("meningococcus_acwy", "Meningococcal A, C, W, Y", "Bacterial meningitis and sepsis from four serogroups, covered by one conjugate vaccine.", False),
+        Disease("meningococcus_acwy", "Meningococcal A, C, W, Y", "Bacterial meningitis and sepsis from four serogroups, covered only together by a four-valent (ACWY) vaccine.", False),
+        Disease("meningococcus_a", "Meningococcal A", "Bacterial meningitis and sepsis from serogroup A only; it does not cover the other serogroups.", False),
+        Disease("meningococcus_c", "Meningococcal C", "Bacterial meningitis and sepsis from serogroup C only; it does not cover the other serogroups.", False),
+        Disease("meningococcus_w", "Meningococcal W", "Bacterial meningitis and sepsis from serogroup W only; it does not cover the other serogroups.", False),
         Disease("meningococcus_b", "Meningococcal B", "The serogroup the A/C/W/Y vaccine does not cover; it needs its own product.", False),
         Disease("rotavirus", "Rotavirus", "The commonest cause of severe infant diarrhoea. Given orally in the first months of life.", False),
         Disease("tick_borne_encephalitis", "Tick-borne encephalitis", "A virus carried by ticks in parts of Europe. Given to people exposed to them.", False),
@@ -128,8 +131,11 @@ VACCINE_CODES: dict[str, tuple[str, ...]] = {
     "IPV": ("polio",),
     "bOPV": ("polio",),
     "HIB": ("hib",),
-    "HibMenC": ("hib", "meningococcus_acwy"),
-    "PCV10": ("pneumococcus", "hib"),
+    # A product is credited only with what its licence names: PCV10 carries a
+    # Haemophilus influenzae protein as its carrier, which does not make it a Hib
+    # vaccine, and each meningococcal product covers only the serogroups it names.
+    "HibMenC": ("hib", "meningococcus_c"),
+    "PCV10": ("pneumococcus",),
     "Pneumo_conj": ("pneumococcus",),
     "Pneumo_ps": ("pneumococcus",),
     "MMR": ("measles", "mumps", "rubella"),
@@ -143,13 +149,13 @@ VACCINE_CODES: dict[str, tuple[str, ...]] = {
     "HPV": ("hpv",),
     "Influenza": ("influenza",),
     "Rotavirus": ("rotavirus",),
-    "MenA_conj": ("meningococcus_acwy",),
-    "MenC_conj": ("meningococcus_acwy",),
-    "MenAC": ("meningococcus_acwy",),
-    "MenACW": ("meningococcus_acwy",),
+    "MenA_conj": ("meningococcus_a",),
+    "MenC_conj": ("meningococcus_c",),
+    "MenAC": ("meningococcus_a", "meningococcus_c"),
+    "MenACW": ("meningococcus_a", "meningococcus_c", "meningococcus_w"),
     "Men_ACWY_135": ("meningococcus_acwy",),
     "MenB": ("meningococcus_b",),
-    "MenBC": ("meningococcus_b", "meningococcus_acwy"),
+    "MenBC": ("meningococcus_b", "meningococcus_c"),
     "SarsCov2_mRNA": ("covid19",),
     "SarsCov2_RNA": ("covid19",),
     "SarsCov2_DNA": ("covid19",),
@@ -205,10 +211,14 @@ _HOMOGLYPHS = str.maketrans({
 })
 
 
+def _loose(text: str) -> str:
+    """Lowercase, shapes folded, word breaks kept: `fold` before its last squeeze."""
+    return unicodedata.normalize("NFKC", text).translate(_HOMOGLYPHS).casefold()
+
+
 def fold(text: str) -> str:
     """Down to lowercase Latin letters and digits, shapes folded, nothing else."""
-    normalised = unicodedata.normalize("NFKC", text).translate(_HOMOGLYPHS)
-    return re.sub(r"[^a-z0-9]+", "", normalised.casefold())
+    return re.sub(r"[^a-z0-9]+", "", _loose(text))
 
 
 _FOLDED_CODES = {fold(code): code for code in VACCINE_CODES}
@@ -250,6 +260,19 @@ _TEXT_MARKERS: tuple[tuple[str, tuple[str, ...]], ...] = tuple(
         ("правця", ("tetanus",)),
     )
 )
+
+#: The two meningococcal markers that name serogroups without naming which.  A
+#: product counts for them only when its text names all four.
+_SEROGROUP_MARKERS = frozenset(
+    fold(phrase) for phrase in ("менінгококів серогруп", "менінгокової інфекції серогруп")
+)
+
+
+def _names_all_four_serogroups(block: str) -> bool:
+    """Whether the words after «серогруп» name A, C, W (or 135) and Y, each as a word of its own."""
+    _, _, tail = _loose(block).partition(_loose("серогруп"))
+    words = set(re.findall(r"[a-z0-9]+", tail))
+    return {"a", "c", "y"} <= words and bool(words & {"w", "135"})
 
 #: Wording that names a code on its own when OCR has mangled the bracketed one.
 #: Every word must be present: «кон'югована» alone is also the meningococcal
@@ -679,6 +702,20 @@ class ParsedDose:
     clinician: str = ""
 
 
+def _code_in_brackets(block: str) -> str | None:
+    """The canonical code of the first bracketed name that reads as one, or None."""
+    for candidate in re.findall(r"\(([^)]{2,40})\)", block):
+        key = fold(candidate)
+        if not key:
+            continue
+        if key in _FOLDED_CODES:
+            return _FOLDED_CODES[key]
+        close = difflib.get_close_matches(key, _FOLDED_CODES, n=1, cutoff=0.75)
+        if close:
+            return _FOLDED_CODES[close[0]]
+    return None
+
+
 def identify_vaccine(block: str) -> tuple[str, tuple[str, ...]]:
     """Which vaccine a row describes, from its bracketed code or its wording.
 
@@ -689,22 +726,16 @@ def identify_vaccine(block: str) -> tuple[str, tuple[str, ...]]:
     is judged on.
     """
     folded_block = fold(block)
-    for candidate in re.findall(r"\(([^)]{2,40})\)", block):
-        key = fold(candidate)
-        if not key:
-            continue
-        if key in _FOLDED_CODES:
-            code = _FOLDED_CODES[key]
-            return code, VACCINE_CODES[code]
-        close = difflib.get_close_matches(key, _FOLDED_CODES, n=1, cutoff=0.75)
-        if close:
-            code = _FOLDED_CODES[close[0]]
-            return code, VACCINE_CODES[code]
+    code = _code_in_brackets(block)
+    if code is not None:
+        return code, VACCINE_CODES[code]
     for words, code in _CODE_MARKERS:
         if all(word in folded_block for word in words):
             return code, VACCINE_CODES[code]
     for marker, keys in _TEXT_MARKERS:
         if marker and marker in folded_block:
+            if marker in _SEROGROUP_MARKERS and not _names_all_four_serogroups(block):
+                continue
             return "", keys
     return "", ()
 
@@ -1125,6 +1156,7 @@ class Recommendation:
     interval_days: int = 0
     source_ids: tuple[str, ...] = ()
     regions_covered: tuple[str, ...] = ()
+    #: 'agreed' | 'agreed_ua_us' | 'differs'.  A 'differs' item never yields a due date.
     agreement: str = "agreed"
 
 
@@ -1142,7 +1174,8 @@ SCHEDULE: tuple[Recommendation, ...] = (
         interval_days=3652,  # ten years
         source_ids=("moz-595-2011", "cdc-adult-schedule", "ecdc-vaccine-scheduler"),
         regions_covered=("UA", "US", "EU"),
-        agreement="agreed",
+        # Ukraine (first adult booster at 26, then every ten years) and the US state the same interval.  EU countries set their own adult schedules -- every ten years, at fixed ages, or none after childhood -- so "all three agree" would be false for an EU reader.
+        agreement="agreed_ua_us",
     ),
     Recommendation(
         key="influenza_season",
@@ -1204,7 +1237,7 @@ class Gap:
     """One thing the record suggests is outstanding, and why."""
 
     key: str
-    kind: str  # 'series' | 'due' | 'never_recorded'
+    kind: str  # 'series' | 'due' | 'never_recorded' | 'discuss'
     diseases: tuple[str, ...]
     last_date: str | None = None
     due_date: str | None = None
@@ -1240,7 +1273,9 @@ def _series_gaps(dated: list[dict[str, object]]) -> list[Gap]:
                     last_date=str(dose["occurrence_date"]),
                     dose_number=given,
                     doses_in_series=total,
-                    urgency="soon",
+                    # The card gives no date for the next dose, so no timing is
+                    # claimed: "unknown", not a window no source states.
+                    urgency="unknown",
                     extras={"product_name": dose.get("product_name") or ""},
                 )
             )
@@ -1270,27 +1305,46 @@ def _due_gap(item: Recommendation, last: str | None, due: date, today: date) -> 
     )
 
 
+def _discuss_gap(item: Recommendation, last: str | None) -> Gap:
+    """An item whose authorities disagree: something to raise with a doctor.
+
+    It carries no due date and no urgency, so the page cannot present one
+    side of the disagreement as the settled answer.
+    """
+    return Gap(
+        key=item.key, kind="discuss", diseases=item.diseases, last_date=last,
+        due_date=None, source_ids=item.source_ids,
+        regions_covered=item.regions_covered, agreement=item.agreement,
+        urgency="unknown",
+    )
+
+
 def _seasonal_gap(item: Recommendation, last: str | None, today: date) -> Gap | None:
-    """The influenza season item: due once per season, not once per rolling year.
+    """The influenza season item: one dose per season, not one per rolling year.
 
     A season, not a rolling year: the strains are reformulated every
     year, so a dose given last November protects against last winter
     and stops counting when the next season opens.  Northern
-    hemisphere seasons are named by the autumn they begin in.
+    hemisphere seasons are named by the autumn they begin in.  The
+    authorities differ on who should have it, so a missing dose is a
+    point to discuss, never a date.
     """
     season_start = date(today.year if today.month >= 9 else today.year - 1, 9, 1)
     if date(today.year, 6, 1) <= today < date(today.year, 9, 1):
-        # Between seasons.  Reporting the season that has just ended as
-        # overdue is true and useless: nobody can act on it, and the
-        # vaccine for the coming one does not exist yet.
-        return _due_gap(item, last, date(today.year, 9, 1), today)
+        # Between seasons.  The season that has just ended is over, and the
+        # vaccine for the coming one does not exist yet: nothing to raise.
+        return None
     if last is not None and last >= season_start.isoformat():
         return None
-    return _due_gap(item, last, season_start, today)
+    return _discuss_gap(item, last)
 
 
 def _schedule_gap(item: Recommendation, dated: list[dict[str, object]], today: date) -> Gap | None:
-    """What one recurring adult item says is outstanding, or None."""
+    """What one recurring adult item says is outstanding, or None.
+
+    An item whose authorities differ yields a "discuss" gap or nothing, never
+    a due date: a date would present one side of the disagreement as settled.
+    """
     covering = [
         dose for dose in dated
         if set(item.diseases) & set(str(dose.get("diseases") or "").split(","))
@@ -1298,6 +1352,14 @@ def _schedule_gap(item: Recommendation, dated: list[dict[str, object]], today: d
     last = max((str(dose["occurrence_date"]) for dose in covering), default=None)
     if item.kind == "seasonal":
         return _seasonal_gap(item, last, today)
+    if item.agreement == "differs":
+        if last is None:
+            return _discuss_gap(item, last)
+        try:
+            recent = date.fromisoformat(last) > today - timedelta(days=item.interval_days)
+        except ValueError:
+            return None
+        return None if recent else _discuss_gap(item, last)
     if last is None:
         return Gap(
             key=item.key, kind="never_recorded", diseases=item.diseases,
@@ -1327,7 +1389,7 @@ def find_gaps(doses: list[dict[str, object]], today: date) -> list[Gap]:
         if gap is not None:
             gaps.append(gap)
 
-    rank ={"series": 0, "due": 1, "never_recorded": 2}
+    rank = {"series": 0, "due": 1, "never_recorded": 2, "discuss": 3}
     urgency_rank = {"overdue": 0, "soon": 1, "unknown": 2, "later": 3}
     gaps.sort(key=lambda gap: (urgency_rank.get(gap.urgency, 9), rank.get(gap.kind, 9), gap.key))
     return gaps
@@ -1477,9 +1539,13 @@ def store_document_doses(
 
     from .db import utc_now
 
+    # Unchecked rows the parser wrote are replaced by what it reads now. A dose a
+    # model suggested and a person accepted beside the card is also unchecked
+    # until they verify it, but it is theirs: the re-read must not delete it.
     connection.execute(
         """DELETE FROM immunizations
-           WHERE document_id=? AND entry_source='document' AND verification_status='extracted'""",
+           WHERE document_id=? AND entry_source='document' AND verification_status='extracted'
+             AND extraction_method <> 'ai_suggested_entry'""",
         (document_id,),
     )
     # A dose typed in by hand is the person's memory of an injection; the
@@ -2011,8 +2077,8 @@ def demo() -> None:
     gaps = {gap.key: gap for gap in find_gaps(rows, date(2026, 8, 7))}
     assert gaps["series:hpv"].kind == "series" and gaps["series:hpv"].dose_number == 2
     assert gaps["td_booster"].due_date == "2035-02-23", gaps["td_booster"].due_date
-    assert gaps["covid_booster"].kind == "never_recorded"
-    assert gaps["influenza_season"].urgency in {"soon", "later"}
+    assert gaps["covid_booster"].kind == "discuss" and gaps["covid_booster"].due_date is None
+    assert "influenza_season" not in gaps, "between seasons there is nothing to raise"
     assert "tuberculosis" in calendar_diseases_without_a_dose(rows)
     print("immunizations: ok")
 

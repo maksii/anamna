@@ -19,7 +19,7 @@ from anamna.reference import canonical_unit, convert_value
         # Synevo's «Од» on the atherogenic ratio is the same dimensionless number.
         ("atherogenic-coefficient", "Од", "ratio", "ratio"),
         # Specific gravity has no unit; «г/мл» is the lab's label, not a quantity.
-        ("urine-specific-gravity", "г/мл", None, None),
+        ("urine-specific-gravity", "г/мл", None, ""),
         # A real unit stays exactly as printed.
         ("platelet-count", "х 10*9/л", "10^9/L", "х 10*9/л"),
         ("creatinine", "мкмоль/л", "µmol/L", "мкмоль/л"),
@@ -38,7 +38,8 @@ def test_od_is_not_folded_into_ratio_outside_the_atherogenic_coefficient():
 def test_per_field_and_specific_gravity_fold_as_the_lab_sync_writes_them():
     """OPS-37: the lab sync adopted «г/мл» and «в п/з» from the lab's record."""
     assert canonical_unit("в п/з") == canonical_unit("per HPF")
-    assert canonical_unit("г/мл") == ""
+    # «г/мл» folds to no unit for specific gravity only (CONCEPT_UNIT_ALIASES).
+    assert canonical_unit("г/мл") == "г/мл"
     assert stored_unit("в п/з", "per HPF", "urine-changed-erythrocytes") == "в п/з"
 
 

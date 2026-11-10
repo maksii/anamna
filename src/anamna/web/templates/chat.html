@@ -44,7 +44,7 @@
           <small>{{ item.updated_at|datefmt }}</small>
         </a>
         <form method="post" action="/chat/{{ item.id }}/delete"
-              data-confirm="{{ t('chat.delete_confirm') }}" onsubmit="return confirm(this.dataset.confirm)">
+              data-confirm="{{ t('chat.delete_confirm') }}">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <input type="hidden" name="back" value="{{ current.id if current else '' }}">
           <button class="an-chat-side__delete" type="submit" title="{{ t('chat.delete') }}"
@@ -54,7 +54,7 @@
       {% endfor %}
     </ul>
     <form method="post" action="/chat/delete-all"
-          data-confirm="{{ t('chat.delete_all_confirm') }}" onsubmit="return confirm(this.dataset.confirm)">
+          data-confirm="{{ t('chat.delete_all_confirm') }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <button class="link-button an-chat-side__clear" type="submit">{{ t('chat.delete_all') }}</button>
     </form>
@@ -72,7 +72,7 @@
       <details class="an-chat-info">
         <summary aria-label="{{ t('chat.info_label') }}" title="{{ t('chat.info_label') }}"><span aria-hidden="true">i</span></summary>
         <div class="an-chat-info__panel">
-          {% if not is_owner %}<p>{{ t('chat.lead_shared', name=record_name) }}</p>{% endif %}
+          {% if not is_owner and not share_read_only %}<p>{{ t('chat.lead_shared', name=record_name) }}</p>{% endif %}
           {% if ai_ready %}<p>{{ t('chat.privacy', host=route.host, model=route.model) }}</p>{% endif %}
           <p>{{ t('chat.context_help') }}</p>
           <p>{{ t('chat.disclaimer') }}</p>
@@ -91,7 +91,11 @@
       {% endfor %}
     </ol>
 
-    {% if ai_ready %}
+    {% if busy_text %}<p class="alert" role="status">{{ busy_text }}</p>{% endif %}
+    {% if share_read_only %}
+    {#- A read-only share: the conversations above stay readable, but no new question goes to the assistant. -#}
+    <p class="alert" role="status">{{ t('chat.share_read_only', name=record_name) }}</p>
+    {% elif ai_ready %}
     <form class="an-chat-composer" method="post" action="/chat/send" data-chat-form data-chat-composer>
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <input type="hidden" name="conversation_id" value="{{ current.id if current else '' }}" data-chat-conversation>

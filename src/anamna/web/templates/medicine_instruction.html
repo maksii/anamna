@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}{{ t('med.info.title') }} · {{ factor.name }}{% endblock %}
+
+{#- The stored instruction of one medicine. A page of its own, and the same
+    <article> is what medicine_info.js shows in a dialog on the list and on
+    the entry page. Everything inside it is text: the instruction is stored
+    with its markup already removed. -#}
+{% block content %}
+<nav class="an-med-crumb" aria-label="{{ t('med.title') }}"><a href="{{ factor.url }}"><span aria-hidden="true">←</span> {{ factor.name }}</a></nav>
+
+<article class="an-med-info" id="med-instruction" aria-labelledby="med-info-title">
+  <header class="an-med-info__head">
+    <h1 id="med-info-title">{{ t('med.info.title') }}</h1>
+    <p class="an-med-info__for">{{ (instruction.shown_for if instruction else '') or factor.name }}</p>
+    {% if instruction %}
+    <p class="tiny muted">{{ t('med.info.source', date=fetched_on) }}
+      <a class="an-med-link" href="{{ instruction.url }}" target="_blank" rel="noreferrer noopener">{{ t('med.reference.open_site') }} <span aria-hidden="true">↗</span></a></p>
+    {% if locale != 'uk' %}<p class="tiny muted">{{ t('med.info.language_note') }}</p>{% endif %}
+    {% endif %}
+  </header>
+
+  {% if not instruction %}
+  <div class="alert neutral" role="status">
+    <p><strong>{{ t('med.info.empty_title') }}</strong></p>
+    <p>{{ t('med.info.empty_body') if lookup_on else t('med.info.off') }}</p>
+    {% if factor.reference_url %}<p><a class="an-med-link" href="{{ factor.reference_url }}" target="_blank" rel="noreferrer noopener">{{ t('med.reference.open_site') }} <span aria-hidden="true">↗</span></a></p>{% endif %}
+  </div>
+  {% else %}
+
+  {% if facts %}
+  <section aria-labelledby="med-info-facts">
+    <h2 id="med-info-facts">{{ t('med.info.facts') }}</h2>
+    <dl class="an-med-facts">
+      {% for fact in facts %}
+      <div>
+        <dt>{{ t('med.info.fact.' ~ fact.key) }}</dt>
+        <dd>{{ fact['values']|join('; ') }}</dd>
+      </div>
+      {% endfor %}
+    </dl>
+  </section>
+  {% endif %}
+
+  {% if warnings %}
+  <section aria-labelledby="med-info-who">
+    <h2 id="med-info-who">{{ t('med.info.who') }}</h2>
+    <ul class="an-med-who">
+      {% for item in warnings %}
+      <li data-state="{{ item.state }}">
+        <span class="an-med-who__mark" aria-hidden="true">{{ {'allowed': '✓', 'free': '✓', 'caution': '!', 'forbidden': '✕'}[item.state] }}</span>
+        <span><strong>{{ item.subject }}</strong>: {{ t('med.info.state.' ~ item.state) }}{% if item.remark %} <span class="muted">({{ item.remark }})</span>{% endif %}</span>
+      </li>
+      {% endfor %}
+    </ul>
+    <p class="tiny muted">{{ t('med.info.who_note') }}</p>
+  </section>
+  {% endif %}
+
+  <section aria-labelledby="med-info-sections">
+    <h2 id="med-info-sections">{{ t('med.info.sections') }}</h2>
+    {% for title, text in instruction.sections %}
+    <details class="an-med-part">
+      <summary>{{ title or t('med.info.title') }}</summary>
+      <div class="an-med-part__text">{% for line in text.split('\n') %}{% if line.strip() %}<p>{{ line }}</p>{% endif %}{% endfor %}</div>
+    </details>
+    {% endfor %}
+  </section>
+  {% endif %}
+</article>
+{% endblock %}

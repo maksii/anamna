@@ -41,6 +41,7 @@ import threading
 import time
 import uuid
 from collections import Counter
+from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
@@ -90,6 +91,26 @@ from .common import (
 
 logger = logging.getLogger("anamna.labsync")
 
+#: Called with an owner's user id after a run that may have changed their
+#: record.  The web layer registers its catalog invalidation here: this
+#: package cannot import the web application, and a background sync has no
+#: request to hang the invalidation on.
+_record_changed: list[Callable[[str], None]] = []
+
+
+def on_record_change(callback: Callable[[str], None]) -> None:
+    if callback not in _record_changed:
+        _record_changed.append(callback)
+
+
+def _notify_record_changed(owner_user_id: str) -> None:
+    for callback in tuple(_record_changed):
+        try:
+            callback(owner_user_id)
+        except Exception as exc:  # a listener must never fail a sync
+            logger.warning("labsync: record-change listener failed: %s", type(exc).__name__)
+
+
 PROVIDERS = {esculab.KEY: esculab, synevo.KEY: synevo, expert.KEY: expert, **doctoreleks.CLINICS}
 
 #: Pause between orders: an unofficial API is not somewhere to be in a hurry.
@@ -108,9 +129,11 @@ INFO_RESULT_TYPES = frozenset({"none", "json", "flora", "cytology", "info", "fil
 #: A lab's free-text remark on the panel («Примітки (зак)»), not a measurement;
 #: nor is the signature of whoever read a smear («Виконавець цитологічного
 #: аналізу»), nor a smear's sampling-site heading («ТОЧКА 2» / «VAGINA»).
-_NOTE_ROW_RE = re.compile(r"^\s*(примітк|коментар|comment|note|виконавець|точка\s*\d+\s*$)", re.I)
+_NOTE_ROW_RE = re.compile(r"^\s*(примітк|коментар|comment|note|точка\s*\d+\s*$|виконавець)", re.I)
 #: «ТОЧКА 2» / «VAGINA»: the site every following smear row was taken from.
 _SITE_ROW_RE = re.compile(r"^\s*точка\s*\d+\s*$", re.I)
+#: A parenthesised part of a label, with no bracket nested inside it.
+_PARENTHESIZED = r"\([^()]*\)"
 #: The smear's closing grade, printed as a conclusion: «Висновок» / «Ступінь
 #: чистоти III».  The analyte is the purity grade; a bare «Висновок» would
 #: merge with every other report's conclusion.
@@ -119,6 +142,8 @@ CLASSES = ("match", "value_mismatch", "unit_mismatch", "name_mismatch", "missing
 
 ERROR_OFF = "labsync.error_off"
 ERROR_AUTH = "labsync.error_auth"
+#: One order the lab refuses (403 on its PDF); the rest of the run carries on.
+ERROR_ORDER_FORBIDDEN = "labsync.error_order_forbidden"
 ERROR_EXPIRED = "labsync.error_expired"
 ERROR_NO_CREDENTIALS = "labsync.error_no_credentials"
 ERROR_PATIENT_UNKNOWN = "labsync.error_patient_unknown"
@@ -132,6 +157,7 @@ ERROR_KEYS = frozenset(
         ERROR_OFF,
         "labsync.error_credentials",
         ERROR_AUTH,
+        ERROR_ORDER_FORBIDDEN,
         ERROR_EXPIRED,
         "labsync.error_unreachable",
         "labsync.error_reply",
@@ -299,8 +325,8 @@ SAVED_CHOOSE = "labsync.sms_choose_person"
 
 def _device_state(row) -> dict:
     """This connection's device id and trusted-device token, kept across
-    reconnects (``forget`` keeps them) so the lab knows the device and need
-    not text a code every time."""
+    reconnects so the lab knows the device and need not text a code every
+    time.  ``forget`` keeps only the device id."""
     try:
         state = json.loads(row["refresh_secret"]) if row and row["refresh_secret"] else {}
     except (json.JSONDecodeError, TypeError):
@@ -377,13 +403,15 @@ def _sign_in(settings: Settings, user_id: str, key: str, form: dict[str, str]) -
 
 def forget(settings: Settings, user_id: str, key: str) -> None:
     """Drop the credential and the lab's person list.  The chosen person and
-    the order history stay, so reconnecting later never re-imports.  For a
-    password lab only the device identity stays (no token): the next sign-in
-    from here is the same device to the lab."""
+    the order history stay, so reconnecting later never re-imports.  Only the
+    device id stays, never the lab's trusted-device token: that token skips the
+    texted code, so a copy of the database must not be able to sign in with it.
+    The next sign-in from here is the same device to the lab, and still gets a code."""
     with _PENDING_LOCK:
         _PENDING.pop((user_id, key), None)
     row = account(settings, user_id, key)
-    device = (json.dumps(_device_state(row)) if row and row["refresh_secret"] and signs_in(provider(key)) else "")
+    device = (json.dumps({"device_id": _device_state(row)["device_id"]})
+              if row and row["refresh_secret"] and signs_in(provider(key)) else "")
     with transaction(settings) as connection:
         connection.execute(
             """UPDATE lab_accounts SET secret='', refresh_secret=?, phone='', secret_expires_at=NULL,
@@ -509,10 +537,10 @@ def link_candidates(settings: Settings, user_id: str) -> list[dict]:
         rows = connection.execute(
             """SELECT DISTINCT u.id, u.display_name FROM users u
                 WHERE u.disabled_at IS NULL AND u.id<>? AND (
-                      u.id IN (SELECT owner_user_id FROM record_shares WHERE grantee_email=?)
-                   OR u.email IN (SELECT grantee_email FROM record_shares WHERE owner_user_id=?))
+                      u.id IN (SELECT owner_user_id FROM record_shares WHERE grantee_user_id=?)
+                   OR u.id IN (SELECT grantee_user_id FROM record_shares WHERE owner_user_id=?))
                 ORDER BY u.display_name COLLATE NOCASE""",
-            (user_id, me["email"], user_id),
+            (user_id, user_id, user_id),
         ).fetchall()
         return [
             {"id": str(row["id"]), "name": str(row["display_name"]), "self": str(row["id"]) == user_id,
@@ -629,6 +657,28 @@ def unlink_person(settings: Settings, user_id: str, key: str, remote_id: str) ->
             "DELETE FROM lab_person_links WHERE account_user_id=? AND provider=? AND remote_person_id=?",
             (user_id, key, str(remote_id)),
         )
+
+
+def drop_links_between(settings: Settings, user_a: str, user_b: str) -> int:
+    """Remove every lab-person link that files one of these accounts' lab
+    people into the other's record; returns how many links were removed."""
+    with transaction(settings) as connection:
+        links = connection.execute(
+            """SELECT account_user_id, provider, remote_person_id, target_user_id FROM lab_person_links
+                WHERE account_user_id<>target_user_id AND (
+                      (account_user_id=? AND target_user_id=?) OR (account_user_id=? AND target_user_id=?))""",
+            (user_a, user_b, user_b, user_a),
+        ).fetchall()
+        for link in links:
+            # As unlink_person does: what was held for the other user and never
+            # entered their record goes; orders already imported stay.
+            _drop_held(connection, str(link["target_user_id"]), str(link["account_user_id"]),
+                       str(link["provider"]), str(link["remote_person_id"]))
+            connection.execute(
+                "DELETE FROM lab_person_links WHERE account_user_id=? AND provider=? AND remote_person_id=?",
+                (str(link["account_user_id"]), str(link["provider"]), str(link["remote_person_id"])),
+            )
+    return len(links)
 
 
 # --- the receiving side: results another user's lab account fetched for you -------
@@ -775,23 +825,28 @@ def _real_number(value: object) -> bool:
     return bool(value) and len(str(value)) > 2
 
 
-def _documents_by_number(connection, owner_user_id: str, numbers: set[str]) -> dict[str, list[str]]:
+def _documents_by_number(connection, owner_user_id: str, numbers: set[str], key: str) -> dict[str, list[str]]:
     """number → every document carrying it, on the document itself or on one
     of its reports (a compound PDF), oldest first; one query for any number of
-    orders.  Duplicates of another document are left out — they hold no
-    observations of their own — and so is the lab's own record of an order
-    (:data:`LAB_RECORD`): it is the lab's rows, not a reading of them."""
+    orders of one lab.  Only documents of that lab's vendor match (a document
+    with no vendor recorded may still match by number): another laboratory's
+    report can print the same order number.  Duplicates of another document
+    are left out — they hold no observations of their own — and so is the
+    lab's own record of an order (:data:`LAB_RECORD`): it is the lab's rows,
+    not a reading of them."""
     if not numbers:
         return {}
     marks = ",".join("?" for _ in numbers)
     found: dict[str, list[str]] = {"": []}  # "" keeps every hit in order, oldest first
     for row in connection.execute(
         f"""SELECT d.id, d.order_identifier, r.order_identifier report_order FROM documents d
+              LEFT JOIN vendors v ON v.id=d.vendor_id
               LEFT JOIN reports r ON r.document_id=d.id AND r.order_identifier IN ({marks})
              WHERE d.owner_user_id=? AND d.duplicate_of_document_id IS NULL AND d.extraction_strategy<>'lab_api'
+               AND (d.vendor_id IS NULL OR v.canonical_name=?)
                AND (d.order_identifier IN ({marks}) OR r.id IS NOT NULL)
              ORDER BY d.imported_at, d.id""",
-        (*numbers, owner_user_id, *numbers),
+        (*numbers, owner_user_id, provider(key).VENDOR, *numbers),
     ):
         for number in ({str(row["order_identifier"] or ""), str(row["report_order"] or "")} & numbers) | {""}:
             if str(row["id"]) not in found.setdefault(number, []):
@@ -829,10 +884,10 @@ def _duplicate_pairs(connection, document_ids: set[str]) -> list[tuple[str, str]
         (NOT_DUPLICATE_NOTE, *ids, *ids))]
 
 
-def documents_for_order(connection, owner_user_id: str, numbers: list[str]) -> list[str]:
-    """Every document carrying one of these order numbers (oldest first)."""
+def documents_for_order(connection, owner_user_id: str, numbers: list[str], key: str) -> list[str]:
+    """Every document of this lab carrying one of these order numbers (oldest first)."""
     wanted = {str(number) for number in numbers if number}
-    return _pick(_documents_by_number(connection, owner_user_id, wanted), list(wanted))
+    return _pick(_documents_by_number(connection, owner_user_id, wanted, key), list(wanted))
 
 
 _OBS_COLUMNS = """o.id, o.document_id, o.page_number, o.raw_name, o.value_numeric, o.value_text, o.comparator,
@@ -1185,7 +1240,7 @@ def _covering_item(obs: dict, items: list[dict], info_texts: list[tuple[dict, st
     # Matched by the label's tail, or by every word of it: a coprogram
     # nests «змінені» under «М'язові волокна».
     tail = obs["_loose"][-20:]
-    words = [name_key(word) for word in re.findall(r"\w{4,}", re.sub(r"\([^()]*\)", "", str(obs["raw_name"])))]
+    words = [name_key(word) for word in re.findall(r"\w{4,}", re.sub(_PARENTHESIZED, "", str(obs["raw_name"])))]
     covering = next((item for item, text in info_texts
                      if (len(tail) >= 4 and tail in text) or (words and all(word in text for word in words))), None)
     # The lab's record only says "the result is in the PDF" (ALEX²): every
@@ -1239,9 +1294,12 @@ def check_orders(connection, owner_user_id: str, order_rows: list) -> dict[tuple
     # report every value as "matches the lab record" and offer to verify it.
     records = _lab_records(connection, [row["document_id"] for row in with_rows])
     with_rows = [row for row in with_rows if str(row["document_id"] or "") not in records]
-    found = _documents_by_number(connection, owner_user_id,
-                                 {number for row in with_rows for number in _numbers(row)})
-    picked = {_order_key(row): _pick(found, _numbers(row)) for row in with_rows}
+    numbers_by_key: dict[str, set[str]] = {}
+    for row in with_rows:
+        numbers_by_key.setdefault(str(row["provider"]), set()).update(_numbers(row))
+    found = {key: _documents_by_number(connection, owner_user_id, numbers, key)
+             for key, numbers in numbers_by_key.items()}
+    picked = {_order_key(row): _pick(found[str(row["provider"])], _numbers(row)) for row in with_rows}
     kept = _kept_documents(connection, [row["document_id"] for row in with_rows])
     pairs = _duplicate_pairs(connection, {doc for docs in picked.values() for doc in docs} | set(kept.values()))
     plan = {}
@@ -1261,7 +1319,8 @@ def check_orders(connection, owner_user_id: str, order_rows: list) -> dict[tuple
     results: dict[tuple[str, str], dict | None] = {_order_key(row): None for row in order_rows}
     for key, (row, document_ids) in plan.items():
         rank = {doc: index for index, doc in enumerate(document_ids)}
-        mine = sorted(_for_order(pooled, _numbers(row), document_ids), key=lambda obs: rank[obs["document_id"]])
+        mine = sorted(_for_order(pooled, _numbers(row), document_ids),
+                      key=lambda obs, rank=rank: rank[obs["document_id"]])
         result = cross_check(json.loads(row["rows_json"]), mine, key[1])
         result["document_ids"] = document_ids
         result["provider"] = row["provider"]
@@ -1641,7 +1700,7 @@ def _record_name(row: dict) -> str:
     name = without_specimen_label(str(row["test"]))
     if not _BARE_NAME_RE.fullmatch(name.strip()):
         return name
-    test = collapse_space(re.sub(r"\([^()]*\)", " ", _PACKET_CODE_RE.sub("", str(row.get("packet") or ""))))
+    test = collapse_space(re.sub(_PARENTHESIZED, " ", _PACKET_CODE_RE.sub("", str(row.get("packet") or ""))))
     test = test.strip(" ,;:-\"«»")
     return f"{test}, {name.strip()}" if test else name
 
@@ -1890,8 +1949,9 @@ class _OrderSync:
                             "error_key": "labsync.partial_imported" if self.stalled else None,
                             **({"rows_changed_at": utc_now()} if self.changed else {})}
         # An accepted order that fails stays accepted (with its reason), so the
-        # next run retries it instead of asking the person a second time.
-        self.failed = "accepted" if self.previous == "accepted" else "failed"
+        # next run retries it instead of asking the person a second time; the
+        # same holds for one already imported or linked (see _KEPT_ON_FAILURE).
+        self.failed = self.previous if self.previous in _KEPT_ON_FAILURE else "failed"
 
     def hold(self) -> tuple[str, bool]:
         """Keep the lab's rows for the record's owner to decide on."""
@@ -1910,7 +1970,7 @@ class _OrderSync:
                 connection, [self.tracked["document_id"] if self.tracked is not None else None])), None)
             if self.record and self.linked_before == self.record:
                 self.linked_before = None
-            self.held = documents_for_order(connection, self.user_id, numbers)
+            self.held = documents_for_order(connection, self.user_id, numbers, self.key)
             if not self.held and not self.linked_before:
                 found = _content_match(connection, self.user_id, self.key, self.order, self.rows)
                 self.held = [found] if found else []
@@ -1946,6 +2006,9 @@ class _OrderSync:
                     _retire_lab_record(connection, self.user_id, self.record, document_id, self.key, self.order_id)
         self.save("imported", document_id=document_id,
                   **{**self.rows_fields, "error_key": self.order.get("unavailable")})
+        if self.changed and document_id:
+            with transaction(self.settings) as connection:
+                _review_lab_rows_changed(connection, document_id)
         return ("reported" if document_id != self.record else "already"), self.changed
 
     def file_record_only(self) -> tuple[str, bool]:
@@ -2028,6 +2091,8 @@ class _OrderSync:
                 _retire_lab_record(connection, self.user_id, self.record, document_id, self.key, self.order_id)
             self.upsert(connection, self.user_id, self.key, self.person["id"], self.order, state=state,
                         document_id=document_id, **self.rows_fields)
+            if self.changed and document_id:
+                _review_lab_rows_changed(connection, document_id)
             row = connection.execute(
                 "SELECT * FROM lab_orders WHERE owner_user_id=? AND provider=? AND order_id=?",
                 (self.user_id, self.key, self.order_id),
@@ -2098,6 +2163,30 @@ def _lab_comments(row: dict) -> list[str]:
     return list(dict.fromkeys(collapse_space(str(text)) for text in found if isinstance(text, str) and text.strip()))
 
 
+def _store_comment_on_values(connection, user_id: str, key: str, order_id: str, comment: str, material: str,
+                             values: list) -> int:
+    """Attach one lab comment to every value it is about; returns how many notes changed."""
+    words = word_key(comment)
+    stored = 0
+    for obs in values:
+        name = word_key(re.sub(_PARENTHESIZED, " ", str(obs["name"] or ""))).strip(" .,:;")
+        specimen = word_key(obs.get("specimen"))
+        if (len(name) < 4 or not re.search(rf"(?<!\w){re.escape(name)}(?!\w)", words)
+                or re.match(rf"{re.escape(name)}\W*[<>≤≥]?\s*\d", words)
+                or (material and specimen and material != specimen)):
+            continue
+        changed = connection.execute(
+            """UPDATE observations SET note=CASE WHEN TRIM(COALESCE(note, ''))='' THEN ?
+                                                     ELSE note || ' ' || ? END
+                        WHERE id=? AND owner_user_id=? AND instr(COALESCE(note, ''), ?)=0""",
+            (comment, comment, obs["id"], user_id, comment)).rowcount
+        if changed:
+            stored += 1
+            _audit(connection, user_id, "observation_note_from_lab", "observation", obs["id"],
+                   {"provider": key, "order_id": order_id, "note": comment})
+    return stored
+
+
 def _store_lab_comments(connection, user_id: str, key: str, order_id: str, check: dict | None) -> int:
     """Keep the lab's comment on a culture with the organism it is about, in
     the value's note («Staphylococcus epidermidis природньо резистентний до
@@ -2114,24 +2203,63 @@ def _store_lab_comments(connection, user_id: str, key: str, order_id: str, check
             continue
         material = word_key(item["lab"].get("material"))
         for comment in _lab_comments(item["lab"]):
-            words = word_key(comment)
-            for obs in values:
-                name = word_key(re.sub(r"\([^()]*\)", " ", str(obs["name"] or ""))).strip(" .,:;")
-                specimen = word_key(obs.get("specimen"))
-                if (len(name) < 4 or not re.search(rf"(?<!\w){re.escape(name)}(?!\w)", words)
-                        or re.match(rf"{re.escape(name)}\W*[<>≤≥]?\s*\d", words)
-                        or (material and specimen and material != specimen)):
-                    continue
-                changed = connection.execute(
-                    """UPDATE observations SET note=CASE WHEN TRIM(COALESCE(note, ''))='' THEN ?
-                                                     ELSE note || ' ' || ? END
-                        WHERE id=? AND owner_user_id=? AND instr(COALESCE(note, ''), ?)=0""",
-                    (comment, comment, obs["id"], user_id, comment)).rowcount
-                if changed:
-                    stored += 1
-                    _audit(connection, user_id, "observation_note_from_lab", "observation", obs["id"],
-                           {"provider": key, "order_id": order_id, "note": comment})
+            stored += _store_comment_on_values(connection, user_id, key, order_id, comment, material, values)
     return stored
+
+
+def _wanted_record_values(check: dict) -> dict[str, ParsedObservation]:
+    """The lab's rows the report does not read, keyed by their evidence line."""
+    spare = [item["obs"] for item in check["items"] if item["cls"] == "extra"]
+    wanted: dict[str, ParsedObservation] = {}
+    for item in check["items"]:
+        parsed = _record_value(item["lab"]) if item["cls"] == "missing" else None
+        if parsed is None or any(_same_result(parsed, obs) for obs in spare):
+            continue
+        wanted[parsed.evidence_text] = parsed
+    return wanted
+
+
+def _drop_unwanted_record_rows(connection, held, wanted: dict[str, ParsedObservation]) -> int:
+    changed = 0
+    for obs in held:
+        if obs["evidence_text"] not in wanted and obs["verification_status"] == "extracted":
+            connection.execute("DELETE FROM observations WHERE id=?", (obs["id"],))
+            changed += 1
+    return changed
+
+
+def _add_missing_record_rows(connection, user_id: str, record, held, wanted: dict[str, ParsedObservation]) -> int:
+    present = {obs["evidence_text"] for obs in held}
+    changed = 0
+    for line, parsed in wanted.items():
+        if line not in present:
+            observation_id = insert_observation(
+                connection, owner_user_id=user_id, patient_id=record["patient_id"], document_id=record["id"],
+                report_id=record["report_id"], vendor_id=record["vendor_id"], observed_at=record["report_date"],
+                parsed=parsed)
+            if parsed.vendor_interpretation:
+                connection.execute(
+                    "UPDATE observations SET vendor_interpretation_source='lab_record' WHERE id=?", (observation_id,))
+            changed += 1
+    return changed
+
+
+def _settle_kept_record(connection, user_id: str, record, row, document_id: str) -> None:
+    """Once the record's values are restored or set aside, make its document a
+    duplicate beside the report, or retire it when it holds nothing."""
+    left = connection.execute("SELECT COUNT(*) FROM observations WHERE document_id=?", (record["id"],)).fetchone()[0]
+    if left and record["duplicate_of_document_id"]:
+        connection.execute("UPDATE documents SET duplicate_of_document_id=NULL WHERE id=?", (record["id"],))
+        connection.execute(
+            """DELETE FROM document_relations WHERE relationship='duplicate' AND notes='person:duplicate'
+                AND ((source_document_id=? AND target_document_id=?) OR (source_document_id=? AND target_document_id=?))""",
+            (record["id"], document_id, document_id, record["id"]))
+        _audit(connection, user_id, "labsync_lab_record_kept", "document", str(record["id"]),
+               {"provider": str(row["provider"]), "order_id": str(row["order_id"]), "beside": document_id,
+                "values": left})
+    elif not left and not record["duplicate_of_document_id"]:
+        _retire_lab_record(connection, user_id, str(record["id"]), document_id, str(row["provider"]),
+                           str(row["order_id"]))
 
 
 def _keep_unread_record_values(connection, user_id: str, row, check: dict | None) -> int:
@@ -2159,47 +2287,15 @@ def _keep_unread_record_values(connection, user_id: str, row, check: dict | None
         (user_id, LAB_RECORD, str(row["order_id"]), document_id, provider(str(row["provider"])).VENDOR)).fetchone()
     if record is None or record["report_id"] is None or not _set_aside_by_sync(connection, record):
         return 0
-    spare = [item["obs"] for item in check["items"] if item["cls"] == "extra"]
-    wanted: dict[str, ParsedObservation] = {}
-    for item in check["items"]:
-        parsed = _record_value(item["lab"]) if item["cls"] == "missing" else None
-        if parsed is None or any(_same_result(parsed, obs) for obs in spare):
-            continue
-        wanted[parsed.evidence_text] = parsed
+    wanted = _wanted_record_values(check)
     held = connection.execute(
         "SELECT id, evidence_text, verification_status FROM observations WHERE document_id=? AND extraction_method=?",
         (record["id"], LAB_RECORD)).fetchall()
-    changed = 0
-    for obs in held:
-        if obs["evidence_text"] not in wanted and obs["verification_status"] == "extracted":
-            connection.execute("DELETE FROM observations WHERE id=?", (obs["id"],))
-            changed += 1
-    present = {obs["evidence_text"] for obs in held}
-    for line, parsed in wanted.items():
-        if line not in present:
-            observation_id = insert_observation(
-                connection, owner_user_id=user_id, patient_id=record["patient_id"], document_id=record["id"],
-                report_id=record["report_id"], vendor_id=record["vendor_id"], observed_at=record["report_date"],
-                parsed=parsed)
-            if parsed.vendor_interpretation:
-                connection.execute(
-                    "UPDATE observations SET vendor_interpretation_source='lab_record' WHERE id=?", (observation_id,))
-            changed += 1
+    changed = _drop_unwanted_record_rows(connection, held, wanted)
+    changed += _add_missing_record_rows(connection, user_id, record, held, wanted)
     if not changed:
         return 0
-    left = connection.execute("SELECT COUNT(*) FROM observations WHERE document_id=?", (record["id"],)).fetchone()[0]
-    if left and record["duplicate_of_document_id"]:
-        connection.execute("UPDATE documents SET duplicate_of_document_id=NULL WHERE id=?", (record["id"],))
-        connection.execute(
-            """DELETE FROM document_relations WHERE relationship='duplicate' AND notes='person:duplicate'
-                AND ((source_document_id=? AND target_document_id=?) OR (source_document_id=? AND target_document_id=?))""",
-            (record["id"], document_id, document_id, record["id"]))
-        _audit(connection, user_id, "labsync_lab_record_kept", "document", str(record["id"]),
-               {"provider": str(row["provider"]), "order_id": str(row["order_id"]), "beside": document_id,
-                "values": left})
-    elif not left and not record["duplicate_of_document_id"]:
-        _retire_lab_record(connection, user_id, str(record["id"]), document_id, str(row["provider"]),
-                           str(row["order_id"]))
+    _settle_kept_record(connection, user_id, record, row, document_id)
     refresh_derived_observations(connection)
     return changed
 
@@ -2464,6 +2560,25 @@ def _review_missing(connection, user_id: str, key: str, row, check: dict | None)
     return 1
 
 
+#: The lab amended the rows of an order already in the record: its report may be the corrected one.
+REVIEW_LAB_ROWS_CHANGED = "review.lab_rows_changed"
+
+
+def _review_lab_rows_changed(connection, document_id: str) -> None:
+    """One open task on the document, for its owner, while the lab's amended
+    rows are unread; a further change while that task is open adds nothing."""
+    owner = connection.execute("SELECT owner_user_id FROM documents WHERE id=?", (document_id,)).fetchone()
+    if owner is None:
+        return
+    user_id = str(owner["owner_user_id"])
+    open_now = connection.execute(
+        """SELECT 1 FROM review_tasks WHERE owner_user_id=? AND entity_type='document' AND entity_id=?
+               AND reason_key=? AND state='open' LIMIT 1""",
+        (user_id, document_id, REVIEW_LAB_ROWS_CHANGED)).fetchone()
+    if open_now is None:
+        open_review_task(connection, user_id, document_id, [reason_part(REVIEW_LAB_ROWS_CHANGED)])
+
+
 def _close_review_tasks(connection, open_tasks: list) -> int:
     """Nothing is missing any more: resolve what was open."""
     for task in open_tasks:
@@ -2508,6 +2623,66 @@ def _clean_record_references(connection) -> int:
     return changed
 
 
+def _refresh_document_values(settings: Settings, connection, document) -> int:
+    """Refresh one lab record document's stored values; returns how many changed."""
+    try:
+        payload = json.loads(resolve_source_path(settings, str(document["source_path"])).read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return 0
+    stored = connection.execute(
+        "SELECT id, raw_name, value_text, specimen, evidence_text, verification_status, concept_id, "
+        "vendor_interpretation_source, vendor_reference_text, report_id, unit_raw FROM observations "
+        "WHERE document_id=? AND extraction_method=? ORDER BY rowid", (document["id"], LAB_RECORD)).fetchall()
+    unused = list(stored)
+    changed = 0
+    for row, parsed in _record_values(payload.get("rows") or []):
+        if not row.get("test"):
+            continue
+        line = _record_line(row)
+        match = next((obs for obs in unused if obs["evidence_text"] == line), None)
+        if match is None:
+            continue
+        unused.remove(match)
+        if match["verification_status"] != "extracted":
+            continue
+        changed += _refresh_stored_value(connection, document, match, parsed)
+    return changed
+
+
+def _refresh_stored_value(connection, document, match, parsed) -> int:
+    """Bring one stored observation in line with its re-read row; returns 1 when
+    it changed or was deleted, else 0."""
+    if parsed is None:
+        connection.execute("DELETE FROM observations WHERE id=?", (match["id"],))
+        return 1
+    touched = False
+    if match["vendor_interpretation_source"] == "lab_record" and not parsed.vendor_interpretation:
+        # A "critical" the record's own interval contradicts: the bounds' reading.
+        connection.execute(
+            "UPDATE observations SET vendor_interpretation=?, vendor_interpretation_source=NULL WHERE id=?",
+            (interpretation(parsed, match["concept_id"]), match["id"]))
+        touched = True
+    if (parsed.raw_name, parsed.value_text, parsed.specimen) != (
+            match["raw_name"], match["value_text"], match["specimen"]):
+        connection.execute("UPDATE observations SET raw_name=?, value_text=?, specimen=? WHERE id=?",
+                           (parsed.raw_name, parsed.value_text, parsed.specimen, match["id"]))
+        touched = True
+    if match["vendor_reference_text"] is None and parsed.reference_text:
+        connection.execute(
+            "UPDATE observations SET vendor_reference_text=?, vendor_reference_low=?, vendor_reference_high=?, "
+            "vendor_reference_low_inclusive=?, vendor_reference_high_inclusive=? WHERE id=?",
+            (parsed.reference_text, parsed.reference_low, parsed.reference_high,
+             int(parsed.reference_low_inclusive), int(parsed.reference_high_inclusive), match["id"]))
+        touched = True
+    concept_id, preferred = resolve_parsed_concept(connection, parsed, match["report_id"],
+                                                   str(document["vendor_id"]), parsed.specimen)
+    if concept_id != match["concept_id"]:
+        connection.execute("UPDATE observations SET concept_id=?, unit_canonical=? WHERE id=?",
+                           (concept_id, stored_unit(match["unit_raw"], preferred, concept_id), match["id"]))
+        touched = True
+    return int(touched)
+
+
 def _refresh_record_values(settings: Settings, connection) -> int:
     """Read every stored lab record's rows again with :func:`_record_values`.
 
@@ -2527,55 +2702,7 @@ def _refresh_record_values(settings: Settings, connection) -> int:
     changed = 0
     for document in connection.execute(
             "SELECT id, source_path, vendor_id FROM documents WHERE extraction_strategy=?", (LAB_RECORD,)).fetchall():
-        try:
-            payload = json.loads(resolve_source_path(settings, str(document["source_path"])).read_text(encoding="utf-8"))
-        except (OSError, ValueError, TypeError):
-            continue
-        stored = connection.execute(
-            "SELECT id, raw_name, value_text, specimen, evidence_text, verification_status, concept_id, "
-            "vendor_interpretation_source, vendor_reference_text, report_id, unit_raw FROM observations "
-            "WHERE document_id=? AND extraction_method=? ORDER BY rowid", (document["id"], LAB_RECORD)).fetchall()
-        unused = list(stored)
-        for row, parsed in _record_values(payload.get("rows") or []):
-            if not row.get("test"):
-                continue
-            line = _record_line(row)
-            match = next((obs for obs in unused if obs["evidence_text"] == line), None)
-            if match is None:
-                continue
-            unused.remove(match)
-            if match["verification_status"] != "extracted":
-                continue
-            if parsed is None:
-                connection.execute("DELETE FROM observations WHERE id=?", (match["id"],))
-                changed += 1
-                continue
-            touched = False
-            if match["vendor_interpretation_source"] == "lab_record" and not parsed.vendor_interpretation:
-                # A "critical" the record's own interval contradicts: the bounds' reading.
-                connection.execute(
-                    "UPDATE observations SET vendor_interpretation=?, vendor_interpretation_source=NULL WHERE id=?",
-                    (interpretation(parsed, match["concept_id"]), match["id"]))
-                touched = True
-            if (parsed.raw_name, parsed.value_text, parsed.specimen) != (
-                    match["raw_name"], match["value_text"], match["specimen"]):
-                connection.execute("UPDATE observations SET raw_name=?, value_text=?, specimen=? WHERE id=?",
-                                   (parsed.raw_name, parsed.value_text, parsed.specimen, match["id"]))
-                touched = True
-            if match["vendor_reference_text"] is None and parsed.reference_text:
-                connection.execute(
-                    "UPDATE observations SET vendor_reference_text=?, vendor_reference_low=?, vendor_reference_high=?, "
-                    "vendor_reference_low_inclusive=?, vendor_reference_high_inclusive=? WHERE id=?",
-                    (parsed.reference_text, parsed.reference_low, parsed.reference_high,
-                     int(parsed.reference_low_inclusive), int(parsed.reference_high_inclusive), match["id"]))
-                touched = True
-            concept_id, preferred = resolve_parsed_concept(connection, parsed, match["report_id"],
-                                                           str(document["vendor_id"]), parsed.specimen)
-            if concept_id != match["concept_id"]:
-                connection.execute("UPDATE observations SET concept_id=?, unit_canonical=? WHERE id=?",
-                                   (concept_id, stored_unit(match["unit_raw"], preferred, concept_id), match["id"]))
-                touched = True
-            changed += touched
+        changed += _refresh_document_values(settings, connection, document)
     return changed
 
 
@@ -2601,7 +2728,7 @@ def recheck(settings: Settings) -> dict[str, int]:
             summary["orders"] += 1
             linked, numbers = str(row["document_id"]), _numbers(row)
             best = _results_document(connection, owner, key, numbers,
-                                     [linked, *documents_for_order(connection, owner, numbers)])
+                                     [linked, *documents_for_order(connection, owner, numbers, key)])
             if best and best != linked:
                 connection.execute("UPDATE lab_orders SET document_id=? WHERE owner_user_id=? AND provider=? "
                                    "AND order_id=?", (best, owner, key, row["order_id"]))
@@ -2615,27 +2742,48 @@ def recheck(settings: Settings) -> dict[str, int]:
     return summary
 
 
-def _sync_link(settings, account_user_id, key, client, link, person, record_patient_id, summary, inline) -> None:
-    """Every order of one lab person, into the record its link names."""
+def _pause_before_order(summary: dict) -> None:
+    if summary["orders"] and ORDER_DELAY_SECONDS:
+        time.sleep(ORDER_DELAY_SECONDS)
+
+
+def _failure_key(exc: LabSyncError, refusals: list[int]) -> str:
+    """The reason to record for a failed order. A refused credential counts
+    toward the run's stop; any other failure starts the count over."""
+    if exc.key == ERROR_AUTH:
+        refusals[0] += 1
+        return ERROR_ORDER_FORBIDDEN
+    refusals[0] = 0
+    return exc.key
+
+
+def _sync_link(settings, account_user_id, key, client, link, person, record_patient_id, summary, inline,
+               refusals: list[int]) -> None:
+    """Every order of one lab person, into the record its link names.
+    ``refusals[0]`` counts the orders refused in a row across the run: one
+    refused order is that order's failure; two in a row mean the credential
+    itself is refused, and the run stops with that reason."""
     owner = str(link["target_user_id"]) if link is not None else account_user_id
     hold = link is not None and link["consent"] == "asked"
     orders = sorted(client.orders(person), key=lambda order: str(order.get("ordered_at") or ""))
     summary["total"] += len(orders)
     for order in orders:
-        if summary["orders"] and ORDER_DELAY_SECONDS:
-            time.sleep(ORDER_DELAY_SECONDS)
+        _pause_before_order(summary)
         _progress(settings, account_user_id, key, summary, order)
         summary["orders"] += 1
         changed = False
         try:
             outcome, changed = _sync_order(settings, account_user_id, owner, key, record_patient_id, client, person,
                                            order, inline, hold)
+            refusals[0] = 0
         except LabSyncError as exc:
-            if exc.key == ERROR_AUTH:
+            error_key = _failure_key(exc, refusals)
+            if exc.key == ERROR_AUTH and refusals[0] >= 2:
                 raise
             outcome = "failed"
-            _record_failure(settings, account_user_id, owner, key, person, order, exc.key)
+            _record_failure(settings, account_user_id, owner, key, person, order, error_key)
         except Exception:  # noqa: BLE001 -- one bad order must not end the run
+            refusals[0] = 0
             logger.exception("labsync: %s order failed", key)
             outcome = "failed"
             _record_failure(settings, account_user_id, owner, key, person, order, ERROR_INGEST)
@@ -2647,11 +2795,18 @@ def _progress(settings, account_user_id: str, key: str, summary: dict, order: di
     """Where a running sync is, for the card: how many of how many, and which
     one now (a clinic's name for the document, or the order number)."""
     with transaction(settings) as connection:
+        # Also a heartbeat: _claim_run treats a run whose sync_started_at is older than STALE_RUN as dead.
         connection.execute(
-            "UPDATE lab_accounts SET sync_summary_json=? WHERE user_id=? AND provider=? AND sync_state='running'",
+            "UPDATE lab_accounts SET sync_summary_json=?, sync_started_at=? WHERE user_id=? AND provider=? AND sync_state='running'",
             (json.dumps({**summary, "current": str(order.get("packet") or order["order_id"])[:200]},
-                        ensure_ascii=False), account_user_id, key),
+                        ensure_ascii=False), utc_now(), account_user_id, key),
         )
+
+
+#: States an order keeps when a sync fails on it: the person's own decision
+#: (accepted) or a result already in the record (imported, linked).  A transient
+#: error only records its reason; the next run retries the order.
+_KEPT_ON_FAILURE = ("accepted", "imported", "linked")
 
 
 def _record_failure(settings, account_user_id, owner, key, person, order, error_key) -> None:
@@ -2660,7 +2815,7 @@ def _record_failure(settings, account_user_id, owner, key, person, order, error_
             "SELECT state FROM lab_orders WHERE owner_user_id=? AND provider=? AND order_id=?",
             (owner, key, order["order_id"]),
         ).fetchone()
-        state = "accepted" if previous is not None and previous["state"] == "accepted" else "failed"
+        state = previous["state"] if previous is not None and previous["state"] in _KEPT_ON_FAILURE else "failed"
         _upsert_order(connection, owner, key, person["id"], order, account_user_id=account_user_id,
                       state=state, error_key=error_key)
 
@@ -2692,8 +2847,59 @@ def sync(settings: Settings, user_id: str, key: str, *, secret: str | None = Non
         logger.exception("labsync: %s sync failed", key)
         _finish_run(settings, user_id, key, "failed", ERROR_INGEST, summary)
         raise
+    finally:
+        _notify_run_owners(settings, user_id, key)
     _finish_run(settings, user_id, key, "done", None, summary)
     return summary
+
+
+def _notify_run_owners(settings: Settings, user_id: str, key: str) -> None:
+    """The run may have filed results into the account holder's record and into
+    each record a family link names; the run does not track which, so tell them all."""
+    with connect(settings) as connection:
+        targets = connection.execute(
+            "SELECT target_user_id FROM lab_person_links WHERE account_user_id=? AND provider=?",
+            (user_id, key),
+        ).fetchall()
+    for owner in {user_id, *(str(row[0]) for row in targets)}:
+        _notify_record_changed(owner)
+
+
+def _sync_people(settings: Settings, user_id: str, key: str, client, person: dict | None, links: list,
+                 patients: dict, own_patient, summary: dict, inline: bool) -> None:
+    work = [(None, person, own_patient)] if person is not None else [
+        (link, json.loads(link["remote_person_json"]), patients[str(link["target_user_id"])])
+        for link in links
+    ]
+    refusals = [0]
+    for link, lab_person, patient in work:
+        if patient is None:
+            # That record has no profile (deleted since the link was
+            # made); nothing can be imported into it.
+            continue
+        summary["people"] += 1
+        try:
+            _sync_link(settings, user_id, key, client, link, lab_person, str(patient["id"]), summary, inline,
+                       refusals)
+        except LabSyncError as exc:
+            # A credential refusal, or the one person a manual sync names, still stops
+            # the run.  Any other failure to list one linked person's orders is
+            # logged, and the people after it still sync.
+            if exc.key == ERROR_AUTH or link is None:
+                raise
+            logger.warning("lab sync: listing orders failed for one linked person (%s)", exc.key)
+            summary["failed"] += 1
+
+
+def _add_crosscheck_counts(settings: Settings, user_id: str, key: str, summary: dict) -> None:
+    with connect(settings) as connection:
+        for tracked in connection.execute(
+            """SELECT crosscheck_json FROM lab_orders WHERE owner_user_id=? AND provider=?
+                AND crosscheck_json IS NOT NULL""",
+            (user_id, key),
+        ):
+            for cls, count in json.loads(tracked[0])["counts"].items():
+                summary["crosscheck"][cls] = summary["crosscheck"].get(cls, 0) + int(count)
 
 
 def _sync_account(settings: Settings, user_id: str, key: str, secret: str | None, phone: str | None,
@@ -2716,28 +2922,11 @@ def _sync_account(settings: Settings, user_id: str, key: str, secret: str | None
     _require_ready(user_id, key, row, secret, phone, stored_secret, person, links, own_patient)
     client = _client(settings, key, secret, phone)
     try:
-        work = [(None, person, own_patient)] if person is not None else [
-            (link, json.loads(link["remote_person_json"]), patients[str(link["target_user_id"])])
-            for link in links
-        ]
-        for link, lab_person, patient in work:
-            if patient is None:
-                # That record has no profile (deleted since the link was
-                # made); nothing can be imported into it.
-                continue
-            summary["people"] += 1
-            _sync_link(settings, user_id, key, client, link, lab_person, str(patient["id"]), summary, inline)
+        _sync_people(settings, user_id, key, client, person, links, patients, own_patient, summary, inline)
     finally:
         if secret == stored_secret:
             _store_rolled_secret(settings, user_id, key, stored_secret, client)
-    with connect(settings) as connection:
-        for tracked in connection.execute(
-            """SELECT crosscheck_json FROM lab_orders WHERE owner_user_id=? AND provider=?
-                AND crosscheck_json IS NOT NULL""",
-            (user_id, key),
-        ):
-            for cls, count in json.loads(tracked[0])["counts"].items():
-                summary["crosscheck"][cls] = summary["crosscheck"].get(cls, 0) + int(count)
+    _add_crosscheck_counts(settings, user_id, key, summary)
 
 
 def _require_ready(user_id: str, key: str, row, secret: str, phone: str, stored_secret: str,
@@ -2899,7 +3088,7 @@ def _card(settings: Settings, user_id: str, key: str) -> dict:
         "sign_in": getattr(provider(key), "SIGN_IN", "paste"),
         "url": provider_settings(settings, key)["url"],
         "connected": bool(secret),
-        "secret_tail": secret[-6:] if secret else "",
+        "secret_tail": secret_tail(secret),
         "expires_at": row["secret_expires_at"] if row else None,
         "expired": _expired(row["secret_expires_at"]) if row else False,
         "phone": _mask_phone(str(row["phone"])) if secret else "",
@@ -2910,6 +3099,13 @@ def _card(settings: Settings, user_id: str, key: str) -> dict:
         **_card_sync_fields(row),
         "orders": [_card_order(order, records, live, titles) for order in orders],
     }
+
+
+def secret_tail(secret: str) -> str:
+    """A short marker that tells two stored credentials apart on the card,
+    without showing any part of the credential: the first six hex digits of
+    its SHA-256.  Empty without a credential."""
+    return hashlib.sha256(secret.encode()).hexdigest()[:6] if secret else ""
 
 
 _SYNC_STATUS_COLUMNS = ("sync_state", "sync_finished_at")

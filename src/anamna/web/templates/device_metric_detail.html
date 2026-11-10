@@ -3,6 +3,7 @@
         verdict_details, trend_chip, empty_state, plural_t with context %}
 {% from "_correlation.html" import correlation_block with context %}
 {% from "_experience.html" import period_stats, metric_about with context %}
+{% from "_factors.html" import factor_key with context %}
 {% block title %}{{ latest.metric_name|phrase }} · {{ t('brand.name') }}{% endblock %}
 {% block content %}
 <link rel="stylesheet" href="{{ asset('patient-experience.css') }}">
@@ -96,6 +97,7 @@
     <svg id="device-trend" role="img" aria-label="{{ t('device.chart_aria', name=display_name) }}"></svg>
     <div id="device-tooltip" class="chart-tooltip" hidden></div>
   </div>
+  {{ factor_key(factor_periods, 'device') }}
   {% else %}
   {{ empty_state(t('metric.no_trend_title'), t('metric.no_trend_body'), 3) }}
   {% endif %}
@@ -134,7 +136,7 @@
   </div>
   <details class="an-disclosure" {% if total_days <= 14 %}open{% endif %}>
     <summary>{{ t('device.daily_aggs') }} ({{ total_days_text }})</summary>
-    <div class="table-wrap table-wrap--stack">
+    <div class="table-wrap table-wrap--stack" tabindex="0" role="region" aria-label="{{ t('device.daily_aggs') }}">
       <table>
         <thead>
           <tr>
@@ -211,8 +213,8 @@
 {{ correlation_block(correlation, chart_band) }}
 
 {% if chart_available %}
-<script type="application/json" id="device-chart-data">{{ chart_payload|tojson }}</script>
-<script type="application/json" id="device-chart-band">{{ (chart_band or none)|tojson }}</script>
+<script type="application/json" nonce="{{ csp_nonce }}" id="device-chart-data">{{ chart_payload|tojson }}</script>
+<script type="application/json" nonce="{{ csp_nonce }}" id="device-chart-band">{{ (chart_band or none)|tojson }}</script>
 <script src="{{ asset('device-chart.js') }}"></script>
 {% endif %}
 {% endblock %}

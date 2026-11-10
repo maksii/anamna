@@ -200,13 +200,15 @@
   /* Size the viewBox from the container so one unit is one CSS pixel, and give
      the svg the height it actually paints - the old `min-height: 380px` left up
      to 270px of empty card under a 106px chart. */
-  const responsive = (svg, host, draw, size) => {
+  const responsive = (svg, host, draw, size, extra) => {
     let painted = -1;
     const paint = () => {
       const width = Math.max(240, Math.round(host.clientWidth || svg.clientWidth || 320));
       // `size(width)` lets a page whose chart is the point of the page take
       // the room it needs; the default stays the compact secondary chart.
-      const height = size ? size(width) : Math.max(200, Math.min(340, Math.round(width * 0.52)));
+      // `extra()` is room the chart needs under its time axis (the lanes of
+      // medicines and other entries), added so the plot itself keeps its size.
+      const height = (size ? size(width) : Math.max(200, Math.min(340, Math.round(width * 0.52)))) + (extra ? extra() : 0);
       svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
       svg.setAttribute('height', height);
       svg.replaceChildren();
@@ -224,9 +226,83 @@
     return paint;
   };
 
+  /* x of a moment on a chart whose points sit at `xs`: in proportion between
+     the two readings around it, the edge when it lies outside them. The same
+     rule serves a compressed time axis and a linear one. */
+  const timeX = (times, xs) => ms => {
+    const last = times.length - 1;
+    if (ms <= times[0]) return xs[0];
+    if (ms >= times[last]) return xs[last];
+    let index = 1;
+    while (times[index] < ms) index += 1;
+    const gap = times[index] - times[index - 1];
+    return xs[index - 1] + (gap ? (ms - times[index - 1]) / gap : 0) * (xs[index] - xs[index - 1]);
+  };
+
+  /* Medicines and other entries under the time axis: one labelled line per
+     entry on its own lane, so overlapping periods stay readable and the plot
+     keeps only the measurements. An entry known to move this result also
+     tints its period in the plot. Words carry the meaning: the name is printed
+     on the lane and the list under the chart (the `factor_key` macro, which
+     also writes the JSON read here) says what each entry does. `key` names
+     the chart. */
+  const LANE = 17, LANES = 6, DAY_MS = 86400000;
+  const factorSource = key => {
+    const holder = document.querySelector(`#factor-periods-${key}`);
+    const all = holder ? JSON.parse(holder.textContent) : [];
+    const fold = document.querySelector(`[data-factor-others="${key}"]`);
+    return {
+      // An entry with no stated effect on this result is drawn only while its list is open.
+      list: () => all.filter(item => item.related || fold?.open),
+      onToggle: repaint => fold?.addEventListener('toggle', repaint),
+      more: holder?.dataset.more || '',
+    };
+  };
+  /* The entries that overlap the drawn time [from, to]. */
+  const factorsIn = (list, from, to) => list.filter(item => {
+    const start = asDate(item.start).getTime();
+    if (item.point) return start >= from && start <= to;
+    /* The end day counts in full, so `end` is the midnight after it: an entry
+       that ended the day before `from` only touches the span and is left out. */
+    const end = item.end ? asDate(item.end).getTime() + DAY_MS : Infinity;
+    return start <= to && end > from;
+  });
+  const factorRoom = count => count ? Math.min(count, LANES) * LANE + 6 : 0;
+  /* Draws the lanes from `lanes` (their top) down, and returns the note for
+     entries that did not fit, or ''. `plotTop`/`plotBottom` bound the tint. */
+  const factorLanes = (svg, shown, {xOf, from, to, left, right, plotTop, plotBottom, lanes, more}) => {
+    shown.slice(0, LANES).forEach((item, order) => {
+      const start = asDate(item.start).getTime();
+      const end = item.end ? asDate(item.end).getTime() + DAY_MS : to;
+      const x0 = Math.max(left, Math.min(right, xOf(Math.max(start, from))));
+      const x1 = item.point ? x0 : Math.max(x0 + 3, Math.min(right, xOf(Math.min(end, to))));
+      const y = lanes + order * LANE;
+      const group = el('g', {
+        class: `chart-factor${item.approximate ? ' is-approximate' : ''}`,
+        'data-related': String(Boolean(item.related)), 'data-direction': item.direction || '',
+      });
+      const title = el('title', {});
+      title.textContent = item.title; group.append(title);
+      if (item.related) {
+        group.append(item.point
+          ? el('line', {x1: x0, x2: x0, y1: plotTop, y2: plotBottom, class: 'chart-factor__guide'})
+          : el('rect', {x: x0, y: plotTop, width: x1 - x0, height: plotBottom - plotTop, class: 'chart-factor__shade'}));
+      }
+      const width = textWidth(svg, [item.name], 'chart-factor__label');
+      const label = el('text', {x: Math.max(left, Math.min(x0, right - width)), y: y + 9, class: 'chart-factor__label'});
+      label.textContent = item.name; group.append(label);
+      group.append(item.point
+        ? el('path', {d: `M ${x0} ${y + 10} l 4 4 l -4 4 l -4 -4 z`, class: 'chart-factor__point'})
+        : el('line', {x1: x0, x2: x1, y1: y + 14, y2: y + 14, class: 'chart-factor__bar'}));
+      svg.append(group);
+    });
+    return shown.length > LANES ? more.replace('{count}', shown.length - LANES) : '';
+  };
+
   globalThis.AnamnaChart = {
     NS, el, num, asDate, monthYear, dayMonth, fullDate, dateLabel,
     axis, fitDomain, timeScale, textWidth, thin, note, responsive,
+    timeX, factorSource, factorsIn, factorRoom, factorLanes,
     /* Evenly spaced indices, first and last always included. */
     tickIndices: (length, wanted) => {
       const count = Math.max(2, Math.min(wanted, length));

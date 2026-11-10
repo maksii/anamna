@@ -522,14 +522,24 @@ def sync_due(settings: Settings) -> int:
             "SELECT user_id FROM provider_connections WHERE provider=? AND status='active'", (PROVIDER_KEY,))]
     started = 0
     for user_id in users:
-        last = str(sync_state(settings, user_id).get("last_sync_at") or "")
         try:
-            stale = not last or (datetime.now(UTC) - datetime.fromisoformat(last)).total_seconds() > REFRESH_SECONDS
-        except ValueError:
-            stale = True
-        if stale:
-            _connect_run(settings, user_id)
+            last = str(sync_state(settings, user_id).get("last_sync_at") or "")
+            try:
+                stale = not last or (datetime.now(UTC) - datetime.fromisoformat(last)).total_seconds() > REFRESH_SECONDS
+            except ValueError:
+                stale = True
+            if not stale:
+                continue
+            name = f"garmin-personal-{user_id}"
+            if not garmin.claim(name):
+                continue  # a "Sync now" run for this account is in flight: it covers the same window
+            try:
+                _connect_run(settings, user_id)
+            finally:
+                garmin.release(name)
             started += 1
+        except Exception as exc:  # noqa: BLE001 — one account must not stop the pass for the others
+            logger.warning("garmin personal: sync for one account failed: %s", type(exc).__name__)
     return started
 
 
@@ -542,12 +552,22 @@ SCHEDULE_SECONDS = 15 * 60
 def start_scheduler(settings: Settings) -> threading.Event:
     stop = threading.Event()
 
+    def deliveries(settings: Settings) -> int:
+        # Shares the in-flight slot with the webhook path (garmin.start_processing), so two
+        # overlapping runs never both count an attempt against the same failing delivery.
+        if not garmin.claim("garmin-process"):
+            return 0
+        try:
+            return garmin.process_pending(settings)
+        finally:
+            garmin.release("garmin-process")
+
     def loop() -> None:
         while not stop.wait(SCHEDULE_SECONDS):
             # Each pass is fully guarded and its handler never writes: a
             # handler that touches SQLite during a lock is how earlier loops
             # in this codebase died silently.
-            for name, step in (("personal", sync_due), ("deliveries", garmin.process_pending)):
+            for name, step in (("personal", sync_due), ("deliveries", deliveries)):
                 try:
                     started = time.monotonic()
                     log_run(logger, f"garmin-scheduler {name}", started, step(settings))

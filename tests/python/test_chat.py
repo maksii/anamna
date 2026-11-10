@@ -131,8 +131,8 @@ def test_a_shared_viewer_reads_the_owners_record_and_owns_the_conversation(tmp_p
     settings, owner, owner_client = build(tmp_path)
     viewer = _other_person(settings)
     with connect(settings) as db:
-        db.execute("INSERT INTO record_shares(id, owner_user_id, grantee_email, created_at) VALUES ('s1', ?, ?, ?)",
-                   (owner, "other@example.test", utc_now()))
+        db.execute("INSERT INTO record_shares(id, owner_user_id, grantee_email, grantee_user_id, created_at) VALUES ('s1', ?, ?, ?, ?)",
+                   (owner, "other@example.test", viewer, utc_now()))
     _ai_on(settings, monkeypatch, [("", [("read_document", {"document_id": "doc-1"}),
                                          ("read_document", {"document_id": "doc-other"})]),
                                    ("Your LDL was 4.42 mmol/L on 2025-02-13.", [])])
@@ -291,7 +291,7 @@ def test_the_system_prompt_carries_the_rules_and_a_compact_english_profile(tmp_p
         reset_locale(token)
     prompt = chat.system_prompt(locale="uk", today="2026-11-09", profile=profile, viewer_is_owner=True)
     for rule in ("Cite what you used", "say so plainly", "Never call a value verified",
-                 "Do not add emergency warnings", "call 112", "Answer in Ukrainian", "Today is 2026-11-09"):
+                 "say so first and plainly", "Answer in Ukrainian", "Today is 2026-11-09"):
         assert rule in prompt, rule
     # Age and sex travel; the name and date of birth do not.
     assert "Test Patient" not in prompt and "1990-03-14" not in prompt
@@ -394,7 +394,7 @@ def test_a_failed_summary_still_bounds_what_is_sent(tmp_path: Path, monkeypatch)
 def test_one_answer_makes_at_most_the_allowed_lookups(tmp_path: Path, monkeypatch):
     settings, owner, client = build(tmp_path)
     greedy = [("search_record", {"query": f"q{index}"}) for index in range(chat.MAX_LOOKUPS + 3)]
-    _ai_on(settings, monkeypatch, [("", greedy), ("", greedy), ("Done.", [])])
+    _ai_on(settings, monkeypatch, [("", greedy), ("Done.", [])])
     events = _events(client.post("/chat/send", data={"csrf_token": _csrf(settings, client), "message": "All?"},
                                  headers={"Accept": "text/event-stream"}))
     assert sum(event["type"] == "tool" for event in events) == chat.MAX_LOOKUPS
@@ -431,7 +431,7 @@ def test_tool_output_is_trimmed_before_it_reaches_the_model(tmp_path: Path):
     assert ldl.startswith("- LDL cholesterol: 4.42 mmol/L @2025-02-13 high (")
     assert "VERIFIED" not in heart and "the interval the laboratory itself printed" not in heart
     alias = ldl.split("(", 1)[1].split()[1].rstrip(";)")
-    assert alias.startswith("S") and f"Sources: " in heart and f"{alias} " in heart.split("Sources: ", 1)[1]
+    assert alias.startswith("S") and "Sources: " in heart and f"{alias} " in heart.split("Sources: ", 1)[1]
     huge = chat.Tool(name="huge", description="", parameters={}, run=lambda _args: "y" * 50000)
     assert len(chat.run_tool({"huge": huge}, "huge", {})) < chat.MAX_TOOL_CHARS + 200
 

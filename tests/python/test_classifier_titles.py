@@ -90,7 +90,7 @@ def test_synevo_column_caption_is_not_part_of_the_title_and_every_panel_is_named
     assert single.title == "Глюкоза"
     assert single.order_identifier == "12345678"  # eight-digit barcode of the older reports
     assert single.collected_at == "2016-04-03T08:51"
-    city = classify(SYNEVO + "Імунологія Київ Індикатор зони підвищеної уваги\nТест 0.3 R R < 0.8\n")
+    city = classify(SYNEVO + "Імунологія Київ Індикатор зони підвищеної уваги\nТест 0.3 ммоль/л 0.1 - 0.8\n")
     assert city.title == "Тест"
     two = classify(
         SYNEVO + "Пакет №4.18.1 (Вітаміни і Мікроелементи) Індикатор зони підвищеної уваги\n"

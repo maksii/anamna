@@ -155,6 +155,8 @@ class Client:
         return bool(set(ids) & set(person.get("match_ids") or [])) or (
             # The person list had one entry and the order names one person:
             # the ids differ only in which of Synevo's handles the order uses.
+            # ``account_size`` is the people list as it stood when the link was made; if a
+            # second person is added to the lab account later, re-link the account.
             person.get("account_size") == 1
         )
 

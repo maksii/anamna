@@ -82,6 +82,7 @@ from .expert import _birthday, normalize_phone
 
 ERROR_CODE = "labsync.password_error_code"
 ERROR_UNMAPPED = "labsync.doctoreleks_error_unmapped"
+_ERROR_AUTH = "labsync.error_auth"
 
 logger = logging.getLogger("anamna.labsync.doctoreleks")
 
@@ -126,9 +127,15 @@ def _shape(value: object, depth: int = 0) -> object:
 def _unreadable(name: str, reply: object, why: str, key: str = ERROR_REPLY) -> LabSyncError:
     """Log what did not fit, then the error the person sees."""
     if isinstance(reply, str):
-        # The server answers a bad call with a sentence (``@X is not a parameter
-        # for procedure Y.``): procedure and parameter names, digits masked.
-        logger.warning("doctoreleks %s: %s; server said: %s", name, why, re.sub(r"\d", "#", reply)[:300])
+        # The server answers a bad call with a sentence; only its length and,
+        # if it is JSON after all, the field names are logged, never the text.
+        try:
+            parsed = json.loads(reply)
+        except ValueError:
+            parsed = None
+        keys = sorted(str(key) for key in parsed)[:40] if isinstance(parsed, dict) else None
+        logger.warning("doctoreleks %s: %s; server replied %d characters, JSON keys: %s",
+                       name, why, len(reply), keys)
     else:
         logger.warning("doctoreleks %s: %s; reply shape: %s", name, why, json.dumps(_shape(reply))[:1500])
     return LabSyncError(key)
@@ -321,10 +328,10 @@ class Client:
     def _refresh(self) -> None:
         state = self._state()
         if not state.get("refresh"):
-            raise LabSyncError("labsync.error_auth", 401)
+            raise LabSyncError(_ERROR_AUTH, 401)
         try:
             row = _first_row(_call(self.base_url, self.installation, "spiAnonymousTokenRefresh",
-                                   {"RefreshToken": state["refresh"]}, refused="labsync.error_auth"))
+                                   {"RefreshToken": state["refresh"]}, refused=_ERROR_AUTH))
             fresh = _credentials(str(row.get("accessToken") or ""), row.get("expires"),
                                  str(row.get("refreshToken") or state["refresh"]),
                                  str(row.get("login") or state.get("login") or ""),
@@ -338,7 +345,7 @@ class Client:
             # unreadable reply on every sync from then on.
             if exc.key != ERROR_REPLY or exc.status:
                 raise
-            raise LabSyncError("labsync.error_auth", 401) from None
+            raise LabSyncError(_ERROR_AUTH, 401) from None
         self.secret, self.refresh_secret = fresh["secret"], fresh["refresh_secret"]
 
     def _run(self, name: str, values: dict | None = None, *, again: bool = True) -> object:

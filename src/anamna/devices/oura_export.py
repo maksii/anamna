@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
 from collections import Counter
 from datetime import datetime, tzinfo
 from pathlib import Path
@@ -24,6 +25,7 @@ from .models import Aggregate, DeviceEvent, ParsedDeviceExport, Workout
 from .timezone import local_day, zone
 from .units import finite_number
 
+logger = logging.getLogger(__name__)
 
 SOURCE_NAME = "Oura"
 
@@ -261,24 +263,34 @@ def _json_value(value: object) -> object:
         return value
     try:
         return json.loads(value)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, RecursionError):
         return value
 
 
 def _csv_rows(path: Path) -> Iterable[dict[str, str]]:
-    with path.open("r", encoding="utf-8-sig", newline="") as handle:
-        first = handle.readline()
-        handle.seek(0)
-        delimiter = ";" if first.count(";") > first.count(",") else ","
-        yield from csv.DictReader(handle, delimiter=delimiter)
+    # One undecodable CSV must not abort the whole Takeout; rows read before the
+    # failure are kept.
+    try:
+        with path.open("r", encoding="utf-8-sig", newline="") as handle:
+            first = handle.readline()
+            handle.seek(0)
+            delimiter = ";" if first.count(";") > first.count(",") else ","
+            yield from csv.DictReader(handle, delimiter=delimiter)
+    except (UnicodeDecodeError, csv.Error) as error:
+        logger.warning("Skipped a CSV file that could not be read: %s", type(error).__name__)
 
 
 def _csv_header(path: Path) -> set[str]:
-    with path.open("r", encoding="utf-8-sig", newline="") as handle:
-        first = handle.readline()
-        handle.seek(0)
-        delimiter = ";" if first.count(";") > first.count(",") else ","
-        return set(csv.DictReader(handle, delimiter=delimiter).fieldnames or ())
+    try:
+        with path.open("r", encoding="utf-8-sig", newline="") as handle:
+            first = handle.readline()
+            handle.seek(0)
+            delimiter = ";" if first.count(";") > first.count(",") else ","
+            return set(csv.DictReader(handle, delimiter=delimiter).fieldnames or ())
+    except (UnicodeDecodeError, csv.Error):
+        # parse() counts rows before it reads headers, so _csv_rows has already
+        # logged this file; a header that cannot be read is simply empty here.
+        return set()
 
 
 def _json_records(payload: object) -> Iterable[dict[str, object]]:
@@ -311,7 +323,7 @@ def _legacy_records(files: list[Path]) -> list[dict[str, object]]:
         if path.suffix.casefold() == ".json":
             try:
                 records.extend(_json_records(json.loads(path.read_text(encoding="utf-8-sig"))))
-            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError, RecursionError):
                 continue
         elif path.suffix.casefold() == ".csv":
             records.extend(_csv_rows(path))

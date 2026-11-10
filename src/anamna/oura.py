@@ -892,9 +892,19 @@ def _plan_events(settings: Settings, rows, connections: dict[str, str]):
     return windows, row_slots, heartrate_users
 
 
-def _sync_windows(settings: Settings, windows: dict[tuple[str, str], str], zones: dict) -> set[tuple[str, str]]:
-    failed: set[tuple[str, str]] = set()
+def _sync_windows(settings: Settings, windows: dict[tuple[str, str], str], zones: dict,
+                  reauth: set[str]) -> tuple[dict[tuple[str, str], tuple[str, bool]], set[tuple[str, str]]]:
+    """Sync each (user, slot) window. Returns the slots that failed, mapped to the
+    exception class name and whether it is a provider/network failure (IntegrationError),
+    and the slots held back because their account needs
+    re-authorization (`reauth` holds those users, and grows as refusals are seen):
+    held slots are not called again in this pass and count no attempt."""
+    failed: dict[tuple[str, str], tuple[str, bool]] = {}
+    held: set[tuple[str, str]] = set()
     for (user_id, slot), earliest in windows.items():
+        if user_id in reauth:
+            held.add((user_id, slot))
+            continue
         today = _today(zones[user_id])
         start = min(earliest or _days_before(today, DELETE_WINDOW_DAYS), today)
         try:
@@ -902,13 +912,15 @@ def _sync_windows(settings: Settings, windows: dict[tuple[str, str], str], zones
                 sync_workouts(settings, user_id, start, today)
             else:
                 sync_range(settings, user_id, slot, start, today)
-        except IntegrationError as exc:
+        except Exception as exc:  # noqa: BLE001 — one account's failure must not hold up the others
             # Leave this slot's events unprocessed: Oura never redelivers an
             # event we answered 200, so stamping it here would make a transient
             # outage permanent — a deletion at Oura displayed as real forever.
-            failed.add((user_id, slot))
-            logger.warning("oura: processing %s for a user failed, will retry: %s", slot, exc)
-    return failed
+            failed[(user_id, slot)] = (type(exc).__name__, isinstance(exc, IntegrationError))
+            if isinstance(exc, ReauthorizeError):
+                reauth.add(user_id)
+            logger.warning("oura: processing %s for a user failed, will retry: %s", slot, type(exc).__name__)
+    return failed, held
 
 
 def _heartrate_ride_along(settings: Settings, users: set[str], zones: dict) -> None:
@@ -916,9 +928,25 @@ def _heartrate_ride_along(settings: Settings, users: set[str], zones: dict) -> N
         today = _today(zones[user_id])
         try:
             sync_heartrate(settings, user_id, _days_before(today, 3), today)
-        except IntegrationError as exc:
-            logger.warning("oura: heart-rate ride-along failed: %s", exc)
+        except Exception as exc:  # noqa: BLE001 — a heart-rate failure must not hold up the queue
+            logger.warning("oura: heart-rate ride-along failed: %s", type(exc).__name__)
         _update_state(settings, user_id, last_sync_at=utc_now())
+
+
+#: A delivery whose window keeps failing inside this application's own code is set aside after this many tries.
+MAX_EVENT_ATTEMPTS = 5
+#: A delivery that fails because the provider could not be reached or answered an error is retried for about a day of scheduler passes before it is set aside; one that fails inside this application's own code is set aside after MAX_EVENT_ATTEMPTS, because retrying cannot change the outcome.
+MAX_TRANSIENT_ATTEMPTS = 300
+def _record_failure(db, row_id: int, error: str, transient: bool) -> None:
+    """Count one failed try under the exception class name only. A provider or network
+    failure (``transient``) sets the delivery aside at MAX_TRANSIENT_ATTEMPTS, any other
+    at MAX_EVENT_ATTEMPTS (processed_at stamped) so it stops being retried."""
+    db.execute("UPDATE provider_events SET attempts=attempts+1, last_error=? WHERE id=?", (error, row_id))
+    attempts = int(db.execute("SELECT attempts FROM provider_events WHERE id=?", (row_id,)).fetchone()[0])
+    limit = MAX_TRANSIENT_ATTEMPTS if transient else MAX_EVENT_ATTEMPTS
+    if attempts >= limit:
+        db.execute("UPDATE provider_events SET processed_at=? WHERE id=?", (utc_now(), row_id))
+        logger.warning("oura: delivery %s set aside after %s attempts: %s", row_id, attempts, error)
 
 
 def process_pending(settings: Settings) -> int:
@@ -927,11 +955,15 @@ def process_pending(settings: Settings) -> int:
     Events name a document id, not a day, so create/update fetches the single
     document to learn which day changed; a delete (or a fetch that 404s) widens
     the window to DELETE_WINDOW_DAYS. Unknown users (disconnected since) and
-    retained-only data types are marked processed without a sync.
+    retained-only data types are marked processed without a sync. A window that
+    fails leaves its events pending, counted against MAX_TRANSIENT_ATTEMPTS when
+    the provider or network failed and MAX_EVENT_ATTEMPTS when this application's
+    own code did.
     """
     with connect(settings) as db:
         rows = db.execute(
-            "SELECT id, payload FROM provider_events WHERE provider='oura' AND processed_at IS NULL ORDER BY id"
+            "SELECT id, payload FROM provider_events WHERE provider='oura' AND processed_at IS NULL AND attempts<? ORDER BY id",
+            (MAX_TRANSIENT_ATTEMPTS,),
         ).fetchall()
         connections = {
             str(row["external_user_id"]): str(row["user_id"])
@@ -939,17 +971,26 @@ def process_pending(settings: Settings) -> int:
                 "SELECT user_id, external_user_id FROM provider_connections WHERE provider='oura' AND external_user_id<>''"
             )
         }
+        reauth = {str(row[0]) for row in db.execute(
+            "SELECT user_id FROM provider_connections WHERE provider='oura' AND status='reauthorize'"
+        )}
     if not rows:
         return 0
     windows, row_slots, heartrate_users = _plan_events(settings, rows, connections)
     zones = {user_id: user_timezone_for(settings, user_id) for user_id in heartrate_users}
-    failed = _sync_windows(settings, windows, zones)
+    failed, held = _sync_windows(settings, windows, zones, reauth)
     _heartrate_ride_along(settings, heartrate_users, zones)
     now = utc_now()
-    done = [
-        row_id for row_id, slot in row_slots.items() if slot is None or slot not in failed
-    ]
+    done: list[int] = []
     with connect(settings) as db:
+        for row_id, slot in row_slots.items():
+            if slot is None:
+                done.append(row_id)
+            elif slot in failed:
+                error, transient = failed[slot]
+                _record_failure(db, row_id, error, transient)
+            elif slot not in held:
+                done.append(row_id)
         db.executemany(
             "UPDATE provider_events SET processed_at=? WHERE id=?",
             [(now, row_id) for row_id in done],

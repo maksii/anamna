@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
 import struct
 import zipfile
 from collections import Counter
@@ -13,6 +14,8 @@ from .catalog import metric
 from .models import Aggregate, ParsedDeviceExport
 from .oura_export import OuraAdapter as OuraAdapter
 from .units import finite_number
+
+logger = logging.getLogger(__name__)
 
 
 def _json_records(payload: object) -> Iterable[dict[str, object]]:
@@ -37,12 +40,17 @@ def _rows(source: Path) -> Iterable[dict[str, object]]:
         if path.suffix.casefold() == ".json":
             try:
                 payload = json.loads(path.read_text(encoding="utf-8-sig"))
-            except (UnicodeDecodeError, json.JSONDecodeError):
+            except (UnicodeDecodeError, json.JSONDecodeError, RecursionError):
                 continue
             yield from _json_records(payload)
         elif path.suffix.casefold() == ".csv":
-            with path.open("r", encoding="utf-8-sig", newline="") as handle:
-                yield from csv.DictReader(handle)
+            # One undecodable or malformed CSV must not abort the whole export;
+            # the rows read before the failure are kept.
+            try:
+                with path.open("r", encoding="utf-8-sig", newline="") as handle:
+                    yield from csv.DictReader(handle)
+            except (UnicodeDecodeError, csv.Error, OSError) as error:
+                logger.warning("Skipped a CSV file that could not be read: %s", type(error).__name__)
 
 
 def _float(value: object) -> float | None:
@@ -57,11 +65,11 @@ def _garmin_observed_at(row: dict[str, object]) -> str:
     if value is None:
         value = next((row[key] for key in StructuredAdapter.date_fields if row.get(key)), None)
     if isinstance(value, list) and len(value) >= 3:
-        parts = [int(item) for item in value[:6]]
-        parts += [0] * (6 - len(parts))
         try:
+            parts = [int(item) for item in value[:6]]
+            parts += [0] * (6 - len(parts))
             return datetime(*parts).isoformat()
-        except ValueError:
+        except (TypeError, ValueError, OverflowError):
             return ""
     return str(value or "")
 
@@ -108,6 +116,11 @@ def _fit_message_numbers(data: bytes) -> set[int]:
     return message_numbers
 
 
+# A FIT activity or wellness file is kilobytes to a few megabytes. A nested member
+# this large is not one, and reading it would hold it all in memory.
+MAX_NESTED_MEMBER_BYTES = 64 * 1024 * 1024
+
+
 def _fit_archive_counts(path: Path) -> dict[str, int]:
     """Count Garmin wellness FIT message types without treating them as new samples.
 
@@ -117,23 +130,31 @@ def _fit_archive_counts(path: Path) -> dict[str, int]:
     visible in metadata rather than silently double-counted.
     """
     counts: Counter[str] = Counter()
-    with zipfile.ZipFile(path) as archive:
-        for entry in archive.infolist():
-            if not entry.filename.casefold().endswith(".fit"):
-                continue
-            data = archive.read(entry)
-            try:
-                message_numbers = _fit_message_numbers(data)
-            except (IndexError, KeyError, struct.error):
-                counts["invalid"] += 1
-                continue
-            counts["entries"] += 1
-            if 51 in message_numbers:
-                counts["blood_pressure"] += 1
-            elif 30 in message_numbers:
-                counts["weight_scale"] += 1
-            else:
-                counts["other"] += 1
+    # One corrupt, encrypted or unreadable archive is counted, not fatal: the
+    # rest of the export still imports and the count shows what was skipped.
+    try:
+        with zipfile.ZipFile(path) as archive:
+            for entry in archive.infolist():
+                if not entry.filename.casefold().endswith(".fit"):
+                    continue
+                if entry.file_size > MAX_NESTED_MEMBER_BYTES:
+                    counts["skipped_large"] += 1
+                    continue
+                data = archive.read(entry)
+                try:
+                    message_numbers = _fit_message_numbers(data)
+                except (IndexError, KeyError, struct.error):
+                    counts["invalid"] += 1
+                    continue
+                counts["entries"] += 1
+                if 51 in message_numbers:
+                    counts["blood_pressure"] += 1
+                elif 30 in message_numbers:
+                    counts["weight_scale"] += 1
+                else:
+                    counts["other"] += 1
+    except (zipfile.BadZipFile, RuntimeError, NotImplementedError, OSError):
+        counts["invalid"] += 1
     return dict(counts)
 
 
@@ -331,7 +352,7 @@ def _files_with_suffix(source: Path, suffix: str) -> list[Path]:
 def _scan_garmin_json(state: "_GarminExportState", path: Path) -> None:
     try:
         payload = json.loads(path.read_text(encoding="utf-8-sig"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError):
         return
     records = list(_json_records(payload))
     state.scanned_records += len(records)
@@ -341,11 +362,14 @@ def _scan_garmin_json(state: "_GarminExportState", path: Path) -> None:
 
 
 def _scan_garmin_csv(state: "_GarminExportState", path: Path) -> None:
-    with path.open("r", encoding="utf-8-sig", newline="") as handle:
-        for row in csv.DictReader(handle):
-            state.scanned_records += 1
-            observed = _garmin_observed_at(row)
-            state.finish_row(state.generic(row, observed), observed)
+    try:
+        with path.open("r", encoding="utf-8-sig", newline="") as handle:
+            for row in csv.DictReader(handle):
+                state.scanned_records += 1
+                observed = _garmin_observed_at(row)
+                state.finish_row(state.generic(row, observed), observed)
+    except (UnicodeDecodeError, csv.Error, OSError) as error:
+        logger.warning("Skipped a CSV file that could not be read: %s", type(error).__name__)
 
 
 def _garmin_fit_counts(source: Path) -> dict[str, int]:

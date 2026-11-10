@@ -99,6 +99,10 @@ def test_every_registered_conversion_round_trips():
         back = UNIT_CONVERSIONS.get((concept_id, target, source))
         assert back is not None, f"{concept_id} {source}->{target} has no inverse"
         assert factor * back == pytest.approx(1.0)
+        # A fold to no unit («г/мл» -> "" for specific gravity) cannot be inverted:
+        # "" does not say which unit the number was in.
+        if not source or not target:
+            continue
         forward = convert_value(10.0, source, target, concept_id)
         assert convert_value(forward, target, source, concept_id) == pytest.approx(10.0)
 
@@ -522,9 +526,13 @@ def test_ferritin_female_overload_band_states_whose_threshold_it_applies(connect
     # profile -- and the band must say so rather than mislabel a 60-year-old.
     verdict = evaluate(connection, "ferritin", value_numeric=170.0, unit="ng/mL",
                        age_years=60, sex="female")
-    assert verdict["interpretation"] == "high"
-    assert "applied to all female profiles" in verdict["band_label"]
+    assert verdict["interpretation"] == "borderline_high"
+    assert "not above the one for non-menstruating women" in verdict["band_label"]
     assert "200" in verdict["note"]
+    above = evaluate(connection, "ferritin", value_numeric=210.0, unit="ng/mL",
+                     age_years=60, sex="female")
+    assert above["interpretation"] == "high"
+    assert above["band_label"] == "Possible risk of iron overload (women)"
 
 
 def test_matched_band_cites_its_own_publisher_not_the_top_candidates(connection):

@@ -17,6 +17,8 @@
 {% if doctor_saved %}<div class="alert" role="status">{{ t('doctor.saved_revoked') }}</div>{% endif %}
 {% if paperless_saved %}<div class="alert" role="status">{{ paperless_saved }}</div>{% endif %}
 {% if integration_saved %}<div class="alert" role="status">{{ integration_saved }}</div>{% endif %}
+{% if share_saved %}<div class="alert" role="status">{{ share_saved }}</div>{% endif %}
+{% if email_saved %}<div class="alert" role="status">{{ email_saved }}</div>{% endif %}
 
 {% set lab_cards = lab_profile_cards(user) %}
 {% import "_tokens.html" as tokens_ui %}
@@ -85,6 +87,20 @@
           </select>
         </label>
       </div>
+      {#- Shown unless the record says male: a sex that is not stated must not
+          hide the question. -#}
+      {% if not (patient and patient.sex_at_birth == 'male') %}
+      <div class="an-profile-field">
+        <label>{{ t('profile.pregnancy_due_date') }}<input name="pregnancy_due_date" type="date" value="{{ (patient.pregnancy_due_date or '') if patient else '' }}" aria-describedby="hint-pregnancy-due-date"></label>
+        <p class="tiny muted" id="hint-pregnancy-due-date">{{ t('profile.pregnancy_due_date_hint') }}</p>
+      </div>
+      <div class="an-profile-field">
+        <label class="an-med-check" for="planning-pregnancy">
+          <input id="planning-pregnancy" type="checkbox" name="planning_pregnancy" value="1" aria-describedby="hint-planning-pregnancy" {{ 'checked' if patient and patient.planning_pregnancy else '' }}>
+          <span>{{ t('profile.planning_pregnancy') }}<span class="an-field-help" id="hint-planning-pregnancy">{{ t('profile.planning_pregnancy_help') }}</span></span>
+        </label>
+      </div>
+      {% endif %}
       <div class="an-profile-field">
         <label>{{ t('profile.timezone') }}
           <input name="timezone" list="timezone-options" value="{{ user_timezone_name }}" autocomplete="off" spellcheck="false" aria-describedby="hint-timezone">
@@ -210,7 +226,6 @@
         </dl>
         <div class="an-person__actions">
           <form action="/profile/doctor-pin/{{ access.id }}/revoke" method="post"
-                onsubmit="return confirm(this.dataset.confirm)"
                 data-confirm="{{ t('doctor.revoke_confirm') }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <button class="secondary an-person__delete" type="submit">{{ t('doctor.revoke') }}</button>
@@ -228,6 +243,7 @@
     <div class="panel-head">
       <div><span class="eyebrow">{{ t('profile.sharing_eyebrow') }}</span><h2>{{ t('profile.sharing_heading') }}</h2></div>
     </div>
+    <p class="muted">{{ t('profile.sharing_lead') }}</p>
     {% if shares %}
     <ul class="an-upload-recent">
       {% for share in shares %}
@@ -238,6 +254,17 @@
           <input type="hidden" name="share_id" value="{{ share.id }}">
           <button class="link-button" type="submit">{{ t('profile.share_remove') }}</button>
         </form>
+        <form action="/profile/shares/level" method="post">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="share_id" value="{{ share.id }}">
+          <label>{{ t('profile.share_level') }}
+            <select name="access">
+              <option value="read" {{ 'selected' if share.access == 'read' else '' }}>{{ t('profile.share_level_read') }}</option>
+              <option value="full" {{ 'selected' if share.access == 'full' else '' }}>{{ t('profile.share_level_full') }}</option>
+            </select>
+          </label>
+          <button class="link-button" type="submit">{{ t('profile.share_level_change') }}</button>
+        </form>
       </li>
       {% endfor %}
     </ul>
@@ -247,6 +274,12 @@
     <form action="/profile/shares" method="post" class="stack-form">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <label>{{ t('profile.share_email') }}<input name="email" type="email" required></label>
+      <label>{{ t('profile.share_level') }}
+        <select name="access">
+          <option value="read" selected>{{ t('profile.share_level_read') }}</option>
+          <option value="full">{{ t('profile.share_level_full') }}</option>
+        </select>
+      </label>
       <button class="primary" type="submit">{{ t('profile.share_add') }}</button>
     </form>
   </section>
@@ -259,7 +292,7 @@
     <ul class="an-upload-recent">
       {% for grant in shared_with_me %}
       <li>
-        <span>{{ grant.display_name }}</span>
+        <span>{{ grant.display_name }} ({{ t('profile.share_level_full') if grant.access == 'full' else t('profile.share_level_read') }})</span>
         <form action="/profile/view" method="post">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <input type="hidden" name="owner_user_id" value="{{ grant.owner_user_id }}">
@@ -314,6 +347,52 @@
     <button class="primary" type="submit">{{ t('profile.password_submit') }}</button>
   </form>
 
+  {#- Not for a guest or while viewing someone else's record: these change or
+      end the account the signed-in person holds, and the forms say so. -#}
+  {% if not viewing and not guest %}
+  <section class="panel" aria-labelledby="email-heading">
+    <div class="panel-head">
+      <div><h2 id="email-heading">{{ t('profile.email_heading') }}</h2></div>
+    </div>
+    <p>{{ user.email }}</p>
+    <form action="/profile/email" method="post" class="stack-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>{{ t('profile.email_new') }}
+        <input name="new_email" type="email" autocomplete="email" required>
+      </label>
+      <label>{{ t('profile.delete_password') }}
+        <input name="password" type="password" autocomplete="current-password" required>
+      </label>
+      <button class="primary" type="submit">{{ t('profile.email_button') }}</button>
+    </form>
+  </section>
+
+  <section class="panel" aria-labelledby="export-heading">
+    <div class="panel-head">
+      <div><h2 id="export-heading">{{ t('profile.export_heading') }}</h2></div>
+    </div>
+    <p class="muted">{{ t('profile.export_lead') }}</p>
+    <p><a class="button secondary" href="/profile/export.zip">{{ t('profile.export_button') }}</a></p>
+  </section>
+
+  <section class="panel" aria-labelledby="delete-heading">
+    <div class="panel-head">
+      <div><h2 id="delete-heading">{{ t('profile.delete_heading') }}</h2></div>
+    </div>
+    <p class="muted">{{ t('profile.delete_lead') }}</p>
+    <form action="/profile/delete-account" method="post" class="stack-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>{{ t('profile.delete_password') }}
+        <input name="password" type="password" autocomplete="current-password" required>
+      </label>
+      <label>{{ t('profile.delete_confirm_email') }}
+        <input name="email" type="email" autocomplete="off" required>
+      </label>
+      <button class="secondary danger-action" type="submit">{{ t('profile.delete_button') }}</button>
+    </form>
+  </section>
+  {% endif %}
+
   {#- Every browser holding this account, so a forgotten library computer or a
       lost phone can be signed out from here.  The current one is labelled and
       offers no button: signing out here is the menu's job, and a stale copy
@@ -331,7 +410,7 @@
       <div class="an-person__actions">
         {% if not s.current %}
         <form action="/profile/sessions/revoke" method="post"
-              onsubmit="return confirm(this.dataset.confirm)" data-confirm="{{ t('profile.session_sign_out_confirm') }}">
+              data-confirm="{{ t('profile.session_sign_out_confirm') }}">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <input type="hidden" name="session" value="{{ s.id }}">
           <button class="secondary an-person__delete" type="submit">{{ t('profile.session_sign_out') }}<span class="visually-hidden"> ({{ s.device }}, {{ s.created_text }})</span></button>
@@ -343,7 +422,7 @@
   </ul>
   {% if sessions|rejectattr('current')|list %}
   <form action="/profile/sessions/revoke-others" method="post" class="inline-form"
-        onsubmit="return confirm(this.dataset.confirm)" data-confirm="{{ t('profile.session_sign_out_others_confirm') }}">
+        data-confirm="{{ t('profile.session_sign_out_others_confirm') }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <button class="secondary" type="submit">{{ t('profile.session_sign_out_others') }}</button>
   </form>
@@ -581,6 +660,11 @@
     <strong>{{ t('openwearables.unreachable') }}</strong>
     <p class="tiny">{{ t('openwearables.unreachable_hint') }}</p>
   </div>
+  {% elif openwearables_card.none_for_you %}
+  {#- The server may hold accounts, just none under this person's email; saying
+      "no accounts" would be wrong, so the card names the address it looked for
+      and offers no chooser. -#}
+  <p class="alert" role="status">{{ t('openwearables.none_for_you', email=user.email) }}</p>
   {% elif openwearables_card.people %}
   <form action="/profile/openwearables/link" method="post" class="stack-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -669,7 +753,7 @@
 </div>
 </details>
 {% endif %}
-<script>
+<script nonce="{{ csp_nonce }}">
 /* A link to anything inside a folded section (#telegram, #lab-esculab after
    a redirect) opens that section first.  Without script the link still jumps
    to the right place and the section opens with one press. */
@@ -691,7 +775,7 @@
 </div>
 {% endif %}
 
-<script>
+<script nonce="{{ csp_nonce }}">
 (() => {
   const strip = document.querySelector(".an-profile-tabs");
   if (!strip) return;

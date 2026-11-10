@@ -1,0 +1,16 @@
+{#- One strip across every administration page. The account menu carries a
+    single "Administration" link; the sections are chosen here. Links, not
+    buttons: each section is a page of its own, with its own address. -#}
+<nav class="tabs an-admin-tabs" aria-label="{{ t('admin.tabs_label') }}">
+  {% for key, href, label in [
+    ('admin', '/admin/users', 'nav.admin'),
+    ('admin_tokens', '/admin/tokens', 'nav.admin_tokens'),
+    ('admin_ai', '/admin/ai', 'nav.admin_ai'),
+    ('admin_paperless', '/admin/paperless', 'nav.admin_paperless'),
+    ('admin_openwearables', '/admin/openwearables', 'nav.admin_openwearables'),
+    ('admin_telegram', '/admin/telegram', 'admin.tab_telegram'),
+    ('admin_labsync', '/admin/lab-connections', 'admin.tab_labs'),
+  ] %}
+  <a href="{{ href }}" class="{{ 'active' if active == key else '' }}"{% if active == key %} aria-current="page"{% endif %}>{{ t(label) }}</a>
+  {% endfor %}
+</nav>

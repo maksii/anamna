@@ -17,6 +17,7 @@
           <span data-page-total>/ {{ pages }}</span>
         </label>
         <button type="button" class="viewer-btn" data-page-next aria-label="{{ t('viewer.next') }}">{{ t('viewer.next') }}</button>
+        <span class="visually-hidden" role="status" data-page-status></span>
       </div>
       {% endif %}
       <div class="viewer-tools" role="group" aria-label="{{ t('viewer.original') }}">

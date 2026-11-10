@@ -847,7 +847,7 @@ _MOLECULE = re.compile(r"(?<![A-Za-z])[rn]?([A-Z][a-z]{1,3})\s?([a-z]{1,2})\s?(\
 #: An ImmunoCAP allergen code in brackets or after a comma: f13 (peanut), d1
 #: (house dust mite), fx5 (a food mixture).  Labs print some with Cyrillic
 #: homoglyphs («с6», «е220», «мх2»).
-_CODE = re.compile(r"(?<![\w-])((?:[fedgtwmikcopuh]x?))(\d{1,4})(?![\w-])")
+_CODE = re.compile(r"(?<![\w-])([fedgtwmikcopuh]x?)(\d{1,4})(?![\w-])")
 _TO_LATIN = str.maketrans("асеікмортху", "aceikmoptxy")
 
 

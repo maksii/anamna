@@ -142,14 +142,15 @@ def test_texted_code_flow_stores_tokens_never_the_password(tmp_path: Path, monke
         labsync.save_credentials(settings, user_id, "expert", {"code": "123456"})
     assert caught.value.key == "labsync.password_error_code_expired"
 
-    # Forgetting drops the tokens but keeps the device, so the lab still
-    # trusts it and the next sign-in sends the trusted-device token.
+    # Forgetting drops the tokens and the trusted-device token, but keeps the
+    # device id, so the lab still knows the device; the next sign-in sends no
+    # trusted-device token and the lab asks for its code again.
     labsync.forget(settings, user_id, "expert")
     row = labsync.account(settings, user_id, "expert")
-    assert row["secret"] == "" and "refresh" not in json.loads(row["refresh_secret"])
+    assert row["secret"] == "" and json.loads(row["refresh_secret"]) == {"device_id": sent[0][0]["device_id"]}
     install(monkeypatch, {("POST", "/api/v1/auth/login"): capture(sent, TOKENS)})
     labsync.save_credentials(settings, user_id, "expert", {"phone": "0670000001", "password": PASSWORD})
-    assert sent[-1][0]["trusted_device_token"] == "trusted-device-token-0001"
+    assert sent[-1][0]["trusted_device_token"] is None
     assert sent[-1][0]["device_id"] == sent[0][0]["device_id"]
 
 
@@ -194,7 +195,7 @@ def test_analyses_become_orders_and_indicators_become_lab_rows(monkeypatch):
     seen = install(monkeypatch, {
         ("GET", "/api/v1/medical/analyses"): ANALYSES,
         ("GET", "/api/v1/medical/analyses/501"): ANALYSIS_501,
-        ("GET", "/api/v1/medical/analyses/501/file"): b"%PDF-1.4 synthetic",
+        ("GET", "/api/v1/medical/analyses/501/file"): b"%PDF-1.4 synthetic\n%%EOF",
     })
     client = expert.Client(URL, ACCESS, "", "")
     kid = {"id": "f12", "family_member_id": 12}
@@ -213,7 +214,7 @@ def test_analyses_become_orders_and_indicators_become_lab_rows(monkeypatch):
     assert by_name["ШОЕ"]["norm"] == ["≥ 2"]
     assert by_name["Колір"]["norm"] == ["світло-жовтий, жовтий"] and by_name["Колір"]["units"] == ""
     assert all(row["packet"] == "Загальний аналіз крові" for row in rows)
-    assert client.pdfs(first, {"id": "p41", "family_member_id": None}) == [b"%PDF-1.4 synthetic"]
+    assert client.pdfs(first, {"id": "p41", "family_member_id": None}) == [b"%PDF-1.4 synthetic\n%%EOF"]
     assert seen[-1][1] == "/api/v1/medical/analyses/501/file"
     # ``is_linked_to_medeir: false`` is no gate: a live account said so and
     # still listed its analyses, so every person is asked.
@@ -238,7 +239,7 @@ def test_sync_imports_a_finished_analysis_and_waits_for_the_rest(tmp_path: Path,
         ("GET", "/api/v1/medical/analyses"): ANALYSES,
         ("GET", "/api/v1/medical/analyses/501"): ANALYSIS_501,
         ("GET", "/api/v1/medical/analyses/502"): {**ANALYSES["items"][1], "indicators": []},
-        ("GET", "/api/v1/medical/analyses/501/file"): b"%PDF-1.4 synthetic",
+        ("GET", "/api/v1/medical/analyses/501/file"): b"%PDF-1.4 synthetic\n%%EOF",
     })
     summary = labsync.sync(settings, user_id, "expert", inline=True)
     assert calls == ["expert-501.pdf"]
@@ -373,7 +374,7 @@ VISIT_FILES = {
     ("GET", "/api/v1/medical/research/903/file"): JPEG,
     ("GET", "/api/v1/medical/conclusions/900/files/1"): BREATH_TEST,
     ("GET", "/api/v1/medical/conclusions/900/files/2"): JPEG,
-    ("GET", "/api/v1/medical/research/900/file"): b"%PDF-1.4 ultrasound",
+    ("GET", "/api/v1/medical/research/900/file"): b"%PDF-1.4 ultrasound\n%%EOF",
 }
 
 
@@ -443,7 +444,7 @@ def test_conclusions_and_examinations_are_listed_beside_analyses_for_every_perso
     # prescription is compared with its soft line breaks folded away.
     assert ("Дексалгін саше: по 1 саше, 3 раз в 1 День (дні), 01.01.2024–07.01.2024, на курс 21 саше"
             in " ".join(said.split()) and "901 ·" not in said)
-    assert client.pdfs(scan, {"id": "p41", "family_member_id": None}) == [b"%PDF-1.4 ultrasound"]
+    assert client.pdfs(scan, {"id": "p41", "family_member_id": None}) == [b"%PDF-1.4 ultrasound\n%%EOF"]
     assert seen[-1][1] == "/api/v1/medical/research/900/file"
     assert "Легеневі поля прозорі." in text_of(client.pdfs(xray, kid)[0], tmp_path)
     # A radiograph is no report: the findings come first, the image beside them.

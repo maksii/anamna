@@ -421,15 +421,16 @@ def test_an_observation_no_longer_needs_a_document(tmp_path: Path):
             )
 
 
-def test_a_seasonal_gap_points_at_the_next_season_not_the_last(tmp_path: Path):
-    """Between seasons, «overdue since last September» is true and useless."""
+def test_influenza_is_raised_for_discussion_never_dated(tmp_path: Path):
+    """The authorities differ on influenza, so a missing dose is a point to discuss, never a date."""
     given = [{"occurrence_date": "2026-01-08", "diseases": "influenza"}]
-    august = {gap.key: gap for gap in find_gaps(given, date(2026, 8, 7))}
-    assert august["influenza_season"].due_date == "2026-09-01"
-    assert august["influenza_season"].urgency == "soon"
-    # Once the season has opened and no dose covers it, it is genuinely due.
+    # Between seasons there is nothing to raise.
+    assert "influenza_season" not in {gap.key for gap in find_gaps(given, date(2026, 8, 7))}
+    # Once the season has opened with only last season's dose on file, it is a point to discuss.
     october = {gap.key: gap for gap in find_gaps(given, date(2026, 10, 1))}
-    assert october["influenza_season"].urgency == "overdue"
+    assert october["influenza_season"].kind == "discuss"
+    assert october["influenza_season"].due_date is None
+    assert october["influenza_season"].urgency == "unknown"
     # A dose given inside the season closes it.
     covered = find_gaps(
         [{"occurrence_date": "2026-10-05", "diseases": "influenza"}], date(2026, 10, 20)

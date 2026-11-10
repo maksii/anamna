@@ -20,6 +20,7 @@ classifiers = [
 dependencies = [
   "fastapi>=0.115",
   "jinja2>=3.1",
+  "numpy>=2",
   "pdfplumber>=0.11",
   "pillow>=13.0.0",
   "pypdf>=6.21.4",
@@ -80,3 +81,16 @@ include = [
 testpaths = ["tests/python"]
 pythonpath = ["src"]
 addopts = "-n auto"
+
+[tool.ruff]
+target-version = "py312"
+
+[tool.ruff.lint]
+# Pyflakes-level correctness only: undefined names, unused imports, repeated
+# dictionary keys, syntax errors. Style is not gated.
+select = ["E9", "F"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests import pytest fixtures from sibling test modules; the import is what
+# registers the fixture, and the parameter of the same name "redefines" it.
+"tests/**" = ["F401", "F811"]

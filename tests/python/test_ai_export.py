@@ -138,7 +138,8 @@ def test_the_prompt_leads_with_instructions_a_legend_and_the_flagged_results(tmp
     assert text.index(legend) < text.index("Needs attention")
     # And the gaps are declared rather than left for the assistant to assume.
     assert "does NOT contain" in text
-    assert "Medication I take" in text
+    assert "is not in the list of my entries above" in text
+    assert "Medication I take" not in text
 
 
 def test_the_name_is_withheld_unless_it_is_asked_for(tmp_path: Path):

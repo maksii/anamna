@@ -5,7 +5,10 @@ import logging
 import math
 import os
 import re
+import secrets
+import shutil
 import sqlite3
+import tempfile
 import threading
 import time
 import uuid
@@ -15,6 +18,7 @@ from datetime import UTC, date, datetime, timedelta
 from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import lru_cache, partial
+from http import HTTPStatus
 from pathlib import Path, PurePath
 from typing import Annotated, Callable
 from urllib.parse import quote, urlencode, urlsplit, urlunsplit
@@ -29,10 +33,14 @@ from fastapi.responses import (
     PlainTextResponse,
     RedirectResponse,
     Response,
+    StreamingResponse,
 )
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.concurrency import run_in_threadpool
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware.gzip import GZipMiddleware
 
 from ..ai import (
     DEFAULT_MODELS as AI_DEFAULT_MODELS,
@@ -55,13 +63,15 @@ from ..ai import (
     save_ai_settings,
     usage_summary,
 )
-from .. import garmin, garmin_personal, integrations, openwearables, oura, paperless
+from .. import garmin, garmin_personal, integrations, labsync, openwearables, oura, paperless
 from .. import openwearables_webhooks as ow_hooks
 from ..telegram import TelegramService
 from .telegram_routes import register_telegram_routes
 from .changes import register_changes_routes, verdict_state
 from .labsync_routes import register_routes as register_labsync_routes
 from .testplan_routes import register_routes as register_testplan_routes
+from .factors_routes import register_routes as register_factors_routes
+from .found_routes import register_routes as register_found_routes
 from .allergy_routes import register_routes as register_allergy_routes
 from .genetics_routes import register_routes as register_genetics_routes
 from .chat_routes import register_routes as register_chat_routes
@@ -88,10 +98,11 @@ from ..devices.reconcile import (
     SLEEP_FAMILY, bridge_origin, human_source_label, preference_group, source_key, source_kind, valid_row,
 )
 from ..devices.timezone import timezone_choices, user_timezone, valid_timezone
-from ..devices.units import PLAUSIBLE_RANGES
 from .experience import build_overview, build_area_experience
 from . import search as record_search
 from .. import immunizations as immunization_records
+from .. import factors, drugref
+from . import factors_view
 from ..devices import queries as device_queries
 from ..locales.concepts_en import CONCEPT_NAMES_EN
 from ..locales.concepts_uk import CONCEPT_NAMES_UK
@@ -160,11 +171,13 @@ from ..immunizations import (
 )
 from ..locales.messages import MESSAGES
 from .health_export import AGGREGATION_KEYS, prepare_metric, render_pdf
+from ..export import write_record_archive
 from ..ingest.intake import (
     ARCHIVE_SUFFIXES,
     INTAKE_SUFFIXES,
     batch_progress,
     clear_finished,
+    discard_upload_tree,
     enqueue,
     reclaim_abandoned_jobs,
     record_duplicate,
@@ -176,7 +189,6 @@ from ..ingest.pipeline import (
     ensure_vendor,
     file_sha256,
     backfill_search_keys,
-    ingest_file,
     interpretation,
     repair_observation_semantics,
     apply_reread_proposals,
@@ -199,6 +211,7 @@ from ..ingest.pipeline import (
 )
 from ..derived import refresh_derived_observations
 from ..ingest.classifier import repair_order_identifiers
+from ..ingest.extract import PDFIUM_LOCK
 from ..ingest.parsers import PARSER_VERSION, ParsedObservation, reference_bounds
 from ..ingest.positions import backfill_positions, page_box, position_key
 from ..ingest.text import collapse_space, normalized_key, parse_decimal, search_key
@@ -219,10 +232,12 @@ from ..panels import (
     roll_up,
 )
 from ..reference import (
+    _SILENT_REQUIRES,
     RULE_CACHE,
     canonical_unit,
     clinical_context,
     convert_value,
+    curated_rules,
     edge_safe_decimals,
     evaluate,
     interpretation_label,
@@ -230,7 +245,6 @@ from ..reference import (
     range_text,
     rule_applies_to_context,
     rule_label,
-    rule_note,
     rule_requirement,
     sources_for,
     staleness,
@@ -243,26 +257,34 @@ from .ai_export import (
     build_subject_prompt,
 )
 from ..security import (
+    DEVICE_COOKIE,
     DOCTOR_PIN_ACCESS,
     DOCTOR_PIN_CLIENT_LIMIT,
     DOCTOR_PIN_GLOBAL_KEY,
     DOCTOR_PIN_GLOBAL_LIMIT,
     DOCTOR_PIN_REDEEM_WINDOW,
+    LOGIN_ACCOUNT_LIMIT,
+    LOGIN_ATTEMPT_LIMIT,
     LOGIN_ATTEMPT_WINDOW,
     MINIMUM_PASSWORD_LENGTH,
-    ROLES,
+    PASSWORD_CHANGE_LIMIT,
     SETUP_CODE_GLOBAL_KEY,
     SETUP_CODE_GLOBAL_LIMIT,
     TOKEN_KINDS,
     AlreadySetUp,
+    access_token_row,
     access_token_user,
     authenticate,
+    blocked as blocked_meters,
     clear_attempts,
+    clear_attempts_matching,
     create_access_token,
     create_doctor_pin,
     create_session,
     create_user,
     csrf_matches,
+    device_cookie_nonce,
+    device_cookie_value,
     ensure_seeded_token,
     has_users,
     list_access_tokens,
@@ -273,6 +295,7 @@ from ..security import (
     list_sessions,
     record_attempt,
     redeem_doctor_pin,
+    retry_minutes,
     revoke_access_token,
     revoke_session,
     revoke_other_sessions,
@@ -289,9 +312,9 @@ from ..security import (
 #: Paths, media types, stored names and message keys used in more than one place.
 _DOCUMENTS_URL = "/documents"
 _LOGIN_URL = "/login"
+_REGISTER_URL = "/register"
 _SETUP_URL = "/setup"
 _setup_log = logging.getLogger("anamna.setup")
-_LOGIN_THROTTLED_URL = "/login?error=throttled"
 _DOCTOR_URL = "/doctor"
 _PROFILE_URL = "/profile"
 _VACCINATIONS_URL = "/vaccinations"
@@ -302,6 +325,9 @@ _INTEGRATION_SYNC_SAVED_URL = "/profile?saved=integration_sync"
 _PAPERLESS_URL_ERROR_URL = "/admin/paperless?error=paperless.error_url"
 _RESCAN_QUEUED_QUERY = "?rescan=queued"
 _PDF_MEDIA_TYPE = "application/pdf"
+#: Forms a visitor fills in before there is any session, so no CSRF token can
+#: guard them; `token_scope` refuses a cross-site post to any of these.
+_PRE_AUTH_FORMS = frozenset({_LOGIN_URL, _REGISTER_URL, _SETUP_URL, _DOCTOR_URL})
 _JSON_MEDIA_TYPE = "application/json"
 _DEVICE_METRIC_PREFIX = "device:"
 _UNKNOWN_PROVIDER = "Unknown provider"
@@ -327,9 +353,31 @@ _PROFILE_ERROR_CHOICE = "profile.error_choice"
 _TOKEN_ERROR_EXPIRY = "token.error_expiry"
 _INTAKE_FAILED_UNREADABLE = "intake.failed_unreadable"
 _INTAKE_FAILED_UNSUPPORTED = "intake.failed_unsupported"
+_INTAKE_FAILED_TOO_BIG = "intake.failed_too_big"
+_PROFILE_ERROR_PASSWORD_THROTTLED = "profile.error_password_throttled"
+_BEGIN_IMMEDIATE = "BEGIN IMMEDIATE"
+_API_PREFIX = "/api/"
+# Throttle keys, one namespace per meter (see `security.throttled`).
+_LOGIN_ACCOUNT_KEY_PREFIX = "login:"
+_LOGIN_IP_KEY_PREFIX = "login-ip:"
+_LOGIN_DEVICE_KEY_PREFIX = "login-dev:"
+_TOKEN_KEY_PREFIX = "token:"
+_DOCTOR_PIN_KEY_PREFIX = "doctor-pin:"
+_SETUP_CODE_KEY_PREFIX = "setup-code:"
+_REGISTER_KEY_PREFIX = "register:"
+_PWCHANGE_KEY_PREFIX = "pwchange:"
+_OBSERVATION_AUDIT_SQL = """INSERT INTO audit_events(
+                       owner_user_id, actor_user_id, action, entity_type, entity_id, details_json, created_at
+                   ) VALUES (?, ?, ?, 'observation', ?, ?, ?)"""
 
 THEME_COOKIE = "anamna_theme"
 VIEW_COOKIE = "anamna_record"
+#: What a share lets the viewer do: "read" the record only, or "full", which
+#: also covers the AI assistant and ordering tests through the owner's lab account.
+SHARE_LEVELS = ("read", "full")
+#: Confirmations for the profile's sharing panel, keyed by the `saved` query value.
+SHARE_SAVED = {"share_level": "profile.share_level_saved"}
+EMAIL_SAVED = {"email": "profile.email_saved"}
 #: Pages that show results, and so carry the "Ask an AI" button.
 AI_EXPORT_PAGES = frozenset(
     {"dashboard", "panels", "metrics", "devices", "documents"}
@@ -385,7 +433,7 @@ GUEST_ALLOWED_PREFIXES = (
     # A doctor holding a link may well have their own account here.  Without
     # these the sign-in page answers 403 to the one visitor most likely to want
     # it, which is a dead end reached by clicking nothing unusual.
-    _LOGIN_URL, "/register",
+    _LOGIN_URL, _REGISTER_URL,
     # And a doctor may hold invitations from two patients.  Refusing the second
     # link because the first one is still open would make the fix "sign out,
     # then click the link again", which nobody is going to guess.
@@ -394,12 +442,15 @@ GUEST_ALLOWED_PREFIXES = (
     # (POST /plan-tests/suggest below); ordering stays the patient's.  The
     # planner links the allergy and DNA pages, and the menu vaccinations.
     "/plan-tests", "/allergy", "/genetics", _VACCINATIONS_URL,
+    # The medicines page is the record a doctor reads next to the results; its
+    # writes stay refused to a guest by the routes themselves.
+    "/medicines",
 )
 #: The POSTs a guest may still make.  None of them touch the record: they end
 #: the visit, change how it is displayed, or sign the visitor in as themselves,
 #: and refusing them would leave a guest unable to read the page in their own
 #: language or to stop being a guest.
-GUEST_ALLOWED_POSTS = ("/logout", "/theme", "/locale", _LOGIN_URL, "/register", _DOCTOR_URL,
+GUEST_ALLOWED_POSTS = ("/logout", "/theme", "/locale", _LOGIN_URL, _REGISTER_URL, _DOCTOR_URL,
                        # The one write a guest makes: a doctor's test selection,
                        # kept apart for the patient to accept, never the record.
                        "/plan-tests/suggest")
@@ -541,6 +592,8 @@ MAX_ARCHIVE_UPLOAD_BYTES = 6 * 1024**3
 #: the assembled file joins the ordinary intake path.
 UPLOAD_CHUNK_BYTES = 32 * 1024 * 1024
 UPLOAD_CHUNK_THRESHOLD = 64 * 1024 * 1024
+#: Form fields and multipart part headers ride in the same body as the file.
+_MULTIPART_OVERHEAD_BYTES = 1024 * 1024
 #: `upload_error` arrives in a URL, so only a key the handler itself can emit is
 #: ever resolved back onto the page.
 UPLOAD_ERRORS = frozenset(
@@ -607,7 +660,7 @@ _MEMO_SIZE = 32
 _MEMO_LOCK = threading.Lock()
 
 #: Which half of the record each memoised read summarises.
-_MEMO_SCOPE = {"lab_catalog": "lab", "device_catalog": "device", "devices": "device"}
+_MEMO_SCOPE = {"lab_catalog": "lab", "device_catalog": "device", "devices": "device", "device_history": "device"}
 
 
 def invalidate_catalog(owner_user_id: str | None = None) -> None:
@@ -656,7 +709,8 @@ def _memoised[T](connection, owner_user_id: str, name: str, build: Callable[[], 
     def resolve() -> T:
         # Cards carry localised names and labels, so the locale is part of the key.
         key = (owner_user_id, get_locale(), name)
-        fingerprint = _fingerprint(connection, owner_user_id, _MEMO_SCOPE.get(name, "all"))
+        # The day is part of the print: cards carry "N days ago" and due states computed when they were built.
+        fingerprint = (date.today().isoformat(), _fingerprint(connection, owner_user_id, _MEMO_SCOPE.get(name, "all")))
         with _MEMO_LOCK:
             entry = _MEMO.get(key)
             if entry is not None and entry[0] == fingerprint:
@@ -1013,20 +1067,24 @@ def _render_pdf_page(cache_dir: Path, source: Path, cache_key: str, page_number:
     if target.is_file() and target.stat().st_mtime_ns >= source.stat().st_mtime_ns:
         return target
     target.parent.mkdir(parents=True, exist_ok=True)
-    document = pdfium.PdfDocument(source)
-    try:
-        if page_number < 1 or page_number > len(document):
-            raise IndexError(page_number)
-        page = document[page_number - 1]
+    # PDFium is not thread-safe, and the intake worker runs it for OCR on another
+    # thread: the lock covers every PDFium call. convert() copies the pixels so the
+    # image outlives the page; the PNG write stays outside the lock.
+    with PDFIUM_LOCK:
+        document = pdfium.PdfDocument(source)
         try:
-            image = page.render(scale=2.0).to_pil().convert("RGB")
-            temporary = target.with_name(f".{target.stem}-{uuid.uuid4().hex}.png")
-            image.save(temporary, format="PNG", optimize=True)
-            temporary.replace(target)
+            if page_number < 1 or page_number > len(document):
+                raise IndexError(page_number)
+            page = document[page_number - 1]
+            try:
+                image = page.render(scale=2.0).to_pil().convert("RGB")
+            finally:
+                page.close()
         finally:
-            page.close()
-    finally:
-        document.close()
+            document.close()
+    temporary = target.with_name(f".{target.stem}-{uuid.uuid4().hex}.png")
+    image.save(temporary, format="PNG", optimize=True)
+    temporary.replace(target)
     return target
 
 
@@ -1687,6 +1745,90 @@ def _clinical_context(connection, owner_user_id: str | None) -> dict[str, object
     )
 
 
+#: A pregnancy is counted 280 days (40 weeks) back from its expected due date.
+PREGNANCY_DAYS = 280
+
+
+def _pregnancy_due_date(connection, owner_user_id: str | None) -> date | None:
+    """The expected due date the profile records, or None; once per request."""
+    if not owner_user_id:
+        return None
+
+    def load() -> date | None:
+        row = connection.execute(
+            "SELECT pregnancy_due_date FROM patients WHERE owner_user_id=? ORDER BY created_at LIMIT 1",
+            (owner_user_id,),
+        ).fetchone()
+        if not row or not row[0]:
+            return None
+        try:
+            return date.fromisoformat(str(row[0]))
+        except ValueError:
+            return None
+
+    return _cached(("pregnancy_due_date", owner_user_id), load)
+
+
+def _field(row, name: str):
+    """One column of a sqlite3.Row or a dict; a column the row does not carry is None."""
+    try:
+        return row[name]
+    except (KeyError, IndexError):
+        return None
+
+
+def _factor_periods(connection, owner_user_id: str) -> list[tuple[str, str, str | None]]:
+    """(fact, start, end) for every medicine or illness the record holds; once per request."""
+    return _cached(
+        ("factor_periods", owner_user_id),
+        lambda: factors.fact_periods(connection, owner_user_id),
+    )
+
+
+def _sample_facts(connection, row, owner_user_id: str | None = None) -> dict[str, object]:
+    """Facts about one stored result that a published band may refuse:
+    a sample the person marked as not fasting, a result dated within a
+    pregnancy recorded in the profile, and the medicines and illnesses the
+    person had going on the day the sample was taken."""
+    facts: dict[str, object] = {}
+    if _field(row, "sample_condition") == "not_fasting":
+        facts["not_fasting_sample"] = True
+    owner_user_id = owner_user_id or _field(row, "owner_user_id")
+    due = _pregnancy_due_date(connection, owner_user_id)
+    observed = str(_field(row, "observed_at") or "")[:10]
+    if due is not None and observed:
+        try:
+            taken = date.fromisoformat(observed)
+        except ValueError:
+            taken = None
+        if taken is not None and due - timedelta(days=PREGNANCY_DAYS) <= taken <= due:
+            facts["pregnant"] = True
+    if owner_user_id and observed:
+        for fact in factors.facts_on(_factor_periods(connection, owner_user_id), observed):
+            facts[fact] = True
+    return facts
+
+
+def _fasting_state(row) -> str | None:
+    """Whether a result's sample was fasting: what the person said, else what the
+    laboratory printed in the name; None when neither says."""
+    condition = _field(row, "sample_condition")
+    if condition in ("fasting", "not_fasting"):
+        return str(condition)
+    printed = str(_field(row, "raw_name") or "").casefold()
+    if "натще" in printed or "fasting" in printed:
+        return "fasting"
+    return None
+
+
+def _fasting_applies(connection, concept_id: str) -> bool:
+    """True when a published band for this analyte is written for a fasting sample only."""
+    return any(
+        "not_fasting_sample" in (rule_context(rule["context_json"]).get("excludes") or ())
+        for rule in curated_rules(connection, concept_id)
+    )
+
+
 def _first_on_page(key: str) -> bool:
     """True the first time a template asks about ``key`` in this request: an
     explanation that applies to every value on a page is printed once."""
@@ -1708,6 +1850,8 @@ BLOCKED_NOTICE_KEYS = {
     "requires_clinical_context": "verdict.blocked_clinical_context",
     "requires_cv_risk_category": "verdict.blocked_cv_risk_category",
     "sex_not_covered": "verdict.blocked_sex_not_covered",
+    "excluded_not_fasting_sample": "verdict.blocked_not_fasting",
+    "excluded_pregnant": "verdict.blocked_pregnancy",
 }
 
 
@@ -1968,6 +2112,15 @@ _DEVICE_PANEL_BY_METRIC.update(
 )
 
 
+def _comparator_of(row) -> str | None:
+    """The laboratory's printed comparator for a censored result (`<`, `>`…),
+    or None.  A device reading and a hand-built row have none."""
+    try:
+        return row["comparator"] or None
+    except (KeyError, IndexError):
+        return None
+
+
 def _reading_verdict(
     connection, concept_id: str, row: dict[str, object], age: int | None, sex: str | None
 ) -> tuple[str | None, dict[str, object]]:
@@ -1998,13 +2151,17 @@ def _reading_verdict(
         concept_id=concept_id,
         value_numeric=row["value_numeric"],
         value_text=row["value_text"],
+        comparator=_comparator_of(row),
         unit=unit_source,
         age_years=age,
         sex=sex,
         vendor_low=vendor_low,
         vendor_high=vendor_high,
         vendor_interpretation=vendor_interpretation,
-        clinical_context=_clinical_context(connection, row.get("owner_user_id")),
+        clinical_context={
+            **_clinical_context(connection, row.get("owner_user_id")),
+            **_sample_facts(connection, row, row.get("owner_user_id")),
+        },
     )
     return unit_source, verdict
 
@@ -2371,6 +2528,16 @@ def _device_overview(connection, owner_user_id: str) -> dict[str, object]:
     )
 
 
+def device_history(connection, owner_user_id: str) -> list[dict[str, object]]:
+    """`device_history_summary`, rebuilt only when the owner's device data
+    changes.  It reads every daily row the owner has; the chat's tools and the
+    AI export ask for it repeatedly within one answer."""
+    return _memoised(
+        connection, owner_user_id, "device_history",
+        lambda: device_history_summary(connection, owner_user_id),
+    )
+
+
 def _metric_catalog(
     connection,
     owner_user_id: str,
@@ -2497,7 +2664,9 @@ def _partial_day(connection, owner_user_id: str, metric_key: str, day: object) -
     """Whether `day` is a day the device is still recording (CONTRACTS §6)."""
     from ..devices.timezone import user_timezone
 
-    zone = user_timezone(connection, owner_user_id)
+    # `_complete_days` asks once per device card; the zone is one row, so it is
+    # resolved once per request.
+    zone = _cached(("user_timezone", owner_user_id), lambda: user_timezone(connection, owner_user_id))
     return bool(device_queries.is_partial_day(metric_key, str(day or "")[:10], zone))
 
 
@@ -2876,8 +3045,8 @@ def _sparkline(card: dict[str, object], span: tuple[int, int] | None) -> dict[st
 # pollens, hemp (Can s) among animals and tomato (Sola l) among insect venoms.
 _PANEL_GROUP = {
     "animals": "animal_dander", "insects": "insect_venom", "latex": "other",
-    **{key: "foods" for key in ("legumes", "cereals", "spices", "fruits", "vegetables", "nuts_seeds",
-                                "milk", "egg", "fish_seafood", "meat")},
+    **dict.fromkeys(("legumes", "cereals", "spices", "fruits", "vegetables", "nuts_seeds",
+                     "milk", "egg", "fish_seafood", "meat"), "foods"),
 }
 
 
@@ -2949,7 +3118,9 @@ def _area_row(card: dict[str, object], area_id: str, legend) -> dict[str, object
     # ImmunoCAP classes belong to another assay.  The class column renders
     # ``allergy.cap_<key>``, so the ALEX key carries its prefix.
     alex = bool(legend) and (card.get("verdict") or {}).get("source_id") == ALEX_SOURCE_ID
-    level = _cap_class(value, alex_legend() if alex else legend) if legend else None
+    level = None
+    if legend:
+        level = _cap_class(value, alex_legend() if alex else legend)
     return {
         "card": card,
         "code": code.group(1) if code else "",
@@ -3189,6 +3360,10 @@ def _bp_block(connection, owner_user_id: str, rows: list[dict[str, object]]) -> 
             "diastolic": _bp_series(connection, owner_user_id, diastolic),
         },
         "weekly": weekly,
+        "factor_periods": factors_view.chart_periods(
+            connection, owner_user_id, ("systolic-blood-pressure", "diastolic-blood-pressure"),
+            locale=get_locale(), today=date.today(),
+        ),
     }
 
 
@@ -3910,13 +4085,17 @@ def _correlation_context(connection, owner_user_id: str, primary_id: str) -> dic
     primary_id = _twin_concept_id(primary_id)
     key = (owner_user_id, get_locale(), primary_id)
     fingerprint = _fingerprint(connection, owner_user_id)
-    entry = _CORRELATION_MEMO.get(key)
+    # `invalidate_catalog` iterates this dict under `_MEMO_LOCK` from another
+    # thread, so every access takes the lock.  The build itself runs outside it.
+    with _MEMO_LOCK:
+        entry = _CORRELATION_MEMO.get(key)
     if entry is not None and entry[0] == fingerprint:
         return entry[1]
     section = _build_correlation_context(connection, owner_user_id, primary_id)
-    if len(_CORRELATION_MEMO) >= 128:
-        _CORRELATION_MEMO.clear()
-    _CORRELATION_MEMO[key] = (fingerprint, section)
+    with _MEMO_LOCK:
+        if len(_CORRELATION_MEMO) >= 128:
+            _CORRELATION_MEMO.clear()
+        _CORRELATION_MEMO[key] = (fingerprint, section)
     return section
 
 
@@ -3979,7 +4158,8 @@ def _correlation_weakest_opening(
         (
             found
             for queue in _correlation_ranked_by_pool(
-                primary_id, windows, pools, min_pairs=MIN_PAIRS_EXPLORER, min_abs_r=0.0, top=1
+                primary_id, windows, pools, min_pairs=MIN_PAIRS_EXPLORER, min_abs_r=0.0, top=1,
+                require_significance=False,
             )
             for found in queue
         ),
@@ -4292,13 +4472,17 @@ def _document_observation_item(
         concept_id=str(row["concept_id"]),
         value_numeric=shown["value_numeric"],
         value_text=row["value_text"],
+        comparator=_comparator_of(row),
         unit=unit_source if numeric else row["unit_raw"],
         age_years=age,
         sex=sex,
         vendor_low=vendor_low,
         vendor_high=vendor_high,
         vendor_interpretation=vendor_reading,
-        clinical_context=_clinical_context(connection, owner_user_id),
+        clinical_context={
+            **_clinical_context(connection, owner_user_id),
+            **_sample_facts(connection, row, owner_user_id),
+        },
     )
     row["url"] = f"/metrics/{row['concept_id']}"
     return row
@@ -4739,23 +4923,35 @@ def _same_as_entries(
     return entries
 
 
+def _relation_text_key(relationship: str, is_source: bool, notes: str, person: bool) -> str | None:
+    key = _RELATION_TEXT_KEYS.get((relationship, is_source, notes)) or _RELATION_TEXT_KEYS.get(
+        (relationship, is_source)
+    )
+    if person:
+        key = "dup.rel_person_part_of" if is_source else "dup.rel_person_has_part"
+    return key
+
+
+def _related_entry(row, briefs: dict[str, dict[str, object]], document_id: str) -> dict[str, object] | None:
+    is_source = row["source_document_id"] == document_id
+    other_id = _relation_other_id(row, document_id)
+    relationship = str(row["relationship"])
+    person = str(row["notes"] or "") == PERSON_PART_NOTE
+    key = _relation_text_key(relationship, is_source, str(row["notes"] or ""), person)
+    if not key or other_id not in briefs:
+        return None
+    return {
+        "label": t(key), "document": briefs[other_id], "part": relationship == "part_of",
+        "person": person, "is_source": is_source,
+    }
+
+
 def _related_entries(related, briefs: dict[str, dict[str, object]], document_id: str) -> list[dict[str, object]]:
     entries: list[dict[str, object]] = []
     for row in related:
-        is_source = row["source_document_id"] == document_id
-        other_id = _relation_other_id(row, document_id)
-        relationship = str(row["relationship"])
-        key = _RELATION_TEXT_KEYS.get((relationship, is_source, str(row["notes"] or ""))) or _RELATION_TEXT_KEYS.get(
-            (relationship, is_source)
-        )
-        person = str(row["notes"] or "") == PERSON_PART_NOTE
-        if person:
-            key = "dup.rel_person_part_of" if is_source else "dup.rel_person_has_part"
-        if key and other_id in briefs:
-            entries.append({
-                "label": t(key), "document": briefs[other_id], "part": relationship == "part_of",
-                "person": person, "is_source": is_source,
-            })
+        entry = _related_entry(row, briefs, document_id)
+        if entry is not None:
+            entries.append(entry)
     # A file a person placed in a report is no longer offered as the next
     # screenshot of some other one.
     if any(item["person"] and item["is_source"] for item in entries):
@@ -5020,6 +5216,24 @@ def _upload_target(settings: Settings, name: str) -> Path:
     return target
 
 
+def _place_exclusively(partial: Path, pick_target) -> Path:
+    """Move a finished partial to a name nothing else holds.  A hard link
+    fails if the name exists, on every platform, which a rename does not; on a
+    filesystem without hard links the move falls back to a plain replace."""
+    for _ in range(5):
+        target = pick_target()
+        try:
+            os.link(partial, target)
+        except FileExistsError:
+            continue
+        except OSError:
+            partial.replace(target)
+            return target
+        partial.unlink()
+        return target
+    raise FileExistsError(str(partial))
+
+
 async def _admit_upload(
     settings: Settings, common: dict[str, str], kind: str, name: str, target: Path, written: int
 ) -> None:
@@ -5043,21 +5257,27 @@ async def _admit_upload(
         # of an OCR pass, keeps one copy of the bytes on disk, and can
         # say what happened.
         digest = await run_in_threadpool(file_sha256, target)
-        with connect(settings) as connection:
-            held = connection.execute(
-                """SELECT id FROM documents WHERE owner_user_id=? AND sha256=?
-                   ORDER BY imported_at LIMIT 1""",
-                (common["owner_user_id"], digest),
-            ).fetchone()
+
+        def held_document():
+            with connect(settings) as connection:
+                return connection.execute(
+                    """SELECT id FROM documents WHERE owner_user_id=? AND sha256=?
+                       ORDER BY imported_at LIMIT 1""",
+                    (common["owner_user_id"], digest),
+                ).fetchone()
+
+        held = await run_in_threadpool(held_document)
         if held:
             target.unlink(missing_ok=True)
-            record_duplicate(
+            await run_in_threadpool(
+                record_duplicate,
                 settings, **common, filename=name,
                 document_id=str(held["id"]), byte_size=written,
             )
             return
 
-    enqueue(
+    await run_in_threadpool(
+        enqueue,
         settings, **common, kind=job_kind, adapter_key=adapter,
         filename=name, source_path=target, byte_size=written,
     )
@@ -5341,17 +5561,28 @@ router = APIRouter()
 
 
 
-#: Sent on every response.  The application serves one person's medical
-#: record, so the defaults are the restrictive ones: nothing off-origin
-#: loads, nothing frames it, and no referrer carries a document id to
-#: another site.  `'unsafe-inline'` is present because the templates carry
-#: inline theme, i18n and chart bootstrapping that runs during parse —
-#: it is the one relaxation, and `default-src 'self'` still stops a
-#: successful injection from reaching an external collector.
-SECURITY_HEADERS = {
-    "Content-Security-Policy": (
+#: Every inline <script> carries the request's nonce and no template uses an
+#: inline event-handler attribute, so the policy is strict: `script-src` allows
+#: only 'self' and this request's nonce.  The switch exists so a deployment
+#: that injects its own inline scripts can be diagnosed by turning it off; it is
+#: not a supported mode.
+CSP_STRICT_SCRIPTS = True
+
+
+def _content_security_policy(nonce: str, strict: bool) -> str:
+    """The policy for one response.  The application serves one person's
+    medical record, so the defaults are the restrictive ones: nothing
+    off-origin loads, nothing frames it, and no referrer carries a document id
+    to another site.  Only `script-src` depends on the arguments; every other
+    directive is sent exactly as it always was.  In strict mode inline scripts
+    run only when they carry this request's nonce.  `default-src 'self'` still
+    stops a successful injection from reaching an external collector."""
+    script_src = (
+        f"script-src 'self' 'nonce-{nonce}'" if strict else "script-src 'self' 'unsafe-inline'"
+    )
+    return (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline'; "
+        f"{script_src}; "
         "style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data:; "
         "connect-src 'self'; "
@@ -5364,7 +5595,11 @@ SECURITY_HEADERS = {
         "form-action 'self'; "
         "base-uri 'self'; "
         "frame-ancestors 'none'"
-    ),
+    )
+
+
+#: Sent on every response (the Content-Security-Policy is built per response).
+SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "no-referrer",
@@ -5410,6 +5645,27 @@ def _resolve_user(request: Request):
     row = session_user(settings, request.cookies.get("anamna_session"))
     return None if row is None else dict(row) | {"bearer": False}
 
+def _guest_may_reach(request: Request, path: str) -> bool:
+    if request.method in ("GET", "HEAD"):
+        return path in GUEST_ALLOWED_PAGES or path.startswith(GUEST_ALLOWED_PREFIXES)
+    return path in GUEST_ALLOWED_POSTS
+
+
+def _upload_refusal(request: Request, path: str):
+    """The answer that refuses an upload before its body is read, or None to let it through."""
+    if request.state.anamna_user is None:
+        return login_redirect(request, HTTPException(401))
+    limit = (
+        MAX_ARCHIVE_UPLOAD_BYTES if path == _UPLOAD_URL else UPLOAD_CHUNK_BYTES
+    ) + _MULTIPART_OVERHEAD_BYTES
+    declared = (request.headers.get("content-length") or "").strip()
+    if not (declared.isascii() and declared.isdigit()):
+        return PlainTextResponse(t(_INTAKE_FAILED_TOO_BIG), status_code=411)
+    if int(declared) > limit:
+        return PlainTextResponse(t(_INTAKE_FAILED_TOO_BIG), status_code=413)
+    return None
+
+
 async def token_scope(request: Request, call_next):
     """Resolve the caller once, and hold each credential to its own reach.
 
@@ -5422,19 +5678,40 @@ async def token_scope(request: Request, call_next):
     request.state.anamna_user = await run_in_threadpool(_resolve_user, request)
     kind = (request.state.anamna_user or {}).get("token_kind")
     path = request.url.path
-    if kind == "api" and not path.startswith("/api/"):
+    if kind == "api" and not path.startswith(_API_PREFIX):
         return JSONResponse({"detail": t("token.error_api_only")}, status_code=403)
-    if kind == "guest":
-        if request.method in ("GET", "HEAD"):
-            permitted = path in GUEST_ALLOWED_PAGES or path.startswith(GUEST_ALLOWED_PREFIXES)
-        else:
-            permitted = path in GUEST_ALLOWED_POSTS
-        if not permitted:
-            return JSONResponse({"detail": t("token.error_guest_only")}, status_code=403)
+    if kind == "guest" and not _guest_may_reach(request, path):
+        return JSONResponse({"detail": t("token.error_guest_only")}, status_code=403)
+    # Uploads are refused here rather than in the handler: FastAPI spools every
+    # multipart file part to disk before the handler, and its `require_user`,
+    # runs, so an anonymous or oversized body would be written in full first.
+    # Who is asking and how much they declare are both known from the headers
+    # already, so the body is never read for a request that cannot succeed.
+    if request.method == "POST" and path in (_UPLOAD_URL, _UPLOAD_URL + "/chunk"):
+        refusal = _upload_refusal(request, path)
+        if refusal is not None:
+            return refusal
+    # No session exists yet on these forms, so no CSRF token can guard them.
+    # A browser says where a form post came from; one that came from another
+    # site is refused.  A client that sends no such header (a script, an old
+    # browser) is unaffected.
+    if (
+        request.method == "POST"
+        and path in _PRE_AUTH_FORMS
+        and (request.headers.get("sec-fetch-site") or "").lower() == "cross-site"
+    ):
+        return PlainTextResponse(t("auth.error_cross_site"), status_code=403)
     return await call_next(request)
 
 async def security_headers(request: Request, call_next):
+    # One nonce per request, set before the handler runs so that every template
+    # rendered for it, including an exception page, can carry it.
+    nonce = secrets.token_urlsafe(16)
+    request.state.csp_nonce = nonce
     response = await call_next(request)
+    response.headers.setdefault(
+        "Content-Security-Policy", _content_security_policy(nonce, CSP_STRICT_SCRIPTS)
+    )
     for header, value in SECURITY_HEADERS.items():
         response.headers.setdefault(header, value)
     # Record pages, API payloads and source previews must be fetched under
@@ -5448,9 +5725,11 @@ async def security_headers(request: Request, call_next):
         response.headers["Cache-Control"] = _static_cache_control(request)
     else:
         response.headers["Cache-Control"] = "private, no-store, no-transform"
-    if request.url.scheme == "https":
+    if _secure_cookie(request):
         # Only over TLS: sent on a plain-http reply it is ignored by every
-        # browser, and pins a scheme the deployment may not have yet.
+        # browser, and pins a scheme the deployment may not have yet.  The
+        # same test as the cookies also covers TLS ending at a proxy, where
+        # the request arrives as plain http but the visitor's connection is not.
         response.headers.setdefault(
             "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
         )
@@ -5552,6 +5831,9 @@ def viewing_row(request: Request):
 
     A missing, self-referring, or revoked grant silently falls back to the
     session user's own record, so a stale cookie can never expose anything.
+    A grant is matched on the account it was given to, never on an address, because a share
+    addressed to someone who had no account yet must not pass to whoever registers that address.
+    The row carries `share_access`, the level its owner granted.
     """
     settings = request.app.state.settings
     user = current_user(request)
@@ -5564,9 +5846,9 @@ def viewing_row(request: Request):
             return None
         with connect(settings) as connection:
             return connection.execute(
-                """SELECT u.* FROM record_shares s JOIN users u ON u.id = s.owner_user_id
-                       WHERE s.owner_user_id = ? AND s.grantee_email = ? AND u.disabled_at IS NULL""",
-                (target, user["email"]),
+                """SELECT u.*, s.access AS share_access FROM record_shares s JOIN users u ON u.id = s.owner_user_id
+                       WHERE s.owner_user_id = ? AND s.grantee_user_id = ? AND u.disabled_at IS NULL""",
+                (target, user["id"]),
             ).fetchone()
 
     return _cached(("viewing", user["id"]), resolve)
@@ -5582,10 +5864,12 @@ def record_user(request: Request, user):
 def template_context(request: Request, **values):
     user = current_user(request)
     locale = get_locale()
+    viewing = viewing_row(request)
     return {
         "request": request,
         "user": user,
-        "viewing": viewing_row(request),
+        "viewing": viewing,
+        "viewing_full": bool(viewing) and viewing["share_access"] == "full",
         # A guest is not the account holder even though the pages render
         # that account's record, so the chrome has to say whose record this
         # is and drop every control the visitor cannot use.  The end date is
@@ -5594,6 +5878,9 @@ def template_context(request: Request, **values):
         "guest": bool(user) and user.get("token_kind") == "guest",
         "guest_until": format_date(user["token_expires_at"]) if user and user.get("token_expires_at") else None,
         "csrf_token": user["csrf_token"] if user else None,
+        # Set by security_headers for every request; the empty default only
+        # covers a page rendered where that middleware did not run.
+        "csp_nonce": getattr(request.state, "csp_nonce", ""),
         "locale": locale,
         "html_lang": "uk" if locale == "uk" else "en",
         # "system" follows the operating system; the explicit values pin it.
@@ -5676,12 +5963,63 @@ def switch_locale(
     return response
 
 def login_redirect(request: Request, exc: HTTPException):
-    if request.url.path.startswith("/api/"):
+    if request.url.path.startswith(_API_PREFIX):
         return JSONResponse({"detail": t("auth.required")}, status_code=401)
     return RedirectResponse(f"/login?next={request.url.path}", status_code=303)
 
+#: Statuses that have a plain-language sentence of their own in the catalog.
+_ERROR_PAGE_STATUSES = (400, 403, 404, 413, 429)
+
+def _is_page_navigation(request: Request) -> bool:
+    """A browser loading a page, as opposed to a script or an API client.
+
+    Scripts send `X-Requested-With` or a credential header, and `Sec-Fetch-Dest`
+    names what the browser is fetching; only a document load gets the HTML page.
+    """
+    headers = request.headers
+    return (
+        "text/html" in headers.get("accept", "")
+        and not request.url.path.startswith(_API_PREFIX)
+        and "authorization" not in headers
+        and "x-api-key" not in headers
+        and "x-requested-with" not in headers
+        and headers.get("sec-fetch-dest", "document") == "document"
+    )
+
+async def http_error_page(request: Request, exc: StarletteHTTPException):
+    """Show an HTML error page to a browser; leave every other caller its JSON."""
+    if exc.status_code == 401:
+        return login_redirect(request, exc)
+    if not _is_page_navigation(request):
+        return await http_exception_handler(request, exc)
+    status_code = exc.status_code
+    try:
+        default_phrase = HTTPStatus(status_code).phrase
+    except ValueError:
+        default_phrase = ""
+    # Handlers here pass translated text as the detail; FastAPI's default
+    # English phrase carries nothing a reader can act on, so it is replaced.
+    if isinstance(exc.detail, str) and exc.detail and exc.detail != default_phrase:
+        message = exc.detail
+    elif status_code in _ERROR_PAGE_STATUSES:
+        message = t(f"error.{status_code}")
+    else:
+        message = t("error.other", status=status_code)
+    return templates.TemplateResponse(
+        request,
+        "error.html",
+        template_context(request, error_message=message),
+        status_code=status_code,
+        headers=exc.headers,
+    )
+
 @router.get(_LOGIN_URL, response_class=HTMLResponse)
-def login_page(request: Request, error: str | None = None):
+def login_page(
+    request: Request,
+    error: str | None = None,
+    notice: str | None = None,
+    wait: str | None = None,
+):
     # A guest is signed in to somebody else's record, not to an account of
     # their own, so bouncing them back to it is the one thing they did not
     # ask for.  They get the form; signing in replaces the guest session.
@@ -5693,8 +6031,8 @@ def login_page(request: Request, error: str | None = None):
         return RedirectResponse("/", status_code=303)
     if error in {"invalid", "Invalid email or password"}:
         error = t("login.error")
-    elif error == "throttled":
-        error = t("login.error_throttled")
+    elif error in _THROTTLE_MESSAGES:
+        error = t(_THROTTLE_MESSAGES[error], minutes=_minutes_text(_wait_minutes(wait)))
     elif error == "closed":
         error = t("register.closed")
     elif error == "token":
@@ -5708,7 +6046,13 @@ def login_page(request: Request, error: str | None = None):
     return templates.TemplateResponse(
         request,
         "login.html",
-        template_context(request, error=error, registration_open=open_registration(settings)),
+        template_context(
+            request,
+            error=error,
+            # Only the one notice this app sends; any other ?notice= is ignored.
+            notice=t("auth.account_deleted") if notice == "account_deleted" else None,
+            registration_open=open_registration(settings),
+        ),
     )
 
 def _secure_cookie(request: Request) -> bool:
@@ -5746,6 +6090,48 @@ def _signed_in(request: Request, destination: str, user_id: str) -> RedirectResp
 def _client_key(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
+def _visitor_key(request: Request) -> str:
+    """Who is knocking, for per-visitor meters only.  Behind the Cloudflare
+    tunnel every request arrives from the tunnel's own address, so the peer
+    address would put every visitor in one bucket; ``CF-Connecting-IP`` is what
+    Cloudflare says the visitor was.  Anyone reaching the origin directly can
+    forge it, which is why it only ever chooses a bucket: the per-account meter
+    beside it counts every failure whatever this header says."""
+    forwarded = (request.headers.get("cf-connecting-ip") or "").strip()[:64]
+    return forwarded or _client_key(request)
+
+#: Throttle redirects carry ``?error=<key>&wait=<minutes>``; the page turns the key
+#: into the sentence that names the meter which refused, and says how long it lasts.
+_THROTTLE_MESSAGES = {
+    "throttled": "login.error_throttled",
+    "throttled_account": "login.error_throttled_account",
+    "throttled_device": "login.error_throttled_device",
+    "throttled_token": "token.error_throttled",
+}
+_WAIT_MINUTES_MAX = int(LOGIN_ATTEMPT_WINDOW.total_seconds() // 60)
+
+def _minutes_text(count: int) -> str:
+    return t_plural(_DOCTOR_MINUTES_KEY, count)
+
+def _wait_minutes(raw: str | None) -> int:
+    """The ``wait`` query value, clamped to 1..15 minutes; 15 when it is not a number."""
+    try:
+        minutes = int(raw or "")
+    except ValueError:
+        return _WAIT_MINUTES_MAX
+    return min(max(minutes, 1), _WAIT_MINUTES_MAX)
+
+def _throttle_redirect(path: str, error: str, client: str) -> RedirectResponse:
+    """Send a refused request back to its form, naming the meter and the wait."""
+    return RedirectResponse(f"{path}?error={error}&wait={retry_minutes(client)}", status_code=303)
+
+def _first_blocked(*meters: tuple[str, int]) -> str | None:
+    """The first ``(key, limit)`` meter that refuses now, checked in the order given."""
+    for key, limit in meters:
+        if throttled(key, limit):
+            return key
+    return None
+
 @router.post(_LOGIN_URL)
 def login(
     request: Request,
@@ -5754,17 +6140,51 @@ def login(
     next: Annotated[str, Form()] = "/",
 ):
     settings = request.app.state.settings
-    client = _client_key(request)
-    if throttled(client):
-        return RedirectResponse(_LOGIN_THROTTLED_URL, status_code=303)
-    user = authenticate(settings, email, password)
-    if user is None:
-        record_attempt(client)
-        return RedirectResponse("/login?error=invalid", status_code=303)
-    # Only failures count here: somebody who knows their own password must
-    # never be locked out of their own record by a noisy neighbour.
-    clear_attempts(client)
-    return _signed_in(request, _safe_next(next), user["id"])
+    # Three meters, all counted on failure.  A browser holding a device cookie
+    # from an earlier sign-in to this account is counted only on its own meter,
+    # so a stranger who knows the address cannot lock the owner out of the
+    # browser the owner uses.  Any other browser is counted on two shared
+    # meters: the address meter stops one source working through many accounts,
+    # and the account meter stops a guesser who rotates addresses from working
+    # through one.  Either shared meter refuses.
+    account_key = email.strip().casefold()[:254]
+    nonce = device_cookie_nonce(settings, email, request.cookies.get(DEVICE_COOKIE))
+    if nonce is not None:
+        device = f"login-dev:{account_key}:{nonce}"
+        if throttled(device, LOGIN_ACCOUNT_LIMIT):
+            return _throttle_redirect(_LOGIN_URL, "throttled_device", device)
+        user = authenticate(settings, email, password)
+        if user is None:
+            record_attempt(device)
+            return RedirectResponse("/login?error=invalid", status_code=303)
+        clear_attempts(device)
+        # The browser already holds a valid cookie: re-set it to refresh its life.
+        device_value = request.cookies[DEVICE_COOKIE]
+    else:
+        visitor = _LOGIN_IP_KEY_PREFIX + _visitor_key(request)
+        account = _LOGIN_ACCOUNT_KEY_PREFIX + account_key
+        if throttled(visitor):
+            return _throttle_redirect(_LOGIN_URL, "throttled", visitor)
+        if throttled(account, LOGIN_ACCOUNT_LIMIT):
+            return _throttle_redirect(_LOGIN_URL, "throttled_account", account)
+        user = authenticate(settings, email, password)
+        if user is None:
+            record_attempt(visitor)
+            record_attempt(account)
+            return RedirectResponse("/login?error=invalid", status_code=303)
+        # Only failures count here, and a success clears only the account's own
+        # count: somebody who knows their own password must never be locked out
+        # of their own record by a noisy neighbour, but a working sign-in to one
+        # account must not reset the address meter either, or it would be a way
+        # to keep guessing at another account from the same address indefinitely.
+        clear_attempts(account)
+        device_value = device_cookie_value(settings, email)
+    response = _signed_in(request, _safe_next(next), user["id"])
+    response.set_cookie(
+        DEVICE_COOKIE, device_value, max_age=365 * 86400, httponly=True, samesite="lax",
+        secure=_secure_cookie(request), path="/",
+    )
+    return response
 
 @router.get("/t/{token}")
 def token_sign_in(request: Request, token: str):
@@ -5784,9 +6204,9 @@ def token_sign_in(request: Request, token: str):
     # reaches the database on every call, and leaving one of those open is
     # how a handful of connections becomes a saturated box.
     settings = request.app.state.settings
-    client = _client_key(request)
+    client = _TOKEN_KEY_PREFIX + _visitor_key(request)
     if throttled(client):
-        return RedirectResponse(_LOGIN_THROTTLED_URL, status_code=303)
+        return _throttle_redirect(_LOGIN_URL, "throttled_token", client)
     row = access_token_user(settings, token)
     if row is None or row["token_kind"] == "api":
         record_attempt(client)
@@ -5846,8 +6266,7 @@ def _doctor_client_key(request: Request) -> str:
     it only ever chooses a bucket: the global meter below it counts every
     failure no matter what this header says.
     """
-    forwarded = (request.headers.get("cf-connecting-ip") or "").strip()[:64]
-    return "doctor-pin:" + (forwarded or _client_key(request))
+    return _DOCTOR_PIN_KEY_PREFIX + _visitor_key(request)
 
 def _doctor_page(request: Request, error: str | None = None, status_code: int = 200):
     return templates.TemplateResponse(
@@ -5879,8 +6298,12 @@ def doctor_redeem(request: Request, pin: Annotated[str, Form()] = ""):
     # of the forger's own record in the victim's browser.
     settings = request.app.state.settings
     client = _doctor_client_key(request)
-    if throttled(client, DOCTOR_PIN_CLIENT_LIMIT) or throttled(DOCTOR_PIN_GLOBAL_KEY, DOCTOR_PIN_GLOBAL_LIMIT):
-        return _doctor_page(request, t("doctor.error_throttled", minutes=t_plural(_DOCTOR_MINUTES_KEY, int(LOGIN_ATTEMPT_WINDOW.total_seconds() // 60))), status_code=429)
+    blocker = _first_blocked(
+        (client, DOCTOR_PIN_CLIENT_LIMIT), (DOCTOR_PIN_GLOBAL_KEY, DOCTOR_PIN_GLOBAL_LIMIT)
+    )
+    if blocker:
+        minutes = _minutes_text(retry_minutes(blocker))
+        return _doctor_page(request, t("doctor.error_throttled", minutes=minutes), status_code=429)
     row = redeem_doctor_pin(settings, pin)
     if row is None:
         # Wrong, expired, already used, malformed: one answer for all of
@@ -5888,6 +6311,9 @@ def doctor_redeem(request: Request, pin: Annotated[str, Form()] = ""):
         record_attempt(client)
         record_attempt(DOCTOR_PIN_GLOBAL_KEY)
         return _doctor_page(request, t("doctor.error_invalid", minutes=t_plural(_DOCTOR_MINUTES_KEY, int(DOCTOR_PIN_REDEEM_WINDOW.total_seconds() // 60))), status_code=400)
+    # A correct code forgives this browser's earlier mistakes: the visitor
+    # meter starts again, while the server-wide cap keeps counting.
+    clear_attempts(client)
     _audit(settings, row["id"], None, "doctor_pin_redeemed", "access_token", row["token_id"], {})
     return _guest_session(request, row)
 
@@ -5972,9 +6398,10 @@ def setup(
         return RedirectResponse(_LOGIN_URL, status_code=303)
     values = {"display_name": display_name.strip(), "email": email.strip(),
               "date_of_birth": date_of_birth.strip(), "sex_at_birth": sex_at_birth.strip()}
-    client = "setup-code:" + _client_key(request)
-    if throttled(client) or throttled(SETUP_CODE_GLOBAL_KEY, SETUP_CODE_GLOBAL_LIMIT):
-        minutes = t_plural(_DOCTOR_MINUTES_KEY, int(LOGIN_ATTEMPT_WINDOW.total_seconds() // 60))
+    client = _SETUP_CODE_KEY_PREFIX + _visitor_key(request)
+    blocker = _first_blocked((client, LOGIN_ATTEMPT_LIMIT), (SETUP_CODE_GLOBAL_KEY, SETUP_CODE_GLOBAL_LIMIT))
+    if blocker:
+        minutes = _minutes_text(retry_minutes(blocker))
         return _setup_page(request, t("setup.error_throttled", minutes=minutes), values, 429)
     if not setup_code_matches(request.app.state.setup_code, setup_code):
         record_attempt(client)
@@ -6007,8 +6434,12 @@ def setup(
     ensure_seeded_token(settings, settings.agent_token)
     return _signed_in(request, "/", user_id)
 
-@router.get("/register", response_class=HTMLResponse)
-def register_page(request: Request, error: str | None = None):
+@router.get(_REGISTER_URL, response_class=HTMLResponse)
+def register_page(
+    request: Request,
+    error: str | None = None,
+    wait: str | None = None,
+):
     settings = request.app.state.settings
     if not has_users(settings):
         return RedirectResponse(_SETUP_URL, status_code=303)
@@ -6016,14 +6447,17 @@ def register_page(request: Request, error: str | None = None):
         return RedirectResponse("/", status_code=303)
     if not open_registration(settings):
         return RedirectResponse("/login?error=closed", status_code=303)
-    message = t(error) if error in REGISTER_ERRORS else None
+    if error == "throttled":
+        message = t("register.error_throttled", minutes=_minutes_text(_wait_minutes(wait)))
+    else:
+        message = t(error) if error in REGISTER_ERRORS else None
     return templates.TemplateResponse(
         request,
         "register.html",
         template_context(request, error=message),
     )
 
-@router.post("/register")
+@router.post(_REGISTER_URL)
 def register(
     request: Request,
     email: Annotated[str, Form()],
@@ -6040,16 +6474,18 @@ def register(
         return RedirectResponse(_SETUP_URL, status_code=303)
     if not open_registration(settings):
         return RedirectResponse("/login?error=closed", status_code=303)
-    client = _client_key(request)
+    client = _REGISTER_KEY_PREFIX + _visitor_key(request)
     if throttled(client):
-        return RedirectResponse(_LOGIN_THROTTLED_URL, status_code=303)
-    # Every attempt counts, not only the failed ones: an open sign-up form
-    # on a public server is abused by succeeding, not by failing.
-    record_attempt(client)
+        return _throttle_redirect(_REGISTER_URL, "throttled", client)
     if not email.strip() or not display_name.strip():
         return failed(_REGISTER_ERROR_INVALID)
     if len(password) < MINIMUM_PASSWORD_LENGTH:
         return failed(_REGISTER_ERROR_PASSWORD)
+    # Counted once the form is valid: a mistyped form must not pause sign-up.
+    # Every submission that gets this far counts, whether it creates the
+    # account or is refused because the address is taken, since an open
+    # sign-up form on a public server is abused by succeeding, not by failing.
+    record_attempt(client)
     try:
         user_id = _new_account(settings, email, display_name, password)
     except sqlite3.IntegrityError:
@@ -6104,7 +6540,7 @@ ADMIN_ERRORS = frozenset(
 ADMIN_DONE = frozenset(
     {
         "added", "blocked", "unblocked", "promoted", "demoted", "deleted", "password_set",
-        "registration_open", "registration_closed",
+        "registration_open", "registration_closed", "released",
     }
 )
 
@@ -6149,12 +6585,53 @@ def _user_stats(connection) -> list[dict[str, object]]:
         for row in rows
     ]
 
+def _paused_label(key: str, emails: dict[str, str]) -> str:
+    """What a paused meter guards, in words a person can act on."""
+    if key.startswith(_LOGIN_DEVICE_KEY_PREFIX):
+        # The device nonce after the address is not for the screen.
+        subject = key[len(_LOGIN_DEVICE_KEY_PREFIX):].rsplit(":", 1)[0]
+        return t("admin.paused_login_dev", subject=subject)
+    if key.startswith(_LOGIN_IP_KEY_PREFIX):
+        return t("admin.paused_login_ip", subject=key[len(_LOGIN_IP_KEY_PREFIX):])
+    if key.startswith(_LOGIN_ACCOUNT_KEY_PREFIX):
+        return t("admin.paused_login", subject=key[len(_LOGIN_ACCOUNT_KEY_PREFIX):])
+    if key.startswith(_TOKEN_KEY_PREFIX):
+        return t("admin.paused_token", subject=key[len(_TOKEN_KEY_PREFIX):])
+    if key.startswith(_DOCTOR_PIN_KEY_PREFIX):
+        subject = key[len(_DOCTOR_PIN_KEY_PREFIX):]
+        return t("admin.paused_doctor_all") if subject == "*" else t("admin.paused_doctor", subject=subject)
+    if key.startswith(_SETUP_CODE_KEY_PREFIX):
+        return t("admin.paused_setup", subject=key[len(_SETUP_CODE_KEY_PREFIX):])
+    if key.startswith(_REGISTER_KEY_PREFIX):
+        return t("admin.paused_register", subject=key[len(_REGISTER_KEY_PREFIX):])
+    if key.startswith(_PWCHANGE_KEY_PREFIX):
+        user_id = key[len(_PWCHANGE_KEY_PREFIX):]
+        return t("admin.paused_pwchange", subject=emails.get(user_id, user_id))
+    if key.startswith("webhook:"):
+        return t("admin.paused_webhook", subject=key[len("webhook:"):])
+    return t("admin.paused_other", subject=key)
+
+@router.get("/admin", responses=_RESPONSES_401_403)
+def admin_home(request: Request):
+    """The administration area opens on its first section."""
+    require_admin(request)
+    return RedirectResponse("/admin/users", status_code=303)
+
 @router.get("/admin/users", response_class=HTMLResponse, responses=_RESPONSES_401_403)
 def admin_users(request: Request, error: str | None = None, done: str | None = None):
     settings = request.app.state.settings
     admin = require_admin(request)
     with connect(settings) as connection:
         people = _user_stats(connection)
+        emails = {row["id"]: row["email"] for row in connection.execute("SELECT id, email FROM users")}
+    paused = [
+        {
+            "key": entry["key"],
+            "minutes_text": _minutes_text(entry["minutes"]),
+            "label": _paused_label(entry["key"], emails),
+        }
+        for entry in blocked_meters()
+    ]
     return templates.TemplateResponse(
         request,
         "admin_users.html",
@@ -6165,6 +6642,7 @@ def admin_users(request: Request, error: str | None = None, done: str | None = N
             admin_id=admin["id"],
             minimum_password=MINIMUM_PASSWORD_LENGTH,
             registration_open=open_registration(settings),
+            paused=paused,
             # Formatted here, not in the template: the same totals rendered
             # raw sat beside per-person counts that had been through
             # `format_count`, so one Ukrainian page showed both "1309" and
@@ -6221,7 +6699,13 @@ def _delete_orphaned_sources(settings, connection, user_id: str) -> int:
     `sources/` has not deleted their record, it has only stopped showing
     it.  Only paths that resolve inside the configured sources directory
     are touched, and only when no surviving document still points at them.
+    Device exports the application unpacked are removed the same way.
     """
+    removed = _remove_unshared_documents(settings, connection, user_id)
+    return removed + _remove_unshared_device_files(settings, connection, user_id)
+
+
+def _remove_unshared_documents(settings, connection, user_id: str) -> int:
     paths = [
         row["source_path"]
         for row in connection.execute(
@@ -6246,6 +6730,93 @@ def _delete_orphaned_sources(settings, connection, user_id: str) -> int:
             removed += 1
     return removed
 
+
+def _remove_unshared_device_files(settings, connection, user_id: str) -> int:
+    source_root = settings.source_dir.resolve()
+    device_paths = [
+        row["source_path"]
+        for row in connection.execute(
+            "SELECT DISTINCT source_path FROM device_imports WHERE owner_user_id = ?", (user_id,)
+        )
+    ]
+    removed = 0
+    for stored in device_paths:
+        # An API feed such as openwearables://api has no file on disk.
+        if not stored or "://" in stored:
+            continue
+        still_used = connection.execute(
+            """SELECT 1 FROM device_imports WHERE source_path = ? AND owner_user_id <> ?
+               UNION ALL
+               SELECT 1 FROM documents WHERE source_path = ? AND owner_user_id <> ?
+               LIMIT 1""",
+            (stored, user_id, stored, user_id),
+        ).fetchone()
+        if still_used:
+            continue
+        removed += _remove_device_path(settings, source_root, stored)
+    return removed
+
+
+def _remove_device_path(settings, source_root, stored: str) -> int:
+    """Remove one device export, or an upload tree the application unpacked, inside sources/; returns 1 when it went."""
+    try:
+        path = resolve_source_path(settings, stored).resolve()
+        inside = path.is_relative_to(source_root) and path != source_root
+        if not inside:
+            return 0
+        if path.is_file():
+            path.unlink()
+            return 1
+        # ponytail: only trees the application unpacked itself are removed; a folder an operator placed in sources/ by hand and imported from the command line stays for the operator.
+        if path.is_dir() and path.is_relative_to(source_root / "uploads"):
+            discard_upload_tree(settings, path)
+            if not path.exists():
+                return 1
+    except OSError:
+        return 0
+    return 0
+
+def _delete_account(settings, connection, user_id: str) -> int:
+    """Remove one account, its files and its rows; returns how many files went.
+
+    Shared by an administrator deleting someone and by a person deleting
+    their own account, so the two cannot drift apart.  Every child table
+    cascades from users(id).  Two columns reference users without a cascade:
+    a deleted account that acted on somebody else's rows is detached from
+    them first, so the rows stay and no longer name a deleted person.
+    """
+    removed = _delete_orphaned_sources(settings, connection, user_id)
+    connection.execute("UPDATE review_tasks SET assigned_user_id=NULL WHERE assigned_user_id=?", (user_id,))
+    connection.execute("UPDATE audit_events SET actor_user_id=NULL WHERE actor_user_id=?", (user_id,))
+    connection.execute("DELETE FROM users WHERE id = ?", (user_id,))
+    return removed
+
+
+logger = logging.getLogger("anamna.account")
+
+
+def _disconnect_providers(settings, user_id: str) -> None:
+    """Tell every provider the account is going, best effort, before it is deleted.
+
+    The local connection rows go with the account, but a link left registered
+    at the provider keeps delivering data for someone who no longer has an
+    account here.  Each provider is tried on its own: one that is unreachable
+    must not block the deletion, so a failure is only logged.  Each call here
+    is a no-op when the account holds no such connection.
+    """
+    attempts: list[tuple[str, object, tuple]] = [
+        (key, integrations.disconnect, (settings, user_id, spec))
+        for key, spec in integrations.PROVIDERS.items()
+    ]
+    attempts.append((garmin_personal.PROVIDER_KEY, garmin_personal.unlink, (settings, user_id)))
+    attempts.append((openwearables.PROVIDER, openwearables.unlink_account, (settings, user_id)))
+    for key, action, args in attempts:
+        try:
+            action(*args)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("account deletion: disconnecting %s failed (%s)", key, type(exc).__name__)
+
+
 def _admin_apply_action(settings, connection, admin, target, user_id: str, action: str) -> str:
     """Carry out one validated account action; returns what was done."""
     if action == "block":
@@ -6264,11 +6835,10 @@ def _admin_apply_action(settings, connection, admin, target, user_id: str, actio
             ("admin" if action == "promote" else "user", user_id),
         )
         return "promoted" if action == "promote" else "demoted"
-    removed = _delete_orphaned_sources(settings, connection, user_id)
-    # Every child table cascades from users(id); the audit line is
-    # written against the acting administrator so it is not
-    # deleted along with the account it describes.
-    connection.execute("DELETE FROM users WHERE id = ?", (user_id,))
+    _disconnect_providers(settings, user_id)
+    removed = _delete_account(settings, connection, user_id)
+    # The audit line is written against the acting administrator so it is
+    # not deleted along with the account it describes.
     _audit(settings, admin["id"], admin["id"], "admin_user_deleted", "user", user_id,
            {"email": target["email"], "files_removed": removed},
            connection=connection)
@@ -6344,8 +6914,38 @@ def admin_set_user_password(
     if target is None:
         return _admin_redirect(error=_ADMIN_ERROR_UNKNOWN)
     set_password(settings, user_id, new_password, keep_token=None)
+    # The person forgot the old password, so the failures that were counting
+    # against it no longer hold them out: release their meters.  The keys use
+    # the same normalisation as sign-in (`login` above).
+    account_key = target["email"].strip().casefold()[:254]
+    clear_attempts(_LOGIN_ACCOUNT_KEY_PREFIX + account_key)
+    clear_attempts_matching(_LOGIN_DEVICE_KEY_PREFIX + account_key + ":")
+    clear_attempts(_PWCHANGE_KEY_PREFIX + user_id)
     _audit(settings, admin["id"], admin["id"], "user_password_set_by_admin", "user", user_id, {"email": target["email"]})
     return _admin_redirect(done="password_set")
+
+@router.post("/admin/throttles/release", responses=_RESPONSES_401_403)
+def admin_release_throttle(
+    request: Request,
+    key: Annotated[str, Form()] = "",
+    csrf_token: Annotated[str, Form()] = "",
+):
+    """Lift one pause, or every pause with ``key=*``, before its wait runs out.
+
+    Only keys the meters list as paused are touched; anything else posted here
+    is ignored.  The audit line counts what was released and never names the
+    address, the email or the key itself.
+    """
+    settings = request.app.state.settings
+    admin = require_admin(request)
+    require_csrf(admin, csrf_token)
+    paused = [entry["key"] for entry in blocked_meters()]
+    targets = paused if key == "*" else [entry for entry in paused if entry == key]
+    for target in targets:
+        clear_attempts(target)
+    _audit(settings, admin["id"], admin["id"], "throttle.release", "throttle",
+           "all" if key == "*" else "one", {"released": len(targets)})
+    return _admin_redirect(done="released")
 
 @router.post("/admin/registration", responses=_RESPONSES_401_403)
 def admin_set_registration(
@@ -6374,9 +6974,17 @@ PROFILE_ERRORS = frozenset(
         "profile.error_timezone",
         "profile.error_share_email",
         "profile.error_share_self",
+        "profile.error_share_unknown",
         "profile.error_password_current",
+        _PROFILE_ERROR_PASSWORD_THROTTLED,
         "profile.error_password_match",
         "profile.error_password_short",
+        "profile.error_email_invalid",
+        "profile.error_email_password",
+        "profile.error_email_taken",
+        "profile.error_delete_password",
+        "profile.error_delete_email",
+        "profile.error_delete_last_admin",
         "token.error_label",
         "token.error_kind",
         _TOKEN_ERROR_EXPIRY,
@@ -6395,9 +7003,18 @@ PROFILE_ERRORS = frozenset(
         "integrations.error_garmin_unreachable",
         "openwearables.error_user",
         "openwearables.error_unreachable",
+        "openwearables.error_taken",
+        "openwearables.error_not_yours",
         "profile.error_session",
     }
 )
+
+def _profile_error_text(error: str | None, wait: str | None) -> str | None:
+    if error not in PROFILE_ERRORS:
+        return None
+    if error == _PROFILE_ERROR_PASSWORD_THROTTLED:
+        return t(error, minutes=_minutes_text(_wait_minutes(wait)))
+    return t(error)
 
 #: Confirmation per `saved` value on the Security tab's session list.
 SESSION_SAVED = {"session": "profile.session_saved_one", "sessions": "profile.session_saved_others"}
@@ -6513,9 +7130,14 @@ def _openwearables_panel(settings, user) -> dict[str, object] | None:
     server — an integration nobody can use is not an empty card.
 
     Unlinked, the card is a list of the accounts that server holds, with
-    the one whose address matches this person's preselected.  A server that
-    will not answer must still render a page: the card says so and offers
-    nothing to submit, rather than taking the whole profile down with it.
+    the one whose address matches this person's preselected.  That list is
+    every account on a shared server, so an ordinary user is shown only the
+    entry under their own address; an administrator, who configured the
+    server, sees all of them.  ``none_for_you`` says the server holds nothing
+    under this address, so the card can say so instead of showing an empty
+    list.  A server that will not answer must still render a page: the card
+    says so and offers nothing to submit, rather than taking the whole profile
+    down with it.
     """
     if not openwearables.configured(settings):
         return None
@@ -6524,8 +7146,10 @@ def _openwearables_panel(settings, user) -> dict[str, object] | None:
             people = openwearables.remote_users(settings)
         except openwearables.OpenWearablesError as exc:
             openwearables.logger.warning("openwearables: user list unavailable: %s", exc)
-            return {"linked": False, "unreachable": True, "people": []}
+            return {"linked": False, "unreachable": True, "people": [], "none_for_you": False}
         mine = str(user["email"]).casefold()
+        if user["role"] != "admin":
+            people = [person for person in people if str(person["email"]).casefold() == mine]
         return {
             "linked": False,
             "unreachable": False,
@@ -6533,6 +7157,7 @@ def _openwearables_panel(settings, user) -> dict[str, object] | None:
                 {**person, "selected": str(person["email"]).casefold() == mine}
                 for person in people
             ],
+            "none_for_you": user["role"] != "admin" and not people,
         }
     state = openwearables.sync_state(settings, user["id"])
     with connect(settings) as db:
@@ -6563,9 +7188,13 @@ def _profile_active_tab(error, saved, new_token, tab: str, new_pin) -> str:
     # instead of on a personal-details form with an error about a password
     # scrolled off somewhere below it.
     key = error or ""
-    if key.startswith("profile.error_password") or key == "profile.error_session" or saved in ("password", *SESSION_SAVED):
+    if (
+        key.startswith(("profile.error_password", "profile.error_email", "profile.error_delete"))
+        or key == "profile.error_session"
+        or saved in ("password", "email", *SESSION_SAVED)
+    ):
         return "security"
-    if key.startswith(("profile.error_share", "doctor.")) or saved == "doctor_revoked" or new_pin is not None:
+    if key.startswith(("profile.error_share", "doctor.")) or saved == "doctor_revoked" or saved in SHARE_SAVED or new_pin is not None:
         return "sharing"
     if key.startswith("token.") or saved in ("revoked", "token") or new_token is not None:
         return "tokens"
@@ -6593,6 +7222,8 @@ def _profile_saved_flag(saved) -> bool:
         and saved not in ("password", "revoked", "token", "doctor_revoked", *SESSION_SAVED)
         and saved not in PAPERLESS_SAVED
         and saved not in INTEGRATION_SAVED
+        and saved not in SHARE_SAVED
+        and saved not in EMAIL_SAVED
     )
 
 def _profile_paperless_fields(settings, user_id: str, saved, paperless_on: bool, paperless_account) -> dict[str, object]:
@@ -6629,7 +7260,7 @@ def _garmin_personal_available(settings, user_id: str) -> bool:
         and integrations.connection_row(settings, user_id, "garmin") is None
     )
 
-def _profile_response(request: Request, user, error=None, saved=None, new_token=None, tab="", new_pin=None):
+def _profile_response(request: Request, user, error=None, saved=None, new_token=None, tab="", new_pin=None, wait=None):
     """Render the profile.
 
     A separate function because minting a credential has to answer with the
@@ -6650,11 +7281,11 @@ def _profile_response(request: Request, user, error=None, saved=None, new_token=
             (user["id"],),
         ).fetchall()
         shared_with_me = connection.execute(
-            """SELECT s.owner_user_id, u.display_name FROM record_shares s
+            """SELECT s.owner_user_id, s.access, u.display_name FROM record_shares s
                    JOIN users u ON u.id = s.owner_user_id
-                   WHERE s.grantee_email = ? AND u.disabled_at IS NULL
+                   WHERE s.grantee_user_id = ? AND u.disabled_at IS NULL
                    ORDER BY u.display_name""",
-            (user["email"],),
+            (user["id"],),
         ).fetchall()
     active_tab = _profile_active_tab(error, saved, new_token, tab, new_pin)
     paperless_on = paperless.paperless_active(settings)
@@ -6691,7 +7322,7 @@ def _profile_response(request: Request, user, error=None, saved=None, new_token=
             token_kinds=TOKEN_KINDS,
             new_token=new_token,
             token_base=_public_base(request),
-            error=t(error) if error in PROFILE_ERRORS else None,
+            error=_profile_error_text(error, wait),
             saved=_profile_saved_flag(saved),
             password_saved=saved == "password",
             session_saved=t(SESSION_SAVED[saved]) if saved in SESSION_SAVED else None,
@@ -6699,6 +7330,8 @@ def _profile_response(request: Request, user, error=None, saved=None, new_token=
             token_saved=t(f"token.saved_{saved}") if saved in ("revoked", "token") else None,
             **_profile_paperless_fields(settings, user["id"], saved, paperless_on, paperless_account),
             integration_saved=t(INTEGRATION_SAVED[saved]) if saved in INTEGRATION_SAVED else None,
+            share_saved=t(SHARE_SAVED[saved]) if saved in SHARE_SAVED else None,
+            email_saved=t(EMAIL_SAVED[saved]) if saved in EMAIL_SAVED else None,
             integrations_providers=_profile_integration_providers(settings, user["id"]),
             openwearables_card=_openwearables_panel(settings, user),
             garmin_personal_card=garmin_personal.panel(settings, user["id"]),
@@ -6714,8 +7347,11 @@ def profile_page(
     error: str | None = None,
     saved: str | None = None,
     tab: str = "",
+    wait: str | None = None,
 ):
-    return _profile_response(request, require_user(request), error=error, saved=saved, tab=tab)
+    return _profile_response(
+        request, require_user(request), error=error, saved=saved, tab=tab, wait=wait
+    )
 
 # --- access tokens ------------------------------------------------------
 
@@ -6821,6 +7457,45 @@ def create_token(
         return _admin_tokens_response(request, user, new_token=minted)
     return _profile_response(request, user, new_token=minted)
 
+def _token_done(destination: str, key: str) -> RedirectResponse:
+    return RedirectResponse(f"{destination}?saved={key}", status_code=303)
+
+
+def _revoke_token(settings, user, token_id: str, scope, destination: str) -> RedirectResponse:
+    if not revoke_access_token(settings, token_id, scope):
+        return RedirectResponse(f"{destination}?error=token.error_unknown", status_code=303)
+    _audit(settings, user["id"], user["id"], "token_revoked", "access_token", token_id, {})
+    return _token_done(destination, "revoked")
+
+
+def _update_token(settings, user, token_id: str, label: str, expires_on: str, scope,
+                  destination: str) -> RedirectResponse:
+    if not label.strip():
+        return RedirectResponse(f"{destination}?error=token.error_label", status_code=303)
+    try:
+        expires_at = _token_expiry(expires_on)
+    except ValueError:
+        return RedirectResponse(f"{destination}?error=token.error_expiry", status_code=303)
+    row = access_token_row(settings, token_id, scope)
+    if row is None:
+        return RedirectResponse(f"{destination}?error=token.error_unknown", status_code=303)
+    # A PIN-opened access keeps the window its code was minted with; the
+    # submitted date cannot lengthen a doctor's access after the fact.
+    if row["pin_hash"]:
+        expires_at = row["expires_at"]
+    elif expires_at is not None and expires_at <= utc_now():
+        return RedirectResponse(f"{destination}?error=token.error_expiry", status_code=303)
+    # A guest link must stay time-limited, as create_token requires; removing
+    # its expiry would leave a link to a record that never stops being shared.
+    elif row["kind"] == "guest" and expires_at is None:
+        return RedirectResponse(f"{destination}?error=token.error_expiry", status_code=303)
+    if not update_access_token(settings, token_id, label, expires_at, scope):
+        return RedirectResponse(f"{destination}?error=token.error_unknown", status_code=303)
+    _audit(settings, user["id"], user["id"], "token_updated", "access_token", token_id,
+           {"label": label.strip(), "expires_at": expires_at})
+    return _token_done(destination, "token")
+
+
 @router.post("/tokens/{token_id}", responses=_RESPONSES_400_401_403)
 def change_token(
     request: Request,
@@ -6844,26 +7519,10 @@ def change_token(
     # that the page they were bounced to is not for them.
     destination = "/admin/tokens" if origin == "admin" and admin else _PROFILE_URL
 
-    def done(key: str) -> RedirectResponse:
-        return RedirectResponse(f"{destination}?saved={key}", status_code=303)
-
     if action == "revoke":
-        if not revoke_access_token(settings, token_id, scope):
-            return RedirectResponse(f"{destination}?error=token.error_unknown", status_code=303)
-        _audit(settings, user["id"], user["id"], "token_revoked", "access_token", token_id, {})
-        return done("revoked")
+        return _revoke_token(settings, user, token_id, scope, destination)
     if action == "update":
-        if not label.strip():
-            return RedirectResponse(f"{destination}?error=token.error_label", status_code=303)
-        try:
-            expires_at = _token_expiry(expires_on)
-        except ValueError:
-            return RedirectResponse(f"{destination}?error=token.error_expiry", status_code=303)
-        if not update_access_token(settings, token_id, label, expires_at, scope):
-            return RedirectResponse(f"{destination}?error=token.error_unknown", status_code=303)
-        _audit(settings, user["id"], user["id"], "token_updated", "access_token", token_id,
-               {"label": label.strip(), "expires_at": expires_at})
-        return done("token")
+        return _update_token(settings, user, token_id, label, expires_on, scope, destination)
     raise HTTPException(400, t("token.error_unknown"))
 
 def _local_moment(value: str, zone) -> str:
@@ -6917,7 +7576,7 @@ def doctor_pin_revoke(request: Request, token_id: str, csrf_token: Annotated[str
     _audit(settings, user["id"], user["id"], "doctor_pin_revoked", "access_token", token_id, {})
     return RedirectResponse("/profile?saved=doctor_revoked", status_code=303)
 
-def _admin_tokens_response(request: Request, user, error=None, saved=None, new_token=None):
+def _admin_tokens_response(request: Request, user, error=None, saved=None, new_token=None, wait=None):
     settings = request.app.state.settings
     with connect(settings) as connection:
         people = connection.execute(
@@ -6935,14 +7594,14 @@ def _admin_tokens_response(request: Request, user, error=None, saved=None, new_t
             new_token=new_token,
             token_base=_public_base(request),
             admin_id=user["id"],
-            error=t(error) if error in PROFILE_ERRORS else None,
+            error=_profile_error_text(error, wait),
             saved=t(f"token.saved_{saved}") if saved in ("revoked", "token") else None,
         ),
     )
 
 @router.get("/admin/tokens", response_class=HTMLResponse, responses=_RESPONSES_401_403)
-def admin_tokens(request: Request, error: str | None = None, saved: str | None = None):
-    return _admin_tokens_response(request, require_admin(request), error=error, saved=saved)
+def admin_tokens(request: Request, error: str | None = None, saved: str | None = None, wait: str | None = None):
+    return _admin_tokens_response(request, require_admin(request), error=error, saved=saved, wait=wait)
 
 AI_ADMIN_ERRORS = frozenset({
     "aiassist.error_provider", "aiassist.error_test", "aiassist.error_cap",
@@ -6984,6 +7643,11 @@ def admin_ai(
     settings = request.app.state.settings
     require_admin(request)
     config = ai_settings(settings)
+    with connect(settings) as connection:
+        drug_lookup = drugref.enabled(connection)
+        drug_lookup_mode = drugref.mode(connection)
+        drug_lookup_token_source = drugref.token_source(connection)
+        drug_lookup_token_value = drugref.token(connection) if drug_lookup_token_source == "settings" else ""
     tested_task = task if task in AI_TASKS else ""
     usage = usage_summary(settings)
     for item in usage["recent"]:
@@ -6996,6 +7660,11 @@ def admin_ai(
             active="admin_ai",
             ai=config,
             ai_on=ai_active(settings),
+            drug_lookup=drug_lookup,
+            drug_lookup_mode=drug_lookup_mode,
+            drug_lookup_token_tail=drug_lookup_token_value[-6:] if drug_lookup_token_value else "",
+            drug_lookup_token_source=drug_lookup_token_source,
+            drug_lookup_paused_minutes=math.ceil(drugref.paused_seconds() / 60),
             # Enough of each key to recognise it, never enough to use it.
             key_tails={
                 name: value[-6:] if value else "" for name, value in config["keys"].items()
@@ -7032,13 +7701,37 @@ async def admin_ai_save(request: Request):
     admin = require_admin(request)
     form = await request.form()
     require_csrf(admin, str(form.get("csrf_token") or ""))
+    # The medicine-reference switch is its own setting, so it is saved even
+    # when the AI part of the form is refused. An unticked box is absent from
+    # the form, which switches it off.
+    drug_lookup = "drug_lookup" in form
+    drug_lookup_mode = str(form.get("drug_lookup_mode") or "page")
+    drug_lookup_token_new = str(form.get("drug_lookup_token") or "")
+    clear_drug_lookup_token = form.get("clear_drug_lookup_token") == "1"
+
+    def save_drug_lookup() -> None:
+        with connect(settings) as connection:
+            drugref.set_enabled(connection, drug_lookup)
+            drugref.set_mode(connection, drug_lookup_mode)
+            if clear_drug_lookup_token:
+                drugref.set_token(connection, "")
+            elif drug_lookup_token_new:
+                drugref.set_token(connection, drug_lookup_token_new)
+
+    await run_in_threadpool(save_drug_lookup)
     parsed = parse_ai_admin_form(form)
     if isinstance(parsed, str):
         return RedirectResponse(f"/admin/ai?error={parsed}", status_code=303)
     values, audit = parsed
-    save_ai_settings(settings, values)
+    # An unchecked box is absent from the form altogether, so absence has to
+    # store the stricter policy rather than leave the previous one in place.
+    data_collection = "allow" if form.get("data_collection") == "allow" else "deny"
+    await run_in_threadpool(save_ai_settings, settings, values, data_collection=data_collection)
     # The keys themselves must never reach the audit log; only which changed.
-    _audit(settings, admin["id"], admin["id"], "admin_ai_changed", "app_settings", "ai", audit)
+    await run_in_threadpool(
+        _audit, settings, admin["id"], admin["id"], "admin_ai_changed", "app_settings", "ai",
+        {**audit, "data_collection": data_collection, "drug_lookup": drug_lookup, "drug_lookup_mode": drug_lookup_mode},
+    )
     return RedirectResponse("/admin/ai?done=saved", status_code=303)
 
 @router.get("/admin/ai/models", responses=_RESPONSES_401_403_404)
@@ -7328,9 +8021,15 @@ def change_password(
     require_csrf(user, csrf_token)
     # The current password is re-checked even though the session is valid:
     # otherwise an unattended logged-in browser is enough to take the
-    # account over permanently.
+    # account over permanently.  Wrong guesses are counted against the account
+    # like sign-in failures, so the form cannot be used to search for it.
+    key = _PWCHANGE_KEY_PREFIX + str(user["id"])
+    if throttled(key, PASSWORD_CHANGE_LIMIT):
+        return _throttle_redirect(_PROFILE_URL, _PROFILE_ERROR_PASSWORD_THROTTLED, key)
     if authenticate(settings, user["email"], current_password) is None:
+        record_attempt(key)
         return RedirectResponse("/profile?error=profile.error_password_current", status_code=303)
+    clear_attempts(key)
     if new_password != confirm_password:
         return RedirectResponse("/profile?error=profile.error_password_match", status_code=303)
     if len(new_password) < MINIMUM_PASSWORD_LENGTH:
@@ -7343,6 +8042,159 @@ def change_password(
     )
     _audit(settings, user["id"], user["id"], "password_changed", "user", user["id"], {})
     return RedirectResponse("/profile?saved=password", status_code=303)
+
+def _own_browser_session(request: Request):
+    """The account behind this request if it is a browser session of its own.
+
+    A bearer credential and a guest link reach the account but are not its
+    holder, so neither may delete it or change the address it signs in with.
+    """
+    user = require_user(request)
+    if user.get("bearer") or user.get("token_kind"):
+        raise HTTPException(403)
+    return user
+
+@router.post("/profile/delete-account", responses=_RESPONSES_401_403)
+def delete_account(
+    request: Request,
+    password: Annotated[str, Form()] = "",
+    email: Annotated[str, Form()] = "",
+    csrf_token: Annotated[str, Form()] = "",
+):
+    """Delete the signed-in account and every record it holds.
+
+    Two proofs before anything is removed: the password, metered like the
+    password change, and the account's own address typed in full, so a stray
+    or scripted click cannot end a record.  An administrator is removed only
+    while another enabled administrator remains.
+    """
+    settings = request.app.state.settings
+    user = _own_browser_session(request)
+    require_csrf(user, csrf_token)
+    key = _PWCHANGE_KEY_PREFIX + str(user["id"])
+    if throttled(key, PASSWORD_CHANGE_LIMIT):
+        return _throttle_redirect(_PROFILE_URL, _PROFILE_ERROR_PASSWORD_THROTTLED, key)
+    if authenticate(settings, user["email"], password) is None:
+        record_attempt(key)
+        return RedirectResponse("/profile?error=profile.error_delete_password", status_code=303)
+    clear_attempts(key)
+    if email.strip().casefold() != user["email"].casefold():
+        return RedirectResponse("/profile?error=profile.error_delete_email", status_code=303)
+    with connect(settings) as connection:
+        if user["role"] == "admin":
+            other_admins = connection.execute(
+                "SELECT COUNT(*) FROM users WHERE role = 'admin' AND disabled_at IS NULL AND id <> ?",
+                (user["id"],),
+            ).fetchone()[0]
+            if other_admins == 0:
+                return RedirectResponse("/profile?error=profile.error_delete_last_admin", status_code=303)
+        _disconnect_providers(settings, user["id"])
+        _delete_account(settings, connection, user["id"])
+    # Same ending as sign-out: the session and the shared-record view go.
+    response = RedirectResponse("/login?notice=account_deleted", status_code=303)
+    response.delete_cookie("anamna_session")
+    response.delete_cookie(VIEW_COOKIE)
+    return response
+
+@router.post("/profile/email", responses=_RESPONSES_401_403)
+def change_email(
+    request: Request,
+    new_email: Annotated[str, Form()] = "",
+    password: Annotated[str, Form()] = "",
+    csrf_token: Annotated[str, Form()] = "",
+):
+    """Change the address this account signs in with.
+
+    Checked like a share's address (one "@", no spaces), the password is
+    re-checked on the same meter as the password change, and the address must
+    not belong to another account.  Shares that name this account carry the
+    new address, so the owners' lists stay true.
+    """
+    settings = request.app.state.settings
+    user = _own_browser_session(request)
+    require_csrf(user, csrf_token)
+    address = new_email.strip().casefold()
+    if "@" not in address or " " in address:
+        return RedirectResponse("/profile?error=profile.error_email_invalid", status_code=303)
+    key = _PWCHANGE_KEY_PREFIX + str(user["id"])
+    if throttled(key, PASSWORD_CHANGE_LIMIT):
+        return _throttle_redirect(_PROFILE_URL, _PROFILE_ERROR_PASSWORD_THROTTLED, key)
+    if authenticate(settings, user["email"], password) is None:
+        record_attempt(key)
+        return RedirectResponse("/profile?error=profile.error_email_password", status_code=303)
+    clear_attempts(key)
+    try:
+        with connect(settings) as connection:
+            taken = connection.execute(
+                "SELECT 1 FROM users WHERE email = ? COLLATE NOCASE AND id <> ?",
+                (address, user["id"]),
+            ).fetchone()
+            if taken is not None:
+                return RedirectResponse("/profile?error=profile.error_email_taken", status_code=303)
+            connection.execute("UPDATE users SET email = ? WHERE id = ?", (address, user["id"]))
+            connection.execute(
+                "UPDATE record_shares SET grantee_email = ? WHERE grantee_user_id = ?",
+                (address, user["id"]),
+            )
+    except sqlite3.IntegrityError:
+        # Lost a race with a registration for the same address.
+        return RedirectResponse("/profile?error=profile.error_email_taken", status_code=303)
+    # No address in the audit line: the record of the change is that it happened.
+    _audit(settings, user["id"], user["id"], "email_changed", "user", user["id"], {})
+    response = RedirectResponse("/profile?saved=email", status_code=303)
+    # This browser keeps its known-device standing under the new address.
+    response.set_cookie(
+        DEVICE_COOKIE, device_cookie_value(settings, address), max_age=365 * 86400,
+        httponly=True, samesite="lax", secure=_secure_cookie(request), path="/",
+    )
+    return response
+
+def _write_export(settings, user_id: str, spool) -> None:
+    write_record_archive(settings, user_id, spool)
+    spool.seek(0)
+    _audit(settings, user_id, user_id, "record_exported", "user", user_id, {})
+
+def _build_export_spool(settings, user_id: str):
+    spool = tempfile.SpooledTemporaryFile(max_size=32 * 1024 * 1024)
+    try:
+        _write_export(settings, user_id, spool)
+    except BaseException:
+        spool.close()
+        raise
+    return spool
+
+
+@router.get("/profile/export.zip", responses=_RESPONSES_401_403)
+async def export_my_record(request: Request):
+    """The signed-in account's own record as one ZIP, for the person to keep.
+
+    Always the session's own account, never the record being viewed: a viewer
+    who downloads a shared record would be copying somebody else's data out
+    under their name.  Built in a worker thread into a spooled file (memory up
+    to 32 MiB, then disk) and streamed out in chunks.
+    """
+    settings = request.app.state.settings
+    user = require_user(request)
+    if user.get("token_kind") == "guest":
+        raise HTTPException(403)
+    spool = await run_in_threadpool(_build_export_spool, settings, user["id"])
+
+    def chunks():
+        try:
+            while block := spool.read(1024 * 1024):
+                yield block
+        finally:
+            spool.close()
+
+    stamp = datetime.now(UTC).strftime("%Y%m%d")
+    return StreamingResponse(
+        chunks(),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="anamna-export-{stamp}.zip"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 @router.post("/profile/sessions/revoke", responses=_RESPONSES_401_403)
 def revoke_one_session(
@@ -7470,12 +8322,19 @@ def openwearables_link(
         )
     # The submitted id is checked against the server's own list rather than
     # trusted: a hand-written form post must not be able to point this
-    # record at an account the person was never shown.
+    # record at an account the person was never shown.  An ordinary user may
+    # link only the account under their own address, because that account's
+    # wearable data is theirs; and no remote account already linked to another
+    # local record may be taken, whoever is asking.
     chosen = next(
         (person for person in people if person["id"] == remote_user_id.strip()), None
     )
     if chosen is None:
         return RedirectResponse("/profile?error=openwearables.error_user", status_code=303)
+    if user["role"] != "admin" and str(chosen["email"]).casefold() != str(user["email"]).casefold():
+        return RedirectResponse("/profile?error=openwearables.error_not_yours", status_code=303)
+    if openwearables.linked_elsewhere(settings, user["id"], str(chosen["id"])):
+        return RedirectResponse("/profile?error=openwearables.error_taken", status_code=303)
     replaced = openwearables.link_account(
         settings, user["id"], str(chosen["id"]), str(chosen["email"])
     )
@@ -7671,17 +8530,20 @@ def garmin_personal_remove(request: Request, csrf_token: Annotated[str, Form()] 
 # store the raw payload, and return; parsing into observations is a later,
 # idempotent processing step over provider_events.
 
-def _oversized(request: Request) -> bool:
-    try:
-        return int(request.headers.get("content-length") or 0) > integrations.MAX_EVENT_BYTES
-    except ValueError:
-        return True
+#: Oura sends a small JSON notice per change; nothing it posts approaches this.
+OURA_EVENT_BYTES = 1024 * 1024
+
+def _oversized(request: Request, limit: int) -> bool:
+    """Refuse before reading: a body with no declared length cannot be bounded
+    ahead of time, and neither provider sends one."""
+    declared = (request.headers.get("content-length") or "").strip()
+    return not (declared.isascii() and declared.isdigit()) or int(declared) > limit
 
 @router.get("/integrations/oura/webhook", responses=_RESPONSES_429)
 def oura_webhook_verify(request: Request, verification_token: str = "", challenge: str = ""):
     """Oura's one-time subscription handshake: echo the challenge back."""
     settings = request.app.state.settings
-    client = request.client.host if request.client else ""
+    client = "webhook:oura:" + _visitor_key(request)
     if throttled(client):
         raise HTTPException(429)
     expected = integrations.oura_verification_token(settings)
@@ -7695,13 +8557,15 @@ def oura_webhook_verify(request: Request, verification_token: str = "", challeng
 @router.post("/integrations/oura/webhook", responses=_RESPONSES_413_429)
 async def oura_webhook(request: Request):
     settings = request.app.state.settings
-    client = request.client.host if request.client else ""
+    client = "webhook:oura:" + _visitor_key(request)
     if throttled(client):
         raise HTTPException(429)
-    if _oversized(request):
+    if _oversized(request, OURA_EVENT_BYTES):
         raise HTTPException(413)
     body = await request.body()
-    _, client_secret = integrations.client_config(settings, integrations.PROVIDERS["oura"])
+    _, client_secret = await run_in_threadpool(
+        integrations.client_config, settings, integrations.PROVIDERS["oura"]
+    )
     if not integrations.verify_oura_signature(
         client_secret,
         request.headers.get("x-oura-timestamp", ""),
@@ -7725,17 +8589,19 @@ async def garmin_webhook(request: Request):
     # user ids are matched to stored connections at processing time, never
     # trusted here.
     settings = request.app.state.settings
-    client = request.client.host if request.client else ""
+    client = "webhook:garmin:" + _visitor_key(request)
     if throttled(client):
         raise HTTPException(429)
-    client_id, _ = integrations.client_config(settings, integrations.PROVIDERS["garmin"])
+    client_id, _ = await run_in_threadpool(
+        integrations.client_config, settings, integrations.PROVIDERS["garmin"]
+    )
     if not client_id:
         raise HTTPException(404)
     if not csrf_matches(client_id, request.headers.get("garmin-client-id", "")):
         record_attempt(client)
         # Returned, not raised — see oura_webhook_verify.
         return JSONResponse({"detail": "unknown client"}, status_code=401)
-    if _oversized(request):
+    if _oversized(request, integrations.MAX_EVENT_BYTES):
         raise HTTPException(413)
     body = await request.body()
     if not integrations.acceptable_event(body):
@@ -7795,6 +8661,26 @@ def _profile_choices(form) -> dict[str, str | None] | None:
             return None
         choices[column] = raw or None
     return choices
+
+def _profile_pregnancy_due(form) -> tuple[bool, str | None]:
+    """Whether this save sets the expected due date, and to what (None clears it).
+
+    The field is not rendered for a male profile, so an absent field leaves
+    the stored date alone.  A date more than 300 days either side of today is
+    ignored rather than failing the whole save.
+    """
+    if "pregnancy_due_date" not in form:
+        return False, None
+    raw = _profile_text(form, "pregnancy_due_date")
+    if not raw:
+        return True, None
+    try:
+        parsed = date.fromisoformat(raw)
+    except ValueError:
+        return False, None
+    if abs((parsed - datetime.now(UTC).date()).days) > 300:
+        return False, None
+    return True, parsed.isoformat()
 
 def _profile_store(connection, user_id: str, name: str, nickname, dob, sex, blood,
                    measurements: dict[str, float | None], choices: dict[str, str | None],
@@ -7875,34 +8761,74 @@ async def update_profile(request: Request):
     choices = _profile_choices(form)
     if choices is None:
         return failed(_PROFILE_ERROR_CHOICE)
+    due_set, due = _profile_pregnancy_due(form)
+    # A profile recorded as male carries no due date, whatever a stale form
+    # field or an earlier female profile left behind.
+    if sex == "male":
+        due_set, due = True, None
+    # The box is shown beside the due date, so an unticked box posts nothing;
+    # a male profile never plans a pregnancy.
+    planning = 0 if sex == "male" else int(field("planning_pregnancy") == "1")
 
-    with connect(settings) as connection:
-        _profile_store(connection, user["id"], name, nickname, dob, sex, blood,
-                       measurements, choices, timezone_name)
-    # Sex, age and the cardiovascular risk category all change verdicts;
-    # the memoised catalogue must not keep judging by the old profile.
-    invalidate_catalog(user["id"])
+    def store() -> None:
+        with connect(settings) as connection:
+            _profile_store(connection, user["id"], name, nickname, dob, sex, blood,
+                           measurements, choices, timezone_name)
+            if due_set:
+                connection.execute(
+                    """UPDATE patients SET pregnancy_due_date=?
+                           WHERE id=(SELECT id FROM patients WHERE owner_user_id=?
+                                     ORDER BY created_at LIMIT 1)""",
+                    (due, user["id"]),
+                )
+            connection.execute(
+                """UPDATE patients SET planning_pregnancy=?
+                       WHERE id=(SELECT id FROM patients WHERE owner_user_id=?
+                                 ORDER BY created_at LIMIT 1)""",
+                (planning, user["id"]),
+            )
+        # Sex, age and the cardiovascular risk category all change verdicts;
+        # the memoised catalogue must not keep judging by the old profile.
+        invalidate_catalog(user["id"])
+
+    # A write that waits on the database lock must not hold up every other
+    # request on the event loop while it waits.
+    await run_in_threadpool(store)
     return RedirectResponse("/profile?saved=1", status_code=303)
 
 @router.post("/profile/shares", responses=_RESPONSES_401_403)
 def add_share(
     request: Request,
     email: Annotated[str, Form()],
+    access: Annotated[str, Form()] = "read",
     csrf_token: Annotated[str, Form()] = "",
 ):
     settings = request.app.state.settings
     user = require_user(request)
     require_csrf(user, csrf_token)
+    level = access if access in SHARE_LEVELS else "read"
     grantee = email.strip().casefold()
     if "@" not in grantee or " " in grantee:
         return RedirectResponse("/profile?error=profile.error_share_email", status_code=303)
     if grantee == user["email"]:
         return RedirectResponse("/profile?error=profile.error_share_self", status_code=303)
     with connect(settings) as connection:
+        # The share names the account it was given to. An address with no account
+        # is refused, because nothing verifies addresses at sign-up and a share
+        # left open would pass to whoever registers that address first.
+        grantee_row = connection.execute(
+            "SELECT id FROM users WHERE email = ? COLLATE NOCASE AND disabled_at IS NULL",
+            (grantee,),
+        ).fetchone()
+        if grantee_row is None:
+            return RedirectResponse("/profile?error=profile.error_share_unknown", status_code=303)
+        # Re-sharing with the same address is the way to change its level: the
+        # (owner, address) pair is unique, so the existing row takes the new level.
         connection.execute(
-            """INSERT OR IGNORE INTO record_shares(id, owner_user_id, grantee_email, created_at)
-                   VALUES (?, ?, ?, ?)""",
-            (str(uuid.uuid4()), user["id"], grantee, utc_now()),
+            """INSERT INTO record_shares(id, owner_user_id, grantee_email, grantee_user_id, created_at, access)
+                   VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(owner_user_id, grantee_email) DO UPDATE SET access = excluded.access""",
+            (str(uuid.uuid4()), user["id"], grantee, grantee_row["id"], utc_now(), level),
         )
     return RedirectResponse(_PROFILE_URL, status_code=303)
 
@@ -7916,11 +8842,38 @@ def remove_share(
     user = require_user(request)
     require_csrf(user, csrf_token)
     with connect(settings) as connection:
-        connection.execute(
-            "DELETE FROM record_shares WHERE id=? AND owner_user_id=?",
+        grant = connection.execute(
+            "SELECT grantee_user_id FROM record_shares WHERE id=? AND owner_user_id=?",
             (share_id, user["id"]),
-        )
+        ).fetchone()
+        if grant is not None:
+            connection.execute(
+                "DELETE FROM record_shares WHERE id=? AND owner_user_id=?",
+                (share_id, user["id"]),
+            )
+    # A share that is gone takes the lab links it carried with it.
+    if grant is not None and grant["grantee_user_id"]:
+        labsync.drop_links_between(settings, user["id"], grant["grantee_user_id"])
     return RedirectResponse(_PROFILE_URL, status_code=303)
+
+@router.post("/profile/shares/level", responses=_RESPONSES_401_403)
+def set_share_level(
+    request: Request,
+    share_id: Annotated[str, Form()],
+    access: Annotated[str, Form()],
+    csrf_token: Annotated[str, Form()] = "",
+):
+    settings = request.app.state.settings
+    user = require_user(request)
+    require_csrf(user, csrf_token)
+    if access not in SHARE_LEVELS:
+        raise HTTPException(400)
+    with connect(settings) as connection:
+        connection.execute(
+            "UPDATE record_shares SET access=? WHERE id=? AND owner_user_id=?",
+            (access, share_id, user["id"]),
+        )
+    return RedirectResponse(f"{_PROFILE_URL}?saved=share_level", status_code=303)
 
 @router.post("/profile/view", responses=_RESPONSES_401_403_404)
 def switch_record(
@@ -7937,8 +8890,8 @@ def switch_record(
         return response
     with connect(settings) as connection:
         allowed = connection.execute(
-            "SELECT 1 FROM record_shares WHERE owner_user_id=? AND grantee_email=?",
-            (owner_user_id, user["email"]),
+            "SELECT 1 FROM record_shares WHERE owner_user_id=? AND grantee_user_id=?",
+            (owner_user_id, user["id"]),
         ).fetchone()
     if allowed is None:
         raise HTTPException(404)
@@ -8093,6 +9046,25 @@ def _tiles(attention_count: int, due_count: int, panels, counts) -> list[dict[st
         },
     ]
 
+def _medicine_tile(connection, owner_user_id: str, *, owner: bool) -> dict[str, object] | None:
+    """The dashboard tile for medicines now.  A guest or a sharing viewer sees
+    it only when there is something to show; the owner always sees it, with
+    an invitation to add an entry when the list is empty."""
+    current = [
+        factor for factor in factors.listing(connection, owner_user_id, today=date.today())
+        if factor["effective_status"] == "current"
+    ]
+    if not current and not owner:
+        return None
+    return {
+        "key": "medicines",
+        "label": t("med.tile.label"),
+        "value": format_count(len(current)),
+        "note": ", ".join(factor["name"] for factor in current[:3]) if current else t("med.tile.note_empty"),
+        "href": "/medicines",
+        "tone": "neutral",
+    }
+
 def _oldest_panels(panels) -> list[dict[str, object]]:
     """Panels with no published retest cadence, longest unrepeated first.
 
@@ -8145,6 +9117,10 @@ def dashboard(request: Request):
         experience = build_overview(
             _areas(catalog, findings, panels), catalog, counts, attention=attention,
         )
+        medicine_tile = _medicine_tile(
+            connection, user["id"],
+            owner=viewing_row(request) is None and current_user(request).get("token_kind") != "guest",
+        )
     # What needs attention, first: the abnormal results and report
     # conclusions themselves, not a count of them.
     priorities = [
@@ -8165,7 +9141,10 @@ def dashboard(request: Request):
             ),
             priorities=priorities,
             attention_total=len(attention) + len(attention_findings),
-            tiles=_tiles(len(attention) + len(attention_findings), len(_due_panels(panels)), panels, counts),
+            tiles=[
+                *_tiles(len(attention) + len(attention_findings), len(_due_panels(panels)), panels, counts),
+                *([medicine_tile] if medicine_tile else []),
+            ],
             recent_documents=recent_documents,
             active="dashboard",
         ),
@@ -8205,7 +9184,7 @@ def _scope_device(connection, owner_user_id: str, metric_key: str) -> dict[str, 
         return _scope_metric(connection, owner_user_id, concept_id)
     summaries = [
         item
-        for item in device_history_summary(connection, owner_user_id)
+        for item in device_history(connection, owner_user_id)
         if str(item["metric_key"]) == metric_key
     ]
     if not summaries:
@@ -8238,7 +9217,7 @@ def _scope_metric(connection, owner_user_id: str, key: str) -> dict[str, object]
         "label": str(card["name"]),
         "cards": [card],
         "device_summaries": [
-            item for item in device_history_summary(connection, owner_user_id)
+            item for item in device_history(connection, owner_user_id)
             if str(item["metric_key"]) in twins
         ] if twins else [],
         "related_cards": related,
@@ -8565,6 +9544,13 @@ def _gap_row(gap, rows: list[dict[str, object]]) -> dict[str, object]:
             "vax.gap_series",
             given=gap.dose_number, total=gap.doses_in_series,
             date=format_date(gap.last_date),
+        )
+    elif gap.kind == "discuss":
+        # The schedules disagree on who needs this, so no date is ever shown;
+        # the sentence says so and points the person to their doctor.
+        sentence = (
+            t("vax.gap_discuss_dated", date=format_date(gap.last_date))
+            if gap.last_date else t("vax.gap_discuss")
         )
     elif gap.last_date and gap.due_date:
         key = "vax.gap_overdue" if gap.urgency == "overdue" else "vax.gap_due"
@@ -8930,6 +9916,7 @@ def add_vaccination(
     page_number: Annotated[int, Form()] = 1,
     evidence_text: Annotated[str, Form()] = "",
     next: Annotated[str, Form()] = _VACCINATIONS_URL,
+    ai_suggested: Annotated[str, Form()] = "",
     csrf_token: Annotated[str, Form()] = "",
 ):
     """Add a human-reviewed dose, optionally linked to its source document.
@@ -8940,10 +9927,16 @@ def add_vaccination(
     own vaccination history.  Unlinked doses remain `manual`; a suggestion
     accepted beside a card keeps the document, page and source evidence and
     is marked human-corrected so a re-read cannot silently overwrite it.
+
+    A suggestion a model proposed is kept as unchecked (`extracted`, method
+    `ai_suggested_entry`) until the person verifies it against the card. A
+    re-read of the document leaves it in place.
     """
     settings = request.app.state.settings
     user = require_user(request)
     require_csrf(user, csrf_token)
+    from_ai = ai_suggested == "1"
+    status, method = ("extracted", "ai_suggested_entry") if from_ai else ("corrected", "human_entered")
     destination = _safe_next(next, _VACCINATIONS_URL)
     joiner = "&" if "?" in destination else "?"
     values, problem = _dose_form_values(
@@ -8974,8 +9967,8 @@ def add_vaccination(
                        lot_number, note, entry_source, entered_by_user_id, verification_status,
                        evidence_text, confidence, extraction_method, parser_version,
                        created_at, updated_at
-                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'corrected',
-                             ?, 1.0, 'human_entered', 'human', ?, ?)""",
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                             ?, 1.0, ?, 'human', ?, ?)""",
             (
                 str(uuid.uuid4()), user["id"], patient["id"],
                 source_id, source_page,
@@ -8983,7 +9976,7 @@ def add_vaccination(
                 values["vaccine_code"], values["diseases"], values["product_name"],
                 *_dose_details(dose),
                 values["dose_number"], values["doses_in_series"], lot, dose.note.strip()[:500],
-                source_kind, user["id"], evidence, now, now,
+                source_kind, user["id"], status, evidence, method, now, now,
             ),
         )
         if source_document is not None:
@@ -9477,17 +10470,15 @@ def _paperless_matches(settings, connection, owner_user_id: str, q: str) -> list
         ready = paperless.connection_for(settings, owner_user_id)
         if not ready:
             return []
-        remote_ids = paperless.cached_search_ids(*ready, q)
-        if not remote_ids:
-            return []
-        marks = ",".join("?" * len(remote_ids))
-        return [
-            str(row["id"])
+        linked = {
+            int(row["paperless_id"]): str(row["id"])
             for row in connection.execute(
-                f"SELECT id FROM documents WHERE owner_user_id=? AND paperless_id IN ({marks})",
-                [owner_user_id, *remote_ids],
+                "SELECT id, paperless_id FROM documents WHERE owner_user_id=? AND paperless_id IS NOT NULL",
+                (owner_user_id,),
             )
-        ]
+        }
+        remote_ids = paperless.cached_search_ids(*ready, q, tuple(sorted(linked)))
+        return [linked[remote] for remote in remote_ids if remote in linked]
     except Exception:
         return []
 
@@ -9576,9 +10567,14 @@ def _mark_same_report(connection, owner_user_id: str, rows: list[dict[str, objec
     } if ids else set()
     for row in rows:
         others = [briefs[other] for other, _, _ in pairs.get(str(row["id"]), []) if other in briefs]
-        row["same_report_text"] = t(
-            "dup.card_same_as", title=others[0]["title_text"], date=format_date(others[0].get("report_date"))
-        ) if others else (t("dup.card_part") if str(row["id"]) in parted else "")
+        if others:
+            row["same_report_text"] = t(
+                "dup.card_same_as", title=others[0]["title_text"], date=format_date(others[0].get("report_date"))
+            )
+        elif str(row["id"]) in parted:
+            row["same_report_text"] = t("dup.card_part")
+        else:
+            row["same_report_text"] = ""
 
 
 def _document_search(settings, connection, owner_user_id: str, q: str, clinical_type: str,
@@ -10001,9 +10997,8 @@ def _document_paperless(request: Request, settings, document_id: str,
     """The link to this document's Paperless copy, and whether one is still pending."""
     # A copy in Paperless is linked lazily, on the page where the link
     # would appear: consumption over there takes as long as its OCR does,
-    # and this is the first moment anyone looks.
-    # ponytail: one task lookup per view while pending (10 s worst case
-    # against a dead server); a background poller if that ever hurts.
+    # and this may be the first moment anyone looks.  paperless.start_scheduler
+    # links the rest within five minutes; this only saves the wait.
     # Someone reading a shared record is shown none of this: that the
     # patient mirrors their documents to an external archive, at which
     # address, under which id, was not part of what they shared.
@@ -10209,7 +11204,8 @@ def document_page_image(request: Request, document_id: str, page_number: int):
         )
     except (IndexError, ValueError):
         raise HTTPException(404) from None
-    return FileResponse(rendered, media_type="image/png", headers={"Cache-Control": "private, max-age=86400"})
+    # No cache header here: security_headers marks every record response no-store, so a page image cannot outlive a sign-out or a revoked share.
+    return FileResponse(rendered, media_type="image/png")
 
 def _ai_hint_images(settings, row, pages, limits: dict | None = None) -> list[bytes]:
     """Render pages when text extraction is absent or too thin to support
@@ -10630,6 +11626,91 @@ def _audit_finding(connection, user, action: str, finding_id: str, details: dict
     )
 
 
+def _add_finding_answer(request: Request, connection, user, document_id: str, text: str, recommended: str,
+                        finding_date: str, health_area: str, destination: str):
+    try:
+        ids = _add_person_finding(
+            connection, user["id"], document_id, text, recommended, finding_date.strip(), health_area
+        )
+    except LookupError:
+        connection.rollback()
+        raise HTTPException(404) from None
+    except _FindingRefused as refused:
+        connection.rollback()
+        code = str(refused)
+        if _wants_json(request):
+            return JSONResponse(
+                {"ok": False, "error": code, "detail": t(f"doc.finding_error_{code}")}, status_code=409
+            )
+        return RedirectResponse(f"{destination}?finding_error={code}#side-panel-conclusion", status_code=303)
+    for added in ids:
+        _audit_finding(connection, user, "finding_added", added, {
+            "document_id": document_id, "source": "image", "after": _finding_fields(text, recommended),
+        })
+    connection.commit()
+    invalidate_catalog(user["id"])
+    if _wants_json(request):
+        return JSONResponse({"ok": True, "action": "add", "finding_ids": ids})
+    return RedirectResponse(destination + "#side-panel-conclusion", status_code=303)
+
+
+def _finding_rows(connection, user_id: str, document_id: str, action: str, finding_id: list[str]) -> list:
+    rows = connection.execute(
+        f"""SELECT * FROM clinical_findings WHERE owner_user_id=? AND document_id=?
+                  AND verification_status<>'rejected' AND id IN ({",".join("?" * len(finding_id))})""",
+        (user_id, document_id, *finding_id),
+    ).fetchall() if finding_id else []
+    if action == "remove":
+        rows = [row for row in rows if str(row["id"]).startswith(PERSON_FINDING_PREFIX)]
+    return rows
+
+
+def _finding_change_inputs(connection, user_id: str, action: str, text: str, recommended: str,
+                           finding_date: str, rows: list):
+    if action == "correct":
+        after = _finding_fields(text, recommended)
+        # The date the photo prints, when the reading lost it.
+        corrected_date = _validated_date(finding_date, _DOC_DATE_INVALID_KEY) if finding_date else None
+        return after, corrected_date, None
+    if action == "revert":
+        return None, None, _finding_corrections(connection, user_id, [str(row["id"]) for row in rows])
+    return None, None, None
+
+
+def _reverted_finding_fields(row, before: dict, history: dict):
+    if row["verification_status"] != "corrected" or str(row["id"]).startswith(PERSON_FINDING_PREFIX):
+        # A person's own conclusion has no reading to go back to; it is removed instead.
+        return None
+    return {**before, "verification_status": "extracted",
+            **(history.get(str(row["id"]), {}).get("before") or {})}
+
+
+def _apply_finding_row(connection, user, document_id: str, action: str, row, after, corrected_date, history) -> None:
+    columns = ("summary_uk", "summary_en", "recommendations", "status", "attention_reasons", "verification_status")
+    before = {name: row[name] for name in columns}
+    if action == "remove":
+        connection.execute("DELETE FROM clinical_findings WHERE id=?", (row["id"],))
+        _audit_finding(connection, user, "finding_removed", str(row["id"]), {
+            "document_id": document_id, "health_area": row["health_area"], "before": before,
+        })
+        return
+    if action == "revert":
+        after = _reverted_finding_fields(row, before, history)
+        if after is None:
+            return
+    connection.execute(
+        f"UPDATE clinical_findings SET {', '.join(f'{name}=?' for name in columns)} WHERE id=?",
+        (*(after[name] for name in columns), row["id"]),
+    )
+    if action == "correct" and corrected_date:
+        connection.execute("UPDATE clinical_findings SET finding_date=? WHERE id=?", (corrected_date, row["id"]))
+    _audit_finding(
+        connection, user, "finding_corrected" if action == "correct" else "finding_correction_reverted",
+        str(row["id"]), {"document_id": document_id, "source": "image", "before": before, "after": after,
+                         **({"finding_date": corrected_date} if action == "correct" and corrected_date else {})},
+    )
+
+
 @router.post("/documents/{document_id}/findings", responses=_RESPONSES_400_401_403_404)
 def correct_document_finding(
     request: Request,
@@ -10667,74 +11748,20 @@ def correct_document_finding(
         raise HTTPException(400)
     destination = _safe_next(next, f"/documents/{document_id}")
     with connect(settings) as connection:
-        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(_BEGIN_IMMEDIATE)
         if action == "add":
-            try:
-                ids = _add_person_finding(
-                    connection, user["id"], document_id, text, recommended, finding_date.strip(), health_area
-                )
-            except LookupError:
-                connection.rollback()
-                raise HTTPException(404) from None
-            except _FindingRefused as refused:
-                connection.rollback()
-                code = str(refused)
-                if _wants_json(request):
-                    return JSONResponse(
-                        {"ok": False, "error": code, "detail": t(f"doc.finding_error_{code}")}, status_code=409
-                    )
-                return RedirectResponse(f"{destination}?finding_error={code}#side-panel-conclusion", status_code=303)
-            for added in ids:
-                _audit_finding(connection, user, "finding_added", added, {
-                    "document_id": document_id, "source": "image", "after": _finding_fields(text, recommended),
-                })
-            connection.commit()
-            invalidate_catalog(user["id"])
-            if _wants_json(request):
-                return JSONResponse({"ok": True, "action": action, "finding_ids": ids})
-            return RedirectResponse(destination + "#side-panel-conclusion", status_code=303)
-        rows = connection.execute(
-            f"""SELECT * FROM clinical_findings WHERE owner_user_id=? AND document_id=?
-                  AND verification_status<>'rejected' AND id IN ({",".join("?" * len(finding_id))})""",
-            (user["id"], document_id, *finding_id),
-        ).fetchall() if finding_id else []
-        if action == "remove":
-            rows = [row for row in rows if str(row["id"]).startswith(PERSON_FINDING_PREFIX)]
+            return _add_finding_answer(
+                request, connection, user, document_id, text, recommended, finding_date, health_area, destination,
+            )
+        rows = _finding_rows(connection, user["id"], document_id, action, finding_id)
         if not rows:
             connection.rollback()
             raise HTTPException(404)
-        if action == "correct":
-            after = _finding_fields(text, recommended)
-            # The date the photo prints, when the reading lost it.
-            corrected_date = _validated_date(finding_date, _DOC_DATE_INVALID_KEY) if finding_date else None
-        elif action == "revert":
-            history = _finding_corrections(connection, user["id"], [str(row["id"]) for row in rows])
-        columns = ("summary_uk", "summary_en", "recommendations", "status", "attention_reasons", "verification_status")
+        after, corrected_date, history = _finding_change_inputs(
+            connection, user["id"], action, text, recommended, finding_date, rows,
+        )
         for row in rows:
-            before = {name: row[name] for name in columns}
-            if action == "remove":
-                connection.execute("DELETE FROM clinical_findings WHERE id=?", (row["id"],))
-                _audit_finding(connection, user, "finding_removed", str(row["id"]), {
-                    "document_id": document_id, "health_area": row["health_area"], "before": before,
-                })
-                continue
-            if action == "revert":
-                # A person's own conclusion has no reading to go back to; it is removed instead.
-                if row["verification_status"] != "corrected" or str(row["id"]).startswith(PERSON_FINDING_PREFIX):
-                    continue
-                after = {**before, "verification_status": "extracted",
-                         **(history.get(str(row["id"]), {}).get("before") or {})}
-            connection.execute(
-                f"UPDATE clinical_findings SET {', '.join(f'{name}=?' for name in columns)} WHERE id=?",
-                (*(after[name] for name in columns), row["id"]),
-            )
-            if action == "correct" and corrected_date:
-                connection.execute("UPDATE clinical_findings SET finding_date=? WHERE id=?", (corrected_date, row["id"]))
-            _audit_finding(
-                connection, user, "finding_corrected" if action == "correct" else "finding_correction_reverted",
-                str(row["id"]), {"document_id": document_id, "source": "image", "before": before, "after": after,
-                                 **({"finding_date": corrected_date} if action == "correct" and corrected_date else {})},
-            )
+            _apply_finding_row(connection, user, document_id, action, row, after, corrected_date, history)
         if action in {"revert", "remove"}:
             sync_clinical_findings(connection)  # an extracted row is refreshed from its page now
         connection.commit()
@@ -10874,7 +11901,8 @@ def _reassign_document_dependants(connection, owner_user_id: str, document, docu
     return None, None
 
 def _remove_unused_source(settings, document) -> bool:
-    """Unlink a deleted document's source file if it lies inside `sources/`."""
+    """Unlink a deleted document's source file if it lies inside `sources/`,
+    and the page images rendered from those bytes with it."""
     source = resolve_source_path(settings, str(document["source_path"] or ""))
     try:
         inside_sources = source.resolve().is_relative_to(settings.source_dir.resolve())
@@ -10886,6 +11914,12 @@ def _remove_unused_source(settings, document) -> bool:
         source.unlink()
     except OSError:
         return False
+    # Rendered pages are keyed by the first 24 characters of the sha256 and
+    # live beside the database, outside `sources/`, so nothing else removes
+    # them.  An empty key would name the whole cache, hence the guard.
+    digest = str(document["sha256"] or "")[:24]
+    if digest:
+        shutil.rmtree(settings.database_path.parent / "source-page-cache" / digest, ignore_errors=True)
     return True
 
 @router.post("/documents/{document_id}/delete", responses=_RESPONSES_401_403_404)
@@ -10909,7 +11943,7 @@ def delete_document(
     destination = _safe_next(next, _DOCUMENTS_URL)
 
     with connect(settings) as connection:
-        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(_BEGIN_IMMEDIATE)
         try:
             document = connection.execute(
                 """SELECT * FROM documents WHERE id=? AND owner_user_id=?""",
@@ -11163,11 +12197,17 @@ def _unnamed_upload_detail(filename: str) -> str:
     return _INTAKE_FAILED_UNREADABLE if supported else _INTAKE_FAILED_UNSUPPORTED
 
 async def _write_upload(upload: UploadFile, target: Path, limit: int) -> tuple[int, bool]:
-    """Stream one upload to `target`; the bytes written and whether it overran `limit`."""
+    """Stream one upload to `target`; the bytes written and whether it overran `limit`.
+
+    The file is created exclusively, so a `target` another upload has just taken
+    raises FileExistsError before a byte of the upload is read, and the caller
+    may pick a new name. The upload is closed only once it has been read here.
+    """
     written = 0
     oversized = False
+    handle = await anyio.open_file(target, "xb")
     try:
-        async with await anyio.open_file(target, "wb") as handle:
+        async with handle:
             while chunk := await upload.read(1 << 20):
                 written += len(chunk)
                 if written > limit:
@@ -11182,7 +12222,8 @@ async def _receive_upload(settings, common: dict[str, object], kind: str, upload
     """Put one file of a submission on disk and in the queue, or queue its rejection."""
     name = _sanitised_upload_name(upload.filename)
     if not name:
-        record_rejected(
+        await run_in_threadpool(
+            record_rejected,
             settings,
             **common,
             filename=PurePath(upload.filename.replace("\\", "/")).name[:120] or "?",
@@ -11193,19 +12234,38 @@ async def _receive_upload(settings, common: dict[str, object], kind: str, upload
 
     limit = upload_limit_for(name)
     target = _upload_target(settings, name)
-    written, oversized = await _write_upload(upload, target, limit)
+    # Two uploads of the same name (every iPhone photo is IMG_0001.jpg) can both
+    # be handed the same free path before either creates it. _write_upload opens
+    # exclusively, so the loser gets FileExistsError with none of its bytes read,
+    # and asks for a fresh path. Five attempts, then the error stands.
+    attempts = 5
+    for attempt in range(1, attempts + 1):
+        try:
+            written, oversized = await _write_upload(upload, target, limit)
+            break
+        except FileExistsError:
+            if attempt == attempts:
+                await upload.close()
+                raise
+            target = _upload_target(settings, name)
     if oversized or not written:
         target.unlink(missing_ok=True)
-        record_rejected(
+        await run_in_threadpool(
+            record_rejected,
             settings,
             **common,
             filename=name,
             byte_size=written or None,
-            detail_key="intake.failed_too_big" if oversized else "intake.failed_missing",
+            detail_key=_INTAKE_FAILED_TOO_BIG if oversized else "intake.failed_missing",
         )
         return
 
-    await _admit_upload(settings, common, kind, name, target, written)
+    try:
+        await _admit_upload(settings, common, kind, name, target, written)
+    except Exception:
+        # Nothing names this file yet: left behind, it is indistinguishable from an upload that was lost.
+        target.unlink(missing_ok=True)
+        raise
 
 @router.post(_UPLOAD_URL, responses=_RESPONSES_400_401)
 async def upload_document(
@@ -11245,8 +12305,11 @@ async def upload_document(
     if kind != "auto" and kind not in DEVICE_ADAPTERS:
         raise HTTPException(400)
 
-    with connect(settings) as connection:
-        patient = _patient_row(connection, user["id"])
+    def load_patient():
+        with connect(settings) as connection:
+            return _patient_row(connection, user["id"])
+
+    patient = await run_in_threadpool(load_patient)
     if patient is None:
         return failed(_UPLOAD_ERROR_NO_SOURCE)
 
@@ -11313,15 +12376,30 @@ async def _finish_chunked_upload(
         # here too.
         partial.unlink(missing_ok=True)
         detail_key = _unnamed_upload_detail(filename) if written else "intake.failed_missing"
-        record_rejected(
+        await run_in_threadpool(
+            record_rejected,
             settings, **common, filename=display, byte_size=written or None,
             detail_key=detail_key,
         )
         return JSONResponse({"status": "rejected"})
+    if written > upload_limit_for(name):
+        # Each slice was judged under the limit of the name it carried, so a .zip
+        # slice could carry a final .pdf past the PDF limit. The whole file is judged here.
+        partial.unlink(missing_ok=True)
+        await run_in_threadpool(
+            record_rejected,
+            settings, **common, filename=display, byte_size=written,
+            detail_key=_INTAKE_FAILED_TOO_BIG,
+        )
+        return JSONResponse({"status": "rejected"})
 
-    target = _upload_target(settings, name)
-    partial.replace(target)
-    await _admit_upload(settings, common, kind, name, target, written)
+    target = await run_in_threadpool(_place_exclusively, partial, lambda: _upload_target(settings, name))
+    try:
+        await _admit_upload(settings, common, kind, name, target, written)
+    except Exception:
+        # Nothing names this file yet: left behind, it is indistinguishable from an upload that was lost.
+        target.unlink(missing_ok=True)
+        raise
     return JSONResponse({"status": "done"})
 
 @router.post("/upload/chunk", responses=_RESPONSES_400_401)
@@ -11356,8 +12434,11 @@ async def upload_chunk(
         raise HTTPException(400)
     if kind != "auto" and kind not in DEVICE_ADAPTERS:
         raise HTTPException(400)
-    with connect(settings) as connection:
-        patient = _patient_row(connection, user["id"])
+    def load_patient():
+        with connect(settings) as connection:
+            return _patient_row(connection, user["id"])
+
+    patient = await run_in_threadpool(load_patient)
     if patient is None:
         return JSONResponse({"error": _UPLOAD_ERROR_NO_SOURCE}, status_code=409)
     common = {
@@ -11380,7 +12461,8 @@ async def upload_chunk(
         # first byte lands rather than after the last slice of a file
         # that was never going to be accepted.
         await chunk.close()
-        record_rejected(
+        await run_in_threadpool(
+            record_rejected,
             settings, **common, filename=display,
             detail_key=_unnamed_upload_detail(filename),
         )
@@ -11389,9 +12471,10 @@ async def upload_chunk(
     written, oversized = await _append_chunk(chunk, partial, have, upload_limit_for(filename))
     if oversized:
         partial.unlink(missing_ok=True)
-        record_rejected(
+        await run_in_threadpool(
+            record_rejected,
             settings, **common, filename=display, byte_size=written,
-            detail_key="intake.failed_too_big",
+            detail_key=_INTAKE_FAILED_TOO_BIG,
         )
         return JSONResponse({"status": "rejected"})
     if final != "1":
@@ -11771,7 +12854,7 @@ def document_duplicate(
     destination = _safe_next(next, f"/documents/{document_id}")
     token_kind = user.get("token_kind")
     with connect(settings) as connection:
-        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(_BEGIN_IMMEDIATE)
         try:
             details = _apply_duplicate_action(
                 connection, user["id"], document_id, action, primary_id, other_id, token_kind
@@ -11806,6 +12889,8 @@ def _remap_concept(
     vendor_id: str | None,
     value_type: str,
     unit_raw: str | None,
+    *,
+    learn: bool,
 ) -> tuple[str, str | None]:
     """The concept a corrected observation belongs to.
 
@@ -11815,13 +12900,13 @@ def _remap_concept(
     begin with.  An empty or unknown name falls back to the parser's own
     resolution.
 
-    The printed label is also offered to the alias table so a label the
-    parser has never seen is learned, but only where nothing is claiming
-    it yet: `concept_aliases` carries no owner column and vendors are
-    shared between accounts, so overwriting an existing row would let one
-    person's correction silently refile another person's next import.  The
-    correction always lands on this observation either way; what it does
-    not do is rewrite a rule someone else depends on.
+    The printed label can also be offered to the alias table so a label the
+    parser has never seen is learned. `concept_aliases` is shared by every
+    account, because vendors are shared, and it carries no owner column. Only
+    an administrator's correction teaches it (`learn`): another account's
+    correction would otherwise refile every other account's next import. The
+    correction always lands on this observation either way, and an existing
+    alias is never overwritten (INSERT OR IGNORE).
     """
     concept = _picked_concept(_concept_picker(connection), canonical_name[:300])
     if concept is None:
@@ -11833,11 +12918,12 @@ def _remap_concept(
             unit_raw=unit_raw,
             clinical_type="laboratory",
         )
-    connection.execute(
-        """INSERT OR IGNORE INTO concept_aliases(concept_id, vendor_id, alias, normalized_alias)
-               VALUES (?, ?, ?, ?)""",
-        (concept["id"], vendor_id, collapse_space(raw_name), normalized_key(raw_name)),
-    )
+    if learn:
+        connection.execute(
+            """INSERT OR IGNORE INTO concept_aliases(concept_id, vendor_id, alias, normalized_alias)
+                   VALUES (?, ?, ?, ?)""",
+            (concept["id"], vendor_id, collapse_space(raw_name), normalized_key(raw_name)),
+        )
     return str(concept["id"]), concept["preferred_unit"]
 
 _proposals_template = templates.env.from_string('{% include "_reread_proposals.html" %}')
@@ -11978,6 +13064,7 @@ def correct_observation(
             row["vendor_id"],
             value_type,
             unit,
+            learn=user["role"] == "admin",
         )
         provisional = ParsedObservation(
             raw_name=clean_name,
@@ -12029,9 +13116,7 @@ def correct_observation(
             ),
         )
         connection.execute(
-            """INSERT INTO audit_events(
-                       owner_user_id, actor_user_id, action, entity_type, entity_id, details_json, created_at
-                   ) VALUES (?, ?, ?, 'observation', ?, ?, ?)""",
+            _OBSERVATION_AUDIT_SQL,
             (
                 user["id"], user["id"],
                 audit_action,
@@ -12172,9 +13257,7 @@ def set_observation_state(
             (states[action], observation_id, user["id"]),
         )
         connection.execute(
-            """INSERT INTO audit_events(
-                       owner_user_id, actor_user_id, action, entity_type, entity_id, details_json, created_at
-                   ) VALUES (?, ?, ?, 'observation', ?, ?, ?)""",
+            _OBSERVATION_AUDIT_SQL,
             (
                 user["id"], user["id"], f"observation_{action}", observation_id,
                 json.dumps(
@@ -12194,6 +13277,49 @@ def set_observation_state(
         status_code=303,
     )
 
+@router.post("/observations/{observation_id}/sample-condition", responses=_RESPONSES_400_401_403_404)
+def set_observation_sample_condition(
+    request: Request,
+    observation_id: str,
+    condition: Annotated[str, Form()] = "",
+    csrf_token: Annotated[str, Form()] = "",
+):
+    """Record whether one result's blood sample was taken fasting, or clear it.
+
+    The person's answer outranks the laboratory's printed name, so it is stored
+    as given and is what the verdict reads.  A guest link reaches the account
+    without being its holder, so it may not write here.
+    """
+    settings = request.app.state.settings
+    user = require_user(request)
+    require_csrf(user, csrf_token)
+    if user.get("token_kind") == "guest":
+        raise HTTPException(403)
+    if condition not in ("fasting", "not_fasting", ""):
+        raise HTTPException(400)
+    stored = condition or None
+    with connect(settings) as connection:
+        row = connection.execute(
+            "SELECT concept_id, sample_condition FROM observations WHERE id=? AND owner_user_id=?",
+            (observation_id, user["id"]),
+        ).fetchone()
+        if not row:
+            raise HTTPException(404)
+        connection.execute(
+            "UPDATE observations SET sample_condition=? WHERE id=? AND owner_user_id=?",
+            (stored, observation_id, user["id"]),
+        )
+        _audit(
+            settings, user["id"], user["id"], "observation_sample_condition", "observation",
+            observation_id, {"previous": row["sample_condition"], "condition": stored},
+            connection=connection,
+        )
+    invalidate_catalog(user["id"])
+    return RedirectResponse(
+        f"/metrics/{row['concept_id']}?saved=sample_condition", status_code=303
+    )
+
+
 @router.post("/documents/{document_id}/observations", responses=_RESPONSES_400_401_403_404)
 def add_observation(
     request: Request,
@@ -12208,6 +13334,7 @@ def add_observation(
     observed_at: Annotated[str, Form()] = "",
     evidence_text: Annotated[str, Form()] = "",
     next: Annotated[str, Form()] = "",
+    ai_suggested: Annotated[str, Form()] = "",
     csrf_token: Annotated[str, Form()] = "",
 ):
     """Record a value the parser missed entirely.
@@ -12217,10 +13344,20 @@ def add_observation(
     certifying the rest of the page as correct would quietly bless that
     gap.  The row is marked as entered by hand, so it is never mistaken
     for something the parser found.
+
+    A missed value a model proposed (`ai_suggested=1`) is not a human entry:
+    it is stored as unchecked (`extracted`) so the review queue asks a person
+    to verify it against the document, the same way an AI correction is kept.
     """
     settings = request.app.state.settings
     user = require_user(request)
     require_csrf(user, csrf_token)
+    from_ai = ai_suggested == "1"
+    status, method, audit_action = (
+        ("extracted", "ai_suggested_entry", "observation_ai_entry_added")
+        if from_ai
+        else ("corrected", "human_entered", "observation_entered")
+    )
     (
         clean_name, numeric, stored_text, value_type, comparator,
         reference, low, high, clean_observed, clean_evidence,
@@ -12253,6 +13390,7 @@ def add_observation(
             vendor_id,
             value_type,
             unit,
+            learn=user["role"] == "admin",
         )
         provisional = ParsedObservation(
             raw_name=clean_name,
@@ -12277,7 +13415,7 @@ def add_observation(
                        verification_status, extraction_method, confidence, evidence_text,
                        parser_version, created_at
                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                             'corrected', 'human_entered', 1.0, ?, 'human', ?)""",
+                             ?, ?, 1.0, ?, 'human', ?)""",
             (
                 observation_id, user["id"], document["patient_id"], document_id,
                 report_id, page, concept_id, clean_name,
@@ -12285,19 +13423,20 @@ def add_observation(
                 stored_text, comparator, unit, preferred_unit,
                 clean_observed or report_date or document["report_date"],
                 reference, low, high, interpretation(provisional, concept_id),
+                status, method,
                 provisional.evidence_text, utc_now(),
             ),
         )
         connection.execute(
-            """INSERT INTO audit_events(
-                       owner_user_id, actor_user_id, action, entity_type, entity_id, details_json, created_at
-                   ) VALUES (?, ?, 'observation_entered', 'observation', ?, ?, ?)""",
+            _OBSERVATION_AUDIT_SQL,
             (
-                user["id"], user["id"], observation_id,
+                user["id"], user["id"], audit_action, observation_id,
                 json.dumps({"document_id": document_id, "concept_id": concept_id}, ensure_ascii=False),
                 utc_now(),
             ),
         )
+        # An unchecked suggestion is one more value the open review task asks for.
+        recount_review_tasks(connection, user["id"], document_id, user["id"])
     invalidate_catalog(user["id"])
     return RedirectResponse(
         _safe_next(next, f"/documents/{document_id}") + f"#observation-{observation_id}",
@@ -12477,6 +13616,7 @@ _GROUP_HEADINGS = {
     "metrics": "metrics.group_analytes",
     "device_metrics": "metrics.group_devices",
     "vaccinations": "metrics.group_vaccinations",
+    "medicines": "metrics.group_medicines",
     "findings": "metrics.group_findings",
     "documents": "metrics.group_documents",
     "panels": "metrics.group_panels",
@@ -12484,7 +13624,7 @@ _GROUP_HEADINGS = {
 }
 _GROUP_KINDS = {
     "metrics": "metric", "device_metrics": "metric", "panels": "panel",
-    "vaccinations": "row", "findings": "row", "documents": "row", "areas": "row",
+    "vaccinations": "row", "medicines": "row", "findings": "row", "documents": "row", "areas": "row",
 }
 
 def _group(key: str, rows: list, *, kind: str | None = None, page=None, fold: bool = False) -> dict[str, object]:
@@ -12602,6 +13742,23 @@ def _document_entries(
     ).fetchall()
     return [_document_entry(row, reported, analyte_terms) for row in rows]
 
+def _medicine_search_entries(connection, owner_user_id: str) -> list[tuple[record_search.Terms, dict[str, object]]]:
+    """One search result per medicine or other entry, titled by its name and
+    showing its kind, its status now and its active substance."""
+    locale = get_locale()
+    entries = []
+    for row in factors.listing(connection, owner_user_id, today=date.today()):
+        subtitle = " · ".join(part for part in (
+            factors_view.kind_label(row["kind"], locale),
+            factors_view.status_label(row["effective_status"], locale),
+            row["substance"],
+        ) if part)
+        entries.append((
+            record_search.terms([row["name"], row["substance"], row["reason"]]),
+            {"kind": "medicine", "title": row["name"], "subtitle": subtitle, "url": f"/medicines/{row['id']}"},
+        ))
+    return entries
+
 def _record_search(connection, owner_user_id: str, q: str, offset: int) -> list[dict[str, object]]:
     """Every kind of thing the record holds, matched by word starts and
     case endings in both languages (`web/search.py` has the rules)."""
@@ -12635,6 +13792,7 @@ def _record_search(connection, owner_user_id: str, q: str, offset: int) -> list[
             (record_search.terms([entry["title"], *entry.get("terms", [])], [entry.get("subtitle"), "vaccination"]), entry)
             for entry in vaccinations
         ],
+        "medicines": _medicine_search_entries(connection, owner_user_id),
         "findings": [
             (
                 record_search.terms(
@@ -12961,6 +14119,12 @@ def _metric_history_row(connection, concept_id: str, row, date_of_birth, sex) ->
         )
     )
 
+def _shown_requires(value) -> list[str]:
+    """A rule's ``requires`` values the reader is told about: the silent ones
+    (a non-fasting sample, planning a pregnancy) are matching machinery only."""
+    keys = [value] if isinstance(value, str) else list(value or ())
+    return [key for key in keys if key not in _SILENT_REQUIRES]
+
 def _metric_rule(raw_rule, age, sex, page_context) -> dict[str, object]:
     rule = dict(raw_rule)
     # label_uk / verdict.* in the reader's language (F4 helpers); a note
@@ -12974,11 +14138,18 @@ def _metric_rule(raw_rule, age, sex, page_context) -> dict[str, object]:
     rule["publisher"] = translate_phrase(str(rule["publisher"]))
     # Matching keys (assay cut-off, risk category, its requirement) are
     # machinery the applicability chip already states in words.
-    rule["context"] = localize_mapping({
+    context = {
         key: value for key, value in rule_context(rule["context_json"]).items()
-        if key not in {"vendor_upper", "not_vendor_upper", "cv_risk_category", "requires"}
+        if key not in {"vendor_upper", "not_vendor_upper", "cv_risk_category", "requires", "excludes", "lower_source_id"}
         or (key == "requires" and "cv_risk_category" not in value)
-    })
+    }
+    if "requires" in context:
+        shown = _shown_requires(context["requires"])
+        if shown:
+            context["requires"] = shown
+        else:
+            del context["requires"]
+    rule["context"] = localize_mapping(context)
     rule["range_text"] = _bounds_text(rule["lower_bound"], rule["upper_bound"], rule["unit"])
     # Two bands named "Within the reference interval" with different
     # numbers are unreadable until each says whose numbers they are.
@@ -12987,9 +14158,11 @@ def _metric_rule(raw_rule, age, sex, page_context) -> dict[str, object]:
     # all five LDL tiers used to read "Applies to you".
     requirement = rule_requirement(raw_rule)
     if requirement:
-        rule["applicability"] = " · ".join(
-            part for part in (rule.get("applicability"), str(requirement["label"])) if part
-        )
+        # A band that needs only a silent fact names no requirement to the reader.
+        if _shown_requires(requirement["requires"]):
+            rule["applicability"] = " · ".join(
+                part for part in (rule.get("applicability"), str(requirement["label"])) if part
+            )
         rule["applies_to_you"] = bool(rule["applies_to_you"]) and rule_applies_to_context(
             raw_rule, page_context
         )
@@ -13124,6 +14297,23 @@ def _method_series(
     return series
 
 
+def _extend_chart_with_methods(chart_points: list, method_series: list) -> None:
+    chart_unit = canonical_unit(str(chart_points[0]["unit"])) if chart_points else None
+    for method in method_series:
+        # Drawn beside the main series only on the same axis unit.
+        chart_points.extend(
+            point for point in method["points"]
+            if chart_unit is None or canonical_unit(str(point["unit"])) == chart_unit
+        )
+
+
+def _chart_sources(chart_points: list) -> set[str]:
+    chart_sources = {str(point["source"]) for point in chart_points if point["line"] == "main"}
+    if any(point["line"] == "method" for point in chart_points):
+        chart_sources.add("method")
+    return chart_sources
+
+
 @router.get("/metrics/{concept_id}", response_class=HTMLResponse, responses=_RESPONSES_401_404)
 def metric_detail(request: Request, concept_id: str, offset: int = 0):
     settings = request.app.state.settings
@@ -13158,21 +14348,29 @@ def metric_detail(request: Request, concept_id: str, offset: int = 0):
         date_of_birth = patient["date_of_birth"] if patient else None
         twin_links = _twin_links(connection, user["id"], concept_id)
         method_series = _method_series(connection, user["id"], concept, date_of_birth, age, sex)
+        factor_periods = factors_view.chart_periods(
+            connection, user["id"], [concept_id], locale=get_locale(), today=date.today(),
+        )
     for row in values:
         _metric_history_row(connection, concept_id, row, date_of_birth, sex)
+    # Only an analyte whose published bands are written for fasting samples
+    # asks the question; everywhere else the column and its sentence are absent.
+    fasting_applies = _fasting_applies(connection, concept_id)
+    if fasting_applies:
+        for row in values:
+            row["fasting_state"] = _fasting_state(row)
+    # The answer is the owner's to give: a shared record or a guest link reads it.
+    can_mark_fasting = (
+        fasting_applies
+        and viewing_row(request) is None
+        and current_user(request).get("token_kind") != "guest"
+    )
+    sample_saved = request.query_params.get("saved") == "sample_condition"
     parsed_rules = [_metric_rule(raw_rule, age, sex, page_context) for raw_rule in rules]
     chart_points = _metric_chart(connection, values, concept["preferred_unit"], date_of_birth, sex)
-    chart_unit = canonical_unit(str(chart_points[0]["unit"])) if chart_points else None
-    for method in method_series:
-        # Drawn beside the main series only on the same axis unit.
-        chart_points.extend(
-            point for point in method["points"]
-            if chart_unit is None or canonical_unit(str(point["unit"])) == chart_unit
-        )
+    _extend_chart_with_methods(chart_points, method_series)
     chart_points.sort(key=lambda point: str(point["date"]))
-    chart_sources = {str(point["source"]) for point in chart_points if point["line"] == "main"}
-    if any(point["line"] == "method" for point in chart_points):
-        chart_sources.add("method")
+    chart_sources = _chart_sources(chart_points)
     latest, previous_numeric, verdict = _metric_latest(connection, concept_id, values, card)
     chart_band = _chart_band(verdict)
     history_page = _pagination(len(values), max(0, offset), METRIC_HISTORY_PAGE_SIZE, f"/metrics/{concept_id}")
@@ -13182,6 +14380,7 @@ def metric_detail(request: Request, concept_id: str, offset: int = 0):
         "metric_detail.html",
         template_context(
             request, concept=concept, values=values, aliases=aliases, rules=parsed_rules,
+            factor_periods=factor_periods,
             history=history,
             page=history_page,
             # A legend only where the chart mixes paths; a lab-only chart has one.
@@ -13193,6 +14392,9 @@ def metric_detail(request: Request, concept_id: str, offset: int = 0):
             latest=latest, previous_numeric=previous_numeric,
             card=card,
             verdict=verdict,
+            fasting_applies=fasting_applies,
+            can_mark_fasting=can_mark_fasting,
+            sample_saved=sample_saved,
             blocked_notice=_blocked_notice(verdict),
             trend=(card or {}).get("trend"),
             staleness=(card or {}).get("staleness")
@@ -13468,6 +14670,11 @@ def _exclusion_context(connection, owner_user_id: str, metric_key: str, comparis
     }
 
 
+def _device_twin_concepts(metric_key: str) -> list[str]:
+    """The lab concepts a device metric is the same measurement as (may be none)."""
+    return [concept for concept, twins in MEASUREMENT_TWINS.items()
+            if any(key == metric_key for key, _relation in twins)]
+
 @router.get("/devices/metrics/{metric_key}", response_class=HTMLResponse, responses=_RESPONSES_401_404)
 def device_metric_detail(request: Request, metric_key: str, offset: int = 0):
     settings = request.app.state.settings
@@ -13493,6 +14700,9 @@ def device_metric_detail(request: Request, metric_key: str, offset: int = 0):
         )
         can_manage = viewing_row(request) is None and current_user(request).get("token_kind") != "guest"
         exclusion = _exclusion_context(connection, user["id"], metric_key, comparison, unit, can_manage)
+        factor_periods = factors_view.chart_periods(
+            connection, user["id"], _device_twin_concepts(metric_key), locale=get_locale(), today=date.today(),
+        )
     freshness = _device_staleness(
         latest["day"], entry, interpretation=str(verdict["interpretation"]), age_years=age,
         daily=_arrives_daily([day["day"] for day in comparison["days"][:90]]),
@@ -13527,6 +14737,7 @@ def device_metric_detail(request: Request, metric_key: str, offset: int = 0):
             values=values,
             comparison=comparison,
             can_manage_sources=can_manage,
+            factor_periods=factor_periods,
             exclusion=exclusion,
             day_groups=day_groups,
             latest=latest,
@@ -14050,6 +15261,7 @@ def _apply_review_action(connection, user_id: str, entity_type: str, entity_id: 
             *allowed,
         ),
     )
+    details = "{}"
     if action == "verify" and entity_type == "document":
         # Only the values nobody has ruled on move: a correction and a
         # set-aside are decisions a bulk verification must not overwrite.
@@ -14078,6 +15290,16 @@ def _apply_review_action(connection, user_id: str, entity_type: str, entity_id: 
             (entity_id,),
         )
     elif action == "reopen" and entity_type == "document":
+        # Named before they change, so the audit line says which values the
+        # reopening moved back to provisional.
+        reopened_ids = [
+            row["id"] for row in connection.execute(
+                """SELECT id FROM observations
+                       WHERE document_id=? AND owner_user_id=? AND verification_status='verified'""",
+                (entity_id, user_id),
+            )
+        ]
+        details = json.dumps({"reopened_observation_ids": reopened_ids})
         connection.execute(
             """UPDATE observations SET verification_status='extracted'
                    WHERE document_id=? AND owner_user_id=? AND verification_status='verified'""",
@@ -14095,7 +15317,7 @@ def _apply_review_action(connection, user_id: str, entity_type: str, entity_id: 
     connection.execute(
         """INSERT INTO audit_events(owner_user_id, actor_user_id, action, entity_type, entity_id, details_json, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
-        (user_id, user_id, f"review_{action}", entity_type, entity_id, "{}", utc_now()),
+        (user_id, user_id, f"review_{action}", entity_type, entity_id, details, utc_now()),
     )
     if entity_type == "document":
         recount_review_tasks(connection, user_id, entity_id, user_id)
@@ -14155,7 +15377,7 @@ def resolve_review(
 # URL with an anonymous fetch, so neither route may require a session.
 # `shell=True` gives the signed-out render the same page width the
 # signed-in chrome gets for free.
-@router.get("/healthz", include_in_schema=False)
+@router.api_route("/healthz", methods=["GET", "HEAD"], include_in_schema=False)
 def healthz(request: Request):
     """Liveness for the container healthcheck: the process answers and the
     database opens.  Public and content-free on purpose."""
@@ -14193,6 +15415,8 @@ async def _lifespan(app: FastAPI):
     # Oura: webhook events are processed on a timer (not only when the next
     # webhook arrives), and every usable account catches up once a day.
     oura_stop, oura_thread = oura.start_scheduler(settings) if workers_enabled else (None, None)
+    # Paperless: an upload stores only a task id; this links the finished ones.
+    paperless_stop = paperless.start_scheduler(settings) if workers_enabled else None
     if workers_enabled:
         telegram_service.start()
     try:
@@ -14200,12 +15424,46 @@ async def _lifespan(app: FastAPI):
     finally:
         if garmin_stop:
             garmin_stop.set()
+        if paperless_stop:
+            paperless_stop.set()
         if oura_stop:
             oura_stop.set()
             await run_in_threadpool(oura_thread.join, 10)
         await run_in_threadpool(telegram_service.stop)
         if ow_worker:
             await run_in_threadpool(ow_hooks.stop_worker, ow_worker)
+
+
+class _Compression:
+    """GZip for responses, without losing the messages Starlette's GZip drops.
+
+    Its responder forwards only the response start and body.  Anything else an
+    application sends — the debug message a template response carries for the
+    test client, a server's zero-copy file send — never reaches the client.
+    Those are handed straight to the real `send`, around the compressor.
+    """
+
+    def __init__(self, app, minimum_size: int = 1024) -> None:
+        self._app = app
+        self._gzip = GZipMiddleware(self._inner, minimum_size=minimum_size)
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self._app(scope, receive, send)
+            return
+        scope["anamna.send"] = send
+        await self._gzip(scope, receive, send)
+
+    async def _inner(self, scope, receive, compressed_send) -> None:
+        direct = scope["anamna.send"]
+
+        async def route(message) -> None:
+            if message["type"] in ("http.response.start", "http.response.body"):
+                await compressed_send(message)
+            else:
+                await direct(message)
+
+        await self._app(scope, receive, route)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -14231,7 +15489,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     reclaim_abandoned_jobs(settings)
     telegram_service = TelegramService(settings)
 
-    app = FastAPI(title="Anamna", docs_url=None, redoc_url=None, lifespan=_lifespan)
+    app = FastAPI(title="Anamna", docs_url=None, redoc_url=None, openapi_url=None, lifespan=_lifespan)
     app.state.settings = settings
     app.state.telegram = telegram_service
     # ponytail: the generated code lives in this process's memory, so a
@@ -14243,11 +15501,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         announce_setup_code(app)
     app.mount("/static", StaticFiles(directory=WEB_DIR / "static"), name="static")
     app.include_router(router)
+    # A lab sync runs on its own thread and edits results in place, which the
+    # catalog's fingerprint cannot see; it reports the owners it touched here.
+    labsync.on_record_change(invalidate_catalog)
     app.middleware('http')(token_scope)
     app.middleware('http')(security_headers)
     app.middleware('http')(locale_middleware)
     app.middleware('http')(derived_values)
+    # Outermost, so it compresses what the others produce.  Starlette leaves
+    # text/event-stream alone, which the chat's streamed answers depend on.
+    app.add_middleware(_Compression, minimum_size=1024)
     app.add_exception_handler(401, login_redirect)
+    app.add_exception_handler(StarletteHTTPException, http_error_page)
 
     register_openwearables_routes(app, settings, require_admin, require_csrf)
     register_telegram_routes(
@@ -14268,9 +15533,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app, settings, templates=templates, template_context=template_context, require_user=require_user,
         record_user=record_user, require_csrf=require_csrf, audit=partial(_audit, settings),
     )
+    register_found_routes(
+        app, settings, templates=templates, template_context=template_context, require_user=require_user,
+        record_user=record_user, require_csrf=require_csrf, audit=partial(_audit, settings),
+        document_row=_document_row,
+    )
+    register_factors_routes(
+        app, settings, templates=templates, template_context=template_context, require_user=require_user,
+        record_user=record_user, require_csrf=require_csrf, audit=partial(_audit, settings),
+        document_row=_document_row,
+    )
     register_chat_routes(
         app, settings, templates=templates, template_context=template_context, require_user=require_user,
-        record_user=record_user, require_csrf=require_csrf, viewing_row=viewing_row,
+        record_user=record_user, require_csrf=require_csrf,
     )
     for register in (register_allergy_routes, register_genetics_routes):
         register(app, settings, templates=templates, template_context=template_context,
@@ -14296,4 +15571,8 @@ async def app(scope, receive, send) -> None:
 
 def run() -> None:
     port = int(os.environ.get("PORT") or 8000)
-    uvicorn.run("anamna.web.app:app", host="127.0.0.1", port=port, reload=False)
+    # The access log would print guest-link secrets (/t/<secret>) and search
+    # text from the query string, so it stays off.
+    uvicorn.run(
+        "anamna.web.app:app", host="127.0.0.1", port=port, reload=False, access_log=False,
+    )

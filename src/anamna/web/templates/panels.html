@@ -82,7 +82,7 @@
 {% endif %}
 </div>
 {% if sort != 'attention' and groups %}
-<script>
+<script nonce="{{ csp_nonce }}">
 (() => {
   // Reorder the cards already rendered instead of reloading the page. Each
   // card keeps a placeholder in its area so "By area" puts it back.

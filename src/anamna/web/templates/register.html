@@ -5,11 +5,11 @@
   <div class="login-card">
     <span class="brand-mark large" aria-hidden="true">A</span>
     <h1>{{ t('register.heading_form') }}</h1>
-    {% if error %}<div class="alert error" role="alert">{{ error }}</div>{% endif %}
+    {% if error %}<div class="alert error" role="alert" id="register-error">{{ error }}</div>{% endif %}
     <form action="/register" method="post" class="stack-form">
       <label>{{ t('register.name') }}<input name="display_name" autocomplete="name" required></label>
-      <label>{{ t('login.email') }}<input name="email" type="email" autocomplete="username" required></label>
-      <label>{{ t('login.password') }}<input name="password" type="password" autocomplete="new-password" minlength="10" required></label>
+      <label>{{ t('login.email') }}<input name="email" type="email" autocomplete="username" required{% if error %} aria-describedby="register-error" aria-invalid="true"{% endif %}></label>
+      <label>{{ t('login.password') }}<input name="password" type="password" autocomplete="new-password" minlength="10" required{% if error %} aria-describedby="register-error" aria-invalid="true"{% endif %}></label>
       <button class="primary" type="submit">{{ t('register.submit') }}</button>
     </form>
     <p class="tiny muted">{{ t('register.agree_prefix') }} <a href="/terms">{{ t('register.agree_terms') }}</a> {{ t('register.agree_and') }} <a href="/privacy">{{ t('register.agree_privacy') }}</a>.</p>

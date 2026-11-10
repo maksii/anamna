@@ -29,8 +29,8 @@ def test_guest_cannot_inherit_records_shared_with_the_inviting_owner(tmp_path, c
         seed_document(settings, user, patient, f"{label} private result", f"{label}.txt")
     with connect(settings) as connection:
         connection.execute(
-            "INSERT INTO record_shares(id, owner_user_id, grantee_email, created_at) VALUES (?, ?, ?, ?)",
-            ("share", other, "alpha@example.test", utc_now()),
+            "INSERT INTO record_shares(id, owner_user_id, grantee_email, grantee_user_id, created_at) VALUES (?, ?, ?, ?, ?)",
+            ("share", other, "alpha@example.test", owner, utc_now()),
         )
     _, secret = create_access_token(
         settings, owner, "guest", "Read Alpha only",

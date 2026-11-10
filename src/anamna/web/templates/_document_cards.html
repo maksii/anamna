@@ -46,7 +46,6 @@
     <div class="an-upload-recent__actions">
       <span class="an-upload-recent__status">{{ item.status_text }}</span>
       <form action="/documents/{{ item.id }}/delete" method="post"
-            onsubmit="return confirm(this.dataset.confirm)"
             data-confirm="{{ t('doc.delete_confirm', name=item.title_text) }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="next" value="/upload">

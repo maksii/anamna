@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import time
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
@@ -278,7 +279,7 @@ def test_oura_events_need_the_signature_garmin_events_need_the_shape(tmp_path: P
     body = json.dumps(
         {"event_type": "create", "data_type": "sleep", "object_id": "obj-1", "user_id": "u-1"}
     ).encode()
-    timestamp = "1754500000"
+    timestamp = str(int(time.time()))
     signature = hmac.new(
         b"oura-client-secret", timestamp.encode() + body, hashlib.sha256
     ).hexdigest().upper()

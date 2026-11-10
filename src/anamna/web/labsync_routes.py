@@ -82,8 +82,12 @@ def _admin_providers(settings) -> list[dict]:
 
 
 def _rechecked_counts(params) -> dict[str, str]:
-    return {name: format_number_localized(int(params.get(name) or 0), 0)
-            for name in RECHECK_COUNTS if (params.get(name) or "0").isdigit()}
+    counts = {}
+    for name in RECHECK_COUNTS:
+        value = params.get(name) or "0"
+        if value.isascii() and value.isdigit():
+            counts[name] = format_number_localized(int(value), 0)
+    return counts
 
 
 def _admin_done(done: str, rechecked: dict[str, str]) -> str:

@@ -57,6 +57,7 @@ VISIT_KINDS = (
     "consultation", "clinical_report", "radiology_mri", "radiology_xray", "ultrasound",
     "pathology", "diagnostic_image", "electrocardiogram", "microbiology",
 )
+_EVENT_STREAM = "text/event-stream"
 
 
 # --- the record, as tools --------------------------------------------------------
@@ -146,7 +147,12 @@ def _negatives(cards: list[dict]) -> tuple[list[dict], str]:
     if len(negative) < fx.ALLERGEN_COLLAPSE_MIN:
         return cards, ""
     days = sorted({str(card.get("latest_date") or "")[:10] for card in negative} - {""})
-    span = days[0] if len(days) == 1 else (f"{days[0]}..{days[-1]}" if days else "-")
+    if len(days) == 1:
+        span = days[0]
+    elif days:
+        span = f"{days[0]}..{days[-1]}"
+    else:
+        span = "-"
     kept = [card for card in cards if card not in negative]
     return kept, (f"- {len(negative)} allergen components negative (below the cut-off) @{span}; "
                   "search_record finds one by name")
@@ -185,356 +191,580 @@ def _device_detail(summary: dict) -> str:
     return "\n".join(lines)
 
 
-def build_tools(connection, owner_id: str) -> dict[str, chat.Tool]:
-    """The read-only tools, every one bound to ``owner_id``."""
+def _catalog(connection, owner_id: str) -> list[dict]:
     from . import app as web
-    from .. import allergy, genetics, testplan
-    from .. import immunizations as vaccines
-    from ..devices.queries import device_history_summary
+
+    return web._metric_catalog(connection, owner_id, include_suppressed=True)
+
+
+def _find_document(connection, owner_id: str, raw: str) -> str | None:
+    key = _clean_id(raw)
+    if not key:
+        return None
+    pattern = key.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+    rows = connection.execute(
+        "SELECT id FROM documents WHERE owner_user_id = ? AND id LIKE ? ESCAPE '\\' LIMIT 2",
+        (owner_id, pattern),
+    ).fetchall()
+    return str(rows[0][0]) if len(rows) == 1 else None
+
+
+def _result_rows(cards: list[dict], sources: Sources) -> list[str]:
+    return [result_row(card, sources) for card in cards]
+
+
+def _tool_search_record(connection, owner_id: str, sources: Sources, args: dict) -> str:
+    from . import app as web
+
+    query = _text(args, "query", 120)
+    groups = web._record_search(connection, owner_id, query, 0) if query else []
+    if not groups:
+        return (f"Nothing matches {query!r}. Try another spelling, the English or Ukrainian name, "
+                "or list_results.")
+    out = []
+    for group in groups:
+        rows = [*group["rows"], *group["more_rows"]]
+        out.append(f"## {group['heading']} ({group['total']})")
+        for item in rows[:20]:
+            if group["key"] in ("metrics", "device_metrics"):
+                out.append(result_row(item, sources))
+            else:
+                out.append(f"- {item.get('title')}; {item.get('subtitle') or ''}".rstrip("; ") + _ids(item.get("url")))
+        if group["total"] > 20:
+            out.append(f"- +{group['total'] - 20} more; narrow the query")
+    return "\n".join(out)
+
+
+def _metric_card_lines(card: dict | None, sources: Sources) -> list[str]:
+    """The result's own line, its retest state and its panel."""
+    if not card:
+        return []
+    out = [result_row(card, sources)]
+    freshness = card.get("staleness") or {}
+    if freshness.get("state") in {"overdue", "due_soon"} or freshness.get("due_on"):
+        out.append(f"retest: {freshness.get('state')}" + (f", due {freshness['due_on']}" if freshness.get("due_on") else ""))
+    if card.get("panel_id"):
+        out.append(f"panel:{card['panel_id']}")
+    return out
+
+
+def _history_context(item: dict, sources: Sources) -> dict:
+    """What a history row says: the judgement, the laboratory's own range and the source."""
+    verdict = item.get("verdict") or {}
+    return {
+        "judged": judged(verdict, sources),
+        "lab": "" if item.get("hide_lab") or not item.get("display_reference") else f" lab {item['display_reference']}",
+        "source": " device" if item.get("is_device") else f" {item.get('vendor') or '-'} {_doc(item.get('document_id'))}",
+    }
+
+
+def _history_text(item: dict, current: dict, previous: dict) -> str:
+    """One history row, leaving out whatever the row above already said."""
+    verdict = item.get("verdict") or {}
+    text = (f"{str(item.get('observed_at') or '-')[:10]} {item['display_value']} {item['display_unit']}".rstrip()
+            + f" {_code(verdict.get('interpretation'))}")
+    text += "".join(value for key, value in current.items() if value != previous[key])
+    if str(item.get("verification_status")) in {"verified", "corrected"}:
+        text += " ✓"
+    return text
+
+
+def _metric_history_lines(connection, metric_id: str, rows: list[dict], birth, sex, sources: Sources) -> list[str]:
+    from . import app as web
+
+    out = []
+    previous = {"judged": None, "lab": None, "source": None}
+    for item in rows[:HISTORY_ROWS]:
+        web._metric_history_row(connection, metric_id, item, birth, sex)
+        current = _history_context(item, sources)
+        out.append(_history_text(item, current, previous))
+        previous = current
+    return out
+
+
+def _tool_get_metric(connection, owner_id: str, sources: Sources, args: dict) -> str:
+    from . import app as web
+
+    metric_id = _clean_id(_text(args, "metric_id", 120))
+    rows = web._linked_observation_rows(connection, owner_id, metric_id) if metric_id else []
+    if not rows:
+        summaries = [item for item in web.device_history(connection, owner_id)
+                     if str(item["metric_key"]) == metric_id]
+        if summaries:
+            return _device_detail(summaries[0])
+        return f"No results for {metric_id!r}. search_record finds the id."
+    _age, sex = web._demographics(connection, owner_id)
+    patient = web._patient_row(connection, owner_id)
+    birth = patient["date_of_birth"] if patient else None
+    card = web._by_id(_catalog(connection, owner_id)).get(metric_id)
+    out = _metric_card_lines(card, sources)
+    entry = web._guidance_index(connection).get(metric_id) or {}
+    about = " ".join(str(entry.get(key) or "").strip() for key in ("short_description", "why_it_matters")).strip()
+    if about:
+        out.append(f"about: {about}")
+    out.append(f"history, newest first ({len(rows)}):")
+    out += _metric_history_lines(connection, metric_id, rows, birth, sex, sources)
+    if len(rows) > HISTORY_ROWS:
+        out.append(f"+{len(rows) - HISTORY_ROWS} older readings")
+    return "\n".join(out)
+
+
+def _area_overview(cards: list[dict]) -> str:
     from ..health import HEALTH_AREAS
     from ..i18n import translate_phrase
 
-    sources = Sources(connection)
+    out = ["Body systems (results, outside interval):"]
+    for area in HEALTH_AREAS:
+        members = [card for card in cards if area["id"] in card["area_ids"]]
+        if members:
+            flagged = sum(1 for card in members if fx._severity(card) < 2)
+            out.append(f"- {translate_phrase(str(area['name']))} area:{area['id']} {len(members)}, {flagged}")
+    return "\n".join(out)
 
-    def catalog() -> list[dict]:
-        return web._metric_catalog(connection, owner_id, include_suppressed=True)
 
-    def row(card: dict) -> str:
-        return result_row(card, sources)
+def _tool_list_results(connection, owner_id: str, sources: Sources, args: dict) -> str:
+    area_id = _clean_id(_text(args, "area_id", 40))
+    cards = [card for card in _catalog(connection, owner_id) if not card.get("is_device")]
+    if not area_id:
+        return _area_overview(cards)
+    members = sorted((card for card in cards if area_id in card["area_ids"]),
+                     key=lambda card: (fx._severity(card), str(card["name"])))
+    if not members:
+        return f"No results in {area_id!r}. list_results without area_id lists the areas."
+    members, collapsed = _negatives(members)
+    return "\n".join([*_result_rows(members, sources), *([collapsed] if collapsed else [])])
 
-    def find_document(raw: str) -> str | None:
-        key = _clean_id(raw)
-        if not key:
-            return None
-        pattern = key.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
-        rows = connection.execute(
-            "SELECT id FROM documents WHERE owner_user_id = ? AND id LIKE ? ESCAPE '\\' LIMIT 2",
-            (owner_id, pattern),
-        ).fetchall()
-        return str(rows[0][0]) if len(rows) == 1 else None
 
-    def search_record(args: dict) -> str:
-        query = _text(args, "query", 120)
-        groups = web._record_search(connection, owner_id, query, 0) if query else []
-        if not groups:
-            return (f"Nothing matches {query!r}. Try another spelling, the English or Ukrainian name, "
-                    "or list_results.")
-        out = []
-        for group in groups:
-            rows = [*group["rows"], *group["more_rows"]]
-            out.append(f"## {group['heading']} ({group['total']})")
-            for item in rows[:20]:
-                if group["key"] in ("metrics", "device_metrics"):
-                    out.append(row(item))
-                else:
-                    out.append(f"- {item.get('title')}; {item.get('subtitle') or ''}".rstrip("; ") + _ids(item.get("url")))
-            if group["total"] > 20:
-                out.append(f"- +{group['total'] - 20} more; narrow the query")
+def _documents_query(connection, owner_id: str, where: str = "", params: tuple = ()) -> list[dict]:
+    from . import app as web
+
+    return [web._document_row(item) for item in connection.execute(
+        f"""SELECT d.id, d.title, d.original_filename, d.report_date, d.imported_at, d.clinical_type,
+                   v.canonical_name vendor,
+                   (SELECT COUNT(*) FROM observations o WHERE o.document_id = d.id
+                     AND o.verification_status <> 'rejected') observation_count
+              FROM documents d LEFT JOIN vendors v ON v.id = d.vendor_id
+             WHERE d.owner_user_id = ? AND d.duplicate_of_document_id IS NULL {where}
+             ORDER BY d.report_date IS NULL, d.report_date DESC, d.imported_at DESC""",
+        (owner_id, *params),
+    )]
+
+
+def _document_line(item: dict) -> str:
+    count = int(item.get("observation_count") or 0)
+    return (f"- {item.get('report_date') or '-'} {_document_name(item)}; {item.get('vendor')}"
+            + (f"; {count} values" if count else "") + f" {_doc(item['id'])}")
+
+
+def _tool_list_documents(connection, owner_id: str, args: dict) -> str:
+    query, kind, offset = _text(args, "query", 80).casefold(), _text(args, "kind", 40), _int(args, "offset")
+    rows = _documents_query(connection, owner_id)
+    if kind:
+        rows = [item for item in rows if item.get("clinical_type") == kind]
+    if query:
+        rows = [item for item in rows if query in " ".join(
+            str(item.get(key) or "") for key in ("title_text", "original_filename", "vendor", "type_label")
+        ).casefold()]
+    page = rows[offset: offset + MAX_LIST]
+    out = [f"{len(rows)} documents, newest first" + (f", {offset + 1}-{offset + len(page)}:" if rows else "")]
+    out += [_document_line(item) for item in page]
+    if offset + len(page) < len(rows):
+        out.append(f"+more: offset={offset + len(page)}")
+    return "\n".join(out)
+
+
+def _result_sections(document: dict, observations: list, findings: list[str], sources: Sources) -> list[str]:
+    """A document's results and conclusions, as read_document prints them."""
+    out = []
+    if observations:
+        dated = str(document.get("report_date") or "")[:10]
+        out.append(f"results ({len(observations)}; dated {dated or 'per row'} unless a row says @):")
+        out += [result_row(fx._observation_card(item), sources, dated) for item in observations[:HISTORY_ROWS]]
+    if findings:
+        out += ["conclusions:", *findings]
+    return out
+
+
+def _document_text_lines(pages, first_page: int) -> list[str]:
+    """The page text that fits the budget, from ``first_page`` on, with its page markers."""
+    shown, budget = [], DOCUMENT_TEXT_CHARS
+    for page in pages:
+        if page["page_number"] < first_page:
+            continue
+        text = redact_document_text(str(page["text"] or "")).strip()
+        if shown and len(text) > budget:
+            break
+        shown.append((page["page_number"], text[:budget]))
+        budget -= len(text)
+    out = [f"text ({len(pages)} pages, identifying lines removed):"]
+    for number, text in shown:
+        out += [f"[p{number}]", text or "(no text)"]
+    if shown and shown[-1][0] < len(pages):
+        out.append(f"+more: page={shown[-1][0] + 1}")
+    elif not pages:
+        out.append("(no text was extracted)")
+    return out
+
+
+def _tool_read_document(connection, owner_id: str, sources: Sources, args: dict) -> str:
+    from . import app as web
+
+    raw, first_page = _text(args, "document_id", 80), _int(args, "page", 0)
+    document_id = _find_document(connection, owner_id, raw)
+    subject = web._scope_document(connection, owner_id, document_id) if document_id else None
+    if subject is None:
+        return f"No document {raw!r} in this record. list_documents or search_record finds the id."
+    document = subject["document"]
+    out = [f"{_document_name(document)}; {document.get('vendor')}; {document.get('report_date') or '-'}; "
+           f"{_doc(document_id)}"]
+    observations = list(subject.get("observations") or ())
+    findings = list(dict.fromkeys(fx._finding_line(item) for item in subject.get("findings") or ()))
+    if not first_page:
+        out += _result_sections(document, observations, findings, sources)
+    pages = connection.execute(
+        """SELECT page_number, COALESCE(NULLIF(native_text, ''), ocr_text, '') text
+             FROM document_pages WHERE document_id = ? ORDER BY page_number""",
+        (document_id,),
+    ).fetchall()
+    if not first_page and (observations or findings):
+        # The results and conclusions are what was read from these pages;
+        # the text itself is ~3k tokens a call and is fetched on request.
+        if pages:
+            out.append(f"text: {len(pages)} pages, not included; page=1 reads it")
         return "\n".join(out)
+    out += _document_text_lines(pages, max(1, first_page))
+    return "\n".join(out)
 
-    def get_metric(args: dict) -> str:
-        metric_id = _clean_id(_text(args, "metric_id", 120))
-        rows = web._linked_observation_rows(connection, owner_id, metric_id) if metric_id else []
-        if not rows:
-            summaries = [item for item in device_history_summary(connection, owner_id)
-                         if str(item["metric_key"]) == metric_id]
-            if summaries:
-                return _device_detail(summaries[0])
-            return f"No results for {metric_id!r}. search_record finds the id."
-        _age, sex = web._demographics(connection, owner_id)
-        patient = web._patient_row(connection, owner_id)
-        birth = patient["date_of_birth"] if patient else None
-        card = web._by_id(catalog()).get(metric_id)
-        out = []
-        if card:
-            out.append(row(card))
-            freshness = card.get("staleness") or {}
-            if freshness.get("state") in {"overdue", "due_soon"} or freshness.get("due_on"):
-                out.append(f"retest: {freshness.get('state')}" + (f", due {freshness['due_on']}" if freshness.get("due_on") else ""))
-            if card.get("panel_id"):
-                out.append(f"panel:{card['panel_id']}")
-        entry = web._guidance_index(connection).get(metric_id) or {}
-        about = " ".join(str(entry.get(key) or "").strip() for key in ("short_description", "why_it_matters")).strip()
-        if about:
-            out.append(f"about: {about}")
-        out.append(f"history, newest first ({len(rows)}):")
-        previous = {"judged": None, "lab": None, "source": None}
-        for item in rows[:HISTORY_ROWS]:
-            web._metric_history_row(connection, metric_id, item, birth, sex)
-            verdict = item.get("verdict") or {}
-            current = {
-                "judged": judged(verdict, sources),
-                "lab": "" if item.get("hide_lab") or not item.get("display_reference") else f" lab {item['display_reference']}",
-                "source": " device" if item.get("is_device") else f" {item.get('vendor') or '-'} {_doc(item.get('document_id'))}",
-            }
-            text = (f"{str(item.get('observed_at') or '-')[:10]} {item['display_value']} {item['display_unit']}".rstrip()
-                    + f" {_code(verdict.get('interpretation'))}")
-            text += "".join(value for key, value in current.items() if value != previous[key])
-            if str(item.get("verification_status")) in {"verified", "corrected"}:
-                text += " ✓"
-            out.append(text)
-            previous = current
-        if len(rows) > HISTORY_ROWS:
-            out.append(f"+{len(rows) - HISTORY_ROWS} older readings")
-        return "\n".join(out)
 
-    def list_results(args: dict) -> str:
-        area_id = _clean_id(_text(args, "area_id", 40))
-        cards = [card for card in catalog() if not card.get("is_device")]
-        if not area_id:
-            out = ["Body systems (results, outside interval):"]
-            for area in HEALTH_AREAS:
-                members = [card for card in cards if area["id"] in card["area_ids"]]
-                if members:
-                    flagged = sum(1 for card in members if fx._severity(card) < 2)
-                    out.append(f"- {translate_phrase(str(area['name']))} area:{area['id']} {len(members)}, {flagged}")
-            return "\n".join(out)
-        members = sorted((card for card in cards if area_id in card["area_ids"]),
-                         key=lambda card: (fx._severity(card), str(card["name"])))
-        if not members:
-            return f"No results in {area_id!r}. list_results without area_id lists the areas."
-        members, collapsed = _negatives(members)
-        return "\n".join([*map(row, members), *([collapsed] if collapsed else [])])
+def _tool_list_visits(connection, owner_id: str, args: dict) -> str:
+    from . import app as web
 
-    def documents_query(where: str = "", params: tuple = ()) -> list[dict]:
-        return [web._document_row(item) for item in connection.execute(
-            f"""SELECT d.id, d.title, d.original_filename, d.report_date, d.imported_at, d.clinical_type,
-                       v.canonical_name vendor,
-                       (SELECT COUNT(*) FROM observations o WHERE o.document_id = d.id
-                         AND o.verification_status <> 'rejected') observation_count
-                  FROM documents d LEFT JOIN vendors v ON v.id = d.vendor_id
-                 WHERE d.owner_user_id = ? AND d.duplicate_of_document_id IS NULL {where}
-                 ORDER BY d.report_date IS NULL, d.report_date DESC, d.imported_at DESC""",
-            (owner_id, *params),
-        )]
+    offset = _int(args, "offset")
+    by_document: dict[str, list[str]] = {}
+    for item in web._finding_catalog(connection, owner_id):
+        # One conclusion is filed under every body system it touches; the
+        # line drops the date and provider the document line already has.
+        text = str(item.get("title") or "")
+        summary = " ".join(str(item.get("summary_en") or "").split())
+        text = f"{text}: {summary}" if summary else text
+        lines = by_document.setdefault(str(item["document_id"]), [])
+        if text and text not in lines:
+            lines.append(text)
+    marks = ",".join("?" * len(VISIT_KINDS))
+    documents = _documents_query(
+        connection, owner_id,
+        f"AND (d.clinical_type IN ({marks}) OR d.id IN (SELECT document_id FROM clinical_findings WHERE owner_user_id = ?))",
+        (*VISIT_KINDS, owner_id),
+    )
+    if not documents:
+        return "No visit notes, consultations, imaging or other reports with conclusions."
+    page = documents[offset: offset + MAX_LIST // 2]
+    out = [f"{len(documents)} visits and reports, newest first, {offset + 1}-{offset + len(page)}; "
+           "conclusions indented:"]
+    for document in page:
+        out.append(_document_line(document))
+        out += [f"  - {text}" for text in by_document.get(str(document["id"]), [])[:6]]
+    if offset + len(page) < len(documents):
+        out.append(f"+more: offset={offset + len(page)}")
+    return "\n".join(out)
 
-    def document_line(item: dict) -> str:
-        count = int(item.get("observation_count") or 0)
-        return (f"- {item.get('report_date') or '-'} {_document_name(item)}; {item.get('vendor')}"
-                + (f"; {count} values" if count else "") + f" {_doc(item['id'])}")
 
-    def list_documents(args: dict) -> str:
-        query, kind, offset = _text(args, "query", 80).casefold(), _text(args, "kind", 40), _int(args, "offset")
-        rows = documents_query()
-        if kind:
-            rows = [item for item in rows if item.get("clinical_type") == kind]
-        if query:
-            rows = [item for item in rows if query in " ".join(
-                str(item.get(key) or "") for key in ("title_text", "original_filename", "vendor", "type_label")
-            ).casefold()]
-        page = rows[offset: offset + MAX_LIST]
-        out = [f"{len(rows)} documents, newest first" + (f", {offset + 1}-{offset + len(page)}:" if rows else "")]
-        out += [document_line(item) for item in page]
-        if offset + len(page) < len(rows):
-            out.append(f"+more: offset={offset + len(page)}")
-        return "\n".join(out)
+def _vaccination_line(dose: dict) -> str:
+    from .. import immunizations as vaccines
 
-    def read_document(args: dict) -> str:
-        raw, first_page = _text(args, "document_id", 80), _int(args, "page", 0)
-        document_id = find_document(raw)
-        subject = web._scope_document(connection, owner_id, document_id) if document_id else None
+    diseases = ", ".join(vaccines._disease_names([key for key in str(dose.get("diseases") or "").split(",") if key]))
+    series = ""
+    if dose.get("dose_number"):
+        series = f" dose {dose['dose_number']}" + (f"/{dose['doses_in_series']}" if dose.get("doses_in_series") else "")
+    # The printed product name is long and in the card's language; the
+    # code and the diseases say which vaccine it was.
+    name = str(dose.get("vaccine_code") or "") or str(dose.get("product_name") or "")[:60]
+    return (f"- {dose.get('occurrence_date') or '-'} {name} ({diseases}); {dose.get('manufacturer') or '-'}"
+            f"{series}{'; booster' if dose.get('event_kind') == 'revaccination' else ''}"
+            f"{' ✓' if dose.get('verification_status') in ('verified', 'corrected') else ''}")
+
+
+def _tool_get_vaccinations(connection, owner_id: str) -> str:
+    from .. import immunizations as vaccines
+
+    doses = vaccines.doses_for(connection, owner_id)
+    if not doses:
+        return "No vaccinations recorded. A vaccination card or certificate can be uploaded."
+    out = [f"{len(doses)} doses, oldest first:"]
+    out += [_vaccination_line(dose) for dose in doses]
+    gaps = vaccines.find_gaps(doses, date.today())
+    if gaps:
+        out.append("outstanding per the national schedule:")
+        out += [
+            f"- {', '.join(vaccines._disease_names(list(gap.diseases)))}: {gap.kind}, {gap.urgency}"
+            + (f", due {gap.due_date}" if gap.due_date else "") + (f", last {gap.last_date}" if gap.last_date else "")
+            for gap in gaps
+        ]
+    return "\n".join(out)
+
+
+def _tool_get_devices(connection, owner_id: str, args: dict) -> str:
+    from . import app as web
+
+    key = _clean_id(_text(args, "metric_key", 80))
+    summaries = web.device_history(connection, owner_id)
+    if not summaries:
+        return "No wearable or home-device data in this record."
+    if key:
+        match = [item for item in summaries if str(item["metric_key"]) == key]
+        if not match:
+            return f"No device metric {key!r}. get_devices without metric_key lists them."
+        return _device_detail(match[0])
+    return "\n".join(["Device metrics (latest @day; mean over the recent window; span):",
+                      *map(_device_line, summaries)])
+
+
+def _tool_get_panel(connection, owner_id: str, sources: Sources, args: dict) -> str:
+    from . import app as web
+
+    panel_id = _clean_id(_text(args, "panel_id", 60))
+    if panel_id:
+        subject = web._scope_panel(connection, owner_id, panel_id)
         if subject is None:
-            return f"No document {raw!r} in this record. list_documents or search_record finds the id."
-        document = subject["document"]
-        out = [f"{_document_name(document)}; {document.get('vendor')}; {document.get('report_date') or '-'}; "
-               f"file {document.get('original_filename') or '-'} {_doc(document_id)}"]
-        observations = list(subject.get("observations") or ())
-        if observations and not first_page:
-            dated = str(document.get("report_date") or "")[:10]
-            out.append(f"results ({len(observations)}; dated {dated or 'per row'} unless a row says @):")
-            out += [result_row(fx._observation_card(item), sources, dated) for item in observations[:HISTORY_ROWS]]
-        findings = list(dict.fromkeys(fx._finding_line(item) for item in subject.get("findings") or ()))
-        if findings and not first_page:
-            out += ["conclusions:", *findings]
-        pages = connection.execute(
-            """SELECT page_number, COALESCE(NULLIF(native_text, ''), ocr_text, '') text
-                 FROM document_pages WHERE document_id = ? ORDER BY page_number""",
-            (document_id,),
-        ).fetchall()
-        if not first_page and (observations or findings):
-            # The results and conclusions are what was read from these pages;
-            # the text itself is ~3k tokens a call and is fetched on request.
-            if pages:
-                out.append(f"text: {len(pages)} pages, not included; page=1 reads it")
-            return "\n".join(out)
-        first_page = max(1, first_page)
-        shown, budget = [], DOCUMENT_TEXT_CHARS
-        for page in pages:
-            if page["page_number"] < first_page:
-                continue
-            text = redact_document_text(str(page["text"] or "")).strip()
-            if shown and len(text) > budget:
-                break
-            shown.append((page["page_number"], text[:budget]))
-            budget -= len(text)
-        out.append(f"text ({len(pages)} pages, identifying lines removed):")
-        for number, text in shown:
-            out += [f"[p{number}]", text or "(no text)"]
-        if shown and shown[-1][0] < len(pages):
-            out.append(f"+more: page={shown[-1][0] + 1}")
-        elif not pages:
-            out.append("(no text was extracted)")
-        return "\n".join(out)
+            return f"No panel {panel_id!r}. get_panel without panel_id lists them."
+        return "\n".join([str(subject["label"]), *_result_rows(subject["cards"], sources)])
+    out = ["Panels (status, tests on file/in panel, flagged):"]
+    for panel in web._panel_cards(connection, owner_id, member_limit=6):
+        if panel["present_count"]:
+            out.append(f"- {panel['name']} panel:{panel['id']} {panel['status']}, "
+                       f"{panel['present_count']}/{panel['member_count']}, {panel['flagged_count']}")
+    return "\n".join(out)
 
-    def list_visits(args: dict) -> str:
-        offset = _int(args, "offset")
-        by_document: dict[str, list[str]] = {}
-        for item in web._finding_catalog(connection, owner_id):
-            # One conclusion is filed under every body system it touches; the
-            # line drops the date and provider the document line already has.
-            text = str(item.get("title") or "")
-            summary = " ".join(str(item.get("summary_en") or "").split())
-            text = f"{text}: {summary}" if summary else text
-            lines = by_document.setdefault(str(item["document_id"]), [])
-            if text and text not in lines:
-                lines.append(text)
-        marks = ",".join("?" * len(VISIT_KINDS))
-        documents = documents_query(
-            f"AND (d.clinical_type IN ({marks}) OR d.id IN (SELECT document_id FROM clinical_findings WHERE owner_user_id = ?))",
-            (*VISIT_KINDS, owner_id),
-        )
-        if not documents:
-            return "No visit notes, consultations, imaging or other reports with conclusions."
-        page = documents[offset: offset + MAX_LIST // 2]
-        out = [f"{len(documents)} visits and reports, newest first, {offset + 1}-{offset + len(page)}; "
-               "conclusions indented:"]
-        for document in page:
-            out.append(document_line(document))
-            out += [f"  - {text}" for text in by_document.get(str(document["id"]), [])[:6]]
-        if offset + len(page) < len(documents):
-            out.append(f"+more: offset={offset + len(page)}")
-        return "\n".join(out)
 
-    def get_vaccinations(args: dict) -> str:
-        doses = vaccines.doses_for(connection, owner_id)
-        if not doses:
-            return "No vaccinations recorded. A vaccination card or certificate can be uploaded."
-        out = [f"{len(doses)} doses, oldest first:"]
-        for dose in doses:
-            diseases = ", ".join(vaccines._disease_names([key for key in str(dose.get("diseases") or "").split(",") if key]))
-            series = ""
-            if dose.get("dose_number"):
-                series = f" dose {dose['dose_number']}" + (f"/{dose['doses_in_series']}" if dose.get("doses_in_series") else "")
-            # The printed product name is long and in the card's language; the
-            # code and the diseases say which vaccine it was.
-            name = str(dose.get("vaccine_code") or "") or str(dose.get("product_name") or "")[:60]
-            out.append(f"- {dose.get('occurrence_date') or '-'} {name} ({diseases}); {dose.get('manufacturer') or '-'}"
-                       f"{series}{'; booster' if dose.get('event_kind') == 'revaccination' else ''}"
-                       f"{' ✓' if dose.get('verification_status') in ('verified', 'corrected') else ''}")
-        gaps = vaccines.find_gaps(doses, date.today())
-        if gaps:
-            out.append("outstanding per the national schedule:")
-            out += [
-                f"- {', '.join(vaccines._disease_names(list(gap.diseases)))}: {gap.kind}, {gap.urgency}"
-                + (f", due {gap.due_date}" if gap.due_date else "") + (f", last {gap.last_date}" if gap.last_date else "")
-                for gap in gaps
-            ]
-        return "\n".join(out)
+def _tool_get_allergy(connection, owner_id: str, sources: Sources) -> str:
+    from .. import allergy
+    from . import app as web
 
-    def get_devices(args: dict) -> str:
-        key = _clean_id(_text(args, "metric_key", 80))
-        summaries = device_history_summary(connection, owner_id)
-        if not summaries:
-            return "No wearable or home-device data in this record."
-        if key:
-            match = [item for item in summaries if str(item["metric_key"]) == key]
-            if not match:
-                return f"No device metric {key!r}. get_devices without metric_key lists them."
-            return _device_detail(match[0])
-        return "\n".join(["Device metrics (latest @day; mean over the recent window; span):",
-                          *map(_device_line, summaries)])
+    age, sex = web._demographics(connection, owner_id)
+    view = allergy.overview(
+        connection, owner_id,
+        judge=lambda item: web._reading_verdict(connection, item["concept_id"], item, age, sex)[1],
+        reading=lambda item: web.format_reading(item, item["preferred_unit"] or item["unit_raw"]),
+    )
+    if not view.get("has_results"):
+        return "No allergy tests in this record."
+    headline = allergy.headline(view)
+    out = [" ".join(str(headline.get(key) or "") for key in ("title", "body", "highest")).strip()]
+    cards = [card for card in _catalog(connection, owner_id) if card.get("panel_id") == "allergy"]
+    cards.sort(key=lambda card: (fx._severity(card), str(card["name"])))
+    cards, collapsed = _negatives(cards)
+    out += [*_result_rows(cards, sources), *([collapsed] if collapsed else [])]
+    return "\n".join(out)
 
-    def get_panel(args: dict) -> str:
-        panel_id = _clean_id(_text(args, "panel_id", 60))
-        if panel_id:
-            subject = web._scope_panel(connection, owner_id, panel_id)
-            if subject is None:
-                return f"No panel {panel_id!r}. get_panel without panel_id lists them."
-            return "\n".join([str(subject["label"]), *map(row, subject["cards"])])
-        out = ["Panels (status, tests on file/in panel, flagged):"]
-        for panel in web._panel_cards(connection, owner_id, member_limit=6):
-            if panel["present_count"]:
-                out.append(f"- {panel['name']} panel:{panel['id']} {panel['status']}, "
-                           f"{panel['present_count']}/{panel['member_count']}, {panel['flagged_count']}")
-        return "\n".join(out)
 
-    def get_allergy(args: dict) -> str:
-        age, sex = web._demographics(connection, owner_id)
-        view = allergy.overview(
-            connection, owner_id,
-            judge=lambda item: web._reading_verdict(connection, item["concept_id"], item, age, sex)[1],
-            reading=lambda item: web.format_reading(item, item["preferred_unit"] or item["unit_raw"]),
-        )
-        if not view.get("has_results"):
-            return "No allergy tests in this record."
-        headline = allergy.headline(view)
-        out = [" ".join(str(headline.get(key) or "") for key in ("title", "body", "highest")).strip()]
-        cards = [card for card in catalog() if card.get("panel_id") == "allergy"]
-        cards.sort(key=lambda card: (fx._severity(card), str(card["name"])))
-        cards, collapsed = _negatives(cards)
-        out += [*map(row, cards), *([collapsed] if collapsed else [])]
-        return "\n".join(out)
+def _tool_get_genetics(connection, owner_id: str, sources: Sources) -> str:
+    from .. import genetics
 
-    def get_genetics(args: dict) -> str:
-        view = genetics.overview(connection, owner_id, catalog(), {})
-        out = []
-        for heading, cards in (("genetic tests:", [item["card"] for item in view["genes"]]),
-                               ("infections by DNA/RNA test (PCR):", view["germs"]),
-                               ("antibody tests:", view["antibodies"])):
-            if cards:
-                out += [heading, *map(row, cards)]
-        return "\n".join(out) or "No genetic, PCR or antibody tests in this record."
+    view = genetics.overview(connection, owner_id, _catalog(connection, owner_id), {})
+    out = []
+    for heading, cards in (("genetic tests:", [item["card"] for item in view["genes"]]),
+                           ("infections by DNA/RNA test (PCR):", view["germs"]),
+                           ("antibody tests:", view["antibodies"])):
+        if cards:
+            out += [heading, *_result_rows(cards, sources)]
+    return "\n".join(out) or "No genetic, PCR or antibody tests in this record."
 
-    def get_test_plan(args: dict) -> str:
-        cards = [card for card in catalog() if not card.get("is_device")]
-        needs = testplan.needs(cards, testplan.lab_concepts(connection, owner_id))
-        if not needs:
-            return "Nothing due: no lab result is past its retest interval or outside its interval."
-        out = ["To measure again (why: due = retest interval, out = outside interval; optional = "
-               "not preselected; prices are on /plan-tests):"]
-        for need in needs:
-            card = need["card"]
-            why = []
-            if need["due"]:
-                due_on = (card.get("staleness") or {}).get("due_on")
-                why.append(f"due {due_on}" if due_on else "due")
-            if need["flagged"]:
-                why.append("out")
-            out.append(f"{row(card)} [{', '.join(why)}{'' if need['preselected'] else ', optional'}]")
-        return "\n".join(out)
 
-    def schema(**properties: tuple[str, str]) -> dict:
-        return {
-            "type": "object",
-            "properties": {name: {"type": kind, "description": text} for name, (kind, text) in properties.items()},
-            "additionalProperties": False,
-        }
+def _plan_why(need: dict) -> str:
+    """Why a result is in the plan: due by its retest interval, outside its interval, or both."""
+    card = need["card"]
+    why = []
+    if need["due"]:
+        due_on = (card.get("staleness") or {}).get("due_on")
+        why.append(f"due {due_on}" if due_on else "due")
+    if need["flagged"]:
+        why.append("out")
+    return ", ".join(why)
+
+
+def _tool_get_test_plan(connection, owner_id: str, sources: Sources) -> str:
+    from .. import testplan
+
+    cards = [card for card in _catalog(connection, owner_id) if not card.get("is_device")]
+    needs = testplan.needs(cards, testplan.lab_concepts(connection, owner_id))
+    if not needs:
+        return "Nothing due: no lab result is past its retest interval or outside its interval."
+    out = ["To measure again (why: due = retest interval, out = outside interval; optional = "
+           "not preselected; prices are on /plan-tests):"]
+    for need in needs:
+        out.append(f"{result_row(need['card'], sources)} [{_plan_why(need)}{'' if need['preselected'] else ', optional'}]")
+    return "\n".join(out)
+
+
+def _medicine_reference(connection, entry):
+    """The stored official instruction of a medicine entry, or None."""
+    if not entry["reference_url"]:
+        return None
+    return connection.execute(
+        "SELECT sections_json, details_json FROM drug_references WHERE source = 'tabletki' AND url = ?",
+        (entry["reference_url"],),
+    ).fetchone()
+
+
+_PRODUCT_FACT_LABELS = {
+    "substance": "active substance", "inn": "international name (INN)", "form": "form",
+    "dosage": "strength", "pack": "pack size", "sale": "how it is sold", "group": "pharmacological group",
+    "atc": "ATC group", "registration": "registration in Ukraine", "maker": "manufacturer",
+}
+_PRODUCT_STATE_LABELS = {
+    "allowed": "allowed", "caution": "with caution", "forbidden": "not allowed", "free": "no restrictions",
+}
+#: A remark that only repeats the state says nothing more (the same set as the instruction page).
+_PLAIN_REMARKS = frozenset({"дозволено", "заборонено", "з обережністю", "немає обмежень"})
+_CARD_LINE_CHARS = 1500
+
+
+def _remark_beyond_state(remark: str) -> str:
+    """The part of a remark that says more than the state itself."""
+    folded = remark.casefold()
+    if folded in _PLAIN_REMARKS:
+        return ""
+    for plain in _PLAIN_REMARKS:
+        if folded.startswith(plain + ","):
+            return remark[len(plain) + 1:].strip()
+    return remark
+
+
+def _stored_details(raw) -> dict:
+    try:
+        parsed = json.loads(raw or "{}")
+    except (TypeError, ValueError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _card_fact_texts(details: dict) -> list[str]:
+    facts = []
+    for item in details.get("facts") if isinstance(details.get("facts"), list) else []:
+        if (isinstance(item, list) and len(item) == 2 and isinstance(item[0], str)
+                and item[0] in _PRODUCT_FACT_LABELS and isinstance(item[1], list)):
+            values = [value.strip() for value in item[1] if isinstance(value, str) and value.strip()]
+            if values:
+                facts.append(f"{_PRODUCT_FACT_LABELS[item[0]]}: {', '.join(values)}")
+    return facts
+
+
+def _card_warning_texts(details: dict) -> list[str]:
+    warnings = []
+    for item in details.get("warnings") if isinstance(details.get("warnings"), list) else []:
+        if not (isinstance(item, list) and len(item) == 3 and all(isinstance(part, str) for part in item)):
+            continue
+        subject, state, remark = (part.strip() for part in item)
+        if not subject or state not in _PRODUCT_STATE_LABELS:
+            continue
+        text = f"{subject}: {_PRODUCT_STATE_LABELS[state]}"
+        beyond = _remark_beyond_state(remark)
+        if beyond:
+            text += f" ({beyond})"
+        warnings.append(text)
+    return warnings
+
+
+def _medicine_card_lines(details: dict) -> str:
+    """The product card's facts and who-may-take-it summary, as lines for the assistant; "" when there are none."""
+    facts = _card_fact_texts(details)
+    warnings = _card_warning_texts(details)
+    lines = []
+    if facts:
+        lines.append("product facts (tabletki.ua product card): " + "; ".join(facts))
+    if warnings:
+        lines.append("who may take it (a summary by tabletki.ua, not the official instruction): "
+                     + "; ".join(warnings))
+    return "".join("\n" + line[:_CARD_LINE_CHARS] for line in lines)
+
+
+def _medicine_section(section: str, stored: bool, sections: list) -> str:
+    if not stored:
+        return "No instruction is stored for this entry."
+    for title, body in sections:
+        if section in str(title).casefold():
+            return f"{title}:\n{body}"[:8000]
+    return "No such section. Sections: " + "; ".join(str(title) for title, _body in sections)
+
+
+def _tool_get_medicines(connection, owner_id: str, args: dict) -> str:
+    from .. import factors
+
+    today = date.today()
+    wanted = _text(args, "medicine_id", 60)
+    if wanted.startswith("m:"):
+        wanted = wanted[2:].strip()
+    if not wanted:
+        return factors.chat_detail(connection, owner_id, today=today)
+    entry = factors.get(connection, owner_id, wanted, today=today)
+    if entry is None:
+        return "No such medicine or factor."
+    reference = _medicine_reference(connection, entry)
+    if reference is None:
+        sections, details = [], {}
+    else:
+        sections, details = json.loads(reference[0]), _stored_details(reference[1])
+    section = _text(args, "section", 80).casefold()
+    if section:
+        return _medicine_section(section, reference is not None, sections)
+    out = factors.chat_detail(connection, owner_id, today=today, factor_id=wanted)
+    if sections:
+        out += ("\ninstruction sections (official instruction for medical use, tabletki.ua): "
+                + "; ".join(str(title) for title, _body in sections))
+    return out + _medicine_card_lines(details)
+
+
+def _schema(**properties: tuple[str, str]) -> dict:
+    return {
+        "type": "object",
+        "properties": {name: {"type": kind, "description": text} for name, (kind, text) in properties.items()},
+        "additionalProperties": False,
+    }
+
+
+def build_tools(connection, owner_id: str) -> dict[str, chat.Tool]:
+    """The read-only tools, every one bound to ``owner_id``."""
+    sources = Sources(connection)
 
     specs: list[tuple[str, str, dict, Callable[[dict], str], Callable[[dict], str]]] = [
         ("search_record", "Find results, panels, documents, conclusions, vaccinations by name (English or "
-         "Ukrainian).", schema(query=("string", "words")), search_record, lambda a: _text(a, "query", 60)),
-        ("get_metric", "One result's full history.", schema(metric_id=("string", "#id")), get_metric,
-         lambda a: ""),
+         "Ukrainian).", _schema(query=("string", "words")),
+         lambda args: _tool_search_record(connection, owner_id, sources, args),
+         lambda a: _text(a, "query", 60)),
+        ("get_metric", "One result's full history.", _schema(metric_id=("string", "#id")),
+         lambda args: _tool_get_metric(connection, owner_id, sources, args), lambda a: ""),
         ("list_results", "No area_id: body systems. With area_id: its current results.",
-         schema(area_id=("string", "area:id")), list_results, lambda a: ""),
+         _schema(area_id=("string", "area:id")),
+         lambda args: _tool_list_results(connection, owner_id, sources, args), lambda a: ""),
         ("list_documents", "Documents, newest first.",
-         schema(query=("string", "words in title or provider"), kind=("string", "laboratory, consultation, ..."),
-                offset=("integer", "next page")), list_documents, lambda a: ""),
+         _schema(query=("string", "words in title or provider"), kind=("string", "laboratory, consultation, ..."),
+                 offset=("integer", "next page")),
+         lambda args: _tool_list_documents(connection, owner_id, args), lambda a: ""),
         ("read_document", "A document's results and conclusions; with page, its text from that page.",
-         schema(document_id=("string", "d:id"), page=("integer", "first page of text")), read_document,
-         lambda a: ""),
+         _schema(document_id=("string", "d:id"), page=("integer", "first page of text")),
+         lambda args: _tool_read_document(connection, owner_id, sources, args), lambda a: ""),
         ("list_visits", "Visits, consultations, imaging and reports with their conclusions.",
-         schema(offset=("integer", "next page")), list_visits, lambda a: ""),
+         _schema(offset=("integer", "next page")),
+         lambda args: _tool_list_visits(connection, owner_id, args), lambda a: ""),
         ("get_vaccinations", "Vaccination doses and what the schedule suggests is outstanding.",
-         NO_ARGUMENTS, get_vaccinations, lambda a: ""),
+         NO_ARGUMENTS, lambda _args: _tool_get_vaccinations(connection, owner_id), lambda a: ""),
         ("get_devices", "Wearable data. No metric_key: every metric. With it: recent days, monthly, yearly.",
-         schema(metric_key=("string", "key:id")), get_devices, lambda a: ""),
+         _schema(metric_key=("string", "key:id")),
+         lambda args: _tool_get_devices(connection, owner_id, args), lambda a: ""),
         ("get_panel", "No panel_id: test panels. With it: that panel's results.",
-         schema(panel_id=("string", "panel:id")), get_panel, lambda a: ""),
-        ("get_allergy", "Allergy overview and allergen results.", NO_ARGUMENTS, get_allergy, lambda a: ""),
-        ("get_genetics", "Genetic, PCR infection and antibody tests.", NO_ARGUMENTS, get_genetics, lambda a: ""),
+         _schema(panel_id=("string", "panel:id")),
+         lambda args: _tool_get_panel(connection, owner_id, sources, args), lambda a: ""),
+        ("get_allergy", "Allergy overview and allergen results.", NO_ARGUMENTS,
+         lambda _args: _tool_get_allergy(connection, owner_id, sources), lambda a: ""),
+        ("get_genetics", "Genetic, PCR infection and antibody tests.", NO_ARGUMENTS,
+         lambda _args: _tool_get_genetics(connection, owner_id, sources), lambda a: ""),
         ("get_test_plan", "What the test planner suggests measuring again, and why.", NO_ARGUMENTS,
-         get_test_plan, lambda a: ""),
+         lambda _args: _tool_get_test_plan(connection, owner_id, sources), lambda a: ""),
+        ("get_medicines", "Medicines, supplements, operations, illnesses, diet and training the person recorded: "
+         "doses, dates, reasons, effects on results, interactions, monitoring. With medicine_id: one entry and "
+         "the section titles of its official instruction. With medicine_id and section: that section's text.",
+         _schema(medicine_id=("string", "m:id"), section=("string", "words from a section title")),
+         lambda args: _tool_get_medicines(connection, owner_id, args), lambda a: ""),
     ]
 
     def wrapped(run: Callable[[dict], str]) -> Callable[[dict], str]:
@@ -551,8 +781,65 @@ def profile_summary(connection, owner_id: str) -> str:
     return _english(_profile_summary, connection, owner_id)
 
 
+def _body_line(connection, owner_id: str, patient, *, today: date) -> str:
+    """The body and lifestyle facts a dose or a risk depends on, as one line.
+
+    Weight and height follow the profile page: a device value displaces the
+    typed one (``app._measured_body``), so the assistant quotes the figure the
+    page shows, dated when a device supplied it.
+    """
+    from . import app as web
+
+    measured = web._measured_body(connection, owner_id)
+    values: dict[str, float] = {}
+    measures: list[str] = []
+    for field, label, unit in (("weight_kg", "weight", "kg"), ("height_cm", "height", "cm")):
+        found = _body_measure(measured, patient, field, label, unit)
+        if found is None:
+            continue
+        values[field] = found[0]
+        measures.append(found[1])
+    if "weight_kg" in values and "height_cm" in values:
+        measures.append(f"BMI {values['weight_kg'] / (values['height_cm'] / 100) ** 2:.1f}")
+    parts = [", ".join(measures) or "weight and height not recorded (ask when a dose or a risk depends on them)"]
+    if patient is not None:
+        parts += _body_lifestyle(patient, today)
+    return "body: " + "; ".join(parts)
+
+
+def _body_measure(measured: dict, patient, field: str, label: str, unit: str) -> tuple[float, str] | None:
+    """One body measure's value and its line, or None when neither source has it."""
+    if field in measured:
+        value = float(measured[field]["value"])
+        when = f" ({str(measured[field]['day'])[:10]})"
+    elif patient is not None and patient[field]:
+        value, when = float(patient[field]), ""
+    else:
+        return None
+    return value, f"{label} {fx._num(value)} {unit}{when}"
+
+
+def _body_lifestyle(patient, today: date) -> list[str]:
+    """Activity, smoking, alcohol, cardiovascular risk and pregnancy from the profile."""
+    parts = []
+    for column, label in (("activity_level", "activity"), ("smoking_status", "smoking"),
+                          ("alcohol_use", "alcohol"), ("cv_risk_category", "cardiovascular risk")):
+        if patient[column]:
+            parts.append(f"{label} {patient[column]}")
+    try:
+        due = date.fromisoformat(str(patient["pregnancy_due_date"])[:10])
+    except ValueError:
+        due = None
+    if due is not None and 0 <= (due - today).days <= 280:
+        parts.append(f"pregnant, due {due.isoformat()}")
+    if "planning_pregnancy" in patient.keys() and patient["planning_pregnancy"] == 1:
+        parts.append("planning a pregnancy")
+    return parts
+
+
 def _profile_summary(connection, owner_id: str) -> str:
     from . import app as web
+    from .. import factors
     from ..health import HEALTH_AREAS, age_on
     from ..i18n import translate_phrase
 
@@ -575,8 +862,10 @@ def _profile_summary(connection, owner_id: str) -> str:
         f"documents, latest {str(counts.get('latest_result') or '-')[:10]}; {findings} written conclusions; "
         f"{vaccinations} vaccination doses; {len(catalog) - len(labs)} device metrics, latest day "
         f"{counts.get('latest_device') or '-'}",
-        "not in this record unless a document states it: medications, symptoms, diagnoses, family history",
+        _body_line(connection, owner_id, patient, today=date.today()),
     ]
+    out += factors.chat_lines(connection, owner_id, today=date.today())
+    out.append("not in this record unless a document or the person states it: symptoms, diagnoses, family history")
     # The verdict and the interval it was judged against, nothing more: the
     # history, the guidance and the other readings are one get_metric away.
     attention = web._attention_cards(catalog)
@@ -603,14 +892,27 @@ def _document_name(row: dict) -> str:
 
 _BOLD = re.compile(r"\*\*(.+?)\*\*")
 _CODE = re.compile(r"`([^`]+)`")
-_ITEM = re.compile(r"^\s*(?:[-*•]|(\d+)[.)])\s+(.*)$")
-_HEADING = re.compile(r"^#{1,6}\s+(.*)$")
+_ITEM = re.compile(r"^\s*(?:[-*•]|(\d+)[.)])\s++(.*)$")
+_HEADING = re.compile(r"^#{1,6}\s++(.*)$")
 
 
 def _inline(text: str) -> str:
     escaped = html.escape(text, quote=False)
     escaped = _CODE.sub(r"<code>\1</code>", escaped)
     return _BOLD.sub(r"<strong>\1</strong>", escaped)
+
+
+def _close_paragraph(out: list[str], paragraph: list[str]) -> None:
+    if paragraph:
+        out.append("<p>" + "<br>".join(_inline(item) for item in paragraph) + "</p>")
+        paragraph.clear()
+
+
+def _close_list(out: list[str], list_tag: str) -> str:
+    """Closes the open list, if there is one; returns the tag left open, which is none."""
+    if list_tag:
+        out.append(f"</{list_tag}>")
+    return ""
 
 
 def render_markdown(text: str) -> Markup:
@@ -620,40 +922,28 @@ def render_markdown(text: str) -> Markup:
     out: list[str] = []
     paragraph: list[str] = []
     list_tag = ""
-
-    def close_paragraph() -> None:
-        if paragraph:
-            out.append("<p>" + "<br>".join(_inline(item) for item in paragraph) + "</p>")
-            paragraph.clear()
-
-    def close_list() -> None:
-        nonlocal list_tag
-        if list_tag:
-            out.append(f"</{list_tag}>")
-            list_tag = ""
-
     for raw in str(text or "").replace("\r\n", "\n").split("\n"):
         item, heading = _ITEM.match(raw), _HEADING.match(raw.strip())
         if not raw.strip():
-            close_paragraph()
-            close_list()
+            _close_paragraph(out, paragraph)
+            list_tag = _close_list(out, list_tag)
         elif heading:
-            close_paragraph()
-            close_list()
+            _close_paragraph(out, paragraph)
+            list_tag = _close_list(out, list_tag)
             out.append(f"<p><strong>{_inline(heading.group(1))}</strong></p>")
         elif item:
-            close_paragraph()
+            _close_paragraph(out, paragraph)
             tag = "ol" if item.group(1) else "ul"
             if tag != list_tag:
-                close_list()
+                list_tag = _close_list(out, list_tag)
                 out.append(f"<{tag}>")
                 list_tag = tag
             out.append(f"<li>{_inline(item.group(2))}</li>")
         else:
-            close_list()
+            list_tag = _close_list(out, list_tag)
             paragraph.append(raw.strip())
-    close_paragraph()
-    close_list()
+    _close_paragraph(out, paragraph)
+    _close_list(out, list_tag)
     return Markup("".join(out))
 
 
@@ -681,7 +971,8 @@ def error_text(reason: str, *, admin: bool) -> str:
     return message
 
 
-_ERROR_KEYS = {"chat.error_disabled", "chat.error_budget", "chat.error_provider_error", "chat.error_truncated"}
+_ERROR_KEYS = {"chat.error_disabled", "chat.error_budget", "chat.error_provider_error", "chat.error_truncated",
+               "chat.error_in_progress"}
 
 
 # --- one turn ------------------------------------------------------------------------
@@ -780,39 +1071,192 @@ def _run_turn(settings, *, viewer: dict, owner: dict, conversation_id: str, mess
         connection.close()
 
 
-def register_routes(app, settings, *, templates, template_context, require_user, record_user, require_csrf,
-                    viewing_row) -> None:
+#: People with an answer being written right now.  One turn at a time each:
+#: a second POST would interleave two answers in one conversation and spend
+#: the installation's shared daily budget twice as fast.
+# ponytail: process-local, like the document-review lock; move to a table if
+# the server ever runs more than one worker.
+_TURNS: set[tuple[str, str]] = set()
+_TURNS_LOCK = threading.Lock()
+
+
+def _share_read_only(user, owner) -> bool:
+    """A viewer of someone else's record whom the owner gave read-only access."""
+    return owner["id"] != user["id"] and dict(owner).get("share_access") != "full"
+
+
+def _people(request: Request, require_user, record_user) -> tuple[dict, dict]:
+    user = require_user(request)
+    if user.get("token_kind") in ("guest", "api"):
+        # token_scope already refuses both; this keeps the rule true if
+        # the allowlist ever grows a prefix that happens to cover /chat.
+        raise HTTPException(403, t("chat.error_guest"))
+    return dict(user), dict(record_user(request, user))
+
+
+def _render_page(settings, templates, template_context, request: Request, viewer: dict, owner: dict,
+                 current: dict | None):
+    choices = chat.choices(settings)
+    chosen = str((current or {}).get("model_key") or "")
+    if chosen not in {item["key"] for item in choices}:
+        chosen = choices[0]["key"] if choices else ""
+    route = chat.chat_route(settings, chosen)
+    items = chat.conversations(settings, viewer["id"], owner["id"])
+    messages = []
+    for item in (current or {}).get("messages", []):
+        messages.append({
+            **item,
+            "html": render_markdown(item["content"]) if item["role"] == "assistant" else None,
+            "tool_labels": [tool_label(event) for event in item["tools"]],
+            "error_text": error_text(item["error"], admin=viewer.get("role") == "admin") if item["error"] else "",
+        })
+    return templates.TemplateResponse(request, "chat.html", template_context(
+        request, active="chat", conversations=items, current=current, messages=messages,
+        route={key: route[key] for key in ("provider", "model", "host")}, ai_ready=route["active"], is_owner=viewer["id"] == owner["id"],
+        share_read_only=_share_read_only(viewer, owner),
+        record_name=owner.get("display_name") or "",
+        disabled_text=error_text("disabled", admin=viewer.get("role") == "admin"),
+        busy_text=error_text("in_progress", admin=False) if request.query_params.get("busy") else "",
+        message_limit=chat.MAX_MESSAGE_CHARS, choices=choices, chosen=chosen,
+        context=context_view(current),
+    ))
+
+
+def _chat_back_url(form) -> str:
+    """The conversation the form came from, or the list when it names none."""
+    return f"/chat/{form.get('conversation_id')}" if form.get("conversation_id") else "/chat"
+
+
+def _refused_turn(request: Request, form):
+    """A send that arrived while the same person's answer is still being written."""
+    if _EVENT_STREAM in request.headers.get("accept", ""):
+        async def refused():
+            yield _sse({"type": "error", "reason": "in_progress",
+                        "message": error_text("in_progress", admin=False), "html": ""})
+
+        return StreamingResponse(refused(), media_type=_EVENT_STREAM,
+                                 headers={"X-Accel-Buffering": "no"})
+    # The page says why the message was not sent (see busy_text in page()).
+    return RedirectResponse(_chat_back_url(form) + "?busy=1", 303)
+
+
+async def _choose_model(settings, form, conversation_id: str, known: dict) -> str:
+    # Only a model the admin offers; anything else answers on the default.
+    choice = str(form.get("model") or "")
+    if choice not in {item["key"] for item in await run_in_threadpool(chat.choices, settings)}:
+        choice = ""
+    if choice != str(known.get("model_key") or ""):
+        await run_in_threadpool(chat.set_model, settings, conversation_id, choice)
+    return choice
+
+
+async def _start_turn(settings, viewer: dict, owner: dict, form, message: str, key: tuple[str, str]):
+    """Find or create the conversation and start its answer in a thread.
+    Returns the conversation id, its title, the event queue and the thread."""
+    try:
+        conversation_id = str(form.get("conversation_id") or "")
+        if not conversation_id:
+            conversation_id = await run_in_threadpool(
+                chat.create_conversation, settings, viewer["id"], owner["id"], message)
+        known = await run_in_threadpool(chat.conversation, settings, conversation_id, viewer["id"], owner["id"])
+        if known is None:
+            raise HTTPException(404)
+        title = str(known["title"])
+        choice = await _choose_model(settings, form, conversation_id, known)
+        locale = get_locale()
+        events: queue.Queue = queue.Queue()
+
+        def work() -> None:
+            try:
+                _run_turn(settings, viewer=viewer, owner=owner, conversation_id=conversation_id,
+                          message=message, locale=locale, emit=events.put, choice=choice)
+            except Exception:
+                events.put({"type": "error", "reason": "provider_error",
+                            "message": error_text("provider_error", admin=False), "html": ""})
+                raise
+            finally:
+                # Released before the stream ends, so a retry that follows the
+                # last event is not refused as still in progress.
+                with _TURNS_LOCK:
+                    _TURNS.discard(key)
+                events.put(None)
+
+        thread = threading.Thread(target=contextvars.Context().run, args=(work,), daemon=True)
+        thread.start()
+    except BaseException:
+        with _TURNS_LOCK:
+            _TURNS.discard(key)
+        raise
+    return conversation_id, title, events, thread
+
+
+def _answer_stream(conversation_id: str, title: str, events: queue.Queue) -> StreamingResponse:
+    async def stream():
+        yield _sse({"type": "conversation", "id": conversation_id, "url": f"/chat/{conversation_id}",
+                    "title": title})
+        while True:
+            event = await asyncio.to_thread(events.get)
+            if event is None:
+                return
+            yield _sse(event)
+
+    return StreamingResponse(stream(), media_type=_EVENT_STREAM, headers={"X-Accel-Buffering": "no"})
+
+
+async def _send_message(request: Request, settings, require_csrf, people):
+    viewer, owner = await run_in_threadpool(people, request)
+    if _share_read_only(viewer, owner):
+        # Before any conversation, message or model call: a read-only share is not asked about.
+        raise HTTPException(403, t("chat.error_share_read_only"))
+    form = await request.form()
+    require_csrf(viewer, str(form.get("csrf_token") or ""))
+    message = str(form.get("message") or "").strip()[: chat.MAX_MESSAGE_CHARS]
+    if not message:
+        return RedirectResponse(_chat_back_url(form), 303)
+    key = (str(settings.database_path), str(viewer["id"]))
+    with _TURNS_LOCK:
+        busy = key in _TURNS
+        if not busy:
+            _TURNS.add(key)
+    if busy:
+        return _refused_turn(request, form)
+    conversation_id, title, events, thread = await _start_turn(settings, viewer, owner, form, message, key)
+    if _EVENT_STREAM not in request.headers.get("accept", ""):
+        # Without script the form posts normally: wait for the answer,
+        # then show the conversation with it.
+        await run_in_threadpool(thread.join)
+        return RedirectResponse(f"/chat/{conversation_id}", 303)
+    return _answer_stream(conversation_id, title, events)
+
+
+async def _delete_conversation(request: Request, settings, require_csrf, people, conversation_id: str):
+    viewer, _owner = await run_in_threadpool(people, request)
+    form = await request.form()
+    require_csrf(viewer, str(form.get("csrf_token") or ""))
+    await run_in_threadpool(chat.delete_conversation, settings, conversation_id, viewer["id"])
+    # Deleting another conversation from the list keeps the open one open.
+    # Only an id shape is accepted, so `back` can never point off /chat.
+    back = str(form.get("back") or "")
+    if back != conversation_id and re.fullmatch(r"[0-9a-f]{32}", back):
+        return RedirectResponse(f"/chat/{back}?deleted=1", 303)
+    return RedirectResponse("/chat?deleted=1", 303)
+
+
+async def _delete_all_conversations(request: Request, settings, require_csrf, people):
+    viewer, owner = await run_in_threadpool(people, request)
+    form = await request.form()
+    require_csrf(viewer, str(form.get("csrf_token") or ""))
+    await run_in_threadpool(chat.delete_all, settings, viewer["id"], owner["id"])
+    return RedirectResponse("/chat?deleted=all", 303)
+
+
+def register_routes(app, settings, *, templates, template_context, require_user, record_user,
+                    require_csrf) -> None:
     def people(request: Request) -> tuple[dict, dict]:
-        user = require_user(request)
-        if user.get("token_kind") in ("guest", "api"):
-            # token_scope already refuses both; this keeps the rule true if
-            # the allowlist ever grows a prefix that happens to cover /chat.
-            raise HTTPException(403, t("chat.error_guest"))
-        return dict(user), dict(record_user(request, user))
+        return _people(request, require_user, record_user)
 
     def page(request: Request, viewer: dict, owner: dict, current: dict | None):
-        choices = chat.choices(settings)
-        chosen = str((current or {}).get("model_key") or "")
-        if chosen not in {item["key"] for item in choices}:
-            chosen = choices[0]["key"] if choices else ""
-        route = chat.chat_route(settings, chosen)
-        items = chat.conversations(settings, viewer["id"], owner["id"])
-        messages = []
-        for item in (current or {}).get("messages", []):
-            messages.append({
-                **item,
-                "html": render_markdown(item["content"]) if item["role"] == "assistant" else None,
-                "tool_labels": [tool_label(event) for event in item["tools"]],
-                "error_text": error_text(item["error"], admin=viewer.get("role") == "admin") if item["error"] else "",
-            })
-        return templates.TemplateResponse(request, "chat.html", template_context(
-            request, active="chat", conversations=items, current=current, messages=messages,
-            route={key: route[key] for key in ("provider", "model", "host")}, ai_ready=route["active"], is_owner=viewer["id"] == owner["id"],
-            record_name=owner.get("display_name") or "",
-            disabled_text=error_text("disabled", admin=viewer.get("role") == "admin"),
-            message_limit=chat.MAX_MESSAGE_CHARS, choices=choices, chosen=chosen,
-            context=context_view(current),
-        ))
+        return _render_page(settings, templates, template_context, request, viewer, owner, current)
 
     @app.get("/chat", response_class=HTMLResponse)
     def chat_page(request: Request):
@@ -829,80 +1273,15 @@ def register_routes(app, settings, *, templates, template_context, require_user,
 
     @app.post("/chat/send")
     async def chat_send(request: Request):
-        viewer, owner = await run_in_threadpool(people, request)
-        form = await request.form()
-        require_csrf(viewer, str(form.get("csrf_token") or ""))
-        message = str(form.get("message") or "").strip()[: chat.MAX_MESSAGE_CHARS]
-        if not message:
-            return RedirectResponse(f"/chat/{form.get('conversation_id')}" if form.get("conversation_id") else "/chat", 303)
-        conversation_id = str(form.get("conversation_id") or "")
-        if not conversation_id:
-            conversation_id = await run_in_threadpool(
-                chat.create_conversation, settings, viewer["id"], owner["id"], message)
-        known = await run_in_threadpool(chat.conversation, settings, conversation_id, viewer["id"], owner["id"])
-        if known is None:
-            raise HTTPException(404)
-        title = str(known["title"])
-        # Only a model the admin offers; anything else answers on the default.
-        choice = str(form.get("model") or "")
-        if choice not in {item["key"] for item in await run_in_threadpool(chat.choices, settings)}:
-            choice = ""
-        if choice != str(known.get("model_key") or ""):
-            await run_in_threadpool(chat.set_model, settings, conversation_id, choice)
-        locale = get_locale()
-        events: queue.Queue = queue.Queue()
-
-        def work() -> None:
-            try:
-                _run_turn(settings, viewer=viewer, owner=owner, conversation_id=conversation_id,
-                          message=message, locale=locale, emit=events.put, choice=choice)
-            except Exception:
-                events.put({"type": "error", "reason": "provider_error",
-                            "message": error_text("provider_error", admin=False), "html": ""})
-                raise
-            finally:
-                events.put(None)
-
-        thread = threading.Thread(target=contextvars.Context().run, args=(work,), daemon=True)
-        thread.start()
-        if "text/event-stream" not in request.headers.get("accept", ""):
-            # Without script the form posts normally: wait for the answer,
-            # then show the conversation with it.
-            await run_in_threadpool(thread.join)
-            return RedirectResponse(f"/chat/{conversation_id}", 303)
-
-        async def stream():
-            yield _sse({"type": "conversation", "id": conversation_id, "url": f"/chat/{conversation_id}",
-                        "title": title})
-            while True:
-                event = await asyncio.to_thread(events.get)
-                if event is None:
-                    return
-                yield _sse(event)
-
-        return StreamingResponse(stream(), media_type="text/event-stream",
-                                 headers={"X-Accel-Buffering": "no"})
+        return await _send_message(request, settings, require_csrf, people)
 
     @app.post("/chat/{conversation_id}/delete")
     async def chat_delete(request: Request, conversation_id: str):
-        viewer, _owner = await run_in_threadpool(people, request)
-        form = await request.form()
-        require_csrf(viewer, str(form.get("csrf_token") or ""))
-        await run_in_threadpool(chat.delete_conversation, settings, conversation_id, viewer["id"])
-        # Deleting another conversation from the list keeps the open one open.
-        # Only an id shape is accepted, so `back` can never point off /chat.
-        back = str(form.get("back") or "")
-        if back != conversation_id and re.fullmatch(r"[0-9a-f]{32}", back):
-            return RedirectResponse(f"/chat/{back}?deleted=1", 303)
-        return RedirectResponse("/chat?deleted=1", 303)
+        return await _delete_conversation(request, settings, require_csrf, people, conversation_id)
 
     @app.post("/chat/delete-all")
     async def chat_delete_all(request: Request):
-        viewer, owner = await run_in_threadpool(people, request)
-        form = await request.form()
-        require_csrf(viewer, str(form.get("csrf_token") or ""))
-        await run_in_threadpool(chat.delete_all, settings, viewer["id"], owner["id"])
-        return RedirectResponse("/chat?deleted=all", 303)
+        return await _delete_all_conversations(request, settings, require_csrf, people)
 
 
 def _sse(event: dict) -> str:

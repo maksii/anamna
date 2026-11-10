@@ -223,7 +223,7 @@ def _metric_story(metric: dict[str, object], add_gap: bool, paragraph, styles: t
                   labels: dict[str, str], bold_name: str) -> list:
     from reportlab.lib import colors
     from reportlab.lib.units import mm
-    from reportlab.platypus import KeepTogether, LongTable, Paragraph, Spacer, Table, TableStyle
+    from reportlab.platypus import KeepTogether, LongTable, Spacer, Table, TableStyle
 
     heading_style, body_style, small_style, verdict_style = styles
     navy = colors.HexColor("#132A3A")
@@ -246,7 +246,7 @@ def _metric_story(metric: dict[str, object], add_gap: bool, paragraph, styles: t
             ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
         ]),
     )
-    story.append(KeepTogether([Paragraph(str(metric.get("name") or ""), heading_style), summary, Spacer(1, 3 * mm)]))
+    story.append(KeepTogether([paragraph(metric.get("name"), heading_style), summary, Spacer(1, 3 * mm)]))
     table_rows = [[
         paragraph(labels["column_date"], small_style),
         paragraph(labels["column_result"], small_style),

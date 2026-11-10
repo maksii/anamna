@@ -26,6 +26,7 @@ from __future__ import annotations
 import logging
 import shutil
 import threading
+import time
 import uuid
 import zipfile
 from dataclasses import dataclass, field
@@ -55,6 +56,8 @@ MAX_ARCHIVE_EXPANDED_BYTES = 32 * 1024**3
 MAX_ARCHIVE_DEPTH = 3
 
 DONE_DEVICE = "intake.done_device"
+DONE_DUPLICATE = "intake.done_duplicate"
+FAILED_ERROR = "intake.failed_error"
 FAILED_MISSING = "intake.failed_missing"
 
 #: Every value `upload_jobs.detail_key` may hold.  Job detail is rendered into
@@ -67,7 +70,7 @@ DETAIL_KEYS = (
     "intake.step_reading",
     "intake.done_imported",
     "intake.done_no_values",
-    "intake.done_duplicate",
+    DONE_DUPLICATE,
     "intake.done_unchanged",
     "intake.done_expanded",
     DONE_DEVICE,
@@ -77,7 +80,7 @@ DETAIL_KEYS = (
     "intake.failed_unsupported",
     "intake.failed_empty",
     "intake.failed_too_big",
-    "intake.failed_error",
+    FAILED_ERROR,
     "intake.failed_device_archive_member",
     "intake.failed_reread_empty",
     "intake.failed_reread_ocr",
@@ -96,6 +99,13 @@ _CONTENT_SIGNATURES = {
 }
 _PEEK_FILES = 40
 _PEEK_BYTES = 8192
+#: Windows resolves these stems to a device whatever extension follows, so
+#: `nul.pdf` is written to nowhere at all.
+_RESERVED_STEMS = frozenset({
+    "con", "prn", "aux", "nul",
+    *(f"com{n}" for n in range(1, 10)),
+    *(f"lpt{n}" for n in range(1, 10)),
+})
 
 
 # --- detection --------------------------------------------------------------
@@ -166,7 +176,11 @@ def _content_scores(listed: list[str], read: Callable[[str], bytes]) -> dict[str
 def detect_archive_adapter(archive: Path) -> tuple[str | None, str]:
     """Read a zip's directory and a slice of its files, without unpacking it."""
     with zipfile.ZipFile(archive) as bundle:
-        names = [info.filename for info in bundle.infolist() if not info.is_dir()]
+        # An unsafe name is never read, so it cannot pick the adapter's root either.
+        names = [
+            info.filename for info in bundle.infolist()
+            if not info.is_dir() and not _unsafe(info.filename)
+        ]
 
         def read(name: str) -> bytes:
             with bundle.open(name) as handle:
@@ -193,10 +207,17 @@ def _unsafe(name: str) -> bool:
     """Reject anything that would write outside the extraction directory.
 
     `ZipFile.extract` already neutralises these, but a skipped entry that is
-    named in the audit trail beats a silently relocated one.
+    named in the audit trail beats a silently relocated one.  Names of Windows
+    devices are refused too: on Windows they are written to the device and
+    silently dropped rather than kept as a file.
     """
     candidate = PurePath(name.replace("\\", "/"))
-    return candidate.is_absolute() or ".." in candidate.parts or name.startswith("/")
+    return (
+        candidate.is_absolute()
+        or ".." in candidate.parts
+        or name.startswith("/")
+        or any(part.split(".", 1)[0].casefold() in _RESERVED_STEMS for part in candidate.parts)
+    )
 
 
 @dataclass
@@ -240,6 +261,16 @@ def expand_archive(
     return produced
 
 
+def _suffix(name: str) -> str:
+    """The extension of a file or member name, if intake reads that kind of file.
+
+    Only the extension goes into the log: the stem is a person's own name, and
+    an unknown extension may be one too (``Ivanov.Petro``), so it is not echoed.
+    """
+    suffix = PurePath(name).suffix.lower()
+    return suffix if suffix in INTAKE_SUFFIXES else "other"
+
+
 def _extract_entries(
     bundle: zipfile.ZipFile,
     entries: list[zipfile.ZipInfo],
@@ -251,7 +282,10 @@ def _extract_entries(
     total = len(entries)
     for index, info in enumerate(entries, 1):
         if _unsafe(info.filename):
-            logger.warning("intake: skipped unsafe archive entry %r", info.filename)
+            # The member name, not the filename: a person's own filenames carry
+            # their surnames, so only the kind of entry is logged.
+            kind = _suffix(info.filename)
+            logger.warning("intake: skipped unsafe archive entry (type %s)", kind)
             continue
         written = Path(bundle.extract(info, target))
         destination = written.resolve()
@@ -272,8 +306,13 @@ def _expand_nested(inner: Path, depth: int, budget: _ExpansionBudget) -> list[Pa
         return expand_archive(inner, inner.with_suffix(""), depth=depth + 1, _budget=budget)
     except _ArchiveCollisionError:
         raise
-    except (zipfile.BadZipFile, OSError):
-        logger.warning("intake: nested archive %s could not be expanded", inner.name)
+    except (zipfile.BadZipFile, OSError, RuntimeError, NotImplementedError) as exc:
+        # The archive's name, not the filename, for the same reason as above.
+        kind = _suffix(inner.name)
+        logger.warning("intake: nested archive (type %s) could not be expanded (%s)", kind, type(exc).__name__)
+        # Whatever it extracted before failing is not in the record and nothing
+        # names it; leaving it behind is the same orphan the validator reports.
+        shutil.rmtree(inner.with_suffix(""), ignore_errors=True)
         return []
 
 
@@ -495,8 +534,10 @@ def _discard_upload_copy(settings: Settings, path: Path) -> None:
         while folder.parent != uploads and not any(folder.iterdir()):
             folder.rmdir()
             folder = folder.parent
-    except OSError:
-        logger.warning("intake: could not remove the re-uploaded copy of %s", path.name)
+    except OSError as exc:
+        # The file name, not the filename: only its kind goes to the log.
+        kind = _suffix(path.name)
+        logger.warning("intake: could not remove the re-uploaded copy (type %s): %s", kind, type(exc).__name__)
 
 
 def discard_upload_tree(settings: Settings, path: Path) -> None:
@@ -522,8 +563,10 @@ def discard_upload_tree(settings: Settings, path: Path) -> None:
         while folder.parent != uploads and folder != uploads and not any(folder.iterdir()):
             folder.rmdir()
             folder = folder.parent
-    except OSError:
-        logger.warning("intake: could not remove the superseded expansion of %s", path.name)
+    except OSError as exc:
+        # A directory is named after the export it came from, so nothing of its
+        # name is logged, only the failure.
+        logger.warning("intake: could not remove a superseded expansion (%s)", type(exc).__name__)
 
 
 def _run_document(settings: Settings, job) -> None:
@@ -547,7 +590,7 @@ def _run_document(settings: Settings, job) -> None:
     # which also covers a retried job whose import had already committed.
     if held:
         _discard_upload_copy(settings, path)
-        _finish(settings, job["id"], "skipped", "intake.done_duplicate", document_id=str(held["id"]))
+        _finish(settings, job["id"], "skipped", DONE_DUPLICATE, document_id=str(held["id"]))
         return
     result = ingest_file(settings, job["owner_user_id"], job["patient_id"], path)
     action = str(result.get("action"))
@@ -555,7 +598,7 @@ def _run_document(settings: Settings, job) -> None:
     if action == "unchanged":
         _discard_upload_copy(settings, path)
     detail = {
-        "duplicate": "intake.done_duplicate",
+        "duplicate": DONE_DUPLICATE,
         "unchanged": "intake.done_unchanged",
     }.get(action, "intake.done_imported" if count else "intake.done_no_values")
     _finish(
@@ -580,11 +623,13 @@ def _run_document(settings: Settings, job) -> None:
         # to an optional external archive is never worth that.
         try:
             paperless.push_document(settings, str(result["document_id"]))
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            # The traceback can carry the file's path, so it stays at DEBUG.
             logger.warning(
-                "paperless: mirroring document %s failed after a successful ingest",
-                result["document_id"], exc_info=True,
+                "paperless: mirroring document %s failed after a successful ingest (%s)",
+                result["document_id"], type(exc).__name__,
             )
+            logger.debug("paperless: mirroring document %s traceback", result["document_id"], exc_info=True)
 
 
 def _relate_upload_parts(settings: Settings, owner_user_id: str, document_id: str) -> None:
@@ -599,8 +644,10 @@ def _relate_upload_parts(settings: Settings, owner_user_id: str, document_id: st
             row = connection.execute("SELECT mime_type FROM documents WHERE id=?", (document_id,)).fetchone()
             if row and str(row["mime_type"] or "").startswith("image/"):
                 record_document_relations(connection, owner_user_id, document_id)
-    except Exception:  # noqa: BLE001
-        logger.warning("intake: relating upload %s to its batch failed", document_id, exc_info=True)
+    except Exception as exc:  # noqa: BLE001
+        # The traceback can carry the file's path, so it stays at DEBUG.
+        logger.warning("intake: relating upload %s to its batch failed (%s)", document_id, type(exc).__name__)
+        logger.debug("intake: relating upload %s traceback", document_id, exc_info=True)
 
 
 def _run_device_export(settings: Settings, job) -> None:
@@ -666,13 +713,8 @@ def _hand_on_device_export(
     _finish(settings, job["id"], "done", DONE_DEVICE)
 
 
-def _run_archive(settings: Settings, job) -> None:
-    archive = Path(str(job["source_path"]))
-    if not archive.is_file():
-        _finish(settings, job["id"], "failed", FAILED_MISSING)
-        return
-    _mark(settings, job["id"], "intake.step_unpacking")
-    target = archive.with_name(f"{archive.stem}-{str(job['id'])[:8]}")
+def _unpack_for_job(settings: Settings, job, archive: Path, target: Path) -> tuple[str | None, str, list[Path]] | None:
+    """Unpack the archive into `target`; None when the job has already been finished as failed."""
     named = str(job["adapter_key"] or "")
     try:
         # A reader who chose the vendor on the form has said something detection
@@ -686,15 +728,43 @@ def _run_archive(settings: Settings, job) -> None:
     except zipfile.BadZipFile:
         discard_upload_tree(settings, target)
         _finish(settings, job["id"], "failed", "intake.failed_unreadable")
-        return
+        return None
     except ValueError:
         discard_upload_tree(settings, target)
         _finish(settings, job["id"], "failed", "intake.failed_too_big")
-        return
+        return None
+    except Exception:
+        # Anything else escaping expansion (an encrypted member, an unsupported
+        # compression method, a full disk) would leave the partial tree on disk
+        # for good. run_job's handler still records the job as failed.
+        discard_upload_tree(settings, target)
+        raise
+    return adapter, relative_root, produced
 
+
+def _export_root(target: Path, relative_root: str) -> Path:
+    # The root comes from names inside the archive and must never leave the
+    # directory it was unpacked into; anything that resolves outside falls
+    # back to the whole expansion.
+    root = target / relative_root if relative_root else target
+    if not root.resolve().is_relative_to(target.resolve()):
+        root = target
+    return root
+
+
+def _run_archive(settings: Settings, job) -> None:
+    archive = Path(str(job["source_path"]))
+    if not archive.is_file():
+        _finish(settings, job["id"], "failed", FAILED_MISSING)
+        return
+    _mark(settings, job["id"], "intake.step_unpacking")
+    target = archive.with_name(f"{archive.stem}-{str(job['id'])[:8]}")
+    unpacked = _unpack_for_job(settings, job, archive, target)
+    if unpacked is None:
+        return
+    adapter, relative_root, produced = unpacked
     if adapter:
-        _hand_on_device_export(settings, job, archive, target / relative_root if relative_root else target,
-                               adapter, produced)
+        _hand_on_device_export(settings, job, archive, _export_root(target, relative_root), adapter, produced)
         return
 
     documents = sorted(
@@ -779,9 +849,12 @@ def run_job(settings: Settings, job) -> None:
         # the person is told why, and that nothing was changed.
         logger.warning("intake: %s job %s refused: %s", job["kind"], job["id"], refused)
         _finish(settings, job["id"], "failed", refused.detail_key)
-    except Exception:
-        logger.exception("intake: job %s failed", job["id"])
-        _finish(settings, job["id"], "failed", "intake.failed_error")
+    except Exception as exc:
+        # The traceback can carry the file's path, so it stays at DEBUG; the job
+        # id is the reference, as in the line above.
+        logger.error("intake: job %s failed (%s)", job["id"], type(exc).__name__)
+        logger.debug("intake: job %s traceback", job["id"], exc_info=True)
+        _finish(settings, job["id"], "failed", FAILED_ERROR)
 
 
 # --- the worker -------------------------------------------------------------
@@ -791,21 +864,47 @@ _WORKERS: dict[str, threading.Thread] = {}
 _LOCK = threading.Lock()
 
 
+def _retire_when_idle(settings: Settings, key: str) -> bool:
+    """True when the queue is empty and this worker has been removed from `_WORKERS`."""
+    # Deciding to stop happens under the same lock that starts a
+    # worker, so a job enqueued at this instant either is seen here or
+    # starts a replacement thread; it cannot fall between the two.
+    with _LOCK:
+        if _pending(settings):
+            return False
+        _WORKERS.pop(key, None)
+        return True
+
+
+def _fail_crashed_job(settings: Settings, job) -> None:
+    """Mark a claimed job failed after its iteration crashed; an unclaimed one is left alone."""
+    if job is not None and job is not False:
+        try:
+            _finish(settings, job["id"], "failed", FAILED_ERROR)
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def _drain(settings: Settings, key: str) -> None:
+    # One failing iteration (a SQLite lock, a disk error) must not end the only
+    # thread draining this database: _WORKERS would keep pointing at a dead thread
+    # and the claimed job would stay `running` for good.
     while True:
-        job = _claim(settings)
-        if job is False:  # another worker took it first
-            continue
-        if job is None:
-            # Deciding to stop happens under the same lock that starts a
-            # worker, so a job enqueued at this instant either is seen here or
-            # starts a replacement thread; it cannot fall between the two.
-            with _LOCK:
-                if _pending(settings):
-                    continue
-                _WORKERS.pop(key, None)
-                return
-        run_job(settings, job)
+        job = None
+        try:
+            job = _claim(settings)
+            if job is False:  # another worker took it first
+                continue
+            if job is None:
+                if _retire_when_idle(settings, key):
+                    return
+                continue
+            run_job(settings, job)
+        except Exception as exc:  # noqa: BLE001
+            # The class name only: a message or traceback can carry a file name, and file names carry patients' names.
+            logger.error("intake: worker iteration failed: %s", type(exc).__name__)
+            _fail_crashed_job(settings, job)
+            time.sleep(1)
 
 
 def start_worker(settings: Settings) -> None:
@@ -885,5 +984,10 @@ def clear_finished(settings: Settings, owner_user_id: str) -> int:
             (owner_user_id,),
         ).rowcount
     for path in abandoned:
-        _discard_upload_copy(settings, Path(path))
+        # A failed device export is a directory, and the whole tree is what must go.
+        target = Path(path)
+        if target.is_dir():
+            discard_upload_tree(settings, target)
+        else:
+            _discard_upload_copy(settings, target)
     return cleared

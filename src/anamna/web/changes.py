@@ -24,7 +24,7 @@ from typing import Annotated
 from fastapi import Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-from .. import ai
+from .. import ai, factors
 from ..db import connect, utc_now
 from ..i18n import (
     EN_MONTHS_SHORT,
@@ -392,6 +392,7 @@ def build_changes(
     # The AI state is "where do I stand now": the latest episode or one document.
     scope = _ai_scope(document_id, focus, kind)
     payload = ai_payload([report]) if report and scope else []
+    factor_items = factors_payload(connection, owner_user_id, today=date.today()) if payload else []
     return {
         "groups": [report] if report else [],
         "report": report,
@@ -407,7 +408,9 @@ def build_changes(
         "document": documents.get(document_id) if document_id else None,
         "scope": scope,
         "ai_payload": payload,
-        "fingerprint": fingerprint(payload),
+        "ai_factors": factor_items,
+        # The medicines travel with the results, so a change in either makes a saved summary stale.
+        "fingerprint": fingerprint({"results": payload, "factors": factor_items}),
     }
 
 
@@ -642,6 +645,7 @@ def ai_payload(groups: list[dict]) -> list[dict]:
                     "value": entry["value_text"],
                     "unit": entry["unit"] or "",
                     "verdict": entry["verdict"]["label"],
+                    "verdict_code": entry["verdict"].get("interpretation") or "",
                     "target_range": entry["verdict"].get("target_range_text") or "",
                     "band": entry["verdict"].get("band_label") or "",
                     "beyond_target": _beyond(entry),
@@ -663,7 +667,62 @@ def ai_payload(groups: list[dict]) -> list[dict]:
     return payload
 
 
-def fingerprint(payload: list[dict]) -> str:
+#: Medicines and other factors sent with a change summary: the current ones, and those that started or ended within this many months.
+FACTOR_WINDOW_MONTHS = 18
+FACTOR_LIMIT = 20
+
+
+def _months_before(day: date, months: int) -> date:
+    index = day.year * 12 + day.month - 1 - months
+    year, month = divmod(index, 12)
+    return date(year, month + 1, min(day.day, 28))
+
+
+def _year_month(value: object) -> str | None:
+    text = str(value or "")[:7]
+    return text if re.fullmatch(r"\d{4}-\d{2}", text) else None
+
+
+def factors_payload(connection, owner_user_id: str, *, today: date) -> list[dict]:
+    """The medicines and other factors the model may connect to these results.
+
+    A factor is included when it is current, or when it started or ended in the
+    window before today.  One stopped three years ago cannot explain this report,
+    and listing it invites the model to blame it.
+    """
+    since = _months_before(today, FACTOR_WINDOW_MONTHS).isoformat()
+    now = today.isoformat()
+    chosen = []
+    for factor in factors.listing(connection, owner_user_id, today=today):
+        recent = any(
+            value and since <= str(value)[:10] <= now
+            for value in (factor["started_on"], factor["ended_on"])
+        )
+        if factor["effective_status"] == "current" or recent:
+            chosen.append(factor)
+    # Stable: current first, the order of the Medicines page otherwise.
+    chosen.sort(key=lambda factor: factor["effective_status"] != "current")
+    payload = []
+    for factor in chosen[:FACTOR_LIMIT]:
+        item = {
+            "name": factor["name"],
+            "kind": factor["kind"],
+            "since": _year_month(factor["started_on"]),
+            "until": _year_month(factor["ended_on"]),
+            "status": factor["effective_status"],
+            "can_change": [
+                {"test": effect["label"], "direction": effect["direction"]}
+                for effect in factor["effects"]
+            ],
+        }
+        how_taken = factors.regimen_text(factor, "en")
+        if how_taken:
+            item["how_taken"] = how_taken
+        payload.append(item)
+    return payload
+
+
+def fingerprint(payload) -> str:
     return hashlib.sha256(
         json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
     ).hexdigest()
@@ -720,7 +779,81 @@ def _grounded(text: str, allowed: set[float]) -> bool:
     return _numbers(text) <= allowed
 
 
-def messages_for(payload: list[dict], locale: str) -> list[dict]:
+#: Payload fields that hold a measured value, change, target bound or percent; dates, ids, counts, ages are not.
+_MEASUREMENT_FIELDS = ("value", "change", "target_range", "percent")
+
+
+def _measurement_numbers(payload) -> set[float]:
+    """The numbers the data holds as measurements, found by walking the payload's measurement fields."""
+    found: set[float] = set()
+    if isinstance(payload, dict):
+        for key, item in payload.items():
+            if key in _MEASUREMENT_FIELDS and isinstance(item, (str, int, float)):
+                found |= _numbers(str(item))
+            elif isinstance(item, (dict, list)):
+                found |= _measurement_numbers(item)
+    elif isinstance(payload, list):
+        for item in payload:
+            found |= _measurement_numbers(item)
+    return found
+
+
+#: Payload fields that hold a date or a month (the group date, a previous reading's date, earlier months).
+_DATE_FIELDS = ("date", "month")
+_YEAR = re.compile(r"\b\d{4}\b")
+
+
+def _payload_years(payload) -> set[float]:
+    """The years the data names in its date fields: a year is when a reading was taken, not a duration or a dose."""
+    found: set[float] = set()
+    if isinstance(payload, dict):
+        for key, item in payload.items():
+            if key in _DATE_FIELDS and isinstance(item, str):
+                found |= {float(year) for year in _YEAR.findall(item) if 1900 <= int(year) <= 2100}
+            elif isinstance(item, (dict, list)):
+                found |= _payload_years(item)
+    elif isinstance(payload, list):
+        for item in payload:
+            found |= _payload_years(item)
+    return found
+
+
+def _factor_numbers(factor_items) -> set[float]:
+    """A medicine's name can carry a number ("Діокор 80", "Вітамін D3"): a sentence naming it is grounded.
+
+    The same holds for how it is taken ("1 tablet, 2 times a day"): those numbers are in the record.
+    """
+    found: set[float] = set()
+    for item in factor_items:
+        found |= _numbers(str(item["name"]))
+        found |= _numbers(str(item.get("how_taken") or ""))
+    return found
+
+
+def _factor_years(factor_items) -> set[float]:
+    """The years a medicine started or stopped: the months it is written with."""
+    found: set[float] = set()
+    for item in factor_items:
+        for key in ("since", "until"):
+            found |= {float(year) for year in _YEAR.findall(str(item.get(key) or "")) if 1900 <= int(year) <= 2100}
+    return found
+
+
+def _clamped_level(level: str, verdict: str) -> str:
+    """The model's severity, held inside what the reference engine's verdict
+    allows.  The engine is the only judge of a value; the model words the
+    change, it does not get to out-rank or under-rank that judgment."""
+    if level not in LEVELS:
+        return level
+    rank = LEVELS.index(level)
+    if verdict.startswith("critical"):
+        rank = max(rank, LEVELS.index("marked"))
+    elif verdict.startswith("borderline") or verdict in ("normal", "optimal"):
+        rank = min(rank, LEVELS.index("moderate"))
+    return LEVELS[rank]
+
+
+def messages_for(payload: list[dict], locale: str, factor_items=()) -> list[dict]:
     language = _LANGUAGE.get(locale, "English")
     rules = (
         "You explain a person's recent laboratory changes to that person, the way a careful, "
@@ -728,7 +861,7 @@ def messages_for(payload: list[dict], locale: str) -> list[dict]:
         "worrying it is, what commonly causes it and what is usually done next. The data is the "
         "latest report: results from a few consecutive days, each compared with the previous result "
         "of the same test from before them. Each change carries the test, its value and unit, the "
-        "verdict from the reference engine, the target range, the band label of the published "
+        "verdict from the reference engine (`verdict_code` is its code), the target range, the band label of the published "
         "source, `beyond_target` (how far outside the target it is, already computed), earlier "
         "readings and the previous result.\n"
         "Rules:\n"
@@ -737,34 +870,52 @@ def messages_for(payload: list[dict], locale: str) -> list[dict]:
         "or durations) in any field. Describe the size of a change or a deviation only by quoting "
         "`change` or `beyond_target.percent`; never in words such as twice, almost double, several "
         "times or half.\n"
+        "- When you mention when an earlier reading was taken, name the month and year only, never the day of the month.\n"
         "- Severity (`level`): judge it for THAT test using general medical knowledge and the data "
         "-- how far outside the range, the direction, whether it is rising, and how much that test "
         "usually matters. `slight`: just outside, commonly not significant on its own. `moderate`: "
         "clearly outside, worth raising at the next routine visit. `marked`: far outside or "
         "steadily worsening, worth seeing a doctor about soon. `urgent`: a value that usually "
         "needs prompt medical attention. Be honest in both directions: do not alarm about a "
-        "slight deviation and do not soften a marked one. `how_serious` says this in one or two "
+        "slight deviation and do not soften a marked one. The level must not contradict the verdict "
+        "given for that test: a critical verdict is never `slight`, and a borderline, normal or "
+        "optimal verdict is never `marked` or `urgent`. `how_serious` says this in one or two "
         "sentences, referring to the value, the range and the earlier readings.\n"
         "- `what_it_is`: one sentence on what the test measures and why it matters.\n"
         "- `possible_reasons`: two to four common general causes of a result like this, most "
         "common and benign first (for example recent exercise, a meal, a recent infection, "
-        "medicines, lab variation), then the conditions doctors usually check for. These are "
-        "possibilities, never a diagnosis of this person.\n"
-        "- `usually_next`: one to three things that are typically done next, such as repeating "
-        "the test or checking related tests. No treatments, medicines or doses.\n"
+        "medicines, lab variation), then the conditions doctors usually check for. "
+        "Say which is most likely for this person given the other results in the data, and why.\n"
+        "- `usually_next`: one to three things that are typically done next: repeating the test "
+        "and how to prepare for it, the related tests that would narrow down the cause, the kind "
+        "of doctor who deals with it, and the treatment that is used when that applies, named "
+        "specifically (the medicine or class, not just \"treatment\"). Figures other than the "
+        "measurements cannot appear in this summary because every number is checked against the "
+        "data, so leave doses out here: the person can ask the assistant, which works them out.\n"
         "- `ask`: one to three specific questions this person could ask their doctor about this "
         "result, not generic ones.\n"
+        "- Read results that belong together as one picture (for example iron studies with "
+        "haemoglobin, liver enzymes with bilirubin, lipids with glucose, kidney markers together, "
+        "thyroid tests together): when several of them are in the data, say in `how_serious` or "
+        "`possible_reasons` what the combination suggests, not each value alone.\n"
+        "- `factors` lists the medicines and other things the person recorded (supplements, operations, "
+        "illnesses, diet, training), with the month they started and stopped and the results each can "
+        "change. When a change in a result follows the start, the stop or a change of one of them, or "
+        "one of them is known to move that result, say so in `possible_reasons` and name it. Do not "
+        "blame a factor the data does not connect to the result.\n"
         "- `findings`: up to five results that are new, still or newly outside range, most "
         "important first; skip stable and improved ones. `improved`: up to four short items that "
-        "resolved or moved towards range. `state`: two or three sentences on the overall picture "
-        "and how serious it is overall.\n"
+        "resolved or moved towards range. `state`: two or three sentences on the overall picture: "
+        "what the abnormal results suggest together, and how serious it is overall.\n"
         "- Be brief: each sentence and list item short and concrete, no repetition between fields.\n"
         f"Write every text field in {language}; `test` is the test name exactly as given. Answer "
         "with one JSON object. Empty lists are fine."
     )
     return [
         {"role": "system", "content": rules},
-        {"role": "user", "content": json.dumps({"results": payload}, ensure_ascii=False)},
+        {"role": "user", "content": json.dumps(
+            {"results": payload, "factors": list(factor_items)}, ensure_ascii=False
+        )},
     ]
 
 
@@ -780,16 +931,20 @@ def _clean_items(values: object, cap: int, allowed: set[float]) -> list[str]:
     return [item for item in kept if item][:cap]
 
 
-def _clean_finding(raw: object, tests: set[str], allowed: set[float]) -> dict | None:
-    """One model finding, or None when it names an unknown test, level or has no grounded gist."""
-    if not isinstance(raw, dict) or raw.get("test") not in tests or raw.get("level") not in LEVELS:
+def _clean_finding(raw: object, verdicts: dict[str, str], allowed: set[float]) -> dict | None:
+    """One model finding, or None when it names an unknown test, level or has no grounded gist.
+
+    ``verdicts`` maps each test in the payload to its engine verdict code; the
+    level is held inside that verdict.
+    """
+    if not isinstance(raw, dict) or raw.get("test") not in verdicts or raw.get("level") not in LEVELS:
         return None
     how_serious = _clean_text(raw.get("how_serious"), allowed)
     if not how_serious:
         return None
     return {
         "test": raw["test"],
-        "level": raw["level"],
+        "level": _clamped_level(raw["level"], verdicts[raw["test"]]),
         "how_serious": how_serious,
         "what_it_is": _clean_text(raw.get("what_it_is"), allowed),
         "possible_reasons": _clean_items(raw.get("possible_reasons"), 4, allowed),
@@ -798,22 +953,32 @@ def _clean_finding(raw: object, tests: set[str], allowed: set[float]) -> dict | 
     }
 
 
-def summarise(settings, payload: list[dict], locale: str) -> tuple[dict, str]:
+def summarise(settings, payload: list[dict], locale: str, factor_items=()) -> tuple[dict, str]:
     """Ask the configured model; return the cleaned answer and the model name.
 
     A sentence or item carrying a number the data does not contain is dropped,
     not repaired: an invented value is worse than a shorter summary.  So is a
-    finding about a test the data does not name.
+    finding about a test the data does not name.  A medicine's own name and
+    start or stop months are data too, so a sentence naming it keeps its numbers.
     """
-    result = ai.complete(settings, AI_FEATURE, messages_for(payload, locale), response_format=_SCHEMA)
+    result = ai.complete(
+        settings, AI_FEATURE, messages_for(payload, locale, factor_items), response_format=_SCHEMA
+    )
     parsed = ai.parse_json_reply(result.content)
-    allowed = _numbers(json.dumps(payload, ensure_ascii=False))
-    tests = {change["test"] for group in payload for change in group["changes"]}
+    allowed = (
+        _measurement_numbers(payload) | _payload_years(payload)
+        | _factor_numbers(factor_items) | _factor_years(factor_items)
+    )
+    # The newest group's verdict wins for a test named in several groups, as attach_notes does.
+    verdicts: dict[str, str] = {}
+    for group in payload:
+        for change in group["changes"]:
+            verdicts.setdefault(change["test"], change.get("verdict_code") or "")
 
     findings = []
     raw_findings = parsed.get("findings")
     for raw in raw_findings if isinstance(raw_findings, list) else []:
-        finding = _clean_finding(raw, tests, allowed)
+        finding = _clean_finding(raw, verdicts, allowed)
         if finding:
             findings.append(finding)
     sentences = re.split(r"(?<=[.!?])\s+", str(parsed.get("state") or "").strip())
@@ -831,14 +996,16 @@ _ACTIVE: set[tuple[str, str, str, str]] = set()
 _ACTIVE_LOCK = threading.Lock()
 
 
-def _summarise_exclusive(settings, key: tuple[str, str, str, str], payload: list[dict], locale: str):
+def _summarise_exclusive(
+    settings, key: tuple[str, str, str, str], payload: list[dict], locale: str, factor_items=()
+):
     """`summarise`, refused with `in_progress` while the same scope is already being asked."""
     with _ACTIVE_LOCK:
         if key in _ACTIVE:
             raise ai.AIUnavailable("in_progress")
         _ACTIVE.add(key)
     try:
-        return summarise(settings, payload, locale)
+        return summarise(settings, payload, locale, factor_items)
     finally:
         with _ACTIVE_LOCK:
             _ACTIVE.discard(key)
@@ -854,8 +1021,6 @@ def _summary_reply(location: str, wants_json: bool, *, cached: bool = False):
 
 
 def load_summary(connection, owner_user_id: str, locale: str, scope: str, current: str):
-    from . import app as web
-
     row = connection.execute(
         "SELECT * FROM ai_change_summaries WHERE owner_user_id=? AND locale=? AND scope=?",
         (owner_user_id, locale, scope),
@@ -951,7 +1116,7 @@ def _answer_ai_summary(settings, build, user_id: str, document: str, refresh: st
         return _summary_reply(location, wants_json, cached=True)
     key = (str(settings.database_path), user_id, locale, view["scope"])
     try:
-        content, model = _summarise_exclusive(settings, key, view["ai_payload"], locale)
+        content, model = _summarise_exclusive(settings, key, view["ai_payload"], locale, view["ai_factors"])
     except ai.AIUnavailable as failure:
         return _failure_reply(failure, location, wants_json)
     _store_summary(settings, user_id, locale, view, model, content)

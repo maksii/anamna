@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import math
+import re
 import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -21,7 +23,11 @@ MINIMUM_PASSWORD_LENGTH = 10
 #: Failed sign-ins tolerated from one address before it is asked to wait, and
 #: the window both the count and the lockout are measured in.
 LOGIN_ATTEMPT_LIMIT = 10
+#: Failed sign-ins tolerated against one account, from all addresses together, per window.  Higher than the per-address limit so a stranger who knows an email address has to work to lock its owner out, and low enough that guessing a ten-character password stays hopeless.
+LOGIN_ACCOUNT_LIMIT = 20
 LOGIN_ATTEMPT_WINDOW = timedelta(minutes=15)
+#: Wrong current passwords tolerated on the change-password form per window: whoever holds an unattended session must not be able to guess the password it belongs to.
+PASSWORD_CHANGE_LIMIT = 10
 
 
 def password_digest(password: str, salt: bytes) -> bytes:
@@ -333,6 +339,9 @@ def list_access_tokens(settings: Settings, owner_user_id: str | None = None):
         ).fetchall()
 
 
+_OWNER_CLAUSE = " AND owner_user_id = ?"
+
+
 def revoke_access_token(settings: Settings, token_id: str, owner_user_id: str | None = None) -> bool:
     """Delete a credential and every session it opened.
 
@@ -341,7 +350,7 @@ def revoke_access_token(settings: Settings, token_id: str, owner_user_id: str | 
     already keeps the record that it existed.  The sessions go with it through
     the foreign key, so a guest holding an open tab is signed out too.
     """
-    clause = " AND owner_user_id = ?" if owner_user_id else ""
+    clause = _OWNER_CLAUSE if owner_user_id else ""
     values = (token_id, owner_user_id) if owner_user_id else (token_id,)
     with connect(settings) as connection:
         return connection.execute(
@@ -358,12 +367,23 @@ def update_access_token(
 ) -> bool:
     """Rename a credential or move its expiry.  The secret never changes — a
     token that needs a new secret is a new token."""
-    clause = " AND owner_user_id = ?" if owner_user_id else ""
+    clause = _OWNER_CLAUSE if owner_user_id else ""
     values = (label.strip(), expires_at, token_id) + ((owner_user_id,) if owner_user_id else ())
     with connect(settings) as connection:
         return connection.execute(
             f"UPDATE access_tokens SET label = ?, expires_at = ? WHERE id = ?{clause}", values
         ).rowcount > 0
+
+
+def access_token_row(settings: Settings, token_id: str, owner_user_id: str | None = None):
+    """One credential's stored row (never its secret, which is not stored), or
+    None; ``owner_user_id`` scopes the lookup the same way the update does."""
+    clause = _OWNER_CLAUSE if owner_user_id else ""
+    values = (token_id, owner_user_id) if owner_user_id else (token_id,)
+    with connect(settings) as connection:
+        return connection.execute(
+            f"SELECT id, kind, expires_at, pin_hash FROM access_tokens WHERE id = ?{clause}", values
+        ).fetchone()
 
 
 def ensure_seeded_token(settings: Settings, secret: str | None) -> str | None:
@@ -431,10 +451,11 @@ DOCTOR_PIN_REDEEM_WINDOW = timedelta(minutes=15)
 DOCTOR_PIN_ACCESS = timedelta(hours=24)
 #: Failed codes tolerated per client and across the whole server inside
 #: LOGIN_ATTEMPT_WINDOW.  The global cap is the real bound: it limits every
-#: code's whole 15-minute life to 30 guesses out of 10^6, wherever they come
-#: from.  The per-client one keeps a single fat-fingered clinic from spending it.
-DOCTOR_PIN_CLIENT_LIMIT = 5
-DOCTOR_PIN_GLOBAL_LIMIT = 30
+#: code's whole 15-minute life to 60 guesses out of 10^6, wherever they come
+#: from.  The per-client one keeps a single fat-fingered clinic from spending it,
+#: and is high enough that nine mistyped codes still leave the tenth one to try.
+DOCTOR_PIN_CLIENT_LIMIT = 10
+DOCTOR_PIN_GLOBAL_LIMIT = 60
 DOCTOR_PIN_GLOBAL_KEY = "doctor-pin:*"
 #: Stored label of a PIN-opened guest row; the page shows ``doctor.token_name``.
 DOCTOR_PIN_LABEL = "Doctor PIN"
@@ -580,6 +601,22 @@ def set_open_registration(settings: Settings, enabled: bool) -> None:
 # ponytail: in-process counter, so it resets on restart and is per-worker.
 # Move the table into SQLite if this ever runs behind more than one worker.
 _attempts: dict[str, list[datetime]] = {}
+#: The limit each key was last checked against, so `retry_minutes` and
+#: `blocked` know when a key stops being blocked.
+_limits: dict[str, int] = {}
+#: Keys without a live stamp are dropped from `_limits` once it grows past this.
+_LIMITS_FLOOR = 4096
+
+
+def _live_stamps(client: str) -> list[datetime]:
+    """The stamps of this key still inside the window, oldest first; prunes the rest."""
+    cutoff = datetime.now(UTC) - LOGIN_ATTEMPT_WINDOW
+    recent = sorted(stamp for stamp in _attempts.get(client, ()) if stamp > cutoff)
+    if recent:
+        _attempts[client] = recent
+    else:
+        _attempts.pop(client, None)
+    return recent
 
 
 def throttled(client: str, limit: int = LOGIN_ATTEMPT_LIMIT) -> bool:
@@ -591,22 +628,45 @@ def throttled(client: str, limit: int = LOGIN_ATTEMPT_LIMIT) -> bool:
     credential-stuffing target and a way to saturate the box from a handful of
     connections.
     """
-    cutoff = datetime.now(UTC) - LOGIN_ATTEMPT_WINDOW
-    recent = [stamp for stamp in _attempts.get(client, ()) if stamp > cutoff]
-    if recent:
-        _attempts[client] = recent
-    else:
-        _attempts.pop(client, None)
-    return len(recent) >= limit
+    _limits[client] = limit
+    if len(_limits) > _LIMITS_FLOOR:
+        for key in [key for key in _limits if key != client and key not in _attempts]:
+            del _limits[key]
+    return len(_live_stamps(client)) >= limit
+
+
+def retry_minutes(client: str) -> int:
+    """Whole minutes until this key stops being blocked, rounded up; 0 when it is free.
+
+    A key is blocked while it holds at least `limit` stamps inside the window,
+    so it frees itself when the stamp `limit` places from the newest one leaves.
+    """
+    recent = _live_stamps(client)
+    limit = _limits.get(client, LOGIN_ATTEMPT_LIMIT)
+    if len(recent) < limit:
+        return 0
+    free_at = recent[len(recent) - limit] + LOGIN_ATTEMPT_WINDOW
+    seconds = (free_at - datetime.now(UTC)).total_seconds()
+    return max(1, math.ceil(seconds / 60))
+
+
+def blocked() -> list[dict]:
+    """Every key that is paused right now, with the minutes until it frees itself."""
+    paused = []
+    for key in sorted(_attempts):
+        minutes = retry_minutes(key)
+        if minutes:
+            paused.append({"key": key, "minutes": minutes})
+    return paused
 
 
 def record_attempt(client: str) -> None:
     """Count one attempt against this address.
 
     Sign-in records only failures — a person with the right password should
-    never be locked out of their own record.  Sign-up records every attempt,
-    successful or not, because an address creating ten accounts in the window
-    is the abuse case rather than the honest one.
+    never be locked out of their own record.  Sign-up records every submission
+    that passes form validation, successful or not, because an address creating
+    ten accounts in the window is the abuse case rather than the honest one.
     """
     _attempts.setdefault(client, []).append(datetime.now(UTC))
     if len(_attempts) > 4096:  # a floor under memory growth from spoofed addresses
@@ -614,7 +674,48 @@ def record_attempt(client: str) -> None:
         for key, stamps in _attempts.copy().items():
             if not any(stamp > cutoff for stamp in stamps):
                 del _attempts[key]
+                _limits.pop(key, None)
 
 
 def clear_attempts(client: str) -> None:
     _attempts.pop(client, None)
+    _limits.pop(client, None)
+
+
+def clear_attempts_matching(prefix: str) -> int:
+    """Clear every key that starts with ``prefix``; returns how many were cleared."""
+    keys = {key for key in (*_attempts, *_limits) if key.startswith(prefix)}
+    for key in keys:
+        _attempts.pop(key, None)
+        _limits.pop(key, None)
+    return len(keys)
+
+
+#: Set on every successful sign-in.  It proves that this browser has signed in
+#: to this account before, so the browser's failed guesses are counted on a
+#: meter of their own: a stranger who knows the address cannot lock the owner
+#: out of the browser the owner actually uses.  It names a browser, not a session.
+DEVICE_COOKIE = "anamna_device"
+_DEVICE_NONCE = re.compile(r"[A-Za-z0-9_-]{10,64}")
+
+
+def _device_mac(settings: Settings, email: str, nonce: str) -> str:
+    message = f"device:{email.strip().casefold()}:{nonce}".encode("utf-8")
+    return hmac.new(settings.secret_key.encode("utf-8"), message, hashlib.sha256).hexdigest()
+
+
+def device_cookie_value(settings: Settings, email: str) -> str:
+    """A new device token for this account: a random nonce and its MAC."""
+    nonce = secrets.token_urlsafe(16)
+    return f"{nonce}.{_device_mac(settings, email, nonce)}"
+
+
+def device_cookie_nonce(settings: Settings, email: str, value: str | None) -> str | None:
+    """The nonce of a device cookie this account minted, or None for anything else."""
+    nonce, separator, mac = (value or "").partition(".")
+    if not separator or not _DEVICE_NONCE.fullmatch(nonce):
+        return None
+    expected = _device_mac(settings, email, nonce)
+    if not hmac.compare_digest(expected.encode("ascii"), mac.encode("utf-8")):
+        return None
+    return nonce

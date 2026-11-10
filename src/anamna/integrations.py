@@ -39,6 +39,7 @@ import logging
 import os
 import secrets
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -59,6 +60,11 @@ STATE_TTL_SECONDS = 600
 #: review requires accepting at least 10 MB (100 MB for activity details), and
 #: Cloudflare in front of the sandbox caps request bodies at 100 MB anyway.
 MAX_EVENT_BYTES = 100_000_000
+
+#: Largest response body read into memory.  Matches MAX_EVENT_BYTES, the largest
+#: body a provider may push: Garmin ping callbacks fetch activity detail files of
+#: that size through this helper.
+MAX_RESPONSE_BYTES = MAX_EVENT_BYTES
 
 
 class IntegrationError(Exception):
@@ -585,14 +591,32 @@ def _age_seconds(created_at: str) -> float:
 # --- webhook receipt ---------------------------------------------------------
 
 
+def _stale_timestamp(value: str, tolerance_seconds: int = 600) -> bool:
+    """True only for a Unix-epoch timestamp (seconds or milliseconds) further
+    than the tolerance from now.  Any other format is not judged: rejecting a
+    genuine delivery over a format this code has not seen is the worse error."""
+    text = value.strip()
+    if not text.isascii() or not text.isdigit():
+        return False
+    stamp = int(text)
+    if stamp > 10**11:  # milliseconds
+        stamp //= 1000
+    return abs(time.time() - stamp) > tolerance_seconds
+
+
 def verify_oura_signature(client_secret: str, timestamp: str, body: bytes, signature: str) -> bool:
-    """``x-oura-signature`` — HMAC-SHA256 over timestamp + raw body, uppercase hex."""
+    """``x-oura-signature`` — HMAC-SHA256 over timestamp + raw body, uppercase hex.
+
+    A valid signature alone does not prove freshness: a captured delivery
+    replays with its headers intact, so an old epoch timestamp is refused too.
+    """
     if not client_secret or not signature:
         return False
     digest = hmac.new(
         client_secret.encode("utf-8"), timestamp.encode("utf-8") + body, hashlib.sha256
     ).hexdigest().upper()
-    return hmac.compare_digest(digest, signature.upper())
+    valid = hmac.compare_digest(digest, signature.upper())
+    return valid and not _stale_timestamp(timestamp)
 
 
 def acceptable_event(body: bytes) -> bool:
@@ -664,10 +688,15 @@ def _request(
     )
     try:
         with _opener.open(request, timeout=REQUEST_TIMEOUT) as response:
-            body_bytes = response.read()
+            body_bytes = response.read(MAX_RESPONSE_BYTES + 1)
+            if len(body_bytes) > MAX_RESPONSE_BYTES:
+                raise IntegrationError("integrations: response too large")
     except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", "replace")[:300]
-        raise IntegrationError(f"HTTP {exc.code}: {detail}", status=exc.code) from exc
+        detail = exc.read(MAX_RESPONSE_BYTES).decode("utf-8", "replace")[:300]
+        # Callers log the message, and a provider's error page can echo a
+        # document title, so the body is kept out of it and logged at DEBUG only.
+        logger.debug("upstream error body: %s", detail)
+        raise IntegrationError(f"HTTP {exc.code}", status=exc.code) from exc
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         raise IntegrationError(str(exc)) from exc
     if raw:

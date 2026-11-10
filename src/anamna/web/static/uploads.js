@@ -12,6 +12,7 @@
   const summary = document.getElementById("an-queue-summary");
   const section = document.getElementById("processing");
   if (!list || !section) return;
+  const strings = globalThis.__HL_I18N__ || {};
 
   /* Queue completion refreshes the server-rendered recent list. Preserve the
    * reader's exact disclosures and position across that refresh, ordinary
@@ -77,6 +78,11 @@
                        // enqueued a moment after the last one finishes is seen
   let quiet = 0;
   let timer = null;
+  // One dropped request is retried on the next tick; only a run of them stops
+  // refreshing, and then the section says so rather than freezing on "processing".
+  const FAILURES_BEFORE_STALLED = 3;
+  let failures = 0;
+  const LIVE_ROLES = new Set(["status", "alert", "log"]);
 
   const el = (tag, className, text) => {
     const node = document.createElement(tag);
@@ -135,8 +141,73 @@
     return item;
   }
 
+  /* Rows are updated in place. A poll that changes nothing leaves every node
+   * alone, so the reader's focus survives it and the list is not re-read; a row
+   * that did change is swapped for its new render, and focus is put back on the
+   * link it was on. Order follows the payload. */
+  function sync(jobs) {
+    const rows = pruneRows(jobs);
+    let cursor = list.firstElementChild;
+    for (const job of jobs) {
+      const fresh = render(job);
+      const node = rows.get(String(job.id));
+      const target = node ? refreshRow(node, fresh) : fresh;
+      if (cursor === node) cursor = target;
+      if (target === cursor) cursor = cursor.nextElementSibling;
+      else if (cursor) cursor.before(target);
+      else list.append(target);
+    }
+  }
+
+  // Removes the rows of jobs that are gone; returns the rest by job id.
+  function pruneRows(jobs) {
+    const rows = new Map();
+    for (const node of list.children) {
+      if (node.dataset.job !== undefined) rows.set(node.dataset.job, node);
+    }
+    const wanted = new Set(jobs.map((job) => String(job.id)));
+    for (const [id, node] of rows) {
+      if (!wanted.has(id)) node.remove();
+    }
+    return rows;
+  }
+
+  // Returns the row to show for an existing node: the node itself when nothing
+  // changed, otherwise the fresh render that replaces it.
+  function refreshRow(node, fresh) {
+    // fold() sets `hidden` after every poll; it is not part of the row's content.
+    fresh.hidden = node.hidden;
+    let target = fresh;
+    if (node.outerHTML === fresh.outerHTML) {
+      target = node;
+    } else {
+      const focused = node.contains(document.activeElement) ? document.activeElement : null;
+      node.replaceWith(fresh);
+      if (focused) restoreFocus(focused, fresh);
+    }
+    return target;
+  }
+
+  // The same kind of control in the new row: its link, matched by destination.
+  function restoreFocus(was, row) {
+    const key = (node) => node.getAttribute("href") ?? node.getAttribute("name");
+    const same = [...row.querySelectorAll(was.tagName)].find((node) => key(node) === key(was));
+    if (same) {
+      same.focus({ preventScroll: true });
+    } else {
+      row.tabIndex = -1;
+      row.focus({ preventScroll: true });
+    }
+  }
+
+  // Written only when the finished or failed count moves. Every poll writes
+  // the running count too, and a live region would read that out each time.
+  let spokenCounts = null;
   function renderSummary(payload) {
     if (!summary?.dataset.template) return;
+    const counts = `${payload.done}/${payload.failed}`;
+    if (counts === spokenCounts) return;
+    spokenCounts = counts;
     summary.textContent = summary.dataset.template
       .replace("{active}", payload.active)
       .replace("{done}", payload.done)
@@ -149,7 +220,9 @@
     const alert = document.getElementById("an-upload-failed");
     const pill = document.getElementById("an-queue-failed-pill");
     [alert, pill].forEach((node) => { if (node) node.hidden = !payload.failed; });
-    if (alert && payload.failed) alert.querySelector("[data-failed-text]").textContent = payload.failed_text;
+    const failedText = alert?.querySelector("[data-failed-text]");
+    // Unchanged text is not rewritten: a role=alert region announces each rewrite.
+    if (failedText && payload.failed && failedText.textContent !== payload.failed_text) failedText.textContent = payload.failed_text;
     if (pill && payload.failed) pill.textContent = payload.failed_text;
   }
 
@@ -161,12 +234,18 @@
       payload = await response.json();
     } catch {
       // A failed poll is not a failed import: the worker is server-side and
-      // keeps going. Stop refreshing rather than blanking what is on screen.
-      return stop();
+      // keeps going. The last good render stays on screen; it is only replaced
+      // once polling has clearly stopped.
+      failures += 1;
+      if (failures < FAILURES_BEFORE_STALLED) return;
+      stop();
+      stalled();
+      return;
     }
+    failures = 0;
     const empty = document.getElementById("an-queue-empty");
     if (empty && payload.jobs.length) empty.remove();
-    list.replaceChildren(...payload.jobs.map(render));
+    sync(payload.jobs);
     fold();
     list.setAttribute("aria-busy", payload.active ? "true" : "false");
     renderSummary(payload);
@@ -190,9 +269,19 @@
     timer = null;
   }
 
+  // The wording comes from the template; without it the page stops silently,
+  // as it always did. Resuming polls rewrites this line on the next success.
+  function stalled() {
+    const text = section.dataset.msgStalled;
+    if (!summary || !text) return;
+    if (!LIVE_ROLES.has(summary.getAttribute("role"))) summary.setAttribute("role", "status");
+    summary.textContent = text;
+  }
+
   function start() {
     if (timer) return;
     quiet = 0;
+    failures = 0;
     timer = setInterval(poll, 1200);
     poll().catch(stop);
   }
@@ -269,7 +358,7 @@
           if (!response.ok) throw payload;
           sent += part.size;
           const percent = Math.min(100, Math.round((sent / total) * 100));
-          show(percent, form.dataset.progress.replace("{name}", file.name).replace("{percent}", String(percent)));
+          show(percent);
           if (payload.status === "rejected") {
             // The queue row already says why; move on to the next file.
             sent += Math.max(0, file.size - offset - part.size);
@@ -277,6 +366,7 @@
           }
         }
       }
+      announce(strings["upload.announce_done"]);
       globalThis.location.assign("/upload?batch=" + session);
     };
 
@@ -288,9 +378,16 @@
       problem.textContent = text || "";
       problem.hidden = !text;
     };
-    const show = (percent, text) => {
+    // Progress goes only to the bar, which carries its own label. The chosen-file
+    // line is a live region for the file names, and a percentage per XHR event
+    // would be read out over and over.
+    const show = (percent) => {
       if (bar) { bar.hidden = false; bar.value = percent; }
-      if (chosen) chosen.textContent = text;
+    };
+    // One status line for the page: said once, when a step is finished.
+    const uploadStatus = document.getElementById("an-upload-status");
+    const announce = (text) => {
+      if (uploadStatus) uploadStatus.textContent = text || "";
     };
 
     /* One ordinary request, sent by XHR only so the bytes can be counted: the
@@ -301,13 +398,17 @@
       request.open("POST", form.action);
       request.upload.onprogress = (event) => {
         if (!event.lengthComputable) return;
-        const percent = Math.min(100, Math.round((event.loaded / event.total) * 100));
-        show(percent, percent >= 100 ? form.dataset.saving : form.dataset.progressBatch.replace("{percent}", String(percent)));
+        show(Math.min(100, Math.round((event.loaded / event.total) * 100)));
       };
+      // All bytes are sent; the server is now working on them.
+      request.upload.onload = () => announce(form.dataset.saving);
       request.onload = () => (request.status >= 200 && request.status < 400 ? resolve(request.responseURL) : reject(new Error(String(request.status))));
       request.onerror = () => reject(new Error("network"));
       request.send(new FormData(form));
-    }).then((url) => globalThis.location.assign(url || "/upload"));
+    }).then((url) => {
+      announce(strings["upload.announce_done"]);
+      globalThis.location.assign(url || "/upload");
+    });
 
     form.addEventListener("submit", (event) => {
       if (form.dataset.sending) { event.preventDefault(); return; }

@@ -33,7 +33,13 @@ _MINUTES = {"min": 1, "h": 60, "d": 1440, "w": 10080}
 
 
 def _unit(word: str) -> str:
-    return "h" if word.startswith("год") else "min" if word.startswith("хв") else "w" if word.startswith("тиж") else "d"
+    if word.startswith("год"):
+        return "h"
+    if word.startswith("хв"):
+        return "min"
+    if word.startswith("тиж"):
+        return "w"
+    return "d"
 
 
 def durations(text: str) -> list[tuple[int, int, str]]:
@@ -99,7 +105,7 @@ def _times(clause: str) -> tuple[str, ...] | None:
 
 
 def _cycle(clause: str) -> str | None:
-    found = re.search(r"(\d+)\s*-\s*(\d+)\W{0,3}(?:го\s+)?(?:день|дня|дні)\s+(?:мц|менструал)", clause) \
+    found = re.search(r"(?<!\d)(\d\d*+)\s*+-\s*+(\d++)\W{0,3}+(?:го\s++)?(?:день|дня|дні)\s++(?:мц|менструал)", clause) \
         or re.search(r"з\s+(\d+)-?го\s+до\s+(\d+)-?го\s+дня\s+менструал", clause)
     return f"{found.group(1)}-{found.group(2)}" if found else None
 
@@ -199,6 +205,28 @@ def _material(item: dict) -> str:
     return " ".join(item.get("material") or []).casefold()
 
 
+def _other_audience(clause: str, is_child: bool, sex: str | None, adult: bool) -> bool:
+    return bool((is_child and adult) or (sex == "M" and _WOMEN.search(clause)) or (sex == "F" and _MEN.search(clause)))
+
+
+def _rule_applies(rule: dict, clause: str, is_child: bool, sex: str | None, material: str) -> bool:
+    if rule["child"] != is_child or (rule["sex"] and sex not in (None, rule["sex"])):
+        return False
+    if (rule["material"] and rule["material"] not in material) or \
+            (rule["not_material"] and re.search(rule["not_material"], material)):
+        return False
+    return bool(rule["find"].search(clause)) and not (rule["unless"] and rule["unless"].search(clause))
+
+
+def _clause_hits(clause: str, index: int, material: str, sex: str | None, adult: bool, found: dict) -> None:
+    is_child = bool(_CHILD.search(clause))
+    if _other_audience(clause, is_child, sex, adult):
+        return
+    for rule in RULES:
+        if _rule_applies(rule, clause, is_child, sex, material):
+            found.setdefault(rule["name"], []).append({"item": index, "value": _value(rule, clause)})
+
+
 def hits(items: list[dict], sex: str | None, adult: bool) -> dict[str, list[dict]]:
     """``{rule: [{"item": index, "value": ...}]}`` over ``items`` (each with its
     preparation text in ``prep``), for a record of ``sex`` ("M"/"F"/None):
@@ -207,18 +235,7 @@ def hits(items: list[dict], sex: str | None, adult: bool) -> dict[str, list[dict
     for index, item in enumerate(items):
         material = _material(item)
         for clause in clauses(item.get("prep") or ""):
-            is_child = bool(_CHILD.search(clause))
-            if (is_child and adult) or (sex == "M" and _WOMEN.search(clause)) or (sex == "F" and _MEN.search(clause)):
-                continue
-            for rule in RULES:
-                if rule["child"] != is_child or (rule["sex"] and sex not in (None, rule["sex"])):
-                    continue
-                if (rule["material"] and rule["material"] not in material) or \
-                        (rule["not_material"] and re.search(rule["not_material"], material)):
-                    continue
-                if not rule["find"].search(clause) or (rule["unless"] and rule["unless"].search(clause)):
-                    continue
-                found.setdefault(rule["name"], []).append({"item": index, "value": _value(rule, clause)})
+            _clause_hits(clause, index, material, sex, adult, found)
         # The sample itself says what to bring, whatever the text adds.
         if "сеч" in material:
             found.setdefault("urine_24h" if "добов" in material else "urine", []).append({"item": index, "value": None})
@@ -340,6 +357,27 @@ def _abstain(values: dict[str, tuple]) -> list[tuple[tuple, str]]:
     return [(value, _join(nouns)) for _, (value, nouns) in sorted(by.items())]
 
 
+def _give(specific: dict[str, dict], items: list[dict], rule: str, index: int, value) -> None:
+    slot = specific.setdefault(topic(items[index], rule), {})
+    if value is None:
+        slot.setdefault(rule, None)
+    elif KIND[rule] == "variant":
+        slot[rule] = slot.get(rule) or value
+    elif slot.get(rule) is None or _key(KIND[rule])(value) > _key(KIND[rule])(slot[rule]):
+        slot[rule] = value
+
+
+def _specific_entries(rule: str, entries: list[dict], n: int, general: dict, dieting: set) -> list[dict]:
+    """The entries that keep a rule on their own line: all of them, unless most of the visit asks the rule,
+    which makes it general (at its usual number) and leaves only the tests that need a stricter one."""
+    indexes = {e["item"] for e in entries}
+    if rule not in GENERAL or not (len(indexes) > FEW or len(indexes) == n):
+        return entries
+    best, needing, base = _strictest(entries, KIND[rule])
+    general[rule] = base if base is not None else best
+    return [e for e in entries if e["item"] in needing and not (rule == "alcohol" and e["item"] in dieting)]
+
+
 def _topics(items: list[dict], found: dict[str, list[dict]]) -> tuple[dict, dict]:
     """``(the visit's own values, {topic: {rule: value}})``: a rule most tests
     ask stays general at its usual number and a stricter number a few tests
@@ -349,30 +387,12 @@ def _topics(items: list[dict], found: dict[str, list[dict]]) -> tuple[dict, dict
     specific: dict[str, dict] = {}
     # A stool test's own diet already bans alcohol for its days.
     dieting = {e["item"] for e in found.get("stool_diet", [])}
-
-    def give(rule: str, index: int, value) -> None:
-        slot = specific.setdefault(topic(items[index], rule), {})
-        if value is None:
-            slot.setdefault(rule, None)
-        elif KIND[rule] == "variant":
-            slot[rule] = slot.get(rule) or value
-        elif slot.get(rule) is None or _key(KIND[rule])(value) > _key(KIND[rule])(slot[rule]):
-            slot[rule] = value
-
     for rule in WAITS + ABSTAIN:
         entries = found.get(rule, [])
-        indexes = {e["item"] for e in entries}
         if not entries:
             continue
-        if rule in GENERAL and (len(indexes) > FEW or len(indexes) == n):
-            best, needing, base = _strictest(entries, KIND[rule])
-            general[rule] = base if base is not None else best
-            for e in entries:
-                if e["item"] in needing and not (rule == "alcohol" and e["item"] in dieting):
-                    give(rule, e["item"], e["value"])
-        else:
-            for e in entries:
-                give(rule, e["item"], e["value"])
+        for e in _specific_entries(rule, entries, n, general, dieting):
+            _give(specific, items, rule, e["item"], e["value"])
     return general, specific
 
 
@@ -393,19 +413,18 @@ def _topic_line(name: str, slot: dict) -> str | None:
     return "; ".join(parts) or None
 
 
-def sections(items: list[dict], found: dict[str, list[dict]]) -> list[dict]:
-    """``[{"key", "heading", "lines"}]``: for the whole visit, the samples to
-    bring, then what particular tests ask, each line short and named by the
-    analyte, never by the package that carries it."""
-    general, specific = _topics(items, found)
-    whole, samples, tests = [], [], []
+def _infant_water_lines(items: list[dict], found, value) -> list[str]:
+    lines = []
+    for name in ("infant_fasting", "toddler_fasting", "child_water"):
+        if name in found and value(name):
+            ml = next((m for e in found[name] for m in re.findall(r"(?<!\d)(\d\d*+-\d++)\s*+мл", " ".join(
+                clauses(items[e["item"]].get("prep") or "")))), "")
+            lines.append(t(f"plan.prep_rule_{name}", d=fmt(value(name)), ml=ml))
+    return lines
 
-    def names(rule: str) -> str:
-        return ", ".join(dict.fromkeys(topic(items[e["item"]], rule) for e in found[rule]))
 
-    def value(rule: str):
-        return _strictest(found[rule], KIND[rule])[0]
-
+def _whole_rules(items: list[dict], found, general, value) -> list[str]:
+    whole = []
     if "fasting" in general:
         text = t("plan.prep_rule_fasting", d=fmt(general["fasting"])) if general["fasting"] \
             else t("plan.prep_rule_fasting_plain")
@@ -418,16 +437,13 @@ def sections(items: list[dict], found: dict[str, list[dict]]) -> list[dict]:
             for rule in ("wake_within", "wake_after", "rest") if general.get(rule)]
     if "morning" in found or when:
         whole.append(t("plan.prep_rule_when", parts=", ".join([t("plan.prep_when_morning")] * ("morning" in found) + when)))
-    for name in ("infant_fasting", "toddler_fasting", "child_water"):
-        if name in found and value(name):
-            ml = next((m for e in found[name] for m in re.findall(r"(\d+-\d+)\s*мл", " ".join(
-                clauses(items[e["item"]].get("prep") or "")))), "")
-            whole.append(t(f"plan.prep_rule_{name}", d=fmt(value(name)), ml=ml))
+    whole += _infant_water_lines(items, found, value)
     if "infant_feed" in found:
         whole.append(t("plan.prep_rule_infant_feed"))
+    return whole
 
-    _samples(found, samples.append, value)
 
+def _topic_lines(specific: dict) -> list[str]:
     order = [t(f"plan.prep_topic_{name}") for name, _ in TOPICS]
     # Tests asking the very same thing share a line: «КФК, ЛДГ: натщесерце 12 год».
     same: dict[str, list[str]] = {}
@@ -435,7 +451,11 @@ def sections(items: list[dict], found: dict[str, list[dict]]) -> list[dict]:
         parts = _topic_line(name, specific[name])
         if parts:
             same.setdefault(parts, []).append(name)
-    tests += [t("plan.prep_rule_topic", topic=", ".join(names), parts=parts) for parts, names in same.items()]
+    return [t("plan.prep_rule_topic", topic=", ".join(names), parts=parts) for parts, names in same.items()]
+
+
+def _drug_lines(items: list[dict], found, names, value) -> list[str]:
+    tests = []
     if "antibiotics" in found:
         tests.append(t("plan.prep_rule_antibiotics", d=fmt(value("antibiotics")), tests=names("antibiotics"))
                      if value("antibiotics") else t("plan.prep_rule_antibiotics_plain", tests=names("antibiotics")))
@@ -446,19 +466,83 @@ def sections(items: list[dict], found: dict[str, list[dict]]) -> list[dict]:
     if "menstruation" in found:
         tests.append(t("plan.prep_rule_menstruation", d=fmt(value("menstruation"))) if value("menstruation")
                      else t("plan.prep_rule_menstruation_plain"))
-    for days in dict.fromkeys(e["value"] for e in found.get("cycle_day", []) if e["value"]):
-        tests.append(t("plan.prep_rule_cycle_day", days=days))
+    return tests
+
+
+def _weekday_text(days: tuple) -> str:
+    span = len(days) > 2 and days == tuple(range(days[0], days[-1] + 1))
+    if span:
+        return "-".join(t(f"plan.prep_weekday_{d}") for d in (days[0], days[-1]))
+    return ", ".join(t(f"plan.prep_weekday_{d}") for d in days)
+
+
+def _cycle_lines(items: list[dict], found) -> list[str]:
+    tests = [t("plan.prep_rule_cycle_day", days=days)
+             for days in dict.fromkeys(e["value"] for e in found.get("cycle_day", []) if e["value"])]
     for days in dict.fromkeys(e["value"] for e in found.get("weekdays", []) if e["value"]):
-        span = len(days) > 2 and days == tuple(range(days[0], days[-1] + 1))
-        text = "-".join(t(f"plan.prep_weekday_{d}") for d in (days[0], days[-1])) if span \
-            else ", ".join(t(f"plan.prep_weekday_{d}") for d in days)
         own = ", ".join(dict.fromkeys(topic(items[e["item"]]) for e in found["weekdays"] if e["value"] == days))
-        tests.append(t("plan.prep_rule_weekdays", days=text, tests=own))
-    for name in ("some_points", "referral", "doctor", "bring"):
-        if name in found:
-            tests.append(t(f"plan.prep_rule_{name}", tests=names(name)))
+        tests.append(t("plan.prep_rule_weekdays", days=_weekday_text(days), tests=own))
+    return tests
+
+
+def _referral_lines(found, names) -> list[str]:
+    return [t(f"plan.prep_rule_{name}", tests=names(name))
+            for name in ("some_points", "referral", "doctor", "bring") if name in found]
+
+
+def sections(items: list[dict], found: dict[str, list[dict]]) -> list[dict]:
+    """``[{"key", "heading", "lines"}]``: for the whole visit, the samples to
+    bring, then what particular tests ask, each line short and named by the
+    analyte, never by the package that carries it."""
+    general, specific = _topics(items, found)
+
+    def names(rule: str) -> str:
+        return ", ".join(dict.fromkeys(topic(items[e["item"]], rule) for e in found[rule]))
+
+    def value(rule: str):
+        return _strictest(found[rule], KIND[rule])[0]
+
+    whole = _whole_rules(items, found, general, value)
+    samples: list[str] = []
+    _samples(found, samples.append, value)
+    tests = (_topic_lines(specific) + _drug_lines(items, found, names, value)
+             + _cycle_lines(items, found) + _referral_lines(found, names))
     return [{"key": key, "heading": t(f"plan.prep_group_{key}"), "lines": found_lines}
             for key, found_lines in (("general", whole), ("samples", samples), ("tests", tests)) if found_lines]
+
+
+def _step_key(part: str, name: str) -> str:
+    if part == "sterile":
+        return "plan.prep_sample_sterile"
+    return f"plan.prep_{name}"
+
+
+def _sample_steps(sample: str, parts: tuple, found, value) -> tuple[list, list]:
+    before, said = [], [t("plan.prep_sample_home")]
+    for part in parts:
+        name = f"{sample}_{part}"
+        if name not in found:
+            continue
+        if part in ("procedures", "diet"):
+            if value(name):
+                before.append(t(f"plan.prep_{name}", d=fmt(value(name))))
+        elif part == "food":
+            before.append(t(f"plan.prep_{name}"))
+        elif part == "midstream" and "urine_morning" in found:
+            said[-1] = t("plan.prep_urine_morning_midstream")
+        else:
+            said.append(t(_step_key(part, name)))
+    return before, said
+
+
+def _sample_line(sample: str, parts: tuple, found, value) -> str:
+    before, said = _sample_steps(sample, parts, found, value)
+    within = value(f"{sample}_within") if f"{sample}_within" in found else None
+    if within:
+        said.append(t("plan.prep_sample_within", d=fmt(within)))
+    elif f"{sample}_now" in found:
+        said.append(t("plan.prep_sample_now"))
+    return t(f"plan.prep_rule_{sample}", parts="; ".join(", ".join(part) for part in (before, said) if part))
 
 
 def _samples(found, add, value) -> None:
@@ -468,26 +552,7 @@ def _samples(found, add, value) -> None:
                           ("stool", ("procedures", "diet", "fresh", "sterile", "enema"))):
         if sample not in found:
             continue
-        before, said = [], [t("plan.prep_sample_home")]
-        for part in parts:
-            name = f"{sample}_{part}"
-            if name not in found:
-                continue
-            if part in ("procedures", "diet"):
-                if value(name):
-                    before.append(t(f"plan.prep_{name}", d=fmt(value(name))))
-            elif part == "food":
-                before.append(t(f"plan.prep_{name}"))
-            elif part == "midstream" and "urine_morning" in found:
-                said[-1] = t("plan.prep_urine_morning_midstream")
-            else:
-                said.append(t("plan.prep_sample_sterile" if part == "sterile" else f"plan.prep_{name}"))
-        within = value(f"{sample}_within") if f"{sample}_within" in found else None
-        if within:
-            said.append(t("plan.prep_sample_within", d=fmt(within)))
-        elif f"{sample}_now" in found:
-            said.append(t("plan.prep_sample_now"))
-        add(t(f"plan.prep_rule_{sample}", parts="; ".join(", ".join(part) for part in (before, said) if part)))
+        add(_sample_line(sample, parts, found, value))
     for name in ("urine_24h", "urine_first"):
         if name in found:
             add(t(f"plan.prep_rule_{name}"))

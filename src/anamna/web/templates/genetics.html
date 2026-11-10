@@ -47,7 +47,7 @@
       {% elif item.entry %}
       <p>{{ t('special.' ~ item.entry ~ '_what') }}</p>
       {% endif %}
-      <p class="an-gx-once">{{ t('genetics.result.once') }}</p>
+      {% if item.once %}<p class="an-gx-once">{{ t('genetics.result.once') }}</p>{% endif %}
       {{ sources_note(item.sources) }}
     </li>
     {% endfor %}

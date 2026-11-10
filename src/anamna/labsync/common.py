@@ -8,6 +8,7 @@ person's lab results, and the request paths carry order and person numbers.
 from __future__ import annotations
 
 import html
+import http.client
 import json
 import logging
 import re
@@ -50,8 +51,9 @@ _opener = urllib.request.build_opener(_NoRedirect())
 
 def _http(method: str, url: str, *, headers: dict[str, str], body: bytes | None = None,
           timeout: int = REQUEST_TIMEOUT, limit: int = MAX_JSON_BYTES) -> tuple[int, list[str], bytes]:
-    """One request: ``(status, set_cookie_headers, body)``.  Network failure
-    raises ``labsync.error_unreachable``; an HTTP error status is returned."""
+    """One request: ``(status, set_cookie_headers, body)``.  Network failure,
+    or a body cut short mid-transfer (``http.client.HTTPException``), raises
+    ``labsync.error_unreachable``; an HTTP error status is returned."""
     request = urllib.request.Request(url, data=body, method=method,
                                      headers={"User-Agent": USER_AGENT, **headers})
     try:
@@ -59,7 +61,7 @@ def _http(method: str, url: str, *, headers: dict[str, str], body: bytes | None 
             return response.status, response.headers.get_all("Set-Cookie") or [], response.read(limit + 1)
     except urllib.error.HTTPError as exc:
         return exc.code, (exc.headers.get_all("Set-Cookie") if exc.headers else None) or [], b""
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+    except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException) as exc:
         logger.warning("labsync: unreachable: %s", type(exc).__name__)
         raise LabSyncError("labsync.error_unreachable") from None
 
@@ -68,6 +70,16 @@ def _encode_body(payload: object | None, form: dict[str, str] | None) -> tuple[b
     if form is not None:
         return urllib.parse.urlencode(form).encode("ascii"), "application/x-www-form-urlencoded; charset=UTF-8"
     return (json.dumps(payload).encode("utf-8") if payload is not None else None), "application/json"
+
+
+def _checked_pdf(body: bytes) -> bytes:
+    if not body.startswith(b"%PDF"):
+        raise LabSyncError("labsync.error_pdf")
+    if b"%%EOF" not in body[-2048:]:
+        # A PDF cut short in transit: retry later, never store it.
+        logger.warning("labsync: PDF without its end marker (%s bytes)", len(body))
+        raise LabSyncError("labsync.error_unreachable")
+    return body
 
 
 def call(method: str, url: str, *, headers: dict[str, str], payload: object | None = None,
@@ -95,9 +107,7 @@ def call(method: str, url: str, *, headers: dict[str, str], payload: object | No
         logger.warning("labsync: %s request answered HTTP %s", method, status)
         raise LabSyncError(ERROR_REPLY, status)
     if want == "pdf":
-        if not body.startswith(b"%PDF"):
-            raise LabSyncError("labsync.error_pdf")
-        return body, cookies
+        return _checked_pdf(body), cookies
     if want == "file":
         return body, cookies
     try:

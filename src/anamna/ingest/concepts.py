@@ -41,7 +41,10 @@ CONCEPT_DEFINITIONS: list[dict[str, object]] = [
     {"name": "Platelet count", "category": "hematology", "unit": "10^9/L", "aliases": ["тромбоцити (plt)", "тромбоцити", "plt"]},
     {"name": "Mean platelet volume", "category": "hematology", "unit": "fL", "aliases": ["середній об'єм тромбоцитів (mpv)", "mpv"]},
     {"name": "Erythrocyte sedimentation rate", "category": "inflammation", "unit": "mm/h", "aliases": ["шое", "аналіз крові: швидкість осідання еритроцитів (шое, esr)", "швидкість осідання еритроцитів (шое, esr)", "шое за вестергреном (швидкість осідання еритроцитів)", "esr", "шое (ser)"]},
-    {"name": "Blood glucose", "category": "metabolic", "unit": "mmol/L", "aliases": ["глюкоза", "глюкоза (сироватка)", "глюкоза (сироватка крові)", "глюкоза (плазма крові)", "glucose", "blood glucose"]},
+    # The fasting spellings resolve here so a fasting result gets its published
+    # interval.  The post-load, 2-hour and random spellings stay out: they are
+    # different samples and must keep resolving to nothing.
+    {"name": "Blood glucose", "category": "metabolic", "unit": "mmol/L", "aliases": ["глюкоза", "глюкоза (сироватка)", "глюкоза (сироватка крові)", "глюкоза (плазма крові)", "глюкоза натще", "глюкоза (натще)", "глюкоза крові", "глюкоза крові натще", "глюкоза плазми", "глюкоза плазми натще", "глюкоза венозної крові", "glucose", "blood glucose", "fasting glucose", "glucose, fasting", "fasting plasma glucose"]},
     {"name": "Hemoglobin A1c", "category": "metabolic", "unit": "%", "aliases": ["глікований гемоглобін (hba1c)", "глікований гемоглобін (hba1c)цільна кров", "hba1c", "hb a1c"]},
     {"name": "Albumin", "category": "liver", "unit": "g/L", "aliases": ["альбумін", "albumin"]},
     {"name": "Total protein", "category": "liver", "unit": "g/L", "aliases": ["білок загальний", "загальний білок", "total protein"]},
@@ -247,7 +250,8 @@ CONCEPT_DEFINITIONS: list[dict[str, object]] = [
     {"name": "Urine pH", "category": "urinalysis", "unit": None, "aliases": ["рн (c-ph)", "ph сечі", "urine ph"]},
     {"name": "Urine specific gravity", "category": "urinalysis", "unit": None, "aliases": ["питома вага", "питома вага (c-s.g.(ref))", "питома вага, г/мл", "відносна щільність", "питома густина", "urine specific gravity", "specific gravity"]},
     {"name": "Urine protein", "category": "urinalysis", "unit": "g/L", "value_type": "mixed", "aliases": ["білок в сечі", "білок (c-pro)", "білок в сечі, г/л", "білок", "urine protein"]},
-    {"name": "Urine glucose", "category": "urinalysis", "unit": None, "value_type": "text", "aliases": ["глюкоза (c-glu)", "глюкоза", "глюкоза в сечі", "глюкоза, ммоль/л", "urine glucose"]},
+    # "mixed" like Urine protein: a numeric strip reading of «Глюкоза» must not fall through to Blood glucose.
+    {"name": "Urine glucose", "category": "urinalysis", "unit": None, "value_type": "mixed", "aliases": ["глюкоза (c-glu)", "глюкоза", "глюкоза в сечі", "глюкоза, ммоль/л", "urine glucose"]},
     # "mixed" rather than "text": Expert Hospital reports ketones as a strip
     # grade on one report and as mmol/L on another.
     {"name": "Urine ketones", "category": "urinalysis", "unit": "mmol/L", "value_type": "mixed", "aliases": ["кетони (c-ket)", "кетонові тіла", "кетони", "urine ketones"]},
@@ -752,7 +756,9 @@ _SPECIMEN_BOUND = frozenset({"urinalysis", "stool"})
 #: A count per litre is a blood count: «Лейкоцити (WBC) 6.84 10^9 клітин/л»
 #: printed in a urinalysis order is the white cell count, not urine.  Urine
 #: counts are per microlitre or per field.  «Г/л» is giga-per-litre.
-_BLOOD_COUNT_UNIT = re.compile(r"10\s*(?:\^|\*\*?)?\s*(?:9|12|⁹|¹²)(?!\d)|^\s*Г/[лЛ]\s*$")
+_TEN_POWER_UNIT = r"10\s*(?:(?:\^|\*\*?)\s*)?(?:9|12|⁹|¹²)(?!\d)"
+_GIGA_PER_LITRE_UNIT = r"^\s*Г/[лЛ]\s*$"
+_BLOOD_COUNT_UNIT = re.compile(rf"{_TEN_POWER_UNIT}|{_GIGA_PER_LITRE_UNIT}")
 
 
 def specimen_family(*texts: str | None) -> str | None:
@@ -866,7 +872,46 @@ def concept_for_alias(
     # Latin-coded rows beside them resolved.  The homoglyph trap is the same one
     # «(МСН)»/«(МСНС)» already carry: identical on paper, unequal to every
     # string comparison, so both scripts have to be tried.
-    code_match = re.findall(r"\(([A-Za-zА-ЯЁІЇЄҐа-яёіїєґ][\w%#.-]{1,10})\)", alias)
-    if code_match:
-        return choose(_ALIAS_INDEX.get(label_key(code_match[-1]), []))
+    codes = list(re.finditer(r"\(([A-Za-zА-ЯЁІЇЄҐа-яёіїєґ][\w%#.-]{1,10})\)", alias))
+    if codes:
+        code = codes[-1]
+        found = choose(_ALIAS_INDEX.get(label_key(code.group(1)), []))
+        # The code alone cannot carry «в сечі», «добової» or «прямий»: a
+        # definition that does not carry the same word is refused, not guessed.
+        if found and _fallback_blocked(alias[: code.start()], found):
+            return None
+        return found
     return None
+
+
+#: Words in the text before a bracketed code that the code alone would drop
+#: (specimen, collection period, fraction, measure).  Casefolded before matching.
+_FALLBACK_DISCRIMINATORS = tuple(
+    (name, re.compile(pattern))
+    for name, pattern in (
+        ("urine", r"сеч"),
+        ("stool", r"\bкал\b|у калі|в калі"),
+        ("24-hour", r"добов"),
+        ("free", r"вільн|free"),
+        ("total", r"загальн|total"),
+        ("direct", r"прям|direct"),
+        ("indirect", r"непрям|indirect"),
+        ("percent", r"%"),
+        ("absolute", r"абс|\babs\b"),
+        ("IgG", r"igg"),
+        ("IgM", r"igm"),
+        ("IgA", r"iga"),
+        ("IgE", r"ige"),
+        ("CSF", r"ліквор"),
+        ("saliva", r"слин"),
+    )
+)
+
+
+def _fallback_blocked(prefix: str, definition: dict[str, object]) -> bool:
+    """True when the text before the code names something the resolved
+    definition does not: «Креатинін в добовій сечі (creatinine)» is not serum
+    creatinine, but «Білірубін прямий (DBIL)» still resolves to direct bilirubin."""
+    text = prefix.casefold()
+    own = " ".join([str(definition["name"]), *(str(item) for item in definition.get("aliases", []))]).casefold()
+    return any(pattern.search(text) and not pattern.search(own) for _, pattern in _FALLBACK_DISCRIMINATORS)

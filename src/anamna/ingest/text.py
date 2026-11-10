@@ -16,7 +16,7 @@ def collapse_space(value: str) -> str:
 #: A Roman numeral typed partly or wholly in Cyrillic («ІІ», «ІV», «ХІІ»):
 #: the lab's record writes «тип ІІ» where the OCR of its print reads «тип II».
 #: Two letters at least, so the conjunction «і» stays a word.
-_CYRILLIC_ROMAN_RE = re.compile(r"(?<!\w)(?=\w*[іх])[ivxіх]{2,}(?!\w)")
+_CYRILLIC_ROMAN_RE = re.compile(r"(?<!\w)(?:[ivx][ivx]*+[іх]|[іх][ivxіх])[ivxіх]*+(?!\w)")
 _ROMAN_TO_LATIN = str.maketrans("іх", "ix")
 
 
@@ -98,7 +98,8 @@ def combined_page_text(page: dict[str, object]) -> str:
 
 
 def parse_decimal(value: str) -> float | None:
-    clean = value.strip().replace(" ", "").replace(",", ".")
+    # The typographic minus («−2,3», U+2212) is the sign, not a character float() rejects.
+    clean = value.strip().replace(" ", "").replace(",", ".").replace("−", "-")
     clean = clean.rstrip("%")
     clean = re.sub(r"^[<>≤≥=~]+", "", clean)
     try:

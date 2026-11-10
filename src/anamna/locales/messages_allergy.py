@@ -333,8 +333,8 @@ MESSAGES: dict[str, dict[str, str]] = {
         "uk": "Головний алерген мʼязів риби, наприклад Gad m 1 (тріска), Cyp c 1 (короп) і Sal s 1 (лосось).",
     },
     "allergy.family.parvalbumin.means": {
-        "en": "Heat-stable and alike across many fish, so a positive often means reacting to several kinds of fish.",
-        "uk": "Стійкий до нагрівання і схожий у багатьох видів риби, тому позитивний результат часто означає реакцію на кілька видів риби.",
+        "en": "Heat-stable and alike across many fish, so a positive often means sensitisation to several kinds of fish; whether you react is decided by your history and, if needed, a supervised challenge.",
+        "uk": "Стійкий до нагрівання і схожий у багатьох видів риби, тому позитивний результат часто означає сенсибілізацію до кількох видів риби; чи є реакція, вирішують за анамнезом і, за потреби, провокаційною пробою.",
     },
     "allergy.family.serum_albumin.name": {"en": "Serum albumins", "uk": "Сироваткові альбуміни"},
     "allergy.family.serum_albumin.what": {
@@ -384,8 +384,8 @@ MESSAGES: dict[str, dict[str, str]] = {
     "allergy.family.omega5.name": {"en": "Omega-5 gliadin", "uk": "Омега-5-гліадин"},
     "allergy.family.omega5.what": {"en": "A wheat protein (Tri a 19).", "uk": "Білок пшениці (Tri a 19)."},
     "allergy.family.omega5.means": {
-        "en": "Linked with wheat allergy in adults, including reactions that happen only when eating wheat is followed by exercise.",
-        "uk": "Повʼязаний з алергією на пшеницю в дорослих, зокрема з реакціями, які виникають лише тоді, коли після пшениці є фізичне навантаження.",
+        "en": "Linked with wheat allergy, including reactions that happen only when eating wheat is followed by exercise.",
+        "uk": "Повʼязаний з алергією на пшеницю, зокрема з реакціями, які виникають лише тоді, коли після пшениці є фізичне навантаження.",
     },
     "allergy.family.venom.name": {"en": "Venom proteins", "uk": "Білки отрути"},
     "allergy.family.venom.what": {

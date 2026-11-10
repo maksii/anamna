@@ -240,6 +240,103 @@ def _dominance(cands: list[tuple], net: bool = False) -> list[tuple]:
     return [cand for index, cand in enumerate(cands) if not any(dominates(o, index) for o in by_cover[cand[1]])]
 
 
+def _forced_facts(forced: list[dict]) -> tuple[dict, float, set]:
+    forced_fees = {fee["id"]: float(fee["price"]) for item in forced for fee in item["fees"]}
+    forced_cost = sum(float(item["final_price"]) for item in forced) + sum(forced_fees.values())
+    forced_results = {result for item in forced for result in measured(item)}
+    return forced_fees, forced_cost, forced_results
+
+
+def _fee_prices(cands: list[tuple], forced_fees: dict) -> dict:
+    return {fee: price for cand in cands for fee, price in cand[4].items() if fee not in forced_fees}
+
+
+def _fitting_start(start: tuple | None, cap: float) -> tuple | None:
+    return start if start is not None and start[0] <= cap + _EPS else None
+
+
+def _stages(first: str) -> tuple[str, ...]:
+    return ("cost", "value", "dups") if first == "cost" else ("value", "cost", "dups")
+
+
+def _open_candidates(pool: list[dict], forced_ids: set, open_keys: set, net: bool) -> list[tuple]:
+    cands = []
+    for item in pool:
+        cover = frozenset(item["keys"]) & open_keys
+        if cover and (item.get("lab"), item["id"]) not in forced_ids:
+            cands.append((item, cover, measured(item), float(item["final_price"]),
+                          {fee["id"]: float(fee["price"]) for fee in item["fees"]}))
+    return _dominance(cands, net)
+
+
+def _result_weights(cands: list[tuple], forced_results: set, required: set[str], tracked: set) -> dict[str, int]:
+    result_keys: dict[str, frozenset[str]] = {}
+    for cand in cands:
+        for result, found in cand[2].items():
+            if result not in forced_results:
+                result_keys.setdefault(result, found)
+    # Value: 1 for a result beyond the needs, 2 when the record holds it.
+    return {result: 1 + bool(found & tracked) for result, found in result_keys.items() if not found & required}
+
+
+def _index_sets(cands: list[tuple], results: list[frozenset]) -> tuple[list[tuple], dict[tuple, list[str]]]:
+    coverers: dict[str, list[int]] = {}
+    reporting: dict[str, list[int]] = {}
+    for i, cand in enumerate(cands):
+        for key in cand[1]:
+            coverers.setdefault(key, []).append(i)
+        for result in results[i]:
+            reporting.setdefault(result, []).append(i)
+    key_sets = list(dict.fromkeys(tuple(found) for found in coverers.values()))
+    result_sets: dict[tuple, list[str]] = {}
+    for result, found in reporting.items():
+        result_sets.setdefault(tuple(found), []).append(result)
+    return key_sets, result_sets
+
+
+def _columns(n: int, fee_price: dict, key_sets: list, result_sets: dict) -> tuple:
+    y_col = {fee: n + index for index, fee in enumerate(sorted(fee_price))}
+    t_col = [n + len(y_col) + index for index in range(len(key_sets))]
+    u_col = {(i, c): n + len(y_col) + len(key_sets) + index
+             for index, (c, i) in enumerate((c, i) for c, found in enumerate(key_sets) for i in found)}
+    w_col = [n + len(y_col) + len(key_sets) + len(u_col) + index for index in range(len(result_sets))]
+    size = n + len(y_col) + len(key_sets) + len(u_col) + len(w_col)
+    return y_col, t_col, u_col, w_col, size
+
+
+def _key_rows(key_sets: list, t_col: list, u_col: dict, inf: float) -> list:
+    rows = []
+    for c, found in enumerate(key_sets):
+        rows.append((1.0, inf, dict.fromkeys(found, 1.0)))
+        rows.append((0.0, 0.0, {t_col[c]: 1.0, **{u_col[i, c]: -1.0 for i in found}}))
+        rows.extend((-inf, 1.0, {i: 1.0, u_col[i, c]: -1.0, t_col[c]: 1.0}) for i in found)
+    return rows
+
+
+def _item_rows(n: int, fees: list[dict], u_col: dict, y_col: dict, w_col: list, result_sets: dict, inf: float) -> list:
+    owns: list[dict[int, float]] = [{} for _ in range(n)]
+    for (i, _), column in u_col.items():
+        owns[i][column] = -1.0
+    rows = []
+    for i in range(n):
+        rows.append((-inf, 0.0, {i: 1.0, **owns[i]}))
+        rows.extend((-inf, 0.0, {i: 1.0, y_col[fee]: -1.0}) for fee in fees[i])
+    for column, found in zip(w_col, result_sets):
+        rows.append((-inf, 0.0, {column: 1.0, **dict.fromkeys(found, -1.0)}))
+    return rows
+
+
+def _matrix(rows: list) -> tuple:
+    starts, index, values = [], [], []
+    for _, _, entries in rows:
+        starts.append(len(index))
+        index.extend(entries)
+        values.extend(entries.values())
+    return (len(rows), np.array([row[0] for row in rows]), np.array([row[1] for row in rows]),
+            len(index), np.array(starts, dtype=np.int32), np.array(index, dtype=np.int32),
+            np.array(values, dtype=np.float64))
+
+
 class _Model:
     """Every irredundant cover of ``required`` from ``pool`` (``forced``
     bought already) as one HiGHS mixed-integer program, solved again for each
@@ -266,27 +363,12 @@ class _Model:
         open_keys = required - {key for item in forced for key in item["keys"]}
         self.covered = sorted(required & {key for item in [*forced, *pool] for key in item["keys"]})
         self.missing = sorted(required - set(self.covered))
-        forced_fees = {fee["id"]: float(fee["price"]) for item in forced for fee in item["fees"]}
-        self.forced_cost = sum(float(item["final_price"]) for item in forced) + sum(forced_fees.values())
-        forced_results = {result for item in forced for result in measured(item)}
-        cands = []
-        for item in pool:
-            cover = frozenset(item["keys"]) & open_keys
-            if cover and (item.get("lab"), item["id"]) not in forced_ids:
-                cands.append((item, cover, measured(item), float(item["final_price"]),
-                              {fee["id"]: float(fee["price"]) for fee in item["fees"]}))
-        cands = _dominance(cands, net)
+        forced_fees, self.forced_cost, forced_results = _forced_facts(forced)
+        cands = _open_candidates(pool, forced_ids, open_keys, net)
         self.items = [cand[0] for cand in cands]
         self.n = n = len(cands)
-        fee_price = {fee: price for cand in cands for fee, price in cand[4].items() if fee not in forced_fees}
-        result_keys: dict[str, frozenset[str]] = {}
-        for cand in cands:
-            for result, found in cand[2].items():
-                if result not in forced_results:
-                    result_keys.setdefault(result, found)
-        # Value: 1 for a result beyond the needs, 2 when the record holds it.
-        self.weight = {result: 1 + bool(found & self.tracked) for result, found in result_keys.items()
-                       if not found & required}
+        fee_price = _fee_prices(cands, forced_fees)
+        self.weight = _result_weights(cands, forced_results, required, self.tracked)
         self.results = [frozenset(cand[2].keys() - forced_results) for cand in cands]
         self.reports = [len(cand[2]) for cand in cands]
         self.prices = [cand[3] for cand in cands]
@@ -294,41 +376,22 @@ class _Model:
         # Keys covered by the same items are one key to the program, and
         # results reported by the same items one result: the same plans
         # from a far smaller program.
-        coverers: dict[str, list[int]] = {}
-        reporting: dict[str, list[int]] = {}
-        for i, cand in enumerate(cands):
-            for key in cand[1]:
-                coverers.setdefault(key, []).append(i)
-            for result in self.results[i]:
-                reporting.setdefault(result, []).append(i)
-        key_sets = list(dict.fromkeys(tuple(found) for found in coverers.values()))
-        result_sets: dict[tuple[int, ...], list[str]] = {}
-        for result, found in reporting.items():
-            result_sets.setdefault(tuple(found), []).append(result)
-
-        y_col = {fee: n + index for index, fee in enumerate(sorted(fee_price))}
-        t_col = [n + len(y_col) + index for index in range(len(key_sets))]
-        u_col = {(i, c): n + len(y_col) + len(key_sets) + index
-                 for index, (c, i) in enumerate((c, i) for c, found in enumerate(key_sets) for i in found)}
-        w_col = [n + len(y_col) + len(key_sets) + len(u_col) + index for index in range(len(result_sets))]
-        self.size = cols = n + len(y_col) + len(key_sets) + len(u_col) + len(w_col)
+        key_sets, result_sets = _index_sets(cands, self.results)
+        y_col, t_col, u_col, w_col, self.size = _columns(n, fee_price, key_sets, result_sets)
         self.y_col, self.t_col, self.u_col, self.key_sets = y_col, t_col, u_col, key_sets
         self.w_col = dict(zip(w_col, result_sets))
-        owns: list[dict[int, float]] = [{} for _ in range(n)]
-        for (i, _), column in u_col.items():
-            owns[i][column] = -1.0
-
+        objective = self._objectives(fee_price, y_col, w_col, result_sets)
+        self.objective = objective
         inf = highspy.kHighsInf
-        rows: list[tuple[float, float, dict[int, float]]] = []
-        for c, found in enumerate(key_sets):
-            rows.append((1.0, inf, dict.fromkeys(found, 1.0)))
-            rows.append((0.0, 0.0, {t_col[c]: 1.0, **{u_col[i, c]: -1.0 for i in found}}))
-            rows.extend((-inf, 1.0, {i: 1.0, u_col[i, c]: -1.0, t_col[c]: 1.0}) for i in found)
-        for i in range(n):
-            rows.append((-inf, 0.0, {i: 1.0, **owns[i]}))
-            rows.extend((-inf, 0.0, {i: 1.0, y_col[fee]: -1.0}) for fee in self.fees[i])
-        for column, found in zip(w_col, result_sets):
-            rows.append((-inf, 0.0, {column: 1.0, **dict.fromkeys(found, -1.0)}))
+        rows = _key_rows(key_sets, t_col, u_col, inf) + _item_rows(n, self.fees, u_col, y_col, w_col, result_sets, inf)
+        self.cost_row, self.value_row = len(rows), len(rows) + 1
+        rows.append((-inf, inf, {c: v for c, v in enumerate(objective["cost"]) if v}))
+        rows.append((-inf, inf, {c: -v for c, v in enumerate(objective["value"]) if v}))
+        self.matrix = _matrix(rows)
+        self.everything = np.arange(self.size, dtype=np.int32)
+
+    def _objectives(self, fee_price: dict, y_col: dict, w_col: list, result_sets: dict) -> dict:
+        n, cols = self.n, self.size
         cost = np.zeros(cols)
         cost[:n] = self.prices
         for fee, column in y_col.items():
@@ -339,22 +402,9 @@ class _Model:
         for column, results in zip(w_col, result_sets.values()):
             value[column] = -sum(self.weight.get(result, 0) for result in results)
             dups[column] = -len(results)
-        if net:
+        if self.net:
             value = value + dups
-        self.objective = {"cost": cost, "value": value, "dups": dups}
-        self.cost_row, self.value_row = len(rows), len(rows) + 1
-        rows.append((-inf, inf, {c: v for c, v in enumerate(cost) if v}))
-        rows.append((-inf, inf, {c: -v for c, v in enumerate(value) if v}))
-
-        starts, index, values = [], [], []
-        for _, _, entries in rows:
-            starts.append(len(index))
-            index.extend(entries)
-            values.extend(entries.values())
-        self.matrix = (len(rows), np.array([row[0] for row in rows]), np.array([row[1] for row in rows]),
-                       len(index), np.array(starts, dtype=np.int32), np.array(index, dtype=np.int32),
-                       np.array(values, dtype=np.float64))
-        self.everything = np.arange(cols, dtype=np.int32)
+        return {"cost": cost, "value": value, "dups": dups}
 
     def _highs(self) -> highspy.Highs:
         """A fresh solver holding the program: one per solve sequence, so
@@ -409,31 +459,43 @@ class _Model:
             return self.measure(()) if self.forced_cost <= cap + _EPS else None
         highs, inf = self._highs(), highspy.kHighsInf
         highs.changeRowBounds(self.cost_row, -inf, cap - self.forced_cost + _EPS if cap < math.inf else inf)
-        found = start if start is not None and start[0] <= cap + _EPS else None
+        found = _fitting_start(start, cap)
         exact = True
-        for stage in ("cost", "value", "dups") if first == "cost" else ("value", "cost", "dups"):
-            highs.changeColsCost(self.size, self.everything, self.objective[stage])
-            highs.setOptionValue("time_limit", max(min(deadline or math.inf, self.deadline) - time.monotonic(), 0.01))
-            if found is not None:
-                highs.setSolution(self.size, self.everything, self._start(found[3]))
-                if stage != first:  # holding the optimum already: the search only proves it
-                    for heuristic in _HEURISTICS:
-                        highs.setOptionValue(heuristic, False)
-                    highs.setOptionValue("mip_heuristic_effort", 0.0)
+        for stage in _stages(first):
+            self._prepare_stage(highs, stage, first, found, deadline)
             highs.run()
             status = highs.getModelStatus()
+            if self._unsolved(highs, status):
+                return None if stage == first else found
             if status == highspy.HighsModelStatus.kTimeLimit:
                 exact = False
-            elif status != highspy.HighsModelStatus.kOptimal:
-                return None if stage == first else found
-            if highs.getInfo().primal_solution_status != highspy.SolutionStatus.kSolutionStatusFeasible:
-                return None if stage == first else found
-            found = self.measure(tuple(i for i in range(self.n) if highs.getSolution().col_value[i] > 0.5), exact)
-            if stage == "cost":
-                highs.changeRowBounds(self.cost_row, -inf, found[0] - self.forced_cost + _EPS)
-            elif stage == "value":
-                highs.changeRowBounds(self.value_row, found[1] - (found[2] if self.net else 0) - 0.5, inf)
+            found = self._solution(highs, exact)
+            self._tighten(highs, stage, found, inf)
         return found
+
+    def _solution(self, highs, exact: bool) -> tuple:
+        return self.measure(tuple(i for i in range(self.n) if highs.getSolution().col_value[i] > 0.5), exact)
+
+    def _prepare_stage(self, highs, stage: str, first: str, found: tuple | None, deadline: float | None) -> None:
+        highs.changeColsCost(self.size, self.everything, self.objective[stage])
+        highs.setOptionValue("time_limit", max(min(deadline or math.inf, self.deadline) - time.monotonic(), 0.01))
+        if found is not None:
+            highs.setSolution(self.size, self.everything, self._start(found[3]))
+            if stage != first:  # holding the optimum already: the search only proves it
+                for heuristic in _HEURISTICS:
+                    highs.setOptionValue(heuristic, False)
+                highs.setOptionValue("mip_heuristic_effort", 0.0)
+
+    def _unsolved(self, highs, status) -> bool:
+        """No plan the solver can show: it neither finished nor ran out of time, or it has no feasible solution."""
+        return (status not in (highspy.HighsModelStatus.kOptimal, highspy.HighsModelStatus.kTimeLimit)
+                or highs.getInfo().primal_solution_status != highspy.SolutionStatus.kSolutionStatusFeasible)
+
+    def _tighten(self, highs, stage: str, found: tuple, inf: float) -> None:
+        if stage == "cost":
+            highs.changeRowBounds(self.cost_row, -inf, found[0] - self.forced_cost + _EPS)
+        elif stage == "value":
+            highs.changeRowBounds(self.value_row, found[1] - (found[2] if self.net else 0) - 0.5, inf)
 
     def richest(self, caps: list[float], start: tuple | None = None) -> list[tuple | None]:
         """:meth:`best` most valuable first under each of ``caps``, side by side."""

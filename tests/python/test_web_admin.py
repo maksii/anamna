@@ -168,11 +168,12 @@ def test_administrator_sees_the_page_and_a_member_never_sees_the_link(tmp_path: 
         page = client.get("/admin/users")
         assert page.status_code == 200
         assert "member@example.test" in page.text
-        assert "/admin/users" in client.get("/profile").text
+        # The account menu carries one link to the administration area.
+        assert 'href="/admin"' in client.get("/profile").text
 
     with TestClient(create_app(settings)) as client:
         sign_in(client, "member@example.test")
-        assert "/admin/users" not in client.get("/profile").text
+        assert 'href="/admin' not in client.get("/profile").text
 
 
 def test_blocking_ends_live_sessions_and_refuses_the_next_sign_in(tmp_path: Path):
@@ -420,8 +421,8 @@ def test_repeated_failed_sign_ins_are_throttled(tmp_path: Path):
             )
             # The correct password is refused too: the limit is on the address,
             # so guessing cannot be resumed by getting one right.
-            assert throttled.headers["location"] == "/login?error=throttled"
-            assert "Too many failed sign-in attempts" in client.get("/login?error=throttled").text
+            assert throttled.headers["location"] == "/login?error=throttled&wait=15"
+            assert "Too many failed sign-in attempts" in client.get("/login?error=throttled&wait=15").text
     finally:
         clear_attempts("testclient")
 
@@ -532,7 +533,7 @@ def test_an_opened_sign_up_form_is_throttled_on_successes_too(tmp_path: Path):
                       "password": PASSWORD},
                 follow_redirects=False,
             )
-            assert refused.headers["location"] == "/login?error=throttled"
+            assert refused.headers["location"] == "/register?error=throttled&wait=15"
     finally:
         clear_attempts("testclient")
 

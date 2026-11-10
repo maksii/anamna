@@ -259,11 +259,6 @@ def test_one_concept_list_serves_every_form_on_the_page(tmp_path: Path):
     # One correction form per value, plus the add form, all pointing at it -
     # inlining the catalogue per row is megabytes of repeated options.
     assert body.count('list="an-concept-list"') == 9
-    with connect(settings) as connection:
-        total = connection.execute("SELECT COUNT(*) FROM concepts").fetchone()[0]
-        vendors = connection.execute(
-            "SELECT COUNT(*) FROM vendors WHERE canonical_name NOT IN ('Unknown vendor','Multiple vendors')"
-        ).fetchone()[0]
     assert body.count("<datalist") == 1
     assert 'name="vendor"' in body
     assert 'value="__clear__"' in body

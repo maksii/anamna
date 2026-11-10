@@ -82,6 +82,8 @@ MAX_PAGES = 200      # per category; the largest (blood) had 61
 #: The one intake the cart was seen to add (see the module docstring).
 BLOOD_DRAW = {"service_id": "5f7b080cf5456f51721692b8", "code": "6001"}
 MONTHLY_OFFER = "пропозиція місяця"
+_ERROR_REPLY = "labsync.error_reply"
+_REFUSED = "synevo_cart.refused"
 
 _ID_RE = re.compile(r"[0-9a-f]{24}")
 _CODE_RE = re.compile(r"\d{1,10}")
@@ -104,6 +106,17 @@ def _pace() -> None:
         _last_request[0] = _clock()
 
 
+def _get_raw(path: str) -> bytes:
+    status, _, body = common._http("GET", BASE + path, headers={"Accept": "text/html"})
+    if not 200 <= status < 300:
+        raise LabSyncError(_ERROR_REPLY, status)
+    return body
+
+
+def _transient(exc: LabSyncError) -> bool:
+    return exc.key == "labsync.error_unreachable" or exc.status == 429 or (exc.status or 0) >= 500
+
+
 def _get(path: str, *, payload: object | None = None, state: dict | None = None, raw: bool = False):
     """One paced public request, retried with backoff on 429, 5xx and network failure."""
     for attempt in range(RETRIES + 1):
@@ -112,16 +125,12 @@ def _get(path: str, *, payload: object | None = None, state: dict | None = None,
             state["requests"] = state.get("requests", 0) + 1
         try:
             if raw:
-                status, _, body = common._http("GET", BASE + path, headers={"Accept": "text/html"})
-                if not 200 <= status < 300:
-                    raise LabSyncError("labsync.error_reply", status)
-                return body
+                return _get_raw(path)
             reply, _ = common.call("POST" if payload is not None else "GET", BASE + path,
                                    headers={}, payload=payload)
             return reply
         except LabSyncError as exc:
-            transient = exc.key == "labsync.error_unreachable" or exc.status == 429 or (exc.status or 0) >= 500
-            if not transient or attempt == RETRIES:
+            if not _transient(exc) or attempt == RETRIES:
                 raise
             _sleep(BACKOFF * 2 ** attempt)
     raise AssertionError("unreachable")
@@ -212,10 +221,28 @@ def regions(settings: Settings) -> list[dict]:
     def fetch():
         reply = _get("/api/locations?" + _query(lang="uk"))
         if not isinstance(reply, list):
-            raise LabSyncError("labsync.error_reply")
+            raise LabSyncError(_ERROR_REPLY)
         return [{"id": str(city["id"]), "name": " ".join(str(city.get("name") or "").split())}
                 for city in reply if isinstance(city, dict) and _ID_RE.fullmatch(str(city.get("id") or ""))]
     return testplan.cached(settings, PROVIDER, "all", "regions", REGIONS_TTL, fetch)
+
+
+def _rubric_sections(rubric: dict) -> dict[str, str]:
+    names = {}
+    title = " ".join(str(rubric.get("name") or "").split())
+    for sub in rubric.get("subrubrics") or []:
+        if isinstance(sub, dict) and sub.get("code"):
+            own = " ".join(str(sub.get("name") or "").split())
+            names[f"{rubric.get('code')}/{sub['code']}"] = own if own == title else f"{title} · {own}"
+    return names
+
+
+def _section_names(rubrics: list) -> dict[str, str]:
+    names = {}
+    for rubric in rubrics:
+        if isinstance(rubric, dict):
+            names.update(_rubric_sections(rubric))
+    return names
 
 
 def sections(settings: Settings) -> dict[str, str]:
@@ -225,17 +252,8 @@ def sections(settings: Settings) -> dict[str, str]:
         reply = _get(f"/_next/data/{_build_id()}/uk/rubricator/top-tests.json")
         rubrics = ((reply or {}).get("pageProps") or {}).get("rubrics") if isinstance(reply, dict) else None
         if not isinstance(rubrics, list):
-            raise LabSyncError("labsync.error_reply")
-        names = {}
-        for rubric in rubrics:
-            if not isinstance(rubric, dict):
-                continue
-            for sub in rubric.get("subrubrics") or []:
-                if isinstance(sub, dict) and sub.get("code"):
-                    title = " ".join(str(rubric.get("name") or "").split())
-                    own = " ".join(str(sub.get("name") or "").split())
-                    names[f"{rubric.get('code')}/{sub['code']}"] = own if own == title else f"{title} · {own}"
-        return names
+            raise LabSyncError(_ERROR_REPLY)
+        return _section_names(rubrics)
     return testplan.cached(settings, PROVIDER, "all", "sections", REGIONS_TTL, fetch)
 
 
@@ -255,7 +273,12 @@ def catalog_status(settings: Settings, region: str) -> dict:
         return {"state": "missing", "fetched_at": None, "progress": None}
     fetched = testplan.fetched_at(settings, PROVIDER, region)
     progress = _row(settings, region, PROGRESS)
-    state = "crawling" if _crawling(settings, region) else "ready" if fetched else "missing"
+    if _crawling(settings, region):
+        state = "crawling"
+    elif fetched:
+        state = "ready"
+    else:
+        state = "missing"
     return {"state": state, "fetched_at": fetched,
             "progress": json.loads(progress["payload_json"]) if progress else None}
 
@@ -313,6 +336,89 @@ def refresh_catalog(settings: Settings, region: str) -> list[dict]:
         return _crawl(settings, region)
 
 
+def _take_service(state: dict, service: object, rubric: str, category: str) -> None:
+    if isinstance(service, dict) and _ID_RE.fullmatch(str(service.get("id") or "")) \
+            and _CODE_RE.fullmatch(str(service.get("code") or "")):
+        entry = state["services"].setdefault(service["id"], {
+            "code": str(service["code"]), "name": " ".join(str(service.get("name") or "").split()),
+            "price": service.get("price"), "active": bool(service.get("active")),
+        })
+        # Every shelf the site lists it on («genetic-tests», «check-up/…»):
+        # what testplan.item_kind tells sets from single tests by.
+        groups = entry.setdefault("groups", [])
+        if f"{rubric}/{category}" not in groups:
+            groups.append(f"{rubric}/{category}")
+
+
+def _queue_pages(state: dict, rubric: str, category: str, reply: dict) -> None:
+    pages = int((reply.get("options") or {}).get("totalPages") or 1)
+    state["pages"] += [[rubric, category, n] for n in range(2, min(pages, MAX_PAGES) + 1)]
+
+
+def _walk_listing(region: str, state: dict, checkpoint) -> None:
+    while state["pages"]:
+        rubric, category, page = state["pages"][0]
+        reply = _get("/api/rubricator/services?" + _query(rubric=rubric, category=category, lang="uk",
+                                                           page=page, city=region), state=state)
+        if not isinstance(reply, dict) or reply.get("res") != "ok":
+            raise LabSyncError(_ERROR_REPLY)
+        for service in reply.get("services") or []:
+            _take_service(state, service, rubric, category)
+        if page == 1:
+            _queue_pages(state, rubric, category, reply)
+        state.setdefault("walked", []).append(state["pages"].pop(0))
+        state["pages_done"] += 1
+        checkpoint("listing", state["pages_done"], state["pages_done"] + len(state["pages"]))
+
+
+def _walk_details(region: str, state: dict, checkpoint) -> None:
+    todo = [sid for sid, service in state["services"].items()
+            if service["active"] and sid not in state["details"]]
+    total = len(state["details"]) + len(todo)
+    for sid in todo:
+        state["details"][sid] = _details(sid, region, state)
+        checkpoint("details", len(state["details"]), total)
+
+
+def _read_english_names(reply: object, services: dict, names: dict) -> None:
+    for service in (reply.get("services") or []) if isinstance(reply, dict) else []:
+        if isinstance(service, dict) and service.get("id") in services and service.get("name"):
+            names[service["id"]] = " ".join(str(service["name"]).split())
+
+
+def _walk_english(region: str, state: dict, checkpoint) -> None:
+    # The site serves its own English names (lang=en): the same listing
+    # pages again, ~400 requests, rather than a second details call per
+    # service.  Names only; preparation text stays the lab's Ukrainian.
+    english = state.setdefault("english", {"todo": None, "names": {}})
+    if english["todo"] is None:
+        english["todo"] = [list(page) for page in state.get("walked") or []]
+    while english["todo"]:
+        rubric, category, page = english["todo"][0]
+        reply = _get("/api/rubricator/services?" + _query(rubric=rubric, category=category, lang="en",
+                                                           page=page, city=region), state=state)
+        _read_english_names(reply, state["services"], english["names"])
+        english["todo"].pop(0)
+        checkpoint("english", len(state.get("walked") or []) - len(english["todo"]), len(state.get("walked") or []))
+
+
+def _read_intake(region: str, state: dict) -> None:
+    if "intake" not in state:
+        intake = _details(BLOOD_DRAW["service_id"], region, state, keep_inactive=True)
+        state["intake"] = ({"id": f"{PROVIDER}:intake:{BLOOD_DRAW['code']}", "name": intake["name"],
+                            "price": float(intake["price"])} if intake.get("price") is not None else None)
+
+
+def _done_progress(state: dict, items: list[dict], started: int) -> dict:
+    return {
+        "stage": "done", "done": len(items), "total": len(items), "requests": state["requests"],
+        "requests_this_run": state["requests"] - started, "started_at": state["started_at"], "finished_at": utc_now(),
+        "packages": sum(1 for item in items if len(item["parameters"]) > 1),
+        "with_fees": sum(1 for item in items if item["fees"]),
+        "discounted": sum(1 for item in items if item["final_price"] < item["price"]),
+    }
+
+
 def _crawl(settings: Settings, region: str) -> list[dict]:
     row = _row(settings, region, PARTIAL)
     state = json.loads(row["payload_json"]) if row and _age(row) < PARTIAL_TTL else None
@@ -334,55 +440,10 @@ def _crawl(settings: Settings, region: str) -> list[dict]:
         if state["pages"] is None:
             state["build"] = _build_id(state)
             state["pages"] = [[rubric, category, 1] for rubric, category in _categories(state["build"], state)]
-        while state["pages"]:
-            rubric, category, page = state["pages"][0]
-            reply = _get("/api/rubricator/services?" + _query(rubric=rubric, category=category, lang="uk",
-                                                               page=page, city=region), state=state)
-            if not isinstance(reply, dict) or reply.get("res") != "ok":
-                raise LabSyncError("labsync.error_reply")
-            for service in reply.get("services") or []:
-                if isinstance(service, dict) and _ID_RE.fullmatch(str(service.get("id") or "")) \
-                        and _CODE_RE.fullmatch(str(service.get("code") or "")):
-                    entry = state["services"].setdefault(service["id"], {
-                        "code": str(service["code"]), "name": " ".join(str(service.get("name") or "").split()),
-                        "price": service.get("price"), "active": bool(service.get("active")),
-                    })
-                    # Every shelf the site lists it on («genetic-tests», «check-up/…»):
-                    # what testplan.item_kind tells sets from single tests by.
-                    groups = entry.setdefault("groups", [])
-                    if f"{rubric}/{category}" not in groups:
-                        groups.append(f"{rubric}/{category}")
-            if page == 1:
-                pages = int((reply.get("options") or {}).get("totalPages") or 1)
-                state["pages"] += [[rubric, category, n] for n in range(2, min(pages, MAX_PAGES) + 1)]
-            state.setdefault("walked", []).append(state["pages"].pop(0))
-            state["pages_done"] += 1
-            checkpoint("listing", state["pages_done"], state["pages_done"] + len(state["pages"]))
-        todo = [sid for sid, service in state["services"].items()
-                if service["active"] and sid not in state["details"]]
-        total = len(state["details"]) + len(todo)
-        for sid in todo:
-            state["details"][sid] = _details(sid, region, state)
-            checkpoint("details", len(state["details"]), total)
-        # The site serves its own English names (lang=en): the same listing
-        # pages again, ~400 requests, rather than a second details call per
-        # service.  Names only; preparation text stays the lab's Ukrainian.
-        english = state.setdefault("english", {"todo": None, "names": {}})
-        if english["todo"] is None:
-            english["todo"] = [list(page) for page in state.get("walked") or []]
-        while english["todo"]:
-            rubric, category, page = english["todo"][0]
-            reply = _get("/api/rubricator/services?" + _query(rubric=rubric, category=category, lang="en",
-                                                               page=page, city=region), state=state)
-            for service in (reply.get("services") or []) if isinstance(reply, dict) else []:
-                if isinstance(service, dict) and service.get("id") in state["services"] and service.get("name"):
-                    english["names"][service["id"]] = " ".join(str(service["name"]).split())
-            english["todo"].pop(0)
-            checkpoint("english", len(state.get("walked") or []) - len(english["todo"]), len(state.get("walked") or []))
-        if "intake" not in state:
-            intake = _details(BLOOD_DRAW["service_id"], region, state, keep_inactive=True)
-            state["intake"] = ({"id": f"{PROVIDER}:intake:{BLOOD_DRAW['code']}", "name": intake["name"],
-                                "price": float(intake["price"])} if intake.get("price") is not None else None)
+        _walk_listing(region, state, checkpoint)
+        _walk_details(region, state, checkpoint)
+        _walk_english(region, state, checkpoint)
+        _read_intake(region, state)
     finally:
         _store(settings, region, PARTIAL, state)
     try:
@@ -393,13 +454,7 @@ def _crawl(settings: Settings, region: str) -> list[dict]:
         offers = {}
     items = _items(state, offers)
     _store(settings, region, "catalog", items)
-    _store(settings, region, PROGRESS, {
-        "stage": "done", "done": len(items), "total": len(items), "requests": state["requests"],
-        "requests_this_run": state["requests"] - started, "started_at": state["started_at"], "finished_at": utc_now(),
-        "packages": sum(1 for item in items if len(item["parameters"]) > 1),
-        "with_fees": sum(1 for item in items if item["fees"]),
-        "discounted": sum(1 for item in items if item["final_price"] < item["price"]),
-    })
+    _store(settings, region, PROGRESS, _done_progress(state, items, started))
     with transaction(settings) as connection:
         connection.execute("DELETE FROM lab_catalog_cache WHERE provider=? AND region=? AND cache_key=?",
                            (PROVIDER, region, PARTIAL))
@@ -409,23 +464,29 @@ def _crawl(settings: Settings, region: str) -> list[dict]:
 def _build_id(state: dict | None = None) -> str:
     match = _BUILD_RE.search(_get("/", raw=True, state=state))
     if not match:
-        raise LabSyncError("labsync.error_reply")
+        raise LabSyncError(_ERROR_REPLY)
     return match.group(1).decode("ascii")
+
+
+def _rubric_pairs(rubric: object) -> list[tuple[str, str]]:
+    pairs = []
+    for sub in (rubric.get("subrubrics") or []) if isinstance(rubric, dict) else []:
+        pair = (str(rubric.get("code") or ""), str(sub.get("code") or "") if isinstance(sub, dict) else "")
+        if all(_SLUG_RE.fullmatch(part) for part in pair):
+            pairs.append(pair)
+    return pairs
 
 
 def _categories(build: str, state: dict) -> list[tuple[str, str]]:
     reply = _get(f"/_next/data/{build}/uk/rubricator/top-tests.json", state=state)
     rubrics = ((reply or {}).get("pageProps") or {}).get("rubrics") if isinstance(reply, dict) else None
     if not isinstance(rubrics, list):
-        raise LabSyncError("labsync.error_reply")
+        raise LabSyncError(_ERROR_REPLY)
     pairs = []
     for rubric in rubrics:
-        for sub in (rubric.get("subrubrics") or []) if isinstance(rubric, dict) else []:
-            pair = (str(rubric.get("code") or ""), str(sub.get("code") or "") if isinstance(sub, dict) else "")
-            if all(_SLUG_RE.fullmatch(part) for part in pair):
-                pairs.append(pair)
+        pairs.extend(_rubric_pairs(rubric))
     if not pairs:
-        raise LabSyncError("labsync.error_reply")
+        raise LabSyncError(_ERROR_REPLY)
     return list(dict.fromkeys(pairs))
 
 
@@ -482,7 +543,46 @@ def _sex(name: str, parameters: list) -> str | None:
     if len(parameters) < 2:
         return None
     women, men = bool(_WOMEN_NAME.search(name)), bool(_MEN_NAME.search(name))
-    return "F" if women and not men else ("M" if men and not women else None)
+    if women and not men:
+        return "F"
+    if men and not women:
+        return "M"
+    return None
+
+
+def _name_codes(services: dict) -> dict[str, str | None]:
+    by_name: dict[str, str | None] = {}
+    for service in services.values():
+        key = name_key(service["name"])
+        by_name[key] = service["code"] if by_name.get(key, service["code"]) == service["code"] else None
+    return by_name
+
+
+def _service_item(state: dict, sid: str, service: dict, found: dict, by_name: dict, intake: dict | None,
+                  offers: dict[str, dict]) -> dict:
+    code, name, price = service["code"], service["name"], float(service["price"])
+    parameters = list({(by_name.get(name_key(part)) or "name:" + name_key(part)): part
+                       for part in found.get("components") or []}.items()) or [(code, name)]
+    promo = offers.get(code)
+    return {
+        "id": code,
+        "code": code,
+        "name": name,
+        "url": f"{BASE}/tests/{code}",
+        "price": price,
+        "final_price": _discounted(price, promo),
+        "fees": [dict(intake)] if intake and _venous_blood(found) else [],
+        "parameters": [{"id": pid, "name": pname} for pid, pname in parameters],
+        "synonyms": [],
+        "sex": _sex(name, parameters),
+        "groups": list(service.get("groups") or []),
+        "name_en": (state.get("english") or {}).get("names", {}).get(sid) or None,
+        "days": found.get("days"),
+        "material": list(found.get("bio") or []),
+        "prep": found.get("prep") or "",
+        "prep_title": found.get("prep_title") or "",
+        "order": {"code": code, "service_id": sid, **({"promo": promo} if promo else {})},
+    }
 
 
 def _items(state: dict, offers: dict[str, dict]) -> list[dict]:
@@ -490,82 +590,80 @@ def _items(state: dict, offers: dict[str, dict]) -> list[dict]:
     # A panel lists its members by name only; a member that is also sold on
     # its own takes that test's code, so the panel and the single test cover
     # the same requirement.  An ambiguous name keeps a name key instead.
-    by_name: dict[str, str | None] = {}
-    for service in services.values():
-        key = name_key(service["name"])
-        by_name[key] = service["code"] if by_name.get(key, service["code"]) == service["code"] else None
+    by_name = _name_codes(services)
     intake = state.get("intake")
     items = []
     for sid, service in services.items():
         found = details.get(sid) or {}
         if not service["active"] or found.get("active") is False or not isinstance(service["price"], (int, float)):
             continue
-        code, name, price = service["code"], service["name"], float(service["price"])
-        parameters = list({(by_name.get(name_key(part)) or "name:" + name_key(part)): part
-                           for part in found.get("components") or []}.items()) or [(code, name)]
-        promo = offers.get(code)
-        items.append({
-            "id": code,
-            "code": code,
-            "name": name,
-            "url": f"{BASE}/tests/{code}",
-            "price": price,
-            "final_price": _discounted(price, promo),
-            "fees": [dict(intake)] if intake and _venous_blood(found) else [],
-            "parameters": [{"id": pid, "name": pname} for pid, pname in parameters],
-            "synonyms": [],
-            "sex": _sex(name, parameters),
-            "groups": list(service.get("groups") or []),
-            "name_en": (state.get("english") or {}).get("names", {}).get(sid) or None,
-            "days": found.get("days"),
-            "material": list(found.get("bio") or []),
-            "prep": found.get("prep") or "",
-            "prep_title": found.get("prep_title") or "",
-            "order": {"code": code, "service_id": sid, **({"promo": promo} if promo else {})},
-        })
+        items.append(_service_item(state, sid, service, found, by_name, intake, offers))
     return sorted(items, key=lambda item: int(item["code"]))
 
 
 # --- offers -----------------------------------------------------------------------
 
 
-def _fetch_offers() -> list[dict]:
+def _offer_listing() -> list[dict]:
     items, page, pages = [], 1, 1
     while page <= min(pages, 20):
         reply = _get("/api/discount/get-list", payload={"lang": "uk", "page": page})
         data = reply.get("data") if isinstance(reply, dict) and reply.get("res") == "ok" else None
         if not isinstance(data, dict):
-            raise LabSyncError("labsync.error_reply")
+            raise LabSyncError(_ERROR_REPLY)
         items += [item for item in data.get("items") or [] if isinstance(item, dict)]
         pages, page = int(data.get("pagesCount") or 1), page + 1
+    return items
+
+
+def _skip_offer(item: dict, name: str, now: float) -> bool:
+    # ponytail: "the monthly offer" is read off its name; anything else is
+    # targeted (veterans, card holders) or unknown, and stays at list price.
+    return (MONTHLY_OFFER not in name.casefold() or (item.get("statusLabel") or {}).get("statusFlag") != 0
+            or float(item.get("endDate") or 0) < now or not _SLUG_RE.fullmatch(str(item.get("url") or "")))
+
+
+def _percent_discounts(details: dict) -> dict[str, float]:
+    return {str(service.get("code")): float(service["discountValue"])
+            for service in details.get("services") or []
+            if isinstance(service, dict) and service.get("discountType") == "percentage"
+            and isinstance(service.get("discountValue"), (int, float)) and 0 < service["discountValue"] < 100}
+
+
+def _offer_record(item: dict, name: str, info: dict, percent: dict[str, float]) -> dict:
+    return {
+        "id": info["_id"], "name": name, "url": item["url"],
+        "until": datetime.fromtimestamp(float(item["endDate"]) / 1000, UTC).isoformat(timespec="seconds"),
+        "percent": percent,
+        "cities": [str(city.get("_id")) for city in info.get("availableCities") or [] if isinstance(city, dict)],
+        "excluded": [str(city.get("_id")) for city in info.get("unavailableCities") or [] if isinstance(city, dict)],
+    }
+
+
+def _offer_from_page(item: dict, name: str, build: str) -> dict | None:
+    reply = _get(f"/_next/data/{build}/uk/info/discounts/{item['url']}.json")
+    info = ((reply or {}).get("pageProps") or {}).get("discountInfoData") if isinstance(reply, dict) else None
+    details = (info or {}).get("servicesDetails") or {}
+    if not isinstance(info, dict) or details.get("appliesFor") != "Include":
+        return None
+    percent = _percent_discounts(details)
+    if not percent or not _ID_RE.fullmatch(str(info.get("_id") or "")):
+        return None
+    return _offer_record(item, name, info, percent)
+
+
+def _fetch_offers() -> list[dict]:
+    items = _offer_listing()
     now = datetime.now(UTC).timestamp() * 1000
     build, offers = None, []
     for item in items:
         name = " ".join(synevo._text(item.get("nameRegional")).split())
-        # ponytail: "the monthly offer" is read off its name; anything else is
-        # targeted (veterans, card holders) or unknown, and stays at list price.
-        if MONTHLY_OFFER not in name.casefold() or (item.get("statusLabel") or {}).get("statusFlag") != 0 \
-                or float(item.get("endDate") or 0) < now or not _SLUG_RE.fullmatch(str(item.get("url") or "")):
+        if _skip_offer(item, name, now):
             continue
         build = build or _build_id()
-        reply = _get(f"/_next/data/{build}/uk/info/discounts/{item['url']}.json")
-        info = ((reply or {}).get("pageProps") or {}).get("discountInfoData") if isinstance(reply, dict) else None
-        details = (info or {}).get("servicesDetails") or {}
-        if not isinstance(info, dict) or details.get("appliesFor") != "Include":
-            continue
-        percent = {str(service.get("code")): float(service["discountValue"])
-                   for service in details.get("services") or []
-                   if isinstance(service, dict) and service.get("discountType") == "percentage"
-                   and isinstance(service.get("discountValue"), (int, float)) and 0 < service["discountValue"] < 100}
-        if not percent or not _ID_RE.fullmatch(str(info.get("_id") or "")):
-            continue
-        offers.append({
-            "id": info["_id"], "name": name, "url": item["url"],
-            "until": datetime.fromtimestamp(float(item["endDate"]) / 1000, UTC).isoformat(timespec="seconds"),
-            "percent": percent,
-            "cities": [str(city.get("_id")) for city in info.get("availableCities") or [] if isinstance(city, dict)],
-            "excluded": [str(city.get("_id")) for city in info.get("unavailableCities") or [] if isinstance(city, dict)],
-        })
+        offer = _offer_from_page(item, name, build)
+        if offer:
+            offers.append(offer)
     return offers
 
 
@@ -585,6 +683,34 @@ def _offers(settings: Settings, region: str) -> dict[str, dict]:
 # --- after a plan -----------------------------------------------------------------
 
 
+def _current_promo(offers: dict | None, fresh: dict) -> dict | None:
+    promo = offers.get(fresh["code"]) if offers is not None else fresh["order"].get("promo")
+    fresh["order"].pop("promo", None)
+    if promo and promo["until"] >= datetime.now(UTC).isoformat(timespec="seconds"):
+        fresh["order"]["promo"] = promo
+        return promo
+    return None
+
+
+def _refresh_item(item: dict, region: str, offers: dict | None, fee: float | None) -> dict:
+    fresh = {**item, "order": dict(item.get("order") or {}), "fees": [dict(f) for f in item.get("fees") or []]}
+    sid = str(fresh["order"].get("service_id") or "")
+    try:
+        found = _details(sid, region) if _ID_RE.fullmatch(sid) else {}
+    except LabSyncError:
+        return {**fresh, "checked": False}
+    if not found or not found["active"] or not isinstance(found.get("price"), (int, float)):
+        return {**fresh, "available": False, "checked": True}
+    fresh["price"] = float(found["price"])
+    promo = _current_promo(offers, fresh)
+    fresh["final_price"] = _discounted(fresh["price"], promo)
+    if fee is not None:
+        for entry in fresh["fees"]:
+            if entry["id"] == f"{PROVIDER}:intake:{BLOOD_DRAW['code']}":
+                entry["price"] = fee
+    return {**fresh, "available": True, "checked": True}
+
+
 def refresh_prices(settings: Settings, region: str, items: list[dict]) -> list[dict]:
     """Re-read today's price of just these items (one request each, plus the
     blood-draw fee once).  Each copy gains ``available`` and ``checked``; an
@@ -601,50 +727,70 @@ def refresh_prices(settings: Settings, region: str, items: list[dict]) -> list[d
             fee = float(intake["price"]) if intake.get("price") is not None else None
         except LabSyncError:
             fee = None
-    out = []
-    for item in items:
-        fresh = {**item, "order": dict(item.get("order") or {}), "fees": [dict(f) for f in item.get("fees") or []]}
-        sid = str(fresh["order"].get("service_id") or "")
-        try:
-            found = _details(sid, region) if _ID_RE.fullmatch(sid) else {}
-        except LabSyncError:
-            out.append({**fresh, "checked": False})
-            continue
-        if not found or not found["active"] or not isinstance(found.get("price"), (int, float)):
-            out.append({**fresh, "available": False, "checked": True})
-            continue
-        fresh["price"] = float(found["price"])
-        promo = offers.get(fresh["code"]) if offers is not None else fresh["order"].get("promo")
-        fresh["order"].pop("promo", None)
-        if promo and promo["until"] >= datetime.now(UTC).isoformat(timespec="seconds"):
-            fresh["order"]["promo"] = promo
-        else:
-            promo = None
-        fresh["final_price"] = _discounted(fresh["price"], promo)
-        if fee is not None:
-            for entry in fresh["fees"]:
-                if entry["id"] == f"{PROVIDER}:intake:{BLOOD_DRAW['code']}":
-                    entry["price"] = fee
-        out.append({**fresh, "available": True, "checked": True})
-    return out
+    return [_refresh_item(item, region, offers, fee) for item in items]
 
 
-_REFUSALS = {1001: "synevo_cart.in_package", 1002: "synevo_cart.refused", 1003: "synevo_cart.refused",
-             2001: "synevo_cart.refused"}
+_REFUSALS = {1001: "synevo_cart.in_package", 1002: _REFUSED, 1003: _REFUSED,
+             2001: _REFUSED}
 
 
 def _refusal(reply: object, code: str) -> str | None:
     """Why add-item did not add ``code``, or None when the cart now holds it."""
     if not isinstance(reply, dict):
-        return "labsync.error_reply"
+        return _ERROR_REPLY
     if reply.get("error") in _REFUSALS:
         return _REFUSALS[reply["error"]]
     if reply.get("res") == "error":
-        return "synevo_cart.promo" if reply.get("status") in (4010, 4011, 4013, 4014) else "synevo_cart.refused"
+        return "synevo_cart.promo" if reply.get("status") in (4010, 4011, 4013, 4014) else _REFUSED
     if reply.get("requred_confirm"):  # sic: Synevo's spelling
         return "synevo_cart.needs_confirmation"
     held = {str((entry.get("Service") or {}).get("Code")) for entry in reply.get("Items") or [] if isinstance(entry, dict)}
     return None if code in held else "synevo_cart.not_added"
+
+
+def _open_cart(client, region: str | None) -> tuple[dict, str]:
+    _pace()
+    cart = client._call("GET", "/api/cart/get-cart")
+    if isinstance(cart, dict) and isinstance(cart.get("cart"), dict):
+        cart = cart["cart"]
+    cart_id = str(cart.get("_id") or "") if isinstance(cart, dict) else ""
+    if not _ID_RE.fullmatch(cart_id):
+        raise LabSyncError(_ERROR_REPLY)
+    if region and (cart.get("Location") or {}).get("_id") != _city(region):
+        _pace()
+        client._call("POST", "/api/cart/set-location", payload={"locationId": region, "cartId": cart_id})
+    return cart, cart_id
+
+
+def _add_item(client, cart_id: str, item: dict, added: list, failed: list, cart: object) -> object:
+    """Add one item to the cart; returns the cart as Synevo last returned it."""
+    order = item.get("order") or {}
+    code = str(order.get("code") or item.get("code") or "")
+    entry = {"id": item.get("id"), "code": code, "name": item.get("name")}
+    if not _CODE_RE.fullmatch(code):
+        failed.append({**entry, "reason": _ERROR_REPLY})
+        return cart
+    promo = order.get("promo") or {}
+    # What Synevo's own pages send: a catalogue add, or an add from the
+    # offer page carrying the offer's id.  isPackage is always false there.
+    body = {"code": int(code), "cartId": cart_id, "confirm": False,
+            "src": "akcii" if promo else "sc",
+            "info": f"/info/discounts/{promo['url']}" if promo else f"/tests/{code}",
+            "promoId": promo.get("id") or None, "isPackage": False}
+    _pace()
+    try:
+        reply = client._call("POST", "/api/cart/add-item", payload=body)
+    except LabSyncError as exc:
+        if exc.key == "labsync.error_auth":
+            raise
+        failed.append({**entry, "reason": exc.key})
+        return cart
+    reason = _refusal(reply, code)
+    if reason:
+        failed.append({**entry, "reason": reason})
+        return cart
+    added.append(entry)
+    return reply
 
 
 def add_to_cart(settings: Settings, user_id: str, items: list[dict], *, region: str | None = None) -> dict:
@@ -663,44 +809,9 @@ def add_to_cart(settings: Settings, user_id: str, items: list[dict], *, region: 
     client = synevo.Client(labsync.provider_settings(settings, PROVIDER)["url"], row["secret"])
     added, failed, cart = [], [], None
     try:
-        _pace()
-        cart = client._call("GET", "/api/cart/get-cart")
-        if isinstance(cart, dict) and isinstance(cart.get("cart"), dict):
-            cart = cart["cart"]
-        cart_id = str(cart.get("_id") or "") if isinstance(cart, dict) else ""
-        if not _ID_RE.fullmatch(cart_id):
-            raise LabSyncError("labsync.error_reply")
-        if region and (cart.get("Location") or {}).get("_id") != _city(region):
-            _pace()
-            client._call("POST", "/api/cart/set-location", payload={"locationId": region, "cartId": cart_id})
+        cart, cart_id = _open_cart(client, region)
         for item in items:
-            order = item.get("order") or {}
-            code = str(order.get("code") or item.get("code") or "")
-            entry = {"id": item.get("id"), "code": code, "name": item.get("name")}
-            if not _CODE_RE.fullmatch(code):
-                failed.append({**entry, "reason": "labsync.error_reply"})
-                continue
-            promo = order.get("promo") or {}
-            # What Synevo's own pages send: a catalogue add, or an add from the
-            # offer page carrying the offer's id.  isPackage is always false there.
-            body = {"code": int(code), "cartId": cart_id, "confirm": False,
-                    "src": "akcii" if promo else "sc",
-                    "info": f"/info/discounts/{promo['url']}" if promo else f"/tests/{code}",
-                    "promoId": promo.get("id") or None, "isPackage": False}
-            _pace()
-            try:
-                reply = client._call("POST", "/api/cart/add-item", payload=body)
-            except LabSyncError as exc:
-                if exc.key == "labsync.error_auth":
-                    raise
-                failed.append({**entry, "reason": exc.key})
-                continue
-            reason = _refusal(reply, code)
-            if reason:
-                failed.append({**entry, "reason": reason})
-            else:
-                added.append(entry)
-                cart = reply
+            cart = _add_item(client, cart_id, item, added, failed, cart)
     finally:
         labsync._store_rolled_secret(settings, user_id, PROVIDER, row["secret"], client)
     totals = {name: cart.get(key) for name, key in (("services", "ServicesSum"), ("fees", "IntakesSum"),

@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}{{ t('error.title') }}{% endblock %}
+{% block content %}
+
+<section class="page-head">
+  <div>
+    <h1>{{ t('error.title') }}</h1>
+    <p>{{ error_message }}</p>
+  </div>
+</section>
+
+<section class="panel">
+  <p><a class="button primary" href="/">{{ t('error.home') }}</a></p>
+</section>
+{% endblock %}

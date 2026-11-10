@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ t('aiassist.admin_title') }}{% endblock %}
 {% block content %}
+{% include "_admin_tabs.html" %}
 
 <section class="page-head">
   <div>
@@ -63,6 +64,43 @@
       <input type="checkbox" name="enabled" value="1" {{ 'checked' if ai.enabled == '1' else '' }}>
       {{ t('aiassist.enable_label') }}
     </label>
+    <label>
+      <input type="checkbox" name="data_collection" value="allow" {{ 'checked' if ai.data_collection == 'allow' else '' }} aria-describedby="ai-data-collection-hint">
+      {{ t('aiadmin.data_collection_label') }}
+    </label>
+    <p class="tiny muted" id="ai-data-collection-hint">{{ t('aiadmin.data_collection_help') }}</p>
+
+    <fieldset class="ai-fieldset">
+      <legend>{{ t('admin.drug_lookup_heading') }}</legend>
+      <label>
+        <input type="checkbox" name="drug_lookup" value="1" {{ 'checked' if drug_lookup else '' }} aria-describedby="drug-lookup-hint">
+        {{ t('admin.drug_lookup_label') }}
+      </label>
+      <p class="tiny muted" id="drug-lookup-hint">{{ t('admin.drug_lookup_help') }} {{ t('admin.drug_lookup_manners') }}</p>
+      {% if drug_lookup_paused_minutes %}<p class="alert neutral" role="status">{{ t('admin.drug_lookup_paused', minutes=drug_lookup_paused_minutes) }}</p>{% endif %}
+      <label>{{ t('admin.drug_lookup_mode_label') }}
+        <select name="drug_lookup_mode" aria-describedby="drug-lookup-mode-hint">
+          <option value="page" {{ 'selected' if drug_lookup_mode == 'page' else '' }}>{{ t('admin.drug_lookup_mode_page') }}</option>
+          <option value="api" {{ 'selected' if drug_lookup_mode == 'api' else '' }}>{{ t('admin.drug_lookup_mode_api') }}</option>
+        </select>
+      </label>
+      <p class="tiny muted" id="drug-lookup-mode-hint">{{ t('admin.drug_lookup_mode_help') }}</p>
+      <label>{{ t('admin.drug_lookup_token_label') }}
+        <input name="drug_lookup_token" type="password" autocomplete="off"
+               placeholder="{% if drug_lookup_token_tail %}...{{ drug_lookup_token_tail }}{% endif %}"
+               aria-describedby="drug-lookup-token-hint">
+      </label>
+      <p class="tiny muted" id="drug-lookup-token-hint">
+        {% if drug_lookup_token_tail %}{{ t('admin.drug_lookup_token_saved', tail=drug_lookup_token_tail) }}{% elif drug_lookup_token_source == 'environment' %}{{ t('admin.drug_lookup_token_env') }}{% else %}{{ t('admin.drug_lookup_token_missing') }}{% endif %}
+        {{ t('admin.drug_lookup_token_help') }}
+      </p>
+      {% if drug_lookup_token_tail %}
+      <label>
+        <input type="checkbox" name="clear_drug_lookup_token" value="1">
+        {{ t('admin.drug_lookup_token_clear') }}
+      </label>
+      {% endif %}
+    </fieldset>
 
     <fieldset class="ai-fieldset">
       <legend>{{ t('aiassist.keys_heading') }}</legend>
@@ -208,7 +246,7 @@
 
   {% macro rollup_table(rows, label_prefix, heading_key) %}
   <h3>{{ t(heading_key) }}</h3>
-  <div class="table-wrap table-wrap--stack">
+  <div class="table-wrap table-wrap--stack" tabindex="0" role="region" aria-label="{{ t(heading_key) }}">
     <table>
       <thead><tr>
         <th scope="col">{{ t('aiassist.col_name') }}</th>
@@ -245,7 +283,7 @@
 
   <h3>{{ t('aiassist.recent_heading') }}</h3>
   {% if usage.recent %}
-  <div class="table-wrap table-wrap--stack">
+  <div class="table-wrap table-wrap--stack" tabindex="0" role="region" aria-label="{{ t('aiassist.recent_heading') }}">
     <table>
       <thead>
         <tr>
@@ -286,9 +324,8 @@
   {% endif %}
 </section>
 
-<p class="muted"><a href="/admin/users">{{ t('token.back_to_people') }}</a></p>
 
-<script>
+<script nonce="{{ csp_nonce }}">
 (() => {
   // Switching a task's provider swaps the model suggestions and the effort
   // choices to that provider's.  Without this script the server still drops
@@ -349,9 +386,14 @@
     const forms = JSON.parse(multi.dataset.plural || '{}');
     multi.addEventListener('change', () => {
       const n = multi.querySelectorAll('input:checked').length;
-      const form = document.documentElement.lang === 'uk'
-        ? (n % 10 === 1 && n % 100 !== 11 ? 'one' : (n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? 'few' : 'many'))
-        : (n === 1 ? 'one' : 'many');
+      let form = 'many';
+      if (document.documentElement.lang !== 'uk') {
+        form = n === 1 ? 'one' : 'many';
+      } else if (n % 10 === 1 && n % 100 !== 11) {
+        form = 'one';
+      } else if (n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14)) {
+        form = 'few';
+      }
       count.textContent = (forms[form] || forms.many || '{count}').replace('{count}', n);
     });
   });

@@ -223,8 +223,8 @@ POWER_NOTATION_RE = re.compile(r"\d\s*\^\s*\d")
 #: no caret to stop at; a PCR «>10^4 ГЄ/мл» names neither a count unit nor a
 #: norm, and stays refused.
 _COUNT_NORM_RE = re.compile(r"КУО|CFU|в\s+нормі|не\s+більше|не\s+менше", re.I)
-_POWER_TERM_RE = re.compile(r"(?:(?P<mantissa>\d+(?:\.\d+)?)\s*[xх×*]\s*)?10\s*\^\s*(?P<power>\d{1,2})", re.I)
-_COUNT_UNIT_RE = re.compile(r"\s*(?:КУО|CFU)(?:\s*/\s*[^\W\d_]+)?", re.I)
+_POWER_TERM_RE = re.compile(r"(?:(?P<mantissa>\d\d*+(?:\.\d++)?)\s*[xх×*]\s*)?10\s*\^\s*(?P<power>\d{1,2})", re.I)
+_COUNT_UNIT_RE = re.compile(r"(?:\s\s*+)?(?:КУО|CFU)(?:\s*/\s*[^\W\d_]+)?", re.I)
 
 
 def _expanded_count(value: str) -> str:
@@ -501,6 +501,10 @@ def reference_limits(reference: str | None) -> ReferenceLimits:
     if not reference:
         return ReferenceLimits()
     value = reference.replace(",", ".")
+    # «1 000 - 2 000» is a thousands-spaced interval: read as printed it gave 0 to 2.
+    spaced = _SPACED_THOUSANDS_INTERVAL.fullmatch(value)
+    if spaced:
+        value = f"{spaced.group(1).replace(' ', '')} {spaced.group(2)} {spaced.group(3).replace(' ', '')}"
     # A lone zero («0.0» beside NRBC or reactive lymphocytes) is the value the
     # laboratory expects: a count that cannot be negative has nothing to be
     # but at most zero.  Read as no reference, an NRBC of 0.2 % against it was
@@ -542,7 +546,7 @@ def _named_normal_band(value: str) -> ReferenceLimits | None:
     # many bands came before: «Ризик дефіциту: <20.0 ... Здорове населення:
     # 30.0 - 100.0» is not "<30.0 is healthy".
     introduces = bool(label) and bool(
-        re.match(r"\s*(?:результат\w*)?\s*(?:\([^)]*\))?\s*:", value[label.end():], re.I)
+        re.match(r"\s*(?:результат\w*\s*)?(?:\([^)]*\)\s*)?:", value[label.end():], re.I)
     )
     limit_first = bool(label and number and number.start() < label.start()) and not introduces
     normal = (_NORMAL_BAND_AFTER if limit_first else _NORMAL_BAND_FIRST).search(value)
@@ -1310,6 +1314,29 @@ _UNIT_ROW = re.compile(
     rf"^(?P<name>.+?)\s+(?P<value>{NUMBER})\s+(?P<unit>{UNIT_PATTERN})(?:\s+(?P<ref>.*))?$",
     re.I,
 )
+# «BE -2,3 ммоль/л»: a sign glued to the digits, which `NUMBER` does not take.
+# Accepted only for the analytes in `_SIGNED_ANALYTE`, in `parse_unit_rows`.
+_GLUED_SIGN_ROW = re.compile(
+    rf"^(?P<name>.+?)\s+(?P<value>[-−]\d+(?:[.,]\d+)?)\s+(?P<unit>{UNIT_PATTERN})(?:\s+(?P<ref>.*))?$",
+    re.I,
+)
+#: Analytes that can be negative.  A dash before the value is a sign for these
+#: only: «BE - 2,3» is base excess -2.3, while «Глюкоза - 5,2» stays +5.2.
+_SIGNED_ANALYTE = re.compile(
+    r"(?<!\w)(?:BE|ABE|SBE|base excess|надлишок основ|надлишок лугів|дефіцит основ)(?!\w)",
+    re.I,
+)
+#: A reference interval printed before its unit: «Глюкоза 7,0 - 7,5 ммоль/л».
+_RANGE_BEFORE_UNIT = re.compile(r"\d\s*[-–—]\s*$")
+_RANGE_LABELS = frozenset(
+    {"норма", "норми", "референтні значення", "референтний інтервал", "reference", "reference range", "norm"}
+)
+#: The names a «R» or «AI» unit belongs to: mumps antibody indices.  On any
+#: other row they are a susceptibility verdict, «Амікацин 16 R» = resistant.
+_ANTIBODY_NAME_FRAGMENTS = ("парот", "mumps", "igg", "igm", "антитіл", "antibod")
+_SPACED_THOUSANDS_INTERVAL = re.compile(
+    r"\s*(\d{1,3}(?: \d{3})+)\s*([-–—])\s*(\d{1,3}(?: \d{3})*)\s*"
+)
 _SUSCEPTIBILITY_REFERENCE = re.compile(rf"^(?:{SUSCEPTIBILITY_VERDICT})\b", re.I)
 
 
@@ -1365,41 +1392,126 @@ def _unit_row_reference(match: re.Match, lines: list[str], index: int) -> str | 
     return f"{reference} {tail}" if tail else reference
 
 
+def _within_interval_magnitude(number: float, low: float | None, high: float | None) -> bool:
+    """Whether ``number`` is within a factor of ten of the printed interval."""
+    if low is not None and number < low / 10:
+        return False
+    return high is None or number <= high * 10
+
+
+def _thousands_split(name: str, digits: str, reference: str | None) -> tuple[str, str] | None:
+    """(name, number) for a thousands-spaced value the unit row split apart.
+
+    «Тромбоцити 250 000 кл/мкл 150000 - 400000» reaches the row as the name
+    «Тромбоцити 250» and the value «000».  A digit group is joined back only
+    when the row's own printed interval proves the magnitude: the joined
+    number fits the interval and the group on its own does not.  Without an
+    interval nothing is joined, so «Інтерлейкін 6 150» and «CA 125 350» keep
+    their numbers in the name, and «Вітамін B 12 350 пг/мл 191 - 663» is
+    B12 of 350.
+
+    A group that starts with 0 («000», «050») is never a value printed on its
+    own, so the one group before it is always its thousands: «Тромбоцити 250
+    000» is 250000 and «Лейкоцити 4 050» is 4050, interval or none.  Further
+    groups still need the interval.
+    """
+    if not re.fullmatch(r"\d{3}", digits):
+        return None
+    low, high = reference_bounds(reference)
+    has_interval = low is not None or high is not None
+    head_pattern = r"(?P<rest>.*\S)\s+(?P<lead>\d{1,3})$"
+    joined = digits
+    if digits.startswith("0"):
+        head = re.match(head_pattern, name)
+        if not head:
+            return None
+        name, joined = head.group("rest"), f"{head.group('lead')} {digits}"
+        if not has_interval:
+            return name, joined
+    else:
+        if not has_interval or _within_interval_magnitude(int(digits), low, high):
+            return None
+    while head := re.match(head_pattern, name):
+        candidate = f"{head.group('lead')} {joined}"
+        if not _within_interval_magnitude(int(candidate.replace(" ", "")), low, high):
+            break
+        name, joined = head.group("rest"), candidate
+    return (name, joined) if joined != digits else None
+
+
+def _unit_row_printed(match: re.Match, lines: list[str], index: int) -> tuple[str, str, str | None] | None:
+    """The name, value and reference printed on a unit row, or None when the row is a range's label."""
+    printed, value_text = match.group("name"), match.group("value")
+    # An unclosed "(" is a label wrapped inside its bracket, not a range:
+    # «Вітамін Д (25-гідроксивітамін D, 25- 31.0 нг/мл» ends in «25-».
+    wrapped = printed.count("(") != printed.count(")")
+    if (_RANGE_BEFORE_UNIT.search(printed) and not wrapped) or (
+        printed.strip().rstrip(":").strip().casefold() in _RANGE_LABELS
+    ):
+        return None
+    reference = _unit_row_reference(match, lines, index)
+    split = _thousands_split(printed, value_text, reference)
+    if split:
+        printed, value_text = split
+    return printed, value_text, reference
+
+
+def _unit_row_observation(
+    match: re.Match, line: str, lines: list[str], index: int, page_number: int,
+) -> ParsedObservation | None:
+    glued = match.re is _GLUED_SIGN_ROW
+    parts = _unit_row_printed(match, lines, index)
+    if parts is None:
+        return None
+    printed, value_text, reference = parts
+    name = _unit_row_name(printed, _lines_before_next_row(lines, index + 1, index + 4))
+    if not valid_analyte_name(name):
+        return None
+    unit = match.group("unit")
+    if unit in ("R", "AI") and not any(
+        fragment in name.casefold() for fragment in _ANTIBODY_NAME_FRAGMENTS
+    ):
+        return None
+    signed = _SIGNED_ANALYTE.search(name) is not None
+    if glued and not signed:
+        return None
+    name = _electrolyte_name(name)
+    raw_value = value_text.replace(" ", "")
+    numeric = parse_decimal(raw_value)
+    if numeric is None:
+        return None
+    # «BE - 2,3»: the dash is the sign of a negative analyte, not a separator.
+    if signed and not glued and re.search(r"\s[-–—]$", printed):
+        numeric = -numeric
+    if reference and _SUSCEPTIBILITY_REFERENCE.match(reference):
+        return None
+    low, high = reference_bounds(reference)
+    comparator_match = _COMPARATOR.match(raw_value)
+    return ParsedObservation(
+        raw_name=name,
+        value_numeric=numeric,
+        value_text=None,
+        comparator=comparator_match.group(0) if comparator_match else None,
+        unit_raw=unit,
+        reference_text=reference,
+        reference_low=low,
+        reference_high=high,
+        page_number=page_number,
+        evidence_text=line,
+        confidence=0.95,
+    )
+
+
 def parse_unit_rows(text: str, page_number: int) -> list[ParsedObservation]:
     lines = [collapse_space(line) for line in text.splitlines() if collapse_space(line)]
     observations: list[ParsedObservation] = []
     for index, line in enumerate(lines):
-        match = _UNIT_ROW.match(line)
+        match = _UNIT_ROW.match(line) or _GLUED_SIGN_ROW.match(line)
         if not match:
             continue
-        name = _unit_row_name(match.group("name"), _lines_before_next_row(lines, index + 1, index + 4))
-        if not valid_analyte_name(name):
-            continue
-        name = _electrolyte_name(name)
-        raw_value = match.group("value").replace(" ", "")
-        numeric = parse_decimal(raw_value)
-        if numeric is None:
-            continue
-        reference = _unit_row_reference(match, lines, index)
-        if reference and _SUSCEPTIBILITY_REFERENCE.match(reference):
-            continue
-        low, high = reference_bounds(reference)
-        comparator_match = _COMPARATOR.match(raw_value)
-        observations.append(
-            ParsedObservation(
-                raw_name=name,
-                value_numeric=numeric,
-                value_text=None,
-                comparator=comparator_match.group(0) if comparator_match else None,
-                unit_raw=match.group("unit"),
-                reference_text=reference,
-                reference_low=low,
-                reference_high=high,
-                page_number=page_number,
-                evidence_text=line,
-                confidence=0.95,
-            )
-        )
+        observation = _unit_row_observation(match, line, lines, index, page_number)
+        if observation is not None:
+            observations.append(observation)
     return observations
 
 
@@ -2676,6 +2788,7 @@ def _esculab_observation(
 #: The column headings a results table prints over its first two columns.
 _INDICATOR_HEADING = "Показник"
 _RESULT_HEADING = "Результат"
+_MICROORGANISM = "Мікроорганізм"
 
 
 def _esculab_header(rows: list[tuple[list[str], list[str], float]]) -> int | None:
@@ -2897,7 +3010,7 @@ def _esculab_stool_header(rows: list[tuple[list[str], list[str], float]], page_t
     )
     if header is not None:
         return header if "Копрограма" in page_text else None
-    if "Мікроорганізм" in page_text or _INDICATOR_HEADING in page_text:
+    if _MICROORGANISM in page_text or _INDICATOR_HEADING in page_text:
         # The page announces a table of its own, so it is not the tail of this
         # one.  Without this the culture report was read as a coprogram: two
         # organisms relabelled «(кал)» and «Амоксицилін-клавуланова» -- half an
@@ -3557,6 +3670,11 @@ def _visit_name(kind: str, line: str, match: re.Match) -> str:
     return "ЧД" if name == "ЧДД" else name
 
 
+def _spans_split(split: int | None, start: int, end: int) -> bool:
+    """Whether a match runs across the join at ``split``; with no join, every match counts."""
+    return split is None or start < split < end
+
+
 def _visit_line_rows(
     line: str, page_number: int, observed_at: str | None, split: int | None = None
 ) -> list[ParsedObservation]:
@@ -3566,9 +3684,6 @@ def _visit_line_rows(
     runs across the join is read: «ЧСС -» / «78/хв.», «АТ 120/80» / «мм рт
     ст.».  Everything else on either line was read from that line alone.
     """
-    def spans(start: int, end: int) -> bool:
-        return split is None or start < split < end
-
     evidence = line if split is None else f"{line[:split]}\n{line[split + 1:]}"
     found: list[ParsedObservation] = []
     whole = next(((kind, match) for kind, pattern in _VISIT_LINE if (match := pattern.match(line))), None)
@@ -3577,10 +3692,20 @@ def _visit_line_rows(
         if _visit_separated(line, match)
     ]
     for bare in _VISIT_BARE.finditer(line):
-        if spans(bare.start(), bare.end()):
+        if _spans_split(split, bare.start(), bare.end()):
             found.extend(_visit_bare(bare, page_number, evidence, observed_at))
+    found.extend(_visit_matched_values(line, matches, split, page_number, evidence, observed_at))
+    found.extend(_visit_fever_values(line, split, page_number, evidence, observed_at))
+    found.extend(_visit_pressure_values(line, split, page_number, evidence, observed_at))
+    return found
+
+
+def _visit_matched_values(
+    line: str, matches: list, split: int | None, page_number: int, evidence: str, observed_at: str | None,
+) -> list[ParsedObservation]:
+    found: list[ParsedObservation] = []
     for kind, match in matches:
-        if not spans(match.start(), match.end()):
+        if not _spans_split(split, match.start(), match.end()):
             continue
         item = _visit_value(
             kind, _visit_name(kind, line, match), match.group("value"),
@@ -3588,16 +3713,30 @@ def _visit_line_rows(
         )
         if item:
             found.append(item)
+    return found
+
+
+def _visit_fever_values(
+    line: str, split: int | None, page_number: int, evidence: str, observed_at: str | None,
+) -> list[ParsedObservation]:
+    found: list[ParsedObservation] = []
     for match in _VISIT_FEVER.finditer(line):
         item = _visit_value(
             "temperature", "Температура тіла", match.group("value"), "°C", page_number, evidence, observed_at,
         )
-        if item and spans(match.start(), match.end()):
+        if item and _spans_split(split, match.start(), match.end()):
             found.append(item)
+    return found
+
+
+def _visit_pressure_values(
+    line: str, split: int | None, page_number: int, evidence: str, observed_at: str | None,
+) -> list[ParsedObservation]:
+    found: list[ParsedObservation] = []
     label = _VISIT_BP_LABEL.search(line)
     if label:
         for reading in _VISIT_BP_READING.finditer(line, label.end()):
-            if spans(label.start(), reading.end()):
+            if _spans_split(split, label.start(), reading.end()):
                 found.extend(_visit_pressure(reading, page_number, evidence, observed_at))
     return found
 
@@ -3672,10 +3811,10 @@ _CULTURE_INLINE_COUNT = re.compile(
 
 #: «(матеріал: Приносний матеріал, кал)», printed under each section heading
 #: or at the end of its last line.
-_CULTURE_MATERIAL = re.compile(r"\(матеріал:\s*(?:приносний\s+матеріал,\s*)?(?P<specimen>[^()]+?)\s*(?:\)|$)", re.I)
+_CULTURE_MATERIAL = re.compile(r"\(матеріал:\s*(?:приносний\s+матеріал,\s*)?(?P<specimen>[^()]+)\s*(?:\)|$)", re.I)
 
 #: «Антибіотики/Антимікотики Staphylococcus epidermidis»: whose antibiogram follows.
-_CULTURE_ANTIBIOGRAM_HEAD = re.compile(r"^Антибіотики/Антимікотики\b\s*(?P<organism>.*)$", re.I)
+_CULTURE_ANTIBIOGRAM_HEAD = re.compile(r"^Антибіотики/Антимікотики\b\s*+(?P<organism>.*)$", re.I)
 
 #: An antibiogram row: the antibiotic, an optional disk potency, and the
 #: verdict -- «Бензилпеніцилін 1 од Стійкий».  The potency is what the paper
@@ -3773,7 +3912,7 @@ class _EsculabCulture:
             self.observations.append(antibiotic)
             self.in_table, self.open_row = False, None
             return
-        if text.startswith("Мікроорганізм") and _RESULT_HEADING in text:
+        if text.startswith(_MICROORGANISM) and _RESULT_HEADING in text:
             self.in_table, self.open_row = True, None
             return
         if line[0][0] >= ESCULAB_CULTURE_COLUMNS[0] and any(item.raw_name == text for item in self.observations):
@@ -3838,7 +3977,7 @@ def parse_esculab_culture(words: list, page_number: int) -> list[ParsedObservati
     """
     lines = _word_lines(words)
     texts = [" ".join(word[3] for word in line) for line in lines]
-    if not any(text.startswith("Мікроорганізм") or _CULTURE_ANTIBIOGRAM_HEAD.match(text) for text in texts):
+    if not any(text.startswith(_MICROORGANISM) or _CULTURE_ANTIBIOGRAM_HEAD.match(text) for text in texts):
         return []
     culture = _EsculabCulture(page_number)
     for line in lines:
@@ -3896,6 +4035,28 @@ _PARTNER_COPROGRAM_HEADER = ["Показники", "Результат", "Од."
 _PARTNER_COPROGRAM_END = re.compile(r"^(?:КОМЕНТАР|Керівник|Результати досліджень)", re.I)
 
 
+def _partner_row_cells(group: list[list[tuple[float, float, float, str]]]) -> tuple[str, str, str, str]:
+    """The name, result, unit and reference cells of one row, joined top to bottom."""
+    cells: list[list[str]] = [[], [], [], []]
+    for line in sorted(group, key=lambda item: item[0][2]):
+        for x0, _x1, _top, text in line:
+            cells[sum(1 for edge in PARTNER_COPROGRAM_COLUMNS if x0 >= edge)].append(text)
+    name, result, unit, reference = (collapse_space(" ".join(cell)) for cell in cells)
+    return name, result, unit, reference
+
+
+def _nearest_anchor_groups(
+    body: list[list[tuple[float, float, float, str]]], anchors: list[int],
+) -> dict[int, list[list[tuple[float, float, float, str]]]]:
+    """Each line of the body under the anchor line whose top it is nearest to."""
+    groups: dict[int, list[list[tuple[float, float, float, str]]]] = {anchor: [] for anchor in anchors}
+    for line in body:
+        top = line[0][2]
+        nearest = min(anchors, key=lambda anchor, top=top: abs(body[anchor][0][2] - top))
+        groups[nearest].append(line)
+    return groups
+
+
 def parse_partner_coprogram(words: list, page_number: int) -> list[ParsedObservation]:
     """The rows of the partner laboratory's coprogram form.
 
@@ -3923,18 +4084,10 @@ def parse_partner_coprogram(words: list, page_number: int) -> list[ParsedObserva
     anchors = [index for index, line in enumerate(body) if line[0][0] < name_to]
     if not anchors:
         return []
-    groups: dict[int, list[list[tuple[float, float, float, str]]]] = {anchor: [] for anchor in anchors}
-    for line in body:
-        top = line[0][2]
-        nearest = min(anchors, key=lambda anchor: abs(body[anchor][0][2] - top))
-        groups[nearest].append(line)
+    groups = _nearest_anchor_groups(body, anchors)
     observations: list[ParsedObservation] = []
     for anchor in anchors:
-        cells: list[list[str]] = [[], [], [], []]
-        for line in sorted(groups[anchor], key=lambda item: item[0][2]):
-            for x0, _x1, _top, text in line:
-                cells[sum(1 for edge in PARTNER_COPROGRAM_COLUMNS if x0 >= edge)].append(text)
-        name, result, unit, reference = (collapse_space(" ".join(cell)) for cell in cells)
+        name, result, unit, reference = _partner_row_cells(groups[anchor])
         if not result:
             continue  # the «30511 Копрограма» heading
         found = _esculab_observation(name, result, unit, [reference], page_number)
@@ -4078,12 +4231,42 @@ def parse_synevo_sediment(words: list, page_number: int) -> list[ParsedObservati
 
 
 #: The norm Synevo sometimes prints inside the result cell itself:
-#: «не виявлені (в нормі - не виявлені)».
-_SYNEVO_INLINE_NORM = re.compile(r"^(?P<value>.+?)\s*(?P<norm>\(в нормі[^)]*\))$", re.I)
+#: «не виявлені (в нормі - не виявлені)».  The bracket is the last thing in
+#: the cell, and the text is one cell of one row.
+_SYNEVO_NORM_BRACKET = r"(?P<norm>\(в нормі[^)]*\))"
+_SYNEVO_INLINE_NORM = re.compile(rf"^(?P<value>.+?)\s*+{_SYNEVO_NORM_BRACKET}$", re.I)
 _SYNEVO_GENOTYPE = re.compile(r"^(?:гомозиготне|гетерозиготне)\s+носійство$", re.I)
 _SYNEVO_NUMBER = re.compile(rf"(?P<comparator>[<>≤≥])?\s*(?P<number>{_DECIMAL})")
 #: A named method in a test heading: «(метод концентрування Parasep)».
-_SYNEVO_HEADING_METHOD = re.compile(r"\(метод\s[^()]*?(?P<method>[A-Z][A-Za-z-]+)\)")
+_SYNEVO_HEADING_METHOD = re.compile(r"\(метод\s(?:[^()A-Za-z-]|[A-Za-z-]++(?!\)))*+[a-z-]*+(?P<method>[A-Z][A-Za-z-]++)\)")
+
+
+def _sediment_block_end(text: str) -> bool:
+    return bool(SYNEVO_SEDIMENT_HEADING.match(text) or SYNEVO_SEDIMENT_END.match(text))
+
+
+def _name_left_open(rows: list, lines: list, value_from: float) -> bool:
+    """Whether the row above still has a bracket open in its name column."""
+    return bool(rows) and _unclosed_bracket(
+        " ".join(word[3] for row_line in rows[-1][1] for word in lines[row_line] if word[0] < value_from)
+    )
+
+
+def _open_unitless_row(
+    rows: list, index: int, line: list, name: str, value_from: float, heading: str | None,
+) -> tuple[str | None, bool]:
+    """Start a row on this line; returns the heading now in force and whether this line is one."""
+    in_heading = not any(word[0] >= value_from for word in line)
+    if in_heading:
+        heading = name  # a section heading: «Копрограма»
+    rows.append((index, [index], heading))
+    return heading, in_heading
+
+
+def _starts_unitless_row(name: str, open_name: bool) -> bool:
+    # «pH» opens lowercase; a wrapped name tail («найпростіших») has no
+    # capital; «16 генотип» has none either and is a row of its own.
+    return (any(char.isupper() for char in name.split(" ")[0]) or bool(_GENOTYPE_NUMBER.match(name))) and not open_name
 
 
 def _synevo_unitless_rows(lines: list, columns: tuple[float, float, float]) -> list[tuple[int, list[int], str | None]]:
@@ -4106,31 +4289,93 @@ def _synevo_unitless_rows(lines: list, columns: tuple[float, float, float]) -> l
     for index in range(header + 1 if header is not None else len(lines), len(lines)):
         line = lines[index]
         text = collapse_space(" ".join(word[3] for word in line))
-        if SYNEVO_SEDIMENT_HEADING.match(text) or SYNEVO_SEDIMENT_END.match(text):
+        if _sediment_block_end(text):
             break
         name = " ".join(word[3] for word in line if word[0] < value_from)
-        open_name = bool(rows) and _unclosed_bracket(
-            " ".join(word[3] for row_line in rows[-1][1] for word in lines[row_line] if word[0] < value_from)
-        )
-        # «pH» opens lowercase; a wrapped name tail («найпростіших») has no
-        # capital; «16 генотип» has none either and is a row of its own.
-        if (any(char.isupper() for char in name.split(" ")[0]) or _GENOTYPE_NUMBER.match(name)) and not open_name:
-            in_heading = not any(word[0] >= value_from for word in line)
-            if in_heading:
-                heading = name  # a section heading: «Копрограма»
-            rows.append((index, [index], heading))
-        elif rows:
-            rows[-1][1].append(index)
-            if in_heading and name:
-                # The heading wraps: «Аналіз калу на кишкові паразити (метод» /
-                # «концентрування Parasep)».
-                heading = f"{heading} {name}"
-                rows[-1] = (rows[-1][0], rows[-1][1], heading)
+        open_name = _name_left_open(rows, lines, value_from)
+        if _starts_unitless_row(name, open_name):
+            heading, in_heading = _open_unitless_row(rows, index, line, name, value_from, heading)
+            continue
+        if not rows:
+            continue
+        rows[-1][1].append(index)
+        if in_heading and name:
+            # The heading wraps: «Аналіз калу на кишкові паразити (метод» /
+            # «концентрування Parasep)».
+            heading = f"{heading} {name}"
+            rows[-1] = (rows[-1][0], rows[-1][1], heading)
     return rows
 
 
 def _unclosed_bracket(name: str) -> bool:
     return name.count("(") > name.count(")")
+
+
+def _unitless_row_fields(
+    lines: list, first: int, row: list[int], heading: str | None, columns: tuple[float, float, float],
+) -> tuple[str, str, str | None] | None:
+    """The name, result and reference of one unitless row, or None when it stays with the text passes."""
+    cells: dict[str, list[str]] = {"name": [], "value": [], "unit": [], "reference": []}
+    for index in row:
+        for x0, _x1, _top, text in lines[index]:
+            cells[_sediment_column(x0, columns)].append(text)
+    name = collapse_space(" ".join(cells["name"])).strip(" ,-:")
+    value = collapse_space(" ".join(cells["value"]))
+    if not value or cells["unit"] or not valid_analyte_name(name):
+        return None
+    method = _SYNEVO_HEADING_METHOD.search(heading or "")
+    if method:
+        # «Яйця гельмінтів» under «Аналіз калу на кишкові паразити (метод
+        # концентрування Parasep)» and again under «Копрограма» are two
+        # tests of one sample by two methods; the bare name made them one.
+        name = f"{name} ({method.group('method')})"
+    reference = _synevo_block(lines, first, columns) or None
+    inline = _SYNEVO_INLINE_NORM.match(value) if not reference else None
+    if inline:
+        # «не виявлені (в нормі - не виявлені)» is all result column (the
+        # words start inside it, left of the reference header) and the
+        # row's reference column is empty: the bracket is where this lab
+        # prints the coprogram's leukocyte and erythrocyte norm.  It is the
+        # row's reference, without the brackets.
+        value = inline.group("value")
+        reference = inline.group("norm").strip("() ")
+    if not reference and not inline and not _SYNEVO_GENOTYPE.match(value):
+        # A result row prints its norm; a line with none is a panel heading
+        # or a note in the result column («Звіт з описом лабораторних
+        # показників | Ваш результат готовий ...»), and stays with the
+        # text passes as before.  The exception is a genotype, printed
+        # under its own PCR heading with no norm: «ПЛР. Фолатний цикл.
+        # MTRR (66 A>G)» over «Гомозиготне носійство».
+        return None
+    return name, value, reference
+
+
+def _unitless_observation(
+    lines: list, first: int, row: list[int], heading: str | None, columns: tuple[float, float, float],
+    page_number: int, name: str, value: str, reference: str | None,
+) -> ParsedObservation:
+    number = _SYNEVO_NUMBER.fullmatch(value)
+    # A block of several lines is a labelled scale (coprogram pH: «7. 0 -
+    # 7.5: в нормі», «5.5 – 6.75: кисла», ...); its first pair of numbers
+    # is not the interval («0 - 7.5» put an acidic 6.75 inside it), so only
+    # a one-line reference gives bounds.
+    first_reference = collapse_space(" ".join(word[3] for word in lines[first] if word[0] >= columns[2]))
+    limits = reference_limits(reference) if number and reference == first_reference else ReferenceLimits()
+    return ParsedObservation(
+        raw_name=name,
+        value_numeric=parse_decimal(number.group("number")) if number else None,
+        value_text=None if number else value,
+        comparator=number.group("comparator") if number else None,
+        unit_raw=None,
+        reference_text=reference,
+        reference_low=limits.low,
+        reference_high=limits.high,
+        page_number=page_number,
+        evidence_text=collapse_space(" ".join(" ".join(word[3] for word in lines[index]) for index in row)),
+        confidence=0.93,
+        value_printed=number.group("number") if number else None,
+        section=heading,
+    )
 
 
 def parse_synevo_unitless(words: list, page_number: int) -> list[ParsedObservation]:
@@ -4151,59 +4396,12 @@ def parse_synevo_unitless(words: list, page_number: int) -> list[ParsedObservati
         return []
     observations: list[ParsedObservation] = []
     for first, row, heading in _synevo_unitless_rows(lines, columns):
-        cells: dict[str, list[str]] = {"name": [], "value": [], "unit": [], "reference": []}
-        for index in row:
-            for x0, _x1, _top, text in lines[index]:
-                cells[_sediment_column(x0, columns)].append(text)
-        name = collapse_space(" ".join(cells["name"])).strip(" ,-:")
-        value = collapse_space(" ".join(cells["value"]))
-        if not value or cells["unit"] or not valid_analyte_name(name):
+        fields = _unitless_row_fields(lines, first, row, heading, columns)
+        if fields is None:
             continue
-        method = _SYNEVO_HEADING_METHOD.search(heading or "")
-        if method:
-            # «Яйця гельмінтів» under «Аналіз калу на кишкові паразити (метод
-            # концентрування Parasep)» and again under «Копрограма» are two
-            # tests of one sample by two methods; the bare name made them one.
-            name = f"{name} ({method.group('method')})"
-        reference = _synevo_block(lines, first, columns) or None
-        inline = _SYNEVO_INLINE_NORM.match(value) if not reference else None
-        if inline:
-            # «не виявлені (в нормі - не виявлені)» is all result column (the
-            # words start inside it, left of the reference header) and the
-            # row's reference column is empty: the bracket is where this lab
-            # prints the coprogram's leukocyte and erythrocyte norm.  It is the
-            # row's reference, without the brackets.
-            value = inline.group("value")
-            reference = inline.group("norm").strip("() ")
-        if not reference and not inline and not _SYNEVO_GENOTYPE.match(value):
-            # A result row prints its norm; a line with none is a panel heading
-            # or a note in the result column («Звіт з описом лабораторних
-            # показників | Ваш результат готовий ...»), and stays with the
-            # text passes as before.  The exception is a genotype, printed
-            # under its own PCR heading with no norm: «ПЛР. Фолатний цикл.
-            # MTRR (66 A>G)» over «Гомозиготне носійство».
-            continue
-        number = _SYNEVO_NUMBER.fullmatch(value)
-        # A block of several lines is a labelled scale (coprogram pH: «7. 0 -
-        # 7.5: в нормі», «5.5 – 6.75: кисла», ...); its first pair of numbers
-        # is not the interval («0 - 7.5» put an acidic 6.75 inside it), so only
-        # a one-line reference gives bounds.
-        first_reference = collapse_space(" ".join(word[3] for word in lines[first] if word[0] >= columns[2]))
-        limits = reference_limits(reference) if number and reference == first_reference else ReferenceLimits()
-        observations.append(ParsedObservation(
-            raw_name=name,
-            value_numeric=parse_decimal(number.group("number")) if number else None,
-            value_text=None if number else value,
-            comparator=number.group("comparator") if number else None,
-            unit_raw=None,
-            reference_text=reference,
-            reference_low=limits.low,
-            reference_high=limits.high,
-            page_number=page_number,
-            evidence_text=collapse_space(" ".join(" ".join(word[3] for word in lines[index]) for index in row)),
-            confidence=0.93,
-            value_printed=number.group("number") if number else None,
-            section=heading,
+        name, value, reference = fields
+        observations.append(_unitless_observation(
+            lines, first, row, heading, columns, page_number, name, value, reference,
         ))
     return observations
 
@@ -4317,6 +4515,9 @@ def _us_lv_mass_value(candidates: list[str]) -> str | None:
     return None
 
 
+_WRAPPED_SIDE = r"\b(права|ліва)\b"
+
+
 def _us_common_carotid(flat: str, page_number: int) -> list[ParsedObservation | None]:
     """Duplex: «Загальна сонна артерія, права 89 N=50-104», or wrapped so the
     side lands on the line below the value."""
@@ -4329,7 +4530,7 @@ def _us_common_carotid(flat: str, page_number: int) -> list[ParsedObservation | 
         if not side:
             # Wrapped: «Загальна сонна артерія, …» / «89 N=50-104» / «права …».
             after = re.split(r"артерія|N=", flat[found.end() : found.end() + 60])[0]
-            wrapped = re.search(r"\b(права|ліва)\b", after)
+            wrapped = re.search(_WRAPPED_SIDE, after)
             side = wrapped.group(1) if wrapped else None
         if not side:
             continue
@@ -4341,11 +4542,14 @@ def _us_common_carotid(flat: str, page_number: int) -> list[ParsedObservation | 
     return rows
 
 
+_THYROID_VOLUME = "Thyroid volume"
+
+
 def _us_thyroid_volume(flat: str, page_number: int) -> list[ParsedObservation | None]:
     """Thyroid: «Права частка : … Об’єм : 6 N- 7.5 cm3», «Сумарний об’єм: 12.5 сm3 N- 13cm3»."""
     return [
         _us_row(
-            "Thyroid volume", found.group("value"), "cm3", found.group(0), page_number,
+            _THYROID_VOLUME, found.group("value"), "cm3", found.group(0), page_number,
             reference=found.group("ref").replace("сm3", "cm3"), high=parse_decimal(found.group("high")),
             specimen=found.group("site"),
         )
@@ -4505,7 +4709,7 @@ def _us_abdomen(flat: str, page_number: int, carried: str | None) -> list[Parsed
         *_us_gallbladder(segments.get("Жовчевий міхур", ""), page_number),
         *_us_pancreas(segments.get("Підшлункова залоза", ""), page_number),
     ]
-    for heading, side in (("Права нирка", "права"), ("Ліва нирка", "ліва")):
+    for heading, side in (("Права нирка", _RIGHT), ("Ліва нирка", "ліва")):
         rows.extend(_us_kidney(segments.get(heading, ""), side, page_number))
     rows.extend(_us_spleen(segments.get("Селезінка", ""), page_number))
     rows.extend(_us_bladder_volume(segments.get("Сечовий міхур", ""), page_number))
@@ -4733,6 +4937,8 @@ def _us_valve_doppler(lines: list[str], page_number: int) -> list[ParsedObservat
 
 
 _US_CAROTID = {"Внутрішня": "internal", "Зовнішня": "external"}
+_VERTEBRAL_PEAK = "Peak systolic velocity, vertebral artery"
+_VERTEBRAL_DIAMETER = "Vertebral artery diameter"
 
 
 def _us_duplex(flat: str, page_number: int) -> list[ParsedObservation]:
@@ -4768,7 +4974,7 @@ def _us_duplex(flat: str, page_number: int) -> list[ParsedObservation]:
     for index, found in enumerate(vertebral):
         side = found.group("side").casefold()
         rows.append(_us_row(
-            "Peak systolic velocity, vertebral artery", found.group("v"), _CM_PER_S, found.group(0), page_number,
+            _VERTEBRAL_PEAK, found.group("v"), _CM_PER_S, found.group(0), page_number,
             reference=f"N={found.group('low')}-{found.group('high')}",
             low=float(found.group("low")), high=float(found.group("high")), specimen=side,
         ))
@@ -4784,7 +4990,7 @@ def _us_duplex(flat: str, page_number: int) -> list[ParsedObservation]:
         )
         if diameter:
             rows.append(_us_row(
-                "Vertebral artery diameter", diameter.group("v"), "мм", f"{found.group(0)} {diameter.group(0)}", page_number,
+                _VERTEBRAL_DIAMETER, diameter.group("v"), "мм", f"{found.group(0)} {diameter.group(0)}", page_number,
                 reference=diameter.group("ref"), low=parse_decimal(diameter.group("low")),
                 high=parse_decimal(diameter.group("high")), specimen=side,
             ))
@@ -4829,11 +5035,63 @@ def _us_soft_tissue(flat: str, lines: list[str], page_number: int) -> list[Parse
 # --- duplex rows without a printed norm, transcranial duplex ------------------
 
 _US_N = r"\d+(?:[.,]\d+)?"
-_US_SIDE = {"права": "права", "ліва": "ліва", "справа": "права", "зліва": "ліва", "правої": "права", "лівої": "ліва"}
+_RIGHT = "права"
+_US_SIDE = {_RIGHT: _RIGHT, "ліва": "ліва", "справа": _RIGHT, "зліва": "ліва", "правої": _RIGHT, "лівої": "ліва"}
 #: Where one vertebral row ends: the next vessel, or the prose under the table.
 _US_VESSEL_START = re.compile(
     r"Хребцева\s+артерія|(?:Загальна|Внутрішня|Зовнішня)\s+сонна|Дистальні\s+відділи|Транскраніальн"
 )
+
+
+def _us_unbanded_carotid_rows(flat: str, starts: list[int], page_number: int) -> list[ParsedObservation | None]:
+    rows: list[ParsedObservation | None] = []
+    for found in re.finditer(
+        r"(?P<vessel>Загальна|Внутрішня|Зовнішня) сонна\s+артерія,?\s*(?P<side>права|ліва)?[^\d]{0,45}?"
+        r"(?<![\d.,=])(?P<v>\d{2,3})(?![\d.,])(?!\s*N=)\s*(?P<side2>права|ліва)?",
+        flat,
+    ):
+        side = found.group("side") or found.group("side2")
+        evidence = found.group(0)
+        if not side:
+            # «Загальна сонна артерія, 108 Кровоплин магістральний, хід» /
+            # «права правильний»: the side wraps under the flow text, still
+            # inside this vessel's row, which ends where the next vessel starts.
+            end = next(start for start in starts if start > found.start())
+            later = re.search(_WRAPPED_SIDE, flat[found.end() : end])
+            if not later:
+                continue
+            side, evidence = later.group(1), flat[found.start() : end].strip()
+        vessel = {"Загальна": "common", "Внутрішня": "internal", "Зовнішня": "external"}[found.group("vessel")]
+        rows.append(_us_row(f"Peak systolic velocity, {vessel} carotid artery", found.group("v"), _CM_PER_S,
+                            evidence, page_number, specimen=side))
+    return rows
+
+
+def _us_unbanded_segment(chunk: str) -> str | None:
+    if "почат" in chunk:
+        return "початковий сегмент"
+    if re.search(r"дист|\bди\b.*\bст\.", chunk):
+        return "дистальний сегмент"
+    return None
+
+
+def _us_unbanded_vertebral_rows(chunk: str, page_number: int) -> list[ParsedObservation | None]:
+    side = re.search(_WRAPPED_SIDE, chunk, re.I)
+    if not side:
+        return []
+    side_name = side.group(1).casefold()
+    segment = _us_unbanded_segment(chunk)
+    diameter = re.search(rf"D=\s*(?P<v>{_US_N})(?:\s+сегмент)?\s*мм", chunk)
+    velocity = re.search(r"(?<![\d.,=])(\d{2,3})(?![\d.,])", re.sub(rf"D=\s*{_US_N}", " ", chunk))
+    rows: list[ParsedObservation | None] = []
+    if velocity:
+        rows.append(_us_row(_VERTEBRAL_PEAK, velocity.group(1), _CM_PER_S,
+                            chunk, page_number,
+                            specimen=f"{side_name}, {segment}" if segment else side_name))
+    if diameter:
+        rows.append(_us_row(_VERTEBRAL_DIAMETER, diameter.group("v"), "мм", chunk, page_number,
+                            specimen=side_name))
+    return rows
 
 
 def _us_duplex_unbanded(flat: str, page_number: int) -> list[ParsedObservation]:
@@ -4849,46 +5107,63 @@ def _us_duplex_unbanded(flat: str, page_number: int) -> list[ParsedObservation]:
         return []
     rows: list[ParsedObservation | None] = []
     starts = [match.start() for match in _US_VESSEL_START.finditer(flat)] + [len(flat)]
-    for found in re.finditer(
-        r"(?P<vessel>Загальна|Внутрішня|Зовнішня) сонна\s+артерія,?\s*(?P<side>права|ліва)?[^\d]{0,45}?"
-        r"(?<![\d.,=])(?P<v>\d{2,3})(?![\d.,])(?!\s*N=)\s*(?P<side2>права|ліва)?",
-        flat,
-    ):
-        side = found.group("side") or found.group("side2")
-        evidence = found.group(0)
-        if not side:
-            # «Загальна сонна артерія, 108 Кровоплин магістральний, хід» /
-            # «права правильний»: the side wraps under the flow text, still
-            # inside this vessel's row, which ends where the next vessel starts.
-            end = next(start for start in starts if start > found.start())
-            later = re.search(r"\b(права|ліва)\b", flat[found.end() : end])
-            if not later:
-                continue
-            side, evidence = later.group(1), flat[found.start() : end].strip()
-        vessel = {"Загальна": "common", "Внутрішня": "internal", "Зовнішня": "external"}[found.group("vessel")]
-        rows.append(_us_row(f"Peak systolic velocity, {vessel} carotid artery", found.group("v"), _CM_PER_S,
-                            evidence, page_number, specimen=side))
+    rows.extend(_us_unbanded_carotid_rows(flat, starts, page_number))
     for start, end in zip(starts, starts[1:]):
         chunk = flat[start:end]
         if not chunk.startswith("Хребцева") or "N=" in chunk:
             continue
-        side = re.search(r"\b(права|ліва)\b", chunk, re.I)
-        if not side:
-            continue
-        side_name = side.group(1).casefold()
-        segment = "початковий сегмент" if "почат" in chunk else (
-            "дистальний сегмент" if re.search(r"дист|\bди\b.*\bст\.", chunk) else None
-        )
-        diameter = re.search(rf"D=\s*(?P<v>{_US_N})(?:\s+сегмент)?\s*мм", chunk)
-        velocity = re.search(r"(?<![\d.,=])(\d{2,3})(?![\d.,])", re.sub(rf"D=\s*{_US_N}", " ", chunk))
-        if velocity:
-            rows.append(_us_row("Peak systolic velocity, vertebral artery", velocity.group(1), _CM_PER_S,
-                                chunk, page_number,
-                                specimen=f"{side_name}, {segment}" if segment else side_name))
-        if diameter:
-            rows.append(_us_row("Vertebral artery diameter", diameter.group("v"), "мм", chunk, page_number,
-                                specimen=side_name))
+        rows.extend(_us_unbanded_vertebral_rows(chunk, page_number))
     return [row for row in rows if row is not None]
+
+
+def _us_prose_carotid_rows(flat: str, page_number: int) -> list[ParsedObservation | None]:
+    rows: list[ParsedObservation | None] = []
+    vessels = (
+        (r"Загальна сонна артерія", "common"),
+        (r"(?:Проксимальний відділ\s+)?внутрішньої сонної артерії", "internal"),
+        (r"Зовнішня сонна артерія", "external"),
+    )
+    for label, vessel in vessels:
+        found = re.search(
+            rf"{label}:\s*швидкість\s+справа\s+(?P<r>\d{{2,3}})\s*см/с[;,]\s*зліва\s+(?P<l>\d{{2,3}})\s*см/с", flat
+        )
+        if found:
+            for group, side in (("r", _RIGHT), ("l", "ліва")):
+                rows.append(_us_row(f"Peak systolic velocity, {vessel} carotid artery", found.group(group), "см/с",
+                                    found.group(0), page_number, specimen=side))
+    return rows
+
+
+def _us_prose_segment_rows(rest: str, side: str, page_number: int) -> list[ParsedObservation | None]:
+    rows: list[ParsedObservation | None] = []
+    initial = re.search(r"[Шш]видкість\s+у\s+початковому\s+сегменті\s+(?P<v>\d{2,3})\s*см/с(?:,\s*RI\s+(?P<ri>0[.,]\d+))?",
+                        rest)
+    if initial:
+        rows.append(_us_row(_VERTEBRAL_PEAK, initial.group("v"), "см/с", initial.group(0),
+                            page_number, specimen=f"{side}, початковий сегмент"))
+        if initial.group("ri"):
+            item = _us_row("Vertebral artery resistive index", initial.group("ri"), "", initial.group(0), page_number,
+                           specimen=f"{side}, початковий сегмент")
+            rows.append(replace(item, unit_raw=None) if item else None)
+    distal = re.search(r"[Шш]видкість\s+у\s+дистальному\s+сегменті\s+(?P<v>\d{2,3})\s*см/с", rest)
+    if distal:
+        rows.append(_us_row(_VERTEBRAL_PEAK, distal.group("v"), "см/с", distal.group(0),
+                            page_number, specimen=f"{side}, дистальний сегмент"))
+    return rows
+
+
+def _us_prose_vertebral_rows(flat: str, page_number: int) -> list[ParsedObservation | None]:
+    rows: list[ParsedObservation | None] = []
+    for found in re.finditer(
+        rf"Діаметр\s+(?P<side>правої|лівої)\s+вертебральної\s+артерії:\s*у\s+сегменті\s+[VУ]2\s*[-–]\s*(?P<d>{_US_N})\s*мм"
+        rf"(?P<rest>(?:(?!Діаметр).){{0,160}})",
+        flat,
+    ):
+        side = _US_SIDE[found.group("side")]
+        rows.append(_us_row(_VERTEBRAL_DIAMETER, found.group("d"), "мм", found.group(0)[:90], page_number,
+                            specimen=side))
+        rows.extend(_us_prose_segment_rows(found.group("rest"), side, page_number))
+    return rows
 
 
 def _us_duplex_prose(flat: str, page_number: int) -> list[ParsedObservation]:
@@ -4901,40 +5176,8 @@ def _us_duplex_prose(flat: str, page_number: int) -> list[ParsedObservation]:
     мм») is not one measurement and is not read.
     """
     rows: list[ParsedObservation | None] = []
-    vessels = (
-        (r"Загальна сонна артерія", "common"),
-        (r"(?:Проксимальний відділ\s+)?внутрішньої сонної артерії", "internal"),
-        (r"Зовнішня сонна артерія", "external"),
-    )
-    for label, vessel in vessels:
-        found = re.search(
-            rf"{label}:\s*швидкість\s+справа\s+(?P<r>\d{{2,3}})\s*см/с[;,]\s*зліва\s+(?P<l>\d{{2,3}})\s*см/с", flat
-        )
-        if found:
-            for group, side in (("r", "права"), ("l", "ліва")):
-                rows.append(_us_row(f"Peak systolic velocity, {vessel} carotid artery", found.group(group), "см/с",
-                                    found.group(0), page_number, specimen=side))
-    for found in re.finditer(
-        rf"Діаметр\s+(?P<side>правої|лівої)\s+вертебральної\s+артерії:\s*у\s+сегменті\s+[VУ]2\s*[-–]\s*(?P<d>{_US_N})\s*мм"
-        rf"(?P<rest>(?:(?!Діаметр).){{0,160}})",
-        flat,
-    ):
-        side = _US_SIDE[found.group("side")]
-        rows.append(_us_row("Vertebral artery diameter", found.group("d"), "мм", found.group(0)[:90], page_number,
-                            specimen=side))
-        initial = re.search(rf"[Шш]видкість\s+у\s+початковому\s+сегменті\s+(?P<v>\d{{2,3}})\s*см/с(?:,\s*RI\s+(?P<ri>0[.,]\d+))?",
-                            found.group("rest"))
-        if initial:
-            rows.append(_us_row("Peak systolic velocity, vertebral artery", initial.group("v"), "см/с", initial.group(0),
-                                page_number, specimen=f"{side}, початковий сегмент"))
-            if initial.group("ri"):
-                item = _us_row("Vertebral artery resistive index", initial.group("ri"), "", initial.group(0), page_number,
-                               specimen=f"{side}, початковий сегмент")
-                rows.append(replace(item, unit_raw=None) if item else None)
-        distal = re.search(r"[Шш]видкість\s+у\s+дистальному\s+сегменті\s+(?P<v>\d{2,3})\s*см/с", found.group("rest"))
-        if distal:
-            rows.append(_us_row("Peak systolic velocity, vertebral artery", distal.group("v"), "см/с", distal.group(0),
-                                page_number, specimen=f"{side}, дистальний сегмент"))
+    rows.extend(_us_prose_carotid_rows(flat, page_number))
+    rows.extend(_us_prose_vertebral_rows(flat, page_number))
     for found in re.finditer(
         rf"(?P<side>Права|Ліва)\s+внутрішня\s+яремна\s+вена\s+(?P<v>{_US_N})\s*мм\.?"
         rf"(?:\s*\((?P<ref>[NМM]\s*до\s*(?P<high>{_US_N})\s*мм)\))?",
@@ -4990,6 +5233,13 @@ def _us_inmed_abdomen(flat: str, page_number: int) -> list[ParsedObservation]:
     return [row for row in rows if row is not None]
 
 
+#: The ejection fraction «скоротився на 67% (норма 40-70%)»: the result, then
+#: the printed norm after it, which is optional.
+_US_EJECTION_RESULT = r"міхур[^.]{0,60}?скоротився\s+на\s+(?P<v>\d{1,3})\s*%"
+_US_EJECTION_REF = r"(?P<ref>норма\s*(?P<low>\d{1,2})\s*-\s*(?P<high>\d{2,3})\s*%)"
+_US_EJECTION_NORM = rf"(?P<tail>[^()]{{0,90}}\({_US_EJECTION_REF}\))?"
+
+
 def _us_gallbladder_test(flat: str, page_number: int) -> list[ParsedObservation]:
     """A gallbladder emptying test with a choleretic breakfast.
 
@@ -5006,10 +5256,7 @@ def _us_gallbladder_test(flat: str, page_number: int) -> list[ParsedObservation]
         when = "натще" if found.group("when") == "натще" else f"через {found.group('minutes')} хв"
         rows.append(_us_row("Gallbladder volume", found.group("v"), "см3", found.group(0), page_number, specimen=when))
     # The result can sit on the next sheet, which a photo carries alone.
-    found = re.search(
-        r"міхур[^.]{0,60}?скоротився\s+на\s+(?P<v>\d{1,3})\s*%(?P<tail>[^()]{0,90}\((?P<ref>норма\s*(?P<low>\d{1,2})\s*-\s*(?P<high>\d{2,3})\s*%)\))?",
-        flat,
-    )
+    found = re.search(rf"{_US_EJECTION_RESULT}{_US_EJECTION_NORM}", flat)
     if found:
         rows.append(_us_row(
             "Gallbladder ejection fraction", found.group("v"), "%", found.group(0), page_number,
@@ -5033,7 +5280,7 @@ def _us_inmed_thyroid(flat: str, page_number: int) -> list[ParsedObservation]:
     for found in re.finditer(r"Розміри\s+(?P<site>правої|лівої)\s+частки:\s*(?P<dims>[^О]{0,40}?)Об['’]єм\s*"
                              rf"(?P<v>{_US_N})\s*см\b\.?(?:\s*куб)?", flat):
         site = _US_LOBE[found.group("site")]
-        rows.append(_us_row("Thyroid volume", found.group("v"), "см3", found.group(0), page_number, specimen=site))
+        rows.append(_us_row(_THYROID_VOLUME, found.group("v"), "см3", found.group(0), page_number, specimen=site))
         dims = re.fullmatch(rf"\s*({_US_N})\s*{_US_X}\s*({_US_N})\s*{_US_X}\s*({_US_N})\s*(?:мм)?\s*;?\s*", found.group("dims"))
         if dims:
             item = _us_row("Thyroid lobe length", max(dims.groups(), key=parse_decimal), "мм", found.group(0),
@@ -5042,8 +5289,8 @@ def _us_inmed_thyroid(flat: str, page_number: int) -> list[ParsedObservation]:
             rows.append(replace(item, note=_us_note(printed)) if item else None)
     found = re.search(rf"Сумарний\s+об['’]єм\s+(?P<v>{_US_N})\s*см\b\.?(?:\s*куб)?", flat)
     if found:
-        rows.append(_us_row("Thyroid volume", found.group("v"), "см3", found.group(0), page_number, specimen="Сумарний"))
-    gland = re.search(r"TI-?RADS\s*:?\s*(?P<v>[1-5])\b(?!\s*категорі)", flat)
+        rows.append(_us_row(_THYROID_VOLUME, found.group("v"), "см3", found.group(0), page_number, specimen="Сумарний"))
+    gland = re.search(r"TI-?RADS\s*(?::\s*)?(?P<v>[1-5])\b(?!\s*категорі)", flat)
     if gland and not re.search(r"(?:Права|Ліва) частка\s*[-–]\s*\d\s*категорі", flat):
         item = _us_row("Thyroid TI-RADS category", gland.group("v"), "", gland.group(0), page_number)
         rows.append(replace(item, unit_raw=None) if item else None)
@@ -5070,6 +5317,34 @@ def _us_clean(*values: str | None) -> bool:
     return all(value is None or (parse_decimal(value) or 0) <= _US_MAX_MM for value in values)
 
 
+def _us_adnexa_line(line: str, left: list[str], right: list[str]) -> None:
+    """Adds one line of the two-column layout to the left and right ovary's text, in place."""
+    labels = [match.start() for match in _US_ADNEXA_LABEL.finditer(line)]
+    if len(labels) >= 2:
+        left.append(line[: labels[1]].strip())
+        right.append(line[labels[1]:].strip())
+    elif labels:
+        left.append(line)
+    else:
+        _us_adnexa_continuation(line, left, right)
+
+
+def _us_adnexa_continuation(line: str, left: list[str], right: list[str]) -> None:
+    # A continuation line: what precedes «розмір…» finishes the right
+    # ovary's sentence (left column), the size completes whichever
+    # column's sentence was left hanging on «утвір».
+    size = re.search(r"розмір\w*|діаметр\w*", line, re.I)
+    head, tail = (line[: size.start()].strip(), line[size.start():]) if size else ("", line)
+    dangling_right = bool(right and _US_DANGLING.search(right[-1]))
+    dangling_left = bool(left and _US_DANGLING.search(left[-1]))
+    if head:
+        left[-1:] = [f"{left[-1]} {head}" if left else head]
+    if dangling_right:
+        right[-1] = f"{right[-1]} {tail}"
+    elif dangling_left or not size:
+        left[-1:] = [f"{left[-1]} {tail}" if left else tail]
+
+
 def _us_adnexa_columns(lines: list[str]) -> dict[str, str] | None:
     """Each ovary's text from the two-column layout, or None without one."""
     start = next((index for index, line in enumerate(lines) if _US_ADNEXA_HEADER.fullmatch(line)), None)
@@ -5080,28 +5355,8 @@ def _us_adnexa_columns(lines: list[str]) -> dict[str, str] | None:
     for line in lines[start + 1:]:
         if _US_ADNEXA_END.search(line):
             break
-        labels = [match.start() for match in _US_ADNEXA_LABEL.finditer(line)]
-        if len(labels) >= 2:
-            left.append(line[: labels[1]].strip())
-            right.append(line[labels[1]:].strip())
-            continue
-        if labels:
-            left.append(line)
-            continue
-        # A continuation line: what precedes «розмір…» finishes the right
-        # ovary's sentence (left column), the size completes whichever
-        # column's sentence was left hanging on «утвір».
-        size = re.search(r"розмір\w*|діаметр\w*", line, re.I)
-        head, tail = (line[: size.start()].strip(), line[size.start():]) if size else ("", line)
-        dangling_right = bool(right and _US_DANGLING.search(right[-1]))
-        dangling_left = bool(left and _US_DANGLING.search(left[-1]))
-        if head:
-            left[-1:] = [f"{left[-1]} {head}" if left else head]
-        if dangling_right:
-            right[-1] = f"{right[-1]} {tail}"
-        elif dangling_left or not size:
-            left[-1:] = [f"{left[-1]} {tail}" if left else tail]
-    return {"права": " ".join(left), "ліва": " ".join(right)}
+        _us_adnexa_line(line, left, right)
+    return {_RIGHT: " ".join(left), "ліва": " ".join(right)}
 
 
 def _us_ovary_segments(flat: str) -> dict[str, str]:
@@ -5112,7 +5367,7 @@ def _us_ovary_segments(flat: str) -> dict[str, str]:
         end = starts[index + 1].start() if index + 1 < len(starts) else len(flat)
         stop = _US_PELVIC_END.search(flat, found.end(), end)
         word = (found.group("side") or found.group("adnexa")).casefold()
-        side = "права" if word.startswith("прав") else "ліва"
+        side = _RIGHT if word.startswith("прав") else "ліва"
         segments.setdefault(side, flat[found.start(): stop.start() if stop else end])
     return segments
 
@@ -5222,7 +5477,7 @@ def _us_endometrium(body: str, page_number: int, cycle: str | None) -> list[Pars
 
 def _us_uterine_lesions(body: str, page_number: int) -> list[ParsedObservation]:
     """A myoma node or an adenomyosis focus in the myometrium, with its wall."""
-    myometrium = re.search(r"Міометрій(?P<text>.*?)(?=Ендометрій|ендометрій|$)", body, re.I)
+    myometrium = re.search(r"Міометрій(?P<text>(?:(?!Ендометрій|ендометрій|$).)*)(?=Ендометрій|ендометрій|$)", body, re.I)
     if not myometrium:
         return []
     rows: list[ParsedObservation] = []
@@ -5253,19 +5508,36 @@ def _us_cervix(body: str, page_number: int) -> list[ParsedObservation]:
     return []
 
 
-def _us_ovary(text: str, side: str, page_number: int, cycle: str | None) -> list[ParsedObservation]:
-    rows: list[ParsedObservation | None] = []
+def _us_ovary_length_row(text: str, side: str, page_number: int, cycle: str | None) -> ParsedObservation | None:
     dims = re.search(
         rf"(?:Розміри|Розмірами|розміри):?\s*(?P<a>{_US_N})\s*(?:{_US_MM}\.?)?\s*{_US_X}?\s*(?P<b>{_US_N})(?:\s*(?:{_US_MM}\.?)?\s*{_US_X}?\s*(?P<c>{_US_N}))?\s*{_US_MM}",
         text,
     )
-    if dims:
-        values = [value for value in dims.groups() if value]
-        if len(values) >= 2 and _us_clean(*values):
-            # Which of the other two figures is width or depth is not
-            # printed; the note keeps all three as the paper prints them.
-            item = _us_row("Ovary length", max(values, key=parse_decimal), "мм", dims.group(0), page_number, specimen=side)
-            rows.append(replace(item, note=_us_note(dims.group(0), cycle)) if item else None)
+    if not dims:
+        return None
+    values = [value for value in dims.groups() if value]
+    if len(values) < 2 or not _us_clean(*values):
+        return None
+    # Which of the other two figures is width or depth is not
+    # printed; the note keeps all three as the paper prints them.
+    item = _us_row("Ovary length", max(values, key=parse_decimal), "мм", dims.group(0), page_number, specimen=side)
+    return replace(item, note=_us_note(dims.group(0), cycle)) if item else None
+
+
+def _us_ovarian_cyst_rows(text: str, side: str, page_number: int, cycle: str | None) -> list[ParsedObservation | None]:
+    rows: list[ParsedObservation | None] = []
+    for found in re.finditer(
+        rf"(?:утвір|утворення|рідинне)\b[^;]{{0,120}}?(?:розміром|діаметром)\s*(?P<a>{_US_N})(?:\s*{_US_X}\s*(?P<b>{_US_N}))?\s*{_US_MM}",
+        text,
+    ):
+        rows.extend(_us_lesion("Ovarian cyst largest diameter", "Ovarian cyst smaller diameter",
+                               [value for value in (found.group("a"), found.group("b")) if value], found.group(0),
+                               page_number, specimen=side, note=cycle))
+    return rows
+
+
+def _us_ovary(text: str, side: str, page_number: int, cycle: str | None) -> list[ParsedObservation]:
+    rows: list[ParsedObservation | None] = [_us_ovary_length_row(text, side, page_number, cycle)]
     volume = re.search(rf"Об['’]єм\w*:?\s*(?P<v>{_US_N})\s*(?:см3|см\.?\s*куб|мл)", text)
     if volume:
         rows.append(_us_row("Ovarian volume", volume.group("v"), "см3", volume.group(0), page_number, specimen=side))
@@ -5278,14 +5550,8 @@ def _us_ovary(text: str, side: str, page_number: int, cycle: str | None) -> list
     if luteum and _us_clean(luteum.group("v")):
         item = _us_row("Corpus luteum diameter", luteum.group("v"), "мм", luteum.group(0), page_number, specimen=side)
         rows.append(replace(item, note=cycle) if item else None)
-    for found in re.finditer(
-        rf"(?:утвір|утворення|рідинне)\b[^;]{{0,120}}?(?:розміром|діаметром)\s*(?P<a>{_US_N})(?:\s*{_US_X}\s*(?P<b>{_US_N}))?\s*{_US_MM}",
-        text,
-    ):
-        rows.extend(_us_lesion("Ovarian cyst largest diameter", "Ovarian cyst smaller diameter",
-                               [value for value in (found.group("a"), found.group("b")) if value], found.group(0),
-                               page_number, specimen=side, note=cycle))
-    category = re.search(r"O-?RADS\s*:?\s*(?P<v>[0-5])\b", text)
+    rows.extend(_us_ovarian_cyst_rows(text, side, page_number, cycle))
+    category = re.search(r"O-?RADS\s*(?::\s*)?(?P<v>[0-5])\b", text)
     if category:
         item = _us_row("Ovarian O-RADS category", category.group("v"), "", category.group(0), page_number, specimen=side)
         rows.append(replace(item, unit_raw=None) if item else None)
@@ -5324,6 +5590,47 @@ _US_SIZE_PHRASE = re.compile(
 )
 
 
+def _us_breast_thickness_rows(text: str, side: str, page_number: int) -> list[ParsedObservation | None]:
+    rows = []
+    for label, name in (
+        (r"Шкіра[^.]{0,30}?товщиною", "Breast skin thickness"),
+        (r"Підшкірна\s+жирова\s+клітковина\s+товщиною", "Breast subcutaneous fat thickness"),
+        (r"Залозиста\s+тканина\s+товщиною", "Breast glandular tissue thickness"),
+    ):
+        thickness = re.search(rf"{label}\s*(?P<v>{_US_N})\s*{_US_MM}", text)
+        if thickness and _us_clean(thickness.group("v")):
+            rows.append(_us_row(name, thickness.group("v"), "мм", thickness.group(0), page_number, specimen=side))
+    return rows
+
+
+def _us_breast_lesion_rows(text: str, side: str, page_number: int) -> list[ParsedObservation | None]:
+    lesion = re.search(rf"гіпоехогенне\s+утворення[^;]{{0,80}}?розміром\s*(?P<a>{_US_N})\s*{_US_X}\s*(?P<b>{_US_N})\s*{_US_MM}", text)
+    if not lesion:
+        return []
+    clock = re.findall(r"на\s+(\d{1,2})\s*год", text[max(0, lesion.start() - 120): lesion.start()], re.I)
+    return _us_lesion("Breast lesion largest diameter", "Breast lesion smaller diameter",
+                      [lesion.group("a"), lesion.group("b")], lesion.group(0), page_number,
+                      specimen=side, note=f"{clock[-1]} год" if clock else None)
+
+
+def _us_breast_category_row(flat: str, page_number: int) -> ParsedObservation | None:
+    # OCR of InMed's «BI-RADS 2 - контрольне обстеження кожних 6-12 місяців»
+    # can split it over two lines, the figure first: «2 обстеження кожних
+    # 6-12 місяців» / «BI-RADS - контрольне».
+    category = re.search(r"BI-?\s?RADS\s*(?::\s*)?(?P<v>[0-6])(?P<sub>[abcABC])?\b", flat) or re.search(
+        r"(?<![\w.,])(?P<v>[0-6])\s+обстеження\s+кожних[^.;]{0,30}?BI-?\s?RADS\s*[-–]\s*контрольне", flat
+    )
+    if not category:
+        return None
+    # The second pattern has no letter group: its match carries no sub-category.
+    sub = category.groupdict().get("sub")
+    item = _us_row("Breast BI-RADS category", category.group("v"), "", category.group(0), page_number)
+    if item and sub:
+        # 4a / 4b / 4c are three categories, not the number 4.
+        item = replace(item, value_numeric=None, value_text=category.group("v") + sub.lower())
+    return replace(item, unit_raw=None) if item else None
+
+
 def _us_breast(lines: list[str], page_number: int) -> list[ParsedObservation]:
     """Each breast's skin, fat and glandular thickness, its solid lesion and
     its largest simple cyst, and the report's BI-RADS category (InMed).
@@ -5339,42 +5646,43 @@ def _us_breast(lines: list[str], page_number: int) -> list[ParsedObservation]:
         return []
     rows: list[ParsedObservation | None] = []
     for index, found in enumerate(starts):
-        side = "права" if found.group("side").casefold().startswith("прав") else "ліва"
+        side = _RIGHT if found.group("side").casefold().startswith("прав") else "ліва"
         end = starts[index + 1].start() if index + 1 < len(starts) else len(flat)
         stop = _US_BREAST_END.search(flat, found.end(), end)
         text = flat[found.start(): stop.start() if stop else end]
-        for label, name in (
-            (r"Шкіра[^.]{0,30}?товщиною", "Breast skin thickness"),
-            (r"Підшкірна\s+жирова\s+клітковина\s+товщиною", "Breast subcutaneous fat thickness"),
-            (r"Залозиста\s+тканина\s+товщиною", "Breast glandular tissue thickness"),
-        ):
-            thickness = re.search(rf"{label}\s*(?P<v>{_US_N})\s*{_US_MM}", text)
-            if thickness and _us_clean(thickness.group("v")):
-                rows.append(_us_row(name, thickness.group("v"), "мм", thickness.group(0), page_number, specimen=side))
-        lesion = re.search(rf"гіпоехогенне\s+утворення[^;]{{0,80}}?розміром\s*(?P<a>{_US_N})\s*{_US_X}\s*(?P<b>{_US_N})\s*{_US_MM}", text)
-        if lesion:
-            clock = re.findall(r"на\s+(\d{1,2})\s*год", text[max(0, lesion.start() - 120): lesion.start()], re.I)
-            rows.extend(_us_lesion("Breast lesion largest diameter", "Breast lesion smaller diameter",
-                                   [lesion.group("a"), lesion.group("b")], lesion.group(0), page_number,
-                                   specimen=side, note=f"{clock[-1]} год" if clock else None))
+        rows.extend(_us_breast_thickness_rows(text, side, page_number))
+        rows.extend(_us_breast_lesion_rows(text, side, page_number))
         rows.append(_us_breast_cyst(text, side, page_number))
-    # OCR of InMed's «BI-RADS 2 - контрольне обстеження кожних 6-12 місяців»
-    # can split it over two lines, the figure first: «2 обстеження кожних
-    # 6-12 місяців» / «BI-RADS - контрольне».
-    category = re.search(r"BI-?\s?RADS\s*:?\s*(?P<v>[0-6])(?P<sub>[abcABC])?\b", flat) or re.search(
-        r"(?<![\w.,])(?P<v>[0-6])(?P<sub>)\s+обстеження\s+кожних[^.;]{0,30}?BI-?\s?RADS\s*[-–]\s*контрольне", flat
-    )
-    if category:
-        item = _us_row("Breast BI-RADS category", category.group("v"), "", category.group(0), page_number)
-        if item and category.group("sub"):
-            # 4a / 4b / 4c are three categories, not the number 4.
-            item = replace(item, value_numeric=None, value_text=category.group("v") + category.group("sub").lower())
-        rows.append(replace(item, unit_raw=None) if item else None)
+    rows.append(_us_breast_category_row(flat, page_number))
     return [row for row in rows if row is not None]
 
 
 #: A cyst named in a breast's text: «киста», «кисти», «кистозне включення».
 _US_CYST = re.compile(r"(?<![^\W\d_])(?:кист|кіст)\w*", re.I)
+
+
+def _us_cyst_unsized(clause: str) -> bool:
+    """True when a cyst the clause names has no size printed after it."""
+    if re.search(r"не\s+виявлен|\bнемає\b|відсутн", clause, re.I):
+        return False
+    mentions = list(_US_CYST.finditer(clause))
+    for index, mention in enumerate(mentions):
+        end = mentions[index + 1].start() if index + 1 < len(mentions) else len(clause)
+        if not _US_SIZE_PHRASE.search(clause, mention.end(), end):
+            return True
+    return False
+
+
+def _us_cyst_sizes(clause: str) -> list[tuple[float | None, str, str, bool]]:
+    """Each size phrase of the clause that passes the size check, as (number, largest value, clause, «до» flag)."""
+    sizes = []
+    for found in _US_SIZE_PHRASE.finditer(clause):
+        values = re.findall(_US_N, found.group("nums"))
+        if not values or not _us_clean(*values):
+            continue
+        largest = max(values, key=parse_decimal)
+        sizes.append((parse_decimal(largest), largest, collapse_space(clause), bool(found.group("le"))))
+    return sizes
 
 
 def _us_breast_cyst(text: str, side: str, page_number: int) -> ParsedObservation | None:
@@ -5385,24 +5693,16 @@ def _us_breast_cyst(text: str, side: str, page_number: int) -> ParsedObservation
     кистозне включення» with no size), nothing is stored: the largest of the
     sizes that survived is not the largest the paper printed.
     """
-    best: tuple[float, str, str, bool] | None = None
+    candidates: list[tuple[float | None, str, str, bool]] = []
     # «макс. діаметром 6 мм» is one clause: an abbreviation's full stop does not end it.
     for clause in re.split(r";|(?<!макс)(?<!мін)\.\s", text):
         if not re.search(r"кист", clause, re.I) or re.search(r"скупчення|кластер", clause, re.I):
             continue
-        if not re.search(r"не\s+виявлен|\bнемає\b|відсутн", clause, re.I):
-            mentions = list(_US_CYST.finditer(clause))
-            for index, mention in enumerate(mentions):
-                end = mentions[index + 1].start() if index + 1 < len(mentions) else len(clause)
-                if not _US_SIZE_PHRASE.search(clause, mention.end(), end):
-                    return None
-        for found in _US_SIZE_PHRASE.finditer(clause):
-            values = re.findall(_US_N, found.group("nums"))
-            if not values or not _us_clean(*values):
-                continue
-            largest = max(values, key=parse_decimal)
-            if best is None or parse_decimal(largest) > best[0]:
-                best = (parse_decimal(largest), largest, collapse_space(clause), bool(found.group("le")))
+        if _us_cyst_unsized(clause):
+            return None
+        candidates.extend(_us_cyst_sizes(clause))
+    # max() returns the first of equal sizes, the one a strict comparison keeps.
+    best = max(candidates, key=lambda candidate: candidate[0], default=None)
     if best is None:
         return None
     item = _us_row("Largest breast cyst diameter", best[1], "мм", best[2], page_number, specimen=side)
@@ -5519,10 +5819,9 @@ def method_note(line: str) -> bool:
 #: citation refers to («*Діти: <2 років: ≤0.4», «**Вагітні жінки:»).  A
 #: population word or a «label:» says which.
 _FOOTNOTE = re.compile(r"^\*+\s*(?!\S[^:]{0,40}:)")
-_BAND_START = re.compile(
-    r"^\**\s*(?:Діти|Дорослі|Чоловіки|Жінки|Новонар|Вагітн|[IІ]{1,3}\s+триместр|[<>≤≥]?\s*\d+\s*[-–]?\s*\d*\s*(?:рок|років|міс|дн|тиж))",
-    re.I,
-)
+_BAND_POPULATION = r"Діти|Дорослі|Чоловіки|Жінки|Новонар|Вагітн|[IІ]{1,3}\s+триместр"
+_BAND_AGE = r"[<>≤≥]?\s*\d+(?:\s*[-–])?\s*(?:\d+\s*)?(?:рок|років|міс|дн|тиж)"
+_BAND_START = re.compile(rf"^\**\s*(?:{_BAND_POPULATION}|{_BAND_AGE})", re.I)
 
 
 def synevo_reference_blocks(words: list) -> dict[str, str]:
@@ -5742,7 +6041,7 @@ SPECIMEN_LABEL = re.compile(r"^Аналіз\s+крові\s*:\s*(?=\S)", re.I)
 #: A gene and its polymorphism, as a PCR heading names them: «ПЛР. Фолатний
 #: цикл. MTHFR (1298 A>C)», «PAI-1 (-675 5G>4G)».
 _GENE_VARIANT = re.compile(
-    r"\b(?P<gene>[A-Z][A-Z0-9-]{1,9})\s*\(\s*(?P<variant>-?\d+\s*\d*[ACGT]\s*>\s*\d*[ACGT])\s*\)"
+    r"\b(?P<gene>[A-Z][A-Z0-9-]{1,9})\s*\(\s*(?P<variant>-?\d+(?:\s+\d*)?[ACGT]\s*>\s*\d*[ACGT])\s*\)"
 )
 #: A row name that names no analyte on its own -- one step of a test whose
 #: name is the heading above it: «Вовчаковий антикоагулянт» / «Скринінговий
@@ -5767,6 +6066,52 @@ def without_specimen_label(name: str) -> str:
     return SPECIMEN_LABEL.sub("", name)
 
 
+def _synevo_named_by_heading(name: str, heading: str | None, lines: list, index: int, value_from: float) -> str:
+    """The row's name as the heading above it qualifies it."""
+    variant = _GENE_VARIANT.search(heading or "")
+    if variant:
+        # «Метілентетрагідрофолатредуктаза (MTHFR 677 C>T)»: the enzyme as
+        # printed, then the gene and variant that tell the two MTHFR tests apart.
+        return f"{name} ({variant['gene']} {collapse_space(variant['variant'])})"
+    if heading and _SUBTEST_NAME.match(name):
+        return f"{heading}, {name[:1].lower()}{name[1:]}"
+    if _GENOTYPE_NUMBER.match(name):
+        # «16 генотип» under «ПЛР. ВПЛ ВКР (генотипування 16, 18, ...)»,
+        # which wraps over three lines: a concept named «16 генотип»
+        # says nothing about what was typed.  «ПЛР. ВПЛ ВКР, 16
+        # генотип» is also the name the lab's own record gives the row.
+        test = _test_heading_above(lines, index, value_from)
+        return f"{test}, {name}" if test else name
+    return name
+
+
+def _synevo_row_in_place(
+    item: ParsedObservation, lines: list, texts: list[str], columns: tuple[float, float, float], claimed: set[int]
+) -> ParsedObservation:
+    changes: dict[str, object] = {}
+    name = without_specimen_label(item.raw_name)
+    # Two rows can print the same line (both MTHFR genotypes read
+    # «Метілентетрагідрофолатредуктаза Мутація відсутня ...»): each takes
+    # the first such line not yet taken, in page order.
+    index = next(
+        (
+            number for number, text in enumerate(texts)
+            if number not in claimed and len(text) > 4 and item.evidence_text.startswith(text)
+        ),
+        None,
+    )
+    if index is not None:
+        claimed.add(index)
+        heading = _synevo_heading_above(lines, texts, index, columns[0])
+        name = _synevo_named_by_heading(name, heading, lines, index, columns[0])
+        tail = _wrapped_unit_tail(item.unit_raw, lines, index, columns)
+        if tail:
+            changes["unit_raw"] = f"{item.unit_raw} {tail}"
+    if name != item.raw_name:
+        changes["raw_name"] = name
+    return cast(ParsedObservation, replace(item, **changes)) if changes else item
+
+
 def _synevo_rows_in_place(observations: list[ParsedObservation], words: list) -> list[ParsedObservation]:
     """What only the page around a row says about it.
 
@@ -5789,41 +6134,7 @@ def _synevo_rows_in_place(observations: list[ParsedObservation], words: list) ->
     for item in observations:
         if _SYNEVO_PACKAGE.match(item.raw_name) or _SYNEVO_FLAG_HEADER.fullmatch(item.reference_text or ""):
             continue
-        changes: dict[str, object] = {}
-        name = without_specimen_label(item.raw_name)
-        # Two rows can print the same line (both MTHFR genotypes read
-        # «Метілентетрагідрофолатредуктаза Мутація відсутня ...»): each takes
-        # the first such line not yet taken, in page order.
-        index = next(
-            (
-                number for number, text in enumerate(texts)
-                if number not in claimed and len(text) > 4 and item.evidence_text.startswith(text)
-            ),
-            None,
-        )
-        if index is not None:
-            claimed.add(index)
-            heading = _synevo_heading_above(lines, texts, index, columns[0])
-            variant = _GENE_VARIANT.search(heading or "")
-            if variant:
-                # «Метілентетрагідрофолатредуктаза (MTHFR 677 C>T)»: the enzyme as
-                # printed, then the gene and variant that tell the two MTHFR tests apart.
-                name = f"{name} ({variant['gene']} {collapse_space(variant['variant'])})"
-            elif heading and _SUBTEST_NAME.match(name):
-                name = f"{heading}, {name[:1].lower()}{name[1:]}"
-            elif _GENOTYPE_NUMBER.match(name):
-                # «16 генотип» under «ПЛР. ВПЛ ВКР (генотипування 16, 18, ...)»,
-                # which wraps over three lines: a concept named «16 генотип»
-                # says nothing about what was typed.  «ПЛР. ВПЛ ВКР, 16
-                # генотип» is also the name the lab's own record gives the row.
-                test = _test_heading_above(lines, index, columns[0])
-                name = f"{test}, {name}" if test else name
-            tail = _wrapped_unit_tail(item.unit_raw, lines, index, columns)
-            if tail:
-                changes["unit_raw"] = f"{item.unit_raw} {tail}"
-        if name != item.raw_name:
-            changes["raw_name"] = name
-        finished.append(cast(ParsedObservation, replace(item, **changes)) if changes else item)
+        finished.append(_synevo_row_in_place(item, lines, texts, columns, claimed))
     return finished
 
 
@@ -5873,7 +6184,7 @@ def _wrapped_unit_tail(unit: str | None, lines: list, index: int, columns: tuple
 #: then explains the empty document instead of reporting missed results.
 COMPANION_SUMMARY = "companion_summary"
 SYNEVO_SUMMARY_FOOTER = re.compile(
-    r"/\s*Пакет\s*№\s*\d+[^/\n]*/\s*\d{2}\.\d{2}\.\d{4}\s*/\s*[cс]тор\.\s*\d+\s*$", re.M
+    r"/\s*Пакет\s*№\s*\d[^/\n]*/\s*\d{2}\.\d{2}\.\d{4}\s*/\s*[cс]тор\.\s*\d+\s*$", re.M
 )
 
 
@@ -6222,7 +6533,7 @@ _SILAB_NOTE = re.compile(
     r"лейкоцитестерази|псевдопероксидази)",
     re.I,
 )
-_SILAB_SITE = re.compile(r"^(?:ТОЧКА|TOUKA)\s*[\dЗ]?\s+(?P<site>URETRA|VAGINA|CERVIX)\b\s*[;:]?\s*(?P<rest>.*)$")
+_SILAB_SITE = re.compile(r"^(?:ТОЧКА|TOUKA)(?:\s*+[\dЗ])?\s++(?P<site>URETRA|VAGINA|CERVIX)\b\s*+(?:[;:]\s*+)?(?P<rest>.*)$")
 #: The fourteen high-risk genotypes the panel prints, in its order.
 SILAB_HPV_GENOTYPES = frozenset({16, 18, 31, 33, 35, 39, 45, 51, 52, 56, 58, 59, 66, 68})
 #: The test those genotypes belong to, as the heading prints it with its
@@ -6250,6 +6561,11 @@ class _SilabRow:
     label: str | None = None
 
 
+_LEUKOCYTES = "Лейкоцити"
+_ERYTHROCYTES = "Еритроцити"
+_PER_MICROLITRE = r"/[µu]L"
+
+
 def _silab_urine_rows() -> tuple[_SilabRow, ...]:
     simple = (
         "Еритроцити (дисморфізм)", "Клітини ниркового епітелію", "Клітини епітелію сечового міхура",
@@ -6268,23 +6584,23 @@ def _silab_urine_rows() -> tuple[_SilabRow, ...]:
         _SilabRow("Прозорість", r"прозора|(?:злегка )?каламутна", reference="прозора"),
         _SilabRow("Відносна щільність", r"1[.,]0\d\d", unit="г/мл", reference=r"1\.0\d\d ?- ?1\.0\d\d"),
         _SilabRow("pH", r"\d(?:[.,]\d)?", reference=r"\d\.\d ?- ?\d\.\d"),
-        _SilabRow("Лейкоцити", rf"{_S_NEG}|\d+", unit=r"Leu/[µu]L", reference=_S_NEG, tiers=3),
-        _SilabRow("Еритроцити", rf"{_S_NEG}|\d+", unit=r"Ery/[µu]L", reference=_S_NEG, tiers=5),
+        _SilabRow(_LEUKOCYTES, rf"{_S_NEG}|\d+", unit=r"Leu/[µu]L", reference=_S_NEG, tiers=3),
+        _SilabRow(_ERYTHROCYTES, rf"{_S_NEG}|\d+", unit=r"Ery/[µu]L", reference=_S_NEG, tiers=5),
         _SilabRow("Білок", rf"{_S_NEG}|\d+(?:[.,]\d+)?", unit="г/л", reference=_S_NEG, tiers=4),
         _SilabRow("Глюкоза", rf"{_S_NEG}|\d+(?:[.,]\d+)?", unit="ммоль/л", reference=_S_NEG, tiers=4),
         _SilabRow("Кетонові тіла", rf"{_S_NEG}|\d+(?:[.,]\d+)?", unit="ммоль/л", reference=_S_NEG, tiers=4),
         _SilabRow("Уробіліноген", r"сліди|\d+", unit="мкмоль/л", reference="сліди", tiers=4),
         _SilabRow("Білірубін", rf"{_S_NEG}|\d+", unit="мкмоль/л", reference=_S_NEG, tiers=3),
         # Microscopy: counted per microlitre, which is the unit OCR loses most.
-        _SilabRow("Лейкоцити", r"\d+-\d+|<\d+|\d+", unit=r"/[µu]L", reference=r"<\d+"),
-        _SilabRow("Еритроцити", r"\d+-\d+|<\d+|\d+", unit=r"/[µu]L", reference=r"<\d+"),
+        _SilabRow(_LEUKOCYTES, r"\d+-\d+|<\d+|\d+", unit=_PER_MICROLITRE, reference=r"<\d+"),
+        _SilabRow(_ERYTHROCYTES, r"\d+-\d+|<\d+|\d+", unit=_PER_MICROLITRE, reference=r"<\d+"),
         _SilabRow(
             "Клітини плоского епітелію", rf"{_S_NEG}|поодинокі(?: в препараті)?|\d+-\d+",
-            unit=r"/[µu]L", reference=rf"{_S_NEG}, 1-15",
+            unit=_PER_MICROLITRE, reference=rf"{_S_NEG}, 1-15",
         ),
         _SilabRow(
             "Клітини перехідного епітелію", rf"{_S_NEG}|поодинокі(?: в препараті)?|\d+-\d+",
-            unit=r"/[µu]L", reference=rf"{_S_NEG}, 1-5",
+            unit=_PER_MICROLITRE, reference=rf"{_S_NEG}, 1-5",
         ),
         *(_SilabRow(name, found, reference=_S_NEG) for name in simple),
     )
@@ -6294,10 +6610,10 @@ _SILAB_ROWS: dict[str, tuple[_SilabRow, ...]] = {
     "urine": _silab_urine_rows(),
     "smear": (
         _SilabRow(
-            "Лейкоцити",
+            _LEUKOCYTES,
             rf"{_S_FIELD}|(?:в тяжах слизу(?: майже)? )?вкривають все поле зору|в тяжах слизу- ?\d{{1,3}}-\d{{1,3}}",
         ),
-        _SilabRow("Еритроцити", rf"{_S_NEG}|{_S_FIELD}|поодинокі в п/з\.?"),
+        _SilabRow(_ERYTHROCYTES, rf"{_S_NEG}|{_S_FIELD}|поодинокі в п/з\.?"),
         _SilabRow("Епітелій", _S_QTY),
         _SilabRow("Слиз", rf"{_S_QTY}|{_S_NEG}"),
         _SilabRow(
@@ -6332,7 +6648,7 @@ _SILAB_ROWS: dict[str, tuple[_SilabRow, ...]] = {
                 r"Клітинні зміни, не пов'язані з неопластичним",
                 r"Не виявлені зміни\.|Плоскоклітинна метаплазія\.",
             ),
-            ("Лейкоцити ({n})", r"Лейкоцити \((?P<n>\d)\)", rf"[ВУ] (?:помірній|великій|невеликій) кількості\."),
+            ("Лейкоцити ({n})", r"Лейкоцити \((?P<n>\d)\)", r"[ВУ] (?:помірній|великій|невеликій) кількості\."),
             ("Інфекційні агенти", r"Інфекційні агенти", r"Не виявлені\.|Виявлені\."),
             # Synevo's print of the same test calls the conclusion
             # «Цитоморфологічний висновок»; one name keeps both on one concept.
@@ -6507,6 +6823,19 @@ def _silab_cells_match(row: _SilabRow, rest: str, cells: list[str]) -> tuple[str
     return value, printed_unit, printed
 
 
+def _silab_name(row: _SilabRow, label: re.Match[str]) -> str:
+    return row.name.format(**label.groupdict()) if label.groupdict() else row.name
+
+
+def _silab_after_tail(row: _SilabRow, cells: list[str]) -> list[str] | None:
+    """The cells that follow the row's name tail, or None when the tail is not there."""
+    if not row.name_tail:
+        return cells
+    if not cells or cells[0] != row.name_tail:
+        return None
+    return cells[1:]
+
+
 def _silab_row(
     section: str, line: str, cells: list[str], page_number: int, site: str | None
 ) -> ParsedObservation | None:
@@ -6514,11 +6843,11 @@ def _silab_row(
         label = _silab_label(row, line)
         if not label:
             continue
-        name = row.name.format(**label.groupdict()) if label.groupdict() else row.name
-        if row.name_tail:
-            if not cells or cells[0] != row.name_tail:
-                continue
-            cells = cells[1:]
+        name = _silab_name(row, label)
+        tail_cells = _silab_after_tail(row, cells)
+        if tail_cells is None:
+            continue
+        cells = tail_cells
         read = _silab_cells_match(row, line[label.end():].strip(), cells)
         if read is None:
             continue
@@ -6530,6 +6859,92 @@ def _silab_row(
             specimen="сеча" if section == "urine" else site,
             section="Мікроскопія осаду сечі" if microscopy else None,
         )
+    return None
+
+
+_SILAB_NO_MATERIAL = "Матеріал відсутній"
+
+
+def _silab_smear_line(
+    line: str, site: str | None, sites_in_order: bool, page_number: int
+) -> tuple[str | None, list[ParsedObservation] | None]:
+    """One line of the smear section: the smear site it sets, and its rows.
+
+    The rows are None when the line is no smear row and goes on to the generic reader.
+    """
+    found = _SILAB_SITE.match(line)
+    if found:
+        site = found.group("site") if sites_in_order else None
+        rows: list[ParsedObservation] = []
+        if site and found.group("rest") == _SILAB_NO_MATERIAL:
+            rows.append(_silab_observation(
+                "Мазок на мікрофлору", _SILAB_NO_MATERIAL, None, None, line, page_number, specimen=site,
+            ))
+        return site, rows
+    if site and line == _SILAB_NO_MATERIAL:
+        return site, [_silab_observation(
+            "Мазок на мікрофлору", line, None, None, line, page_number, specimen=site,
+        )]
+    grade = _SILAB_GRADE.match(line)
+    if grade:
+        return None, [_silab_observation("Ступінь чистоти", grade.group("grade"), None, None, line, page_number)]
+    if not site:
+        return site, []
+    return site, None
+
+
+def _silab_hpv_line(section: str, line: str, page_number: int) -> list[ParsedObservation]:
+    found = _SILAB_GENOTYPE.match(line)
+    if found and int(found.group("type")) in SILAB_HPV_GENOTYPES:
+        # The lab's own record names the row «ПЛР. ВПЛ ВКР, 16 генотип»
+        # (`labsync._record_name`); a bare «16 генотип» filed the
+        # clinic's print of the same order as a second series.
+        return [_silab_observation(
+            f"{SILAB_HPV_TEST}, {found.group('type')} генотип", _silab_case(found.group("value"), section), None,
+            _silab_case(found.group("ref"), section), line, page_number,
+        )]
+    return []
+
+
+def _silab_tail_follows(lines: list[str], index: int, tail: re.Pattern[str]) -> bool:
+    """Whether the line after ``lines[index]`` is the tail that completes its result."""
+    return index + 1 < len(lines) and tail.match(lines[index + 1]) is not None
+
+
+def _silab_pap_line(
+    lines: list[str], index: int, page_number: int, state: dict[str, str | None]
+) -> list[ParsedObservation] | None:
+    """One line of the pap section, with the result it completes; None when it is no pap row."""
+    line = lines[index]
+    found = _SILAB_QUINTILE.match(line)
+    if found and _silab_tail_follows(lines, index, _SILAB_QUINTILE_TAIL):
+        rows = [_silab_observation(
+            "Квінтильний ранг препарату за технологією BD FocalPoint", found.group("rank"), None, None,
+            f"{line} {lines[index + 1]}", page_number,
+        )]
+        state["quintile"] = found.group("rank")
+        return rows
+    found = _SILAB_PERCENTILE.match(line)
+    if found and _silab_tail_follows(lines, index, _SILAB_QUINTILE_TAIL):
+        # The rank is the fifth the percentage falls in (rank 4 with
+        # 77 %): a percentage outside it is a digit OCR lost («7 %»).
+        # ponytail: only read beside a rank read on the same print.
+        rank, percent = state.get("quintile"), int(found.group("percent"))
+        rows: list[ParsedObservation] = []
+        if rank and (int(rank) - 1) * 20 < percent <= int(rank) * 20:
+            rows.append(_silab_observation(
+                "Відсоток квінтильного рангу за технологією BD FocalPoint", str(percent), "%", None,
+                f"{line} {lines[index + 1]}", page_number,
+            ))
+        return rows
+    found = _SILAB_BETHESDA.match(line)
+    if found and _silab_tail_follows(lines, index, _SILAB_BETHESDA_TAIL):
+        return [_silab_observation(
+            "Лабораторний висновок ПАП-тесту за класифікацією BETHESDA 2014",
+            f"NILM (тип {found.group('grade')}, запальний тип мазка) /Negative for Intraepithelial Lesion "
+            "or Malignancy (негативні відносно інтраепітеліальних уражень і злоякісності)",
+            None, None, f"{line} {lines[index + 1]}", page_number,
+        )]
     return None
 
 
@@ -6553,68 +6968,16 @@ def parse_silab_page(
             continue
         if section is None:
             continue
+        rows = None
         if section == "smear":
-            found = _SILAB_SITE.match(line)
-            if found:
-                site = found.group("site") if sites_in_order else None
-                if site and found.group("rest") == "Матеріал відсутній":
-                    observations.append(_silab_observation(
-                        "Мазок на мікрофлору", "Матеріал відсутній", None, None, line, page_number, specimen=site,
-                    ))
-                continue
-            if site and line == "Матеріал відсутній":
-                observations.append(_silab_observation(
-                    "Мазок на мікрофлору", line, None, None, line, page_number, specimen=site,
-                ))
-                continue
-            grade = _SILAB_GRADE.match(line)
-            if grade:
-                observations.append(_silab_observation("Ступінь чистоти", grade.group("grade"), None, None, line, page_number))
-                site = None
-                continue
-            if not site:
-                continue
-        if section == "hpv":
-            found = _SILAB_GENOTYPE.match(line)
-            if found and int(found.group("type")) in SILAB_HPV_GENOTYPES:
-                # The lab's own record names the row «ПЛР. ВПЛ ВКР, 16 генотип»
-                # (`labsync._record_name`); a bare «16 генотип» filed the
-                # clinic's print of the same order as a second series.
-                observations.append(_silab_observation(
-                    f"{SILAB_HPV_TEST}, {found.group('type')} генотип", _silab_case(found.group("value"), section), None,
-                    _silab_case(found.group("ref"), section), line, page_number,
-                ))
+            site, rows = _silab_smear_line(line, site, sites_in_order, page_number)
+        elif section == "hpv":
+            rows = _silab_hpv_line(section, line, page_number)
+        elif section == "pap":
+            rows = _silab_pap_line(lines, index, page_number, state)
+        if rows is not None:
+            observations.extend(rows)
             continue
-        if section == "pap":
-            found = _SILAB_QUINTILE.match(line)
-            if found and index + 1 < len(lines) and _SILAB_QUINTILE_TAIL.match(lines[index + 1]):
-                observations.append(_silab_observation(
-                    "Квінтильний ранг препарату за технологією BD FocalPoint", found.group("rank"), None, None,
-                    f"{line} {lines[index + 1]}", page_number,
-                ))
-                state["quintile"] = found.group("rank")
-                continue
-            found = _SILAB_PERCENTILE.match(line)
-            if found and index + 1 < len(lines) and _SILAB_QUINTILE_TAIL.match(lines[index + 1]):
-                # The rank is the fifth the percentage falls in (rank 4 with
-                # 77 %): a percentage outside it is a digit OCR lost («7 %»).
-                # ponytail: only read beside a rank read on the same print.
-                rank, percent = state.get("quintile"), int(found.group("percent"))
-                if rank and (int(rank) - 1) * 20 < percent <= int(rank) * 20:
-                    observations.append(_silab_observation(
-                        "Відсоток квінтильного рангу за технологією BD FocalPoint", str(percent), "%", None,
-                        f"{line} {lines[index + 1]}", page_number,
-                    ))
-                continue
-            found = _SILAB_BETHESDA.match(line)
-            if found and index + 1 < len(lines) and _SILAB_BETHESDA_TAIL.match(lines[index + 1]):
-                observations.append(_silab_observation(
-                    "Лабораторний висновок ПАП-тесту за класифікацією BETHESDA 2014",
-                    f"NILM (тип {found.group('grade')}, запальний тип мазка) /Negative for Intraepithelial Lesion "
-                    "or Malignancy (негативні відносно інтраепітеліальних уражень і злоякісності)",
-                    None, None, f"{line} {lines[index + 1]}", page_number,
-                ))
-                continue
         row = _silab_row(section, line, _silab_cells(lines, index, section), page_number, site)
         if row is not None:
             observations.append(row)
@@ -6657,6 +7020,20 @@ _EEG_RHYTHM = re.compile(
 _EEG_NAMES = {"альфа": "alpha", "бета": "beta", "тета": "theta"}
 
 
+def _eeg_rhythm_rows(found: re.Match[str], rhythm: str, page: dict[str, object]) -> list[ParsedObservation]:
+    """The frequency and, when printed, the amplitude ceiling of one rhythm."""
+    rows: list[ParsedObservation] = []
+    evidence = found.group(0)
+    item = _us_row(f"EEG {rhythm} rhythm frequency", found.group("f"), "Гц", evidence, int(page["page_number"]))
+    if item:
+        rows.append(item)
+    if found.group("a"):
+        item = _us_row(f"EEG {rhythm} rhythm amplitude", found.group("a"), "мкВ", evidence, int(page["page_number"]))
+        if item:
+            rows.append(replace(item, comparator="≤") if found.group("le") else item)
+    return rows
+
+
 def parse_eeg(pages: list[dict[str, object]]) -> list[ParsedObservation]:
     """Each rhythm's mean frequency and largest amplitude from an EEG protocol.
 
@@ -6676,19 +7053,30 @@ def parse_eeg(pages: list[dict[str, object]]) -> list[ParsedObservation]:
             if rhythm in seen:
                 continue
             seen.add(rhythm)
-            evidence = found.group(0)
-            item = _us_row(f"EEG {rhythm} rhythm frequency", found.group("f"), "Гц", evidence, int(page["page_number"]))
-            rows.extend([item] if item else [])
-            if found.group("a"):
-                item = _us_row(f"EEG {rhythm} rhythm amplitude", found.group("a"), "мкВ", evidence, int(page["page_number"]))
-                if item:
-                    rows.append(replace(item, comparator="≤") if found.group("le") else item)
+            rows.extend(_eeg_rhythm_rows(found, rhythm, page))
     return rows
 
 
 _BREATH_TEST = re.compile(r"дихальн\w*\s+(?:водневий\s+)?тест|бактерійного\s+росту", re.I)
 #: GastroLife's table rows: «1. базальний 2», «3. 40 хвилина 5».
 _BREATH_ROW = re.compile(r"^\s*\d\.\s*(?:(?P<basal>базальний)|(?P<minutes>\d{1,3})\s*хвилин\w*)\s+(?P<v>\d{1,3})\s*$", re.I | re.M)
+
+
+def _breath_page_rows(page: dict[str, object], text: str, page_number: int) -> list[ParsedObservation]:
+    """The hydrogen readings of one breath-test page, filed under their specimen."""
+    rows: list[ParsedObservation] = []
+    substrate = re.search(r"Реагент:\s*(глюкоза|лактулоза)", text, re.I)
+    prefix = f"{substrate.group(1).casefold()}, " if substrate else ""
+    unit = "ppm" if re.search(r"\bppm\b", text, re.I) else None
+    readings = _breath_chart(page.get("words") or []) or [
+        ("0 хв" if found.group("basal") else f"{found.group('minutes')} хв", found.group("v"), found.group(0))
+        for found in _BREATH_ROW.finditer(text)
+    ]
+    for minute, value, evidence in readings:
+        item = _us_row("Breath hydrogen", value, unit or "", collapse_space(evidence), page_number, specimen=prefix + minute)
+        if item:
+            rows.append(replace(item, unit_raw=unit))
+    return rows
 
 
 def parse_breath_test(pages: list[dict[str, object]]) -> list[ParsedObservation]:
@@ -6716,17 +7104,7 @@ def parse_breath_test(pages: list[dict[str, object]]) -> list[ParsedObservation]
             continue
         if not _BREATH_TEST.search(text):
             continue
-        substrate = re.search(r"Реагент:\s*(глюкоза|лактулоза)", text, re.I)
-        prefix = f"{substrate.group(1).casefold()}, " if substrate else ""
-        unit = "ppm" if re.search(r"\bppm\b", text, re.I) else None
-        readings = _breath_chart(page.get("words") or []) or [
-            ("0 хв" if found.group("basal") else f"{found.group('minutes')} хв", found.group("v"), found.group(0))
-            for found in _BREATH_ROW.finditer(text)
-        ]
-        for minute, value, evidence in readings:
-            item = _us_row("Breath hydrogen", value, unit or "", collapse_space(evidence), page_number, specimen=prefix + minute)
-            if item:
-                rows.append(replace(item, unit_raw=unit))
+        rows.extend(_breath_page_rows(page, text, page_number))
     return rows
 
 

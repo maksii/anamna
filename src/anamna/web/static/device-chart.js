@@ -14,7 +14,30 @@
   let activeSource = 'combined';
   let inspectPlot = null;
   let pending = '';
+  // The points of the chart on screen, and the one that is the Tab stop.
+  let pointNodes = [];
+  let pointStop = null;
+  // Every switch takes a number. Only the newest may clear the busy state, show
+  // the failure note or repaint; an older fetch that lands late still fills the
+  // cache, so switching back to its source is instant.
+  let latest = 0;
   svg.addEventListener('click', event => { if (inspectPlot) inspectPlot(event); });
+  // Roving tab stop: the chart is one Tab stop (its newest reading), and the
+  // arrow keys, Home and End walk the points instead of Tab visiting each one.
+  const moveStop = node => {
+    if (pointStop && pointStop !== node) pointStop.setAttribute('tabindex', '-1');
+    pointStop = node;
+    node.setAttribute('tabindex', '0');
+  };
+  svg.addEventListener('keydown', event => {
+    const at = pointNodes.indexOf(event.target);
+    if (at < 0) return;
+    const last = pointNodes.length - 1;
+    const to = {ArrowLeft: at - 1, ArrowRight: at + 1, Home: 0, End: last}[event.key];
+    if (to === undefined) return;
+    event.preventDefault();
+    if (to >= 0 && to <= last) pointNodes[to].focus();
+  });
 
   // The payload is columnar (one array per field, sources as indexes into
   // `labels`); the chart code below reads point objects, built once here.
@@ -29,11 +52,19 @@
   const newest = () => all().map(point => point.date).sort().at(-1);
   const selected = () => globalThis.AnamnaExperience.dailyWindow(all(), days, newest());
   let complete = payload.complete;
+  // Resolves true when this request is still the newest, so the caller repaints
+  // only for the switch the reader actually made last.
   const load = id => {
+    const mine = ++latest;
     // "All" on the selected series needs the years the page did not inline.
     const needAll = id === 'combined' && !days && !complete;
     const source = needAll ? {url: payload.full_url} : payload.sources.find(item => item.id === id);
-    if (!source || (series[id] && !needAll)) return Promise.resolve();
+    if (!source || (series[id] && !needAll)) {
+      // Nothing to wait for, so an earlier fetch must not keep the page busy.
+      pending = '';
+      host.removeAttribute('aria-busy');
+      return Promise.resolve(true);
+    }
     pending = id;
     C.note(host, host.dataset.msgLoading);
     host.setAttribute('aria-busy', 'true');
@@ -45,10 +76,19 @@
       .then(data => {
         series[id] = points(data.points, data.labels);
         if (needAll) complete = true;
+        return mine === latest;
       })
-      .catch(() => { C.note(host, host.dataset.msgFailed); throw new Error('load'); })
-      .finally(() => { pending = ''; host.removeAttribute('aria-busy'); });
+      .catch(() => {
+        if (mine === latest) C.note(host, host.dataset.msgFailed);
+        throw new Error('load');
+      })
+      .finally(() => {
+        if (mine !== latest) return;
+        pending = '';
+        host.removeAttribute('aria-busy');
+      });
   };
+  const refresh = (button, id) => track(button, load(id)).then(fresh => { if (fresh) repaint(); }, () => {});
 
   const bound = value => (value ?? null) === null ? null : Number(value);
   const hasValue = value => value !== null && value !== undefined;
@@ -92,8 +132,17 @@
     label.textContent = band.label; svg.append(label);
   };
 
+  // Medicines and other entries of the person, drawn under the time axis.
+  const F = C.factorSource('device');
+  const stamp = point => C.asDate(point.date).getTime();
+  const factorsNow = () => {
+    const source = pending ? [] : selected();
+    return source.length ? C.factorsIn(F.list(), stamp(source[0]), stamp(source.at(-1))) : [];
+  };
+
   const draw = (W, H) => {
     inspectPlot = null;
+    pointNodes = [];
     if (pending) return;
     const source = selected();
     globalThis.AnamnaExperience?.periodSummary(host.closest('section'), source);
@@ -108,7 +157,8 @@
     // negative (audit C4) and never fractional.
     const A = C.axis(lo, hi, {integral, zeroFloor: lo >= 0});
     const L = C.textWidth(svg, A.ticks.map(A.format), 'chart-axis-label') + 12;
-    const R = 14, T = 14, B = 30, plot = Math.max(40, W - L - R);
+    const factors = factorsNow(), room = C.factorRoom(factors.length);
+    const R = 14, T = 14, B = 30 + room, plot = Math.max(40, W - L - R);
     const points = globalThis.AnamnaExperience.thinDaily(source, C.capacity(plot));
     const notes = points.length < source.length
       ? [C.text('chart.averaged', {total: source.length, shown: points.length})] : [];
@@ -120,6 +170,14 @@
     svg.append(C.el('rect', {x: L, y: T, width: plot, height: H - T - B, fill: 'transparent', 'pointer-events': 'all', 'aria-hidden': 'true'}));
 
     if (bandLow !== null || bandHigh !== null) drawBand({L, T, plot, A, y, bandLow, bandHigh}, notes);
+    if (room) {
+      const overflow = C.factorLanes(svg, factors, {
+        xOf: C.timeX(points.map(stamp), points.map((_, index) => x(index))),
+        from: stamp(source[0]), to: stamp(source.at(-1)), left: L, right: W - R,
+        plotTop: T, plotBottom: H - B, lanes: H - room + 2, more: F.more,
+      });
+      if (overflow) notes.push(overflow);
+    }
     A.ticks.forEach(value => {
       const yy = y(value);
       svg.append(C.el('line', {x1: L, x2: W - R, y1: yy, y2: yy, class: 'chart-gridline'}));
@@ -137,7 +195,8 @@
         : C.fullDate(C.asDate(point.date));
       const reading = `${C.num(point.value, integral ? 0 : 4)} ${point.unit}`;
       const vendorSuffix = grouped ? '' : `, ${point.vendor}`;
-      const node = C.el('g', {tabindex: '0', role: 'button', 'aria-label': `${when}, ${reading}${vendorSuffix}`});
+      // Only the newest reading is a Tab stop; the rest are reached with the arrow keys.
+      const node = C.el('g', {tabindex: index === points.length - 1 ? '0' : '-1', role: 'button', 'aria-label': `${when}, ${reading}${vendorSuffix}`});
       node.append(C.el('circle', {cx: x(index), cy: y(point.value), r: radius, class: 'dynamic-point information'}));
       const show = event => {
         event.preventDefault();
@@ -148,11 +207,14 @@
       };
       node.addEventListener('mouseenter', show);
       node.addEventListener('focus', show);
+      node.addEventListener('focus', () => moveStop(node));
       node.addEventListener('click', show);
       node.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') show(event); });
       hitPoints.push({x: x(index), y: y(point.value), show, node});
+      pointNodes.push(node);
       svg.append(node);
     });
+    pointStop = pointNodes.at(-1) || null;
     // The whole plot is a touch target. A finger need not hit a six-pixel
     // glyph; keyboard focus on each individual point remains available.
     inspectPlot = event => {
@@ -170,7 +232,7 @@
     C.xLabels(points, stops, format).forEach((text, order) => {
       if (!text) return;
       const label = C.el('text', {
-        x: x(stops[order]), y: H - 9, class: 'chart-date-label',
+        x: x(stops[order]), y: H - 9 - room, class: 'chart-date-label',
         'text-anchor': anchorFor(order, stops.length - 1),
       });
       label.textContent = text; svg.append(label);
@@ -178,18 +240,19 @@
     C.note(host, notes.join(' '));
   };
 
-  const repaint = C.responsive(svg, host, draw);
+  const repaint = C.responsive(svg, host, draw, undefined, () => C.factorRoom(factorsNow().length));
+  F.onToggle(repaint);
   // A switch that needs the server marks its button busy until the data arrives.
   const track = (button, work) => globalThis.anamnaBusy ? globalThis.anamnaBusy.track(button, work) : work;
   document.querySelectorAll('[data-days]').forEach(button => button.addEventListener('click', () => {
     document.querySelectorAll('[data-days]').forEach(node => node.classList.remove('active'));
     button.classList.add('active'); days = Number(button.dataset.days); tip.hidden = true;
-    track(button, load(activeSource)).then(repaint, () => {});
+    refresh(button, activeSource);
   }));
   document.querySelectorAll('[data-chart-source]').forEach(button => button.addEventListener('click', () => {
     document.querySelectorAll('[data-chart-source]').forEach(node => node.classList.remove('active'));
     button.classList.add('active'); activeSource = button.dataset.chartSource; tip.hidden = true;
-    track(button, load(activeSource)).then(repaint, () => {});
+    refresh(button, activeSource);
   }));
   document.addEventListener('click', event => { if (!host.contains(event.target)) tip.hidden = true; });
   document.addEventListener('keydown', event => { if (event.key === 'Escape') tip.hidden = true; });

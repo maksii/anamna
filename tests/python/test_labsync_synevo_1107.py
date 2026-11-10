@@ -11,7 +11,7 @@ import pytest
 from anamna.labsync import common, synevo
 
 BLOB = "https://synevostatic.blob.core.windows.net/results/a.pdf?sig=1"
-PDF = b"%PDF-1.7 report"
+PDF = b"%PDF-1.7 report\n%%EOF"
 
 
 def fake(replies: list, seen: list):

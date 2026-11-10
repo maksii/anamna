@@ -133,14 +133,19 @@ def test_search_cache_answers_repeats_and_swallows_failures(tmp_path: Path, monk
     monkeypatch.setattr(
         paperless, "_request", fake_request({"/api/documents/": {"results": [{"id": 7}]}}, calls)
     )
-    assert paperless.cached_search_ids("http://paperless.test", "tok", "гемоглобін") == [7]
-    assert paperless.cached_search_ids("http://paperless.test", "tok", "гемоглобін") == [7]
+    assert paperless.cached_search_ids("http://paperless.test", "tok", "гемоглобін", (7, 8)) == [7]
+    assert paperless.cached_search_ids("http://paperless.test", "tok", "гемоглобін", (7, 8)) == [7]
     assert len(calls) == 1  # second answer came from the cache
+    # Ranking happens among this person's linked copies only: in an archive
+    # many times the size of the record, a bare "top 50" crowded them out.
+    assert "&id__in=7,8" in calls[0]["path"] and "page_size=2" in calls[0]["path"]
+    assert paperless.search_ids("http://paperless.test", "tok", "x", ()) == []  # nothing linked, nothing asked
+    assert len(calls) == 1
     paperless.reset_caches()
     monkeypatch.setattr(
         paperless, "_request", fake_request({"/api/documents/": paperless.PaperlessError("down")})
     )
-    assert paperless.cached_search_ids("http://paperless.test", "tok", "anything") == []
+    assert paperless.cached_search_ids("http://paperless.test", "tok", "anything", (7,)) == []
 
 
 # --- module: push and resolve -------------------------------------------------
@@ -293,6 +298,52 @@ def test_sync_all_users_honours_each_persons_consent(tmp_path: Path, monkeypatch
     totals = paperless.sync_all_users(settings)
     assert totals == {"users": 1, "pushed": 1, "resolved": 0}
     assert {call["token"] for call in calls} == {"pl-token-abcdef"}  # never the bystander's
+
+
+def test_the_scheduler_pass_finishes_what_was_sent_and_sends_nothing_new(tmp_path: Path, monkeypatch):
+    """The background pass links consumed uploads and retries refusals, but a
+    document never handed over waits for the person's own "send existing"
+    press: their consent covers new uploads, not the whole back catalogue."""
+    settings, user_id, _ = build(tmp_path)
+    configure_paperless(settings)
+    connect_user(settings, user_id)
+    for doc, name in (("doc-2", "pending.pdf"), ("doc-3", "never.pdf"), ("doc-4", "refused-once.pdf")):
+        source = settings.source_dir / name
+        source.write_bytes(b"%PDF-" + name.encode())
+        with connect(settings) as connection:
+            connection.execute(
+                """INSERT INTO documents(id, owner_user_id, patient_id, vendor_id, original_filename,
+                       source_path, mime_type, byte_size, sha256, page_count, title, clinical_type,
+                       extraction_strategy, imported_at, status)
+                   SELECT ?, owner_user_id, patient_id, vendor_id, ?, ?, mime_type,
+                       9, ?, 1, ?, clinical_type, extraction_strategy, ?, status
+                   FROM documents WHERE id='doc-1'""",
+                (doc, name, str(source), "sha-" + doc, name, utc_now()),
+            )
+    with connect(settings) as connection:
+        connection.execute("UPDATE documents SET paperless_id=5 WHERE id='doc-1'")
+        connection.execute("UPDATE documents SET paperless_task_id=? WHERE id='doc-2'", (TASK_UUID,))
+        connection.execute("UPDATE documents SET paperless_attempts=1 WHERE id='doc-4'")
+    calls: list = []
+    monkeypatch.setattr(
+        paperless,
+        "_request",
+        fake_request(
+            {"/api/tasks/": task_reply("success", 42), "/api/documents/post_document/": "retry-task"},
+            calls,
+        ),
+    )
+    assert paperless.sync_all_users(settings, attempted_only=True) == {"users": 1, "pushed": 1, "resolved": 1}
+    with connect(settings) as connection:
+        state = {
+            row["id"]: (row["paperless_id"], row["paperless_task_id"])
+            for row in connection.execute("SELECT id, paperless_id, paperless_task_id FROM documents")
+        }
+    assert state["doc-2"] == (42, None)  # linked without anyone opening it
+    assert state["doc-4"] == (None, "retry-task")  # an upload that failed is retried
+    assert state["doc-3"] == (None, None)  # never offered: left for the person
+    stop = paperless.start_scheduler(settings)
+    stop.set()  # starts and stops cleanly; the pass itself is exercised above
 
 
 # --- intake: the ingest hook --------------------------------------------------
@@ -506,7 +557,13 @@ def test_paperless_full_text_widens_search_to_owned_documents_only(tmp_path: Pat
     monkeypatch.setattr(
         paperless, "_request", fake_request({"/api/documents/": {"results": [{"id": 7}, {"id": 999}]}})
     )
+    calls: list = []
+    monkeypatch.setattr(
+        paperless, "_request",
+        fake_request({"/api/documents/": {"results": [{"id": 7}, {"id": 999}]}}, calls),
+    )
     reply = client.get("/api/documents/search?q=cholesterol+wording").json()
+    assert "&id__in=7" in calls[0]["path"]  # only this person's linked copies are ranked
     assert reply["total"] == 1  # id 999 maps to nobody's document and vanishes
     assert "doc-1" in reply["documents"]
     page = client.get("/documents?q=cholesterol+wording")

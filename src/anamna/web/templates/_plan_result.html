@@ -181,6 +181,7 @@
         {% if form and form.connected and form.person %}
         <form class="stack-form an-plan-order" action="/plan-tests/order/esculab" method="post">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="order_nonce" value="{{ form.nonce }}">
           <input type="hidden" name="region" value="{{ plan.region }}">
           <input type="hidden" name="plan_query" value="{{ plan_query(request.query_params) }}">
           <input type="hidden" name="expected" value="{{ plan.cost }}">
@@ -231,7 +232,7 @@
   </ul>
   {% endif %}
 </section>
-<script>
+<script nonce="{{ csp_nonce }}">
 (function () {
   // A tile's box answers as the person types: it hides the order's items it
   // does not match and lists that lab's tests to add (/plan-tests/order-search).
@@ -243,7 +244,7 @@
     box.querySelector('[data-order-go]').remove();
     var controller = null, timer = null;
     function show(match) {
-      rows.forEach(function (row) { row.hidden = !!match && match.indexOf(row.dataset.item) < 0; });
+      rows.forEach(function (row) { row.hidden = !!match && !match.includes(row.dataset.item); });
       none.hidden = !match || match.length > 0;
     }
     function search() {
