@@ -29,7 +29,6 @@ import re
 from collections.abc import Callable, Collection, Sequence
 
 from ..devices.catalog import CORE_METRIC_KEYS
-from ..devices.queries import device_history_summary
 from ..i18n import get_locale, t, t_plural
 from ..panels import SAME_DEVICE_KEYS
 
@@ -579,10 +578,12 @@ def _add_history(out, omissions, catalog) -> None:
 
 def _add_devices(out, connection, owner_user_id) -> None:
     """Wearables."""
+    from . import app as web
+
     # A scale's weight and a cuff's pressure are already results above, their
     # daily values in the history; listing them here again would be twice.
     summaries = [
-        item for item in device_history_summary(connection, owner_user_id)
+        item for item in web.device_history(connection, owner_user_id)
         if str(item["metric_key"]) not in SAME_DEVICE_KEYS
     ]
     out += [f"## {t('ai.devices_heading')}", ""]

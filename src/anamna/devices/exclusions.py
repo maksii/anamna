@@ -251,8 +251,8 @@ def connected_people(db, owner_user_id: str) -> list:
         """SELECT DISTINCT u.id, u.display_name, u.email FROM users u
            JOIN users me ON me.id=?
            WHERE u.id<>me.id AND u.disabled_at IS NULL AND (
-               EXISTS (SELECT 1 FROM record_shares s WHERE s.owner_user_id=me.id AND s.grantee_email=u.email)
-               OR EXISTS (SELECT 1 FROM record_shares s WHERE s.owner_user_id=u.id AND s.grantee_email=me.email))
+               EXISTS (SELECT 1 FROM record_shares s WHERE s.owner_user_id=me.id AND s.grantee_user_id=u.id)
+               OR EXISTS (SELECT 1 FROM record_shares s WHERE s.owner_user_id=u.id AND s.grantee_user_id=me.id))
            ORDER BY u.display_name""",
         (owner_user_id,),
     ).fetchall()

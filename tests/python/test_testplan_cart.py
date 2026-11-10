@@ -24,6 +24,7 @@ def synevo_item(code, price):
 
 
 def test_cart_takes_the_plan_in_its_city(tmp_path, monkeypatch):
+    monkeypatch.setattr(synevo_shop, "regions", lambda settings: [{"id": synevo_shop.DEFAULT_REGION, "name": "Львів"}])
     settings = settings_for(tmp_path)
     migrate(settings)
     user_id = create_user(settings, "cart@example.test", "Cart", PASSWORD)

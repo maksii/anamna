@@ -265,6 +265,10 @@ _NUCLEIC = re.compile(r"ДНК|\bDNA\b|ПЛР|\bPCR\b|РНК|\bRNA\b", re.IGNORE
 #: A name that says it reads a gene («носійство гену», «генотип», "mutation").
 _GENE_WORDS = re.compile(r"\bген(у|а|ів|и|ом|ам|і)?\b|генетик|генетичн|генотип|мутаці|поліморфізм|\bgenes?\b|genetic"
                          r"|genotyp|mutation|polymorphism", re.IGNORECASE)
+#: Acquired (somatic, tumour) changes, followed over time rather than settled
+#: once: a JAK2, BCR-ABL or EGFR result is repeated as the disease is watched.
+_SOMATIC = re.compile(r"соматичн|пухлин|онко|лейкоз|лейкем|мієло|somatic|tumou?r|oncolog|leuk(a)?emi|\bBCR[-/ ]?ABL"
+                      r"|\bJAK2\b|\bEGFR\b|\bKRAS\b|\bBRAF\b|\bCALR\b|\bMPL\b", re.IGNORECASE)
 _GENETIC_ITEM = sorted(testplan.GENETIC_GROUPS)[:1]
 
 #: The printed outcome, read as words ("не виявлено" is "not detected"):
@@ -294,6 +298,12 @@ def entry_for(concept_id: str, raw_name: str) -> list[str]:
         return [_CONCEPT_ENTRY[concept_id]]
     found = testplan_special.matches({"name": raw_name, "groups": _GENETIC_ITEM})
     return list(dict.fromkeys(e for key in found for e in _MARKER_ENTRIES.get(key, ())))
+
+
+def _once_only(entry: str | None, raw_name: str) -> bool:
+    """A planner test a person needs only once: the result is a known test and
+    the change it reads is inherited, not acquired in a tumour."""
+    return entry is not None and not _SOMATIC.search(raw_name)
 
 
 def outcome(value_text: str | None) -> str | None:
@@ -336,6 +346,7 @@ def overview(connection, owner_id: str, cards: list[dict], offers: dict[str, lis
             entry = entries[0] if entries else None
             result = outcome(row["value_text"])
             genes.append({"card": card, "entry": entry, "outcome": result if entry in RESULT_TEXTS else None,
+                          "once": _once_only(entry, row["raw_name"]),
                           "sources": sources(ENTRY_SOURCES.get(entry) or GENERAL)})
             for entry_id in entries:
                 done.setdefault(entry_id, card)

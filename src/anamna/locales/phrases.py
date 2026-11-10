@@ -207,9 +207,7 @@ PHRASES: dict[str, str] = {
     "Climbing": "Скелелазіння",
     "Mixed Cardio": "Змішане кардіо",
     "Flexibility": "Гнучкість",
-    "Sinus Rhythm with Wide QRS": "Синусовий ритм із широким комплексом QRS",
     "Unclassified": "Не класифіковано",
-    "Unreadable": "Запис непридатний для аналізу",
     "Kardia 6-lead ECG recording": "Запис ЕКГ Kardia у 6 відведеннях",
     "Daily steps": "Кроки за день",
     "Deep sleep": "Глибокий сон",
@@ -571,16 +569,6 @@ PHRASES: dict[str, str] = {
         "Письмовий висновок є в документі-джерелі; автоматичного клінічного підсумку програма не складала."
     ),
     "No written conclusion in the source.": "У джерелі немає письмового висновку.",
-    # documents.notes, written by the importer in English.
-    "Order cover retained for provenance; the result values are stored in the linked attachment export.": (
-        "Титульну сторінку замовлення збережено як підтвердження походження даних; значення результатів зберігаються в пов’язаному експортованому вкладенні."
-    ),
-    "Image-only chest radiograph; OCR is limited to acquisition metadata.": (
-        "Рентгенограма грудної клітки лише у вигляді зображення; розпізнано тільки службові дані знімка."
-    ),
-    "Image attachment with CT views; no narrative interpretation is present.": (
-        "Вкладення із зображеннями КТ; письмового опису немає."
-    ),
 
     # Reference sets / rules
     "Standards of Care in Diabetes - diagnosis and classification": (
@@ -1121,11 +1109,11 @@ PHRASES: dict[str, str] = {
     "Whooping cough": "Кашлюк",
     "A bacterial cough illness, dangerous to infants. Adults are boosted mainly to protect babies around them.": "Бактеріальна інфекція з нападами кашлю, небезпечна для немовлят. Дорослих ревакцинують передусім, щоб захистити немовлят поруч.",
     "Poliomyelitis": "Поліомієліт",
-    "A virus that can paralyse. Ukraine gives inactivated and oral vaccine in infancy and at six years.": "Вірус, що може спричинити параліч. В Україні щеплення роблять інактивованою та оральною вакцинами в немовлячому віці та в шість років.",
+    "A virus that can paralyse. Ukraine's calendar gives inactivated vaccine at 2, 4, 6 and 18 months and at six years.": "Вірус, що може спричинити параліч. За календарем України щеплення роблять інактивованою вакциною у 2, 4, 6 і 18 місяців та в шість років.",
     "Haemophilus influenzae type b": "Гемофільна інфекція типу b",
     "A bacterium that causes meningitis in small children. Given in infancy.": "Бактерія, що спричиняє менінгіт у маленьких дітей. Щеплення роблять у немовлячому віці.",
     "Hepatitis B": "Гепатит B",
-    "A virus that damages the liver over years. Given from the second day of life in Ukraine.": "Вірус, що роками ушкоджує печінку. В Україні щеплення роблять із другого дня життя.",
+    "A virus that damages the liver over years. Ukraine's current calendar starts the course at two months of age; babies whose mothers carry the virus are vaccinated in the first day of life.": "Вірус, що роками ушкоджує печінку. За чинним календарем України курс починають у два місяці; дітей, чиї матері мають цей вірус, щеплюють у першу добу життя.",
     "Hepatitis A": "Гепатит A",
     "A liver virus spread through food and water. Recommended rather than routine.": "Вірус, що уражає печінку й передається через їжу та воду. Щеплення рекомендоване, але не входить до календаря.",
     "Measles": "Кір",
@@ -1141,11 +1129,17 @@ PHRASES: dict[str, str] = {
     "COVID-19": "COVID-19",
     "Caused by the SARS-CoV-2 coronavirus. Which adults should be revaccinated, and how often, is where the three authorities differ most.": "Збудник: коронавірус SARS-CoV-2. Найбільше три відомства розходяться в тому, кого з дорослих і як часто ревакцинувати.",
     "Human papillomavirus": "Вірус папіломи людини",
-    "A virus that causes cervical and other cancers. Given as a course of two or three doses.": "Вірус, що спричиняє рак шийки матки та інші види раку. Щеплення роблять курсом із двох або трьох доз.",
+    "A virus that causes cervical and other cancers. Ukraine's calendar gives one dose to girls aged 12 to 13; at other ages the course is one to three doses, depending on age, immune status and the national schedule.": "Вірус, що спричиняє рак шийки матки та інші види раку. За календарем України одну дозу отримують дівчата віком 12–13 років; в іншому віці курс складається з однієї-трьох доз залежно від віку, стану імунітету та національного календаря.",
     "Pneumococcal disease": "Пневмококова інфекція",
     "A bacterium causing pneumonia and meningitis; risk rises with age and with some long-term conditions.": "Бактерія, що спричиняє пневмонію та менінгіт; ризик зростає з віком і за деяких хронічних станів.",
     "Meningococcal A, C, W, Y": "Менінгококова інфекція серогруп A, C, W, Y",
-    "Bacterial meningitis and sepsis from four serogroups, covered by one conjugate vaccine.": "Бактеріальний менінгіт і сепсис, спричинені чотирма серогрупами; від усіх захищає одна кон’югована вакцина.",
+    "Bacterial meningitis and sepsis from four serogroups, covered only together by a four-valent (ACWY) vaccine.": "Бактеріальний менінгіт і сепсис, спричинені чотирма серогрупами; від усіх чотирьох захищає лише чотиривалентна вакцина (ACWY).",
+    "Meningococcal A": "Менінгококова інфекція серогрупи A",
+    "Meningococcal C": "Менінгококова інфекція серогрупи C",
+    "Meningococcal W": "Менінгококова інфекція серогрупи W",
+    "Bacterial meningitis and sepsis from serogroup A only; it does not cover the other serogroups.": "Бактеріальний менінгіт і сепсис, спричинені лише серогрупою A; від інших серогруп щеплення не захищає.",
+    "Bacterial meningitis and sepsis from serogroup C only; it does not cover the other serogroups.": "Бактеріальний менінгіт і сепсис, спричинені лише серогрупою C; від інших серогруп щеплення не захищає.",
+    "Bacterial meningitis and sepsis from serogroup W only; it does not cover the other serogroups.": "Бактеріальний менінгіт і сепсис, спричинені лише серогрупою W; від інших серогруп щеплення не захищає.",
     "Meningococcal B": "Менінгококова інфекція серогрупи B",
     "The serogroup the A/C/W/Y vaccine does not cover; it needs its own product.": "Серогрупа, від якої вакцина A/C/W/Y не захищає; потрібна окрема вакцина.",
     "Rotavirus": "Ротавірусна інфекція",

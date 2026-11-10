@@ -1,0 +1,26 @@
+# A minimal deployment. The database and uploaded files live on the named
+# volume; the image itself carries no health data.
+#
+#   docker compose up -d
+#   docker compose logs anamna   # shows the one-time first-run setup code
+#
+# The port is bound to this machine only. Put a TLS-terminating reverse proxy
+# or tunnel in front of it before reaching it from anywhere else, and then set
+# the two commented variables below (see SECURITY.md).
+services:
+  anamna:
+    image: ghcr.io/maksii/anamna:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - anamna-data:/data
+    environment:
+      ANAMNA_LOG_LEVEL: INFO
+      # ANAMNA_SECURE_COOKIES: "1"
+      # ANAMNA_PUBLIC_URL: https://health.example.com
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  anamna-data:

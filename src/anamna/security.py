@@ -21,7 +21,11 @@ MINIMUM_PASSWORD_LENGTH = 10
 #: Failed sign-ins tolerated from one address before it is asked to wait, and
 #: the window both the count and the lockout are measured in.
 LOGIN_ATTEMPT_LIMIT = 10
+#: Failed sign-ins tolerated against one account, from all addresses together, per window.  Higher than the per-address limit so a stranger who knows an email address has to work to lock its owner out, and low enough that guessing a ten-character password stays hopeless.
+LOGIN_ACCOUNT_LIMIT = 20
 LOGIN_ATTEMPT_WINDOW = timedelta(minutes=15)
+#: Wrong current passwords tolerated on the change-password form per window: whoever holds an unattended session must not be able to guess the password it belongs to.
+PASSWORD_CHANGE_LIMIT = 5
 
 
 def password_digest(password: str, salt: bytes) -> bytes:
@@ -364,6 +368,17 @@ def update_access_token(
         return connection.execute(
             f"UPDATE access_tokens SET label = ?, expires_at = ? WHERE id = ?{clause}", values
         ).rowcount > 0
+
+
+def access_token_row(settings: Settings, token_id: str, owner_user_id: str | None = None):
+    """One credential's stored row (never its secret, which is not stored), or
+    None; ``owner_user_id`` scopes the lookup the same way the update does."""
+    clause = " AND owner_user_id = ?" if owner_user_id else ""
+    values = (token_id, owner_user_id) if owner_user_id else (token_id,)
+    with connect(settings) as connection:
+        return connection.execute(
+            f"SELECT id, kind, expires_at, pin_hash FROM access_tokens WHERE id = ?{clause}", values
+        ).fetchone()
 
 
 def ensure_seeded_token(settings: Settings, secret: str | None) -> str | None:

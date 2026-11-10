@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import difflib
 import logging
+import math
 import re
 from datetime import date, datetime
 from urllib.parse import parse_qsl, quote, unquote, urlencode
@@ -43,6 +44,35 @@ except ImportError:  # pragma: no cover
 SHOPS = {"esculab": esculab_shop}
 if synevo_shop and all(hasattr(synevo_shop, name) for name in ("catalog", "ensure_fresh", "regions", "DEFAULT_REGION")):
     SHOPS["synevo"] = synevo_shop
+
+
+def _known_region(settings, key: str, value: str | None) -> str | None:
+    """``value`` when the lab really has that region, else None.  Anything a
+    visitor types into the query string would otherwise become a catalogue
+    download from the lab and a cached row per invented region."""
+    if not value:
+        return None
+    try:
+        known = {str(region["id"]) for region in SHOPS[key].regions(settings)}
+    except Exception:  # the lab's region list is unavailable: accept nothing new
+        return None
+    return value if value in known else None
+
+
+def _list_is_stale(cached_total: float, fresh_total: float) -> bool:
+    """Whether the cached price list disagrees with the prices just read from the lab."""
+    return round(cached_total, 2) != round(fresh_total, 2)
+
+
+def _expected_total(form) -> float | None:
+    """The total the client showed, or None when it is not a finite number."""
+    try:
+        value = float(str(form.get("expected") or "0").replace(",", "."))
+    except ValueError:
+        return None
+    return value if math.isfinite(value) else None
+
+
 VENDORS = {"esculab": "Esculab", "synevo": "Synevo"}
 #: Why Synevo did not take an item into the cart (synevo_shop._refusal).
 CART_REASONS = frozenset({"synevo_cart.in_package", "synevo_cart.refused", "synevo_cart.promo",
@@ -622,7 +652,8 @@ def _special(params, sex: str | None, ready: dict[str, list[dict]], cards: list[
                 "recent": recent_now, "skipped": recent_now and skip_recent and entry.id not in picked
                 and entry.id in opened and bool(sold[entry.id]) and not (entry.once and done[entry.id]),
                 "name": t(f"special.{entry.id}"), "what": t(f"special.{entry.id}_what"),
-                "done": done[entry.id], "once": entry.once, "labs": [VENDORS[lab] for lab in sold[entry.id]],
+                "done": done[entry.id], "once": entry.once, "once_kind": entry.once_kind,
+                "labs": [VENDORS[lab] for lab in sold[entry.id]],
                 "all_labs": len(sold[entry.id]) == len(ready),
                 "page": (f"{page}#{entry.id}" if entry.topic == "genetics" else page) if page else None}
 
@@ -933,8 +964,9 @@ def register_routes(app, settings, *, templates, template_context, require_user,
         city = " ".join((params.get("city") if "city" in params else remembered["city"]).split())[:80]
         regions, no_city = {}, []
         for key, module in SHOPS.items():
-            if params.get(f"city_{key}"):
-                regions[key] = params.get(f"city_{key}")
+            city_id = _known_region(settings, key, params.get(f"city_{key}"))
+            if city_id:
+                regions[key] = city_id
             elif city:
                 wanted = testplan.alphabetical(city)
                 regions[key] = next((row["id"] for row in region_lists.get(key, [])
@@ -1355,6 +1387,10 @@ def register_routes(app, settings, *, templates, template_context, require_user,
             return RedirectResponse(f"/plan-tests?{query}&notice=suggestion_empty#plan-needs", status_code=303)
         suggestion_id = str(uuid4())
         with transaction(settings) as connection:
+            # One pending suggestion per doctor link and record: the newer replaces the older.
+            connection.execute(
+                """DELETE FROM plan_suggestions WHERE owner_user_id=? AND token_id IS ? AND dismissed_at IS NULL""",
+                (user["id"], user.get("token_id")))
             connection.execute(
                 """INSERT INTO plan_suggestions(id, owner_user_id, query, test_count, token_id, author, created_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
@@ -1385,14 +1421,20 @@ def register_routes(app, settings, *, templates, template_context, require_user,
             raise HTTPException(403)
         region, plan_query = str(form.get("region") or ""), str(form.get("plan_query") or "")
         ids = [str(value) for value in form.getlist("item")]
-        expected = float(str(form.get("expected") or "0").replace(",", "."))
+        expected = _expected_total(form)
+        if expected is None or not _known_region(settings, "esculab", region):
+            return back(plan_query, "items_gone")
         # For the record on screen: one's own, or one shared with this person.
         owner = await run_in_threadpool(record_user, request, user)
         account_id, person = _order_account(settings, user["id"], owner["id"], "esculab")
         row = labsync.account(settings, account_id, "esculab")
         if not (row and row["secret"] and person):
             return back(plan_query, "esculab_not_connected")
-        catalogue = {item["id"]: item for item in esculab_shop.catalog(settings, region)}
+        try:
+            catalogue = {item["id"]: item for item in esculab_shop.catalog(settings, region)}
+        except LabSyncError as exc:
+            logger.warning("esculab catalogue unavailable: %s", exc.key)
+            return back(plan_query, "order_failed")
         chosen = [catalogue[i] for i in ids if i in catalogue]
         if not chosen or len(chosen) != len(ids):
             return back(plan_query, "items_gone")
@@ -1400,11 +1442,15 @@ def register_routes(app, settings, *, templates, template_context, require_user,
         total = round(sum(item["final_price"] for item in fresh)
                       + sum(fee["price"] for fee in esculab_shop.fees(fresh)), 2)
         if total != round(expected, 2):
-            # A price moved since the list was read: drop the copy, so the plan
-            # is recomputed from today's list before anything is ordered.
-            with transaction(settings) as connection:
-                connection.execute("DELETE FROM lab_catalog_cache WHERE provider='esculab' AND region=? AND cache_key='catalog'",
-                                   (region,))
+            # The cached list is stale only when it disagrees with the prices just read from the lab: then drop it,
+            # so the plan is recomputed from today's list before anything is ordered.  When it agrees, the client
+            # sent a wrong total and the list stays.
+            cached_total = round(sum(item["final_price"] for item in chosen)
+                                 + sum(fee["price"] for fee in esculab_shop.fees(chosen)), 2)
+            if _list_is_stale(cached_total, total):
+                with transaction(settings) as connection:
+                    connection.execute("DELETE FROM lab_catalog_cache WHERE provider='esculab' AND region=? AND cache_key='catalog'",
+                                       (region,))
             return back(plan_query, "prices_changed")
         client = labsync._client(settings, "esculab", row["secret"], row["phone"], row["refresh_secret"])
         try:
@@ -1432,6 +1478,8 @@ def register_routes(app, settings, *, templates, template_context, require_user,
         if synevo_shop is None or user.get("token_kind") == "guest" or not labsync.active(settings, "synevo"):
             raise HTTPException(403)
         region, plan_query = str(form.get("region") or ""), str(form.get("plan_query") or "")
+        if not _known_region(settings, "synevo", region):
+            return back(plan_query, "items_gone")
         owner = await run_in_threadpool(record_user, request, user)
         account_id, _person = _order_account(settings, user["id"], owner["id"], "synevo")
         catalogue = {item["id"]: item for item in synevo_shop.catalog(settings, region) or []}

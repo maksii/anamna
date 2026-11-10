@@ -70,7 +70,7 @@
 </form>
 
 <details class="panel an-page-disclosure" id="processing" data-upload-disclosure data-queue-active="{{ queue_active }}"{% if queue_active or queue_failed %} open{% endif %}
-         data-open-label="{{ t('intake.open_result') }}">
+         data-open-label="{{ t('intake.open_result') }}" data-msg-stalled="{{ t('upload.status_stalled') }}">
   <summary>
     <span><strong>{{ t('intake.heading') }}</strong></span>
     <span class="an-queue__totals">

@@ -131,14 +131,14 @@ def test_guest_link_is_read_only_and_expires(tmp_path: Path):
     # unauthenticated and reaches the database on every call.
     from anamna.security import LOGIN_ATTEMPT_LIMIT, clear_attempts
 
-    clear_attempts("testclient")
+    clear_attempts("token:testclient")
     with TestClient(create_app(settings)) as knocking:
         for _ in range(LOGIN_ATTEMPT_LIMIT):
             knocking.get("/t/anamna_guest_wrong", follow_redirects=False)
         assert knocking.get("/t/anamna_guest_wrong", follow_redirects=False).headers[
             "location"
         ] == "/login?error=throttled"
-    clear_attempts("testclient")
+    clear_attempts("token:testclient")
 
     # An expired invitation stops working without anyone revoking it.
     _, stale = create_access_token(

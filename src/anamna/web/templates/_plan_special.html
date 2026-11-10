@@ -16,9 +16,10 @@
       <span class="an-plan-need__name">{{ row.name }}</span>
       <span class="tiny muted">{{ row.what }}</span>
       {% if card %}{{ latest_line(card, ago, fresh) }}
-      {% if row.once %}<span class="tiny muted">{{ t('special.once_note') }}</span>{% endif %}
+      {% if row.once %}<span class="tiny muted">{{ t('special.once_note_lifetime') if row.once_kind == 'lifetime_level' else t('special.once_note') }}</span>{% endif %}
       {% elif row.done %}<span class="an-plan-need__meta">
         {%- if row.done.count %}{{ t_plural('special.covered', row.done.count, date=row.done.date|datefmt) }}
+        {%- elif row.once and row.once_kind == 'lifetime_level' %}{{ t('special.done_once_lifetime', date=row.done.date|datefmt) }}
         {%- elif row.once %}{{ t('special.done_once', date=row.done.date|datefmt) }}
         {%- else %}{{ t('special.done', date=row.done.date|datefmt) }}{% endif -%}
       </span>{% endif %}

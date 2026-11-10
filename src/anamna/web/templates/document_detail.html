@@ -434,6 +434,7 @@
             {% if not viewing %}
             <form action="/documents/{{ document.id }}/observations" method="post">
               <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input type="hidden" name="ai_suggested" value="1">
               <input type="hidden" name="next" value="/documents/{{ document.id }}">
               <label>{{ t('doc.metric_name') }}<input name="raw_name" value="{{ item.name }}" required></label>
               <label>{{ t('obs.maps_to') }}<input name="canonical_name" list="an-concept-list" placeholder="{{ t('obs.maps_to_hint') }}"></label>
@@ -509,6 +510,7 @@
             <summary><strong>{{ item.vaccine_code or item.product_name }}</strong> · {{ item.occurred_on }}{% if item.page %} · {{ t('doc.page_n', n=item.page) }}{% endif %}</summary>
             <form action="/vaccinations" method="post">
               <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input type="hidden" name="ai_suggested" value="1">
               <input type="hidden" name="next" value="/documents/{{ document.id }}#side-panel-ai">
               <input type="hidden" name="document_id" value="{{ document.id }}">
               <input type="hidden" name="page_number" value="{{ item.page_input }}">

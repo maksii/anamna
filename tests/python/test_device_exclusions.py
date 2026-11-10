@@ -319,8 +319,8 @@ def test_a_viewer_of_a_shared_record_cannot_exclude(tmp_path, monkeypatch):
     viewer_id = create_user(settings, "viewer@example.test", "Viewer", PASSWORD)
     with connect(settings) as db:
         owner_email = db.execute("SELECT email FROM users WHERE id=?", (owner_id,)).fetchone()[0]
-        db.execute("INSERT INTO record_shares(id, owner_user_id, grantee_email, created_at) VALUES ('s1', ?, ?, ?)",
-                   (owner_id, "viewer@example.test", utc_now()))
+        db.execute("INSERT INTO record_shares(id, owner_user_id, grantee_email, grantee_user_id, created_at) VALUES ('s1', ?, ?, ?, ?)",
+                   (owner_id, "viewer@example.test", viewer_id, utc_now()))
     viewer = TestClient(create_app(settings))
     token, _ = create_session(settings, viewer_id)
     viewer.cookies.set("anamna_session", token)

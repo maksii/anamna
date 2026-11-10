@@ -132,6 +132,14 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Too many failed sign-in attempts from this address. Wait 15 minutes and try again.",
         "uk": "Забагато невдалих спроб входу з цієї адреси. Зачекайте 15 хвилин і спробуйте ще раз.",
     },
+    "auth.error_cross_site": {
+        "en": "This form can only be submitted from this site.",
+        "uk": "Цю форму можна надіслати лише з цього сайту.",
+    },
+    "profile.error_password_throttled": {
+        "en": "Too many wrong attempts. Wait 15 minutes and try again.",
+        "uk": "Забагато невдалих спроб. Зачекайте 15 хвилин і спробуйте ще раз.",
+    },
     "login.register_prompt": {"en": "New here?", "uk": "Вперше тут?"},
     "login.register_link": {"en": "Create an account", "uk": "Створити обліковий запис"},
     "login.registration_closed": {
@@ -550,6 +558,10 @@ MESSAGES: dict[str, dict[str, str]] = {
     "profile.error_share_self": {
         "en": "You already have access to your own record",
         "uk": "Це ваша картка, доступ до неї у вас уже є",
+    },
+    "profile.error_share_unknown": {
+        "en": "No account here uses that address. The person needs an account on this server first; ask the administrator to add them, then share again.",
+        "uk": "На цьому сервері немає облікового запису з такою адресою. Спершу людині потрібен обліковий запис: попросіть адміністратора додати її, а потім поділіться ще раз.",
     },
     "profile.shared_with_me_eyebrow": {"en": "Shared with me", "uk": "Доступні мені"},
     "profile.shared_with_me_heading": {"en": "Records shared with me", "uk": "Картки, до яких мені надали доступ"},
@@ -1009,6 +1021,33 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
     "dashboard.device_through": {"en": "Devices through {date}", "uk": "Дані з пристроїв до {date}"},
     "dashboard.medical_through": {"en": "Medical results through {date}", "uk": "Медичні результати до {date}"},
+    "dashboard.welcome_heading": {"en": "Your record is empty", "uk": "Ваша картка ще порожня"},
+    "dashboard.welcome_lead": {
+        "en": "Anamna reads results out of your medical documents and device exports, shows each one beside its history and a cited reference range, and keeps the original page next to every value so you can check it.",
+        "uk": "Anamna зчитує результати з ваших медичних документів і експортів із пристроїв, показує кожен поруч з історією та референтним діапазоном із посиланням на джерело і зберігає сторінку оригіналу біля кожного значення, щоб ви могли його звірити.",
+    },
+    "dashboard.welcome_upload": {"en": "Add documents or a device export", "uk": "Додати документи або експорт із пристрою"},
+    "dashboard.welcome_upload_hint": {
+        "en": "PDF files, photos and scans of lab reports, or an Apple Health, Garmin or Oura export.",
+        "uk": "PDF-файли, фото й скани результатів аналізів або експорт з Apple Health, Garmin чи Oura.",
+    },
+    "dashboard.welcome_connect": {"en": "Connect a lab account or a wearable", "uk": "Під’єднати кабінет лабораторії або пристрій"},
+    "dashboard.welcome_connect_hint": {
+        "en": "Results and readings then arrive on their own.",
+        "uk": "Тоді результати й показники надходитимуть самі.",
+    },
+    "dashboard.welcome_connect_admin": {
+        "en": "Lab accounts and wearables appear there once you turn them on under Administration.",
+        "uk": "Кабінети лабораторій і пристрої з’являться там, щойно ви ввімкнете їх у розділі «Адміністрування».",
+    },
+    "dashboard.welcome_profile": {
+        "en": "Check your date of birth and sex at birth",
+        "uk": "Перевірити дату народження і стать при народженні",
+    },
+    "dashboard.welcome_profile_hint": {
+        "en": "Many reference ranges depend on them.",
+        "uk": "Від них залежать багато референтних діапазонів.",
+    },
     "dashboard.snapshot_empty": {"en": "No structured measurements yet", "uk": "Структурованих вимірювань ще немає"},
     "dashboard.coverage_short": {"en": "{covered}/{total} health areas", "uk": "{covered}/{total} сфер здоров’я"},
     "dashboard.flags_short": {"en": "{count} areas to review", "uk": "{count} сфер до перегляду"},
@@ -3242,8 +3281,8 @@ MESSAGES: dict[str, dict[str, str]] = {
         "uk": "Референтні інтервали цього показника залежать від віку, а у вашому профілі немає дати народження, тому оцінку з урахуванням віку не показуємо.",
     },
     "verdict.blocked_clinical_context": {
-        "en": "This result is interpreted in clinical context, such as why the test was ordered, so no automatic judgement is shown.",
-        "uk": "Цей результат оцінюють з урахуванням клінічної ситуації, зокрема причини, з якої призначили аналіз, тому автоматичної оцінки тут немає.",
+        "en": "Some published targets for this test apply only in a specific clinical situation, such as a particular treatment or the reason the test was ordered, so they are not applied here. Where a verdict is shown, it comes from the laboratory's own range.",
+        "uk": "Деякі опубліковані цільові значення цього показника застосовують лише в певній клінічній ситуації, наприклад під час певного лікування чи залежно від причини призначення аналізу, тому тут їх не застосовано. Якщо оцінку показано, вона ґрунтується на діапазоні самої лабораторії.",
     },
     "verdict.blocked_cv_risk_category": {
         "en": "Goals for this test depend on your cardiovascular risk category, which your record does not hold, so no goal is applied and only population cut-points judge it. Set the category your doctor assigned in your profile.",
@@ -3557,6 +3596,10 @@ MESSAGES: dict[str, dict[str, str]] = {
     "upload.status_duplicate": {
         "en": "Copy of a file already held",
         "uk": "Копія файлу, який уже є",
+    },
+    "upload.status_stalled": {
+        "en": "The status has stopped updating. Reload the page to see the latest.",
+        "uk": "Статус перестав оновлюватися. Перезавантажте сторінку, щоб побачити актуальний стан.",
     },
 
     # The intake queue: what the processing area says while it works.
@@ -4771,6 +4814,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "The answer reached its length limit and was cut off. Ask about a narrower part, or an administrator can raise the chat’s output limit under Admin › AI assist.",
         "uk": "Відповідь досягла ліміту довжини й обірвалася. Запитайте про вужчу частину, або адміністратор може збільшити ліміт відповіді чату в розділі «ШІ-помічник».",
     },
+    "chat.error_in_progress": {
+        "en": "An answer is still being written. Wait for it to finish, then send your message again.",
+        "uk": "Відповідь ще пишеться. Дочекайтеся її завершення й надішліть повідомлення ще раз.",
+    },
     "chat.error_guest": {
         "en": "The chat is for account holders. A guest link opens the record for reading only.",
         "uk": "Чат доступний лише власникам облікових записів. Гостьове посилання відкриває картку тільки для перегляду.",
@@ -4809,6 +4856,14 @@ MESSAGES: dict[str, dict[str, str]] = {
     "aiassist.provider_about_openrouter": {
         "en": "Key at openrouter.ai. Model IDs ending in \":free\" cost nothing.",
         "uk": "Ключ можна отримати на openrouter.ai. Моделі, чий ID закінчується на «:free», безкоштовні.",
+    },
+    "aiadmin.data_collection_label": {
+        "en": "Allow AI providers that may keep or train on what is sent",
+        "uk": "Дозволити постачальників ШІ, які можуть зберігати надіслане або навчати на ньому моделі",
+    },
+    "aiadmin.data_collection_help": {
+        "en": "Applies to OpenRouter. Off, requests go only to providers that do not store prompts or train on them; many free models are then unavailable. On, any provider may answer, including ones that keep the medical text you send.",
+        "uk": "Стосується OpenRouter. Якщо вимкнено, запити надходять лише до постачальників, які не зберігають запити й не навчають на них моделі; багато безкоштовних моделей тоді недоступні. Якщо ввімкнено, відповісти може будь-який постачальник, зокрема той, що зберігає надісланий медичний текст.",
     },
     "aiassist.provider_about_anthropic": {
         "en": "Key at console.anthropic.com. Until one is saved here, the server's ANTHROPIC_API_KEY is used.",
@@ -5105,6 +5160,10 @@ MESSAGES: dict[str, dict[str, str]] = {
     "labsync.open_site": {"en": "Open {site} in a new tab", "uk": "Відкрити {site} у новій вкладці"},
     "labsync.copy": {"en": "Copy", "uk": "Копіювати"},
     "labsync.copied": {"en": "Copied", "uk": "Скопійовано"},
+    "labsync.copy_failed": {
+        "en": "Could not copy. Select the text and copy it yourself.",
+        "uk": "Не вдалося скопіювати. Виділіть текст і скопіюйте його самостійно.",
+    },
     "labsync.rejected_pill": {"en": "key rejected", "uk": "ключ відхилено"},
     "labsync.cookie_name_label": {"en": "Cookie name to look for", "uk": "Назва cookie для пошуку"},
     "labsync.cookie_name_hint": {
@@ -6334,6 +6393,18 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "That account is not on the server's list any more. Reload the page and pick again.",
         "uk": "Цього облікового запису вже немає в списку сервера. Оновіть сторінку і виберіть ще раз.",
     },
+    "openwearables.error_taken": {
+        "en": "That OpenWearables account is already linked to another person's record here.",
+        "uk": "Цей обліковий запис OpenWearables уже під’єднано до картки іншої людини.",
+    },
+    "openwearables.error_not_yours": {
+        "en": "You can link only the OpenWearables account that uses your own email address.",
+        "uk": "Під’єднати можна лише обліковий запис OpenWearables із вашою власною адресою.",
+    },
+    "openwearables.none_for_you": {
+        "en": "No account on the OpenWearables server uses your email address ({email}). Ask the person who runs the server to create one with this address.",
+        "uk": "На сервері OpenWearables немає облікового запису з вашою адресою ({email}). Попросіть адміністратора сервера створити обліковий запис із цією адресою.",
+    },
     # Devices page disclosure.
     "openwearables.devices_failures": {
         "en": "Some OpenWearables data is not arriving",
@@ -6532,6 +6603,10 @@ MESSAGES: dict[str, dict[str, str]] = {
     "corr.suggested_heading": {
         "en": "Strongest associations found", "uk": "Найсильніші зв’язки",
     },
+    "corr.suggested_note": {
+        "en": "Listed only when the pattern is stronger than chance would explain, after allowing for how many of your measurements were compared and for overlapping averages. It still does not show that one causes the other.",
+        "uk": "Тут показано лише ті зв’язки, які сильніші, ніж можна пояснити випадковістю, з поправкою на кількість порівняних показників і на перекриття усереднених днів. Це все одно не означає, що одне спричиняє інше.",
+    },
     "corr.no_suggestions": {
         "en": "Nothing else you record moves with this one strongly enough to put forward on its own. The picker below still compares it with anything in your record.",
         "uk": "Жоден інший показник не змінюється разом із цим настільки помітно, щоб ми пропонували його окремо. У списку нижче ви все одно можете порівняти його з будь-якими даними з вашої картки.",
@@ -6672,8 +6747,8 @@ MESSAGES: dict[str, dict[str, str]] = {
         "uk": "Що означає це число і чого воно не означає",
     },
     "corr.explain_what": {
-        "en": "A correlation coefficient describes how consistently two measurements move together across the days that carry both. It runs from −1 to +1: at +1 every rise in one is matched by a rise in the other, at −1 every rise is matched by a fall, and near 0 there is no consistent pattern. This page uses Spearman's rank correlation, which compares the order of the values rather than the values themselves, so one 51,000-step travel day or a watch taken off mid-night cannot invent a relationship, and a real link that is not a straight line is still found.",
-        "uk": "Коефіцієнт кореляції показує, наскільки узгоджено змінюються два вимірювання в дні, коли записано обидва. Він набуває значень від −1 до +1: за +1 кожне зростання одного супроводжується зростанням іншого, за −1 кожне зростання супроводжується спаданням, а біля 0 сталої закономірності немає. Тут використано рангову кореляцію Спірмена: вона порівнює порядок значень, а не самі значення. Тому один день у поїздці з 51 000 кроків чи годинник, знятий посеред ночі, не створять уявного зв’язку, а справжній, але нелінійний зв’язок усе одно буде знайдено.",
+        "en": "A correlation coefficient describes how consistently two measurements move together across the days that carry both. It runs from −1 to +1: at +1 every rise in one is matched by a rise in the other, at −1 every rise is matched by a fall, and near 0 there is no consistent pattern. This page uses Spearman's rank correlation, which compares the order of the values rather than the values themselves, so one 51,000-step travel day or a watch taken off mid-night has far less power to invent a relationship, and a link that rises or falls consistently is still found even when it is not a straight line. A link that rises and then falls is not: this method reads it as no relationship.",
+        "uk": "Коефіцієнт кореляції показує, наскільки узгоджено змінюються два вимірювання в дні, коли записано обидва. Він набуває значень від −1 до +1: за +1 кожне зростання одного супроводжується зростанням іншого, за −1 кожне зростання супроводжується спаданням, а біля 0 сталої закономірності немає. Тут використано рангову кореляцію Спірмена: вона порівнює порядок значень, а не самі значення. Тому один день у поїздці з 51 000 кроків чи годинник, знятий посеред ночі, значно менше здатні створити уявний зв’язок, а зв’язок, за якого один показник стабільно зростає або спадає разом з іншим, буде знайдено, навіть якщо він не прямолінійний. Зв’язок, за якого показник спершу зростає, а потім спадає, цей метод не виявить: він покаже, що зв’язку немає.",
     },
     "corr.scale_heading": {
         "en": "How the strength word is chosen", "uk": "Як ми визначаємо силу зв’язку",
@@ -6757,6 +6832,14 @@ MESSAGES: dict[str, dict[str, str]] = {
     "vax.gap_overdue": {"en": "Last dose {date}. The next was due around {due}.", "uk": "Остання доза: {date}. Наступну треба було зробити приблизно {due}."},
     "vax.gap_never_dated": {"en": "Nothing on file. The schedules put the next one around {due}.", "uk": "У картці таких щеплень немає. За календарями наступне припадає приблизно на {due}."},
     "vax.gap_never": {"en": "Nothing on file, and without a previous dose no date can be worked out.", "uk": "У картці таких щеплень немає, а без попередньої дози дату наступної не розрахувати."},
+    "vax.gap_discuss_dated": {
+        "en": "Last dose {date}. The published schedules differ on whether and when a healthy adult needs another, so no date is given here; ask your doctor.",
+        "uk": "Остання доза: {date}. Календарі по-різному визначають, чи потрібна здоровій дорослій людині наступна доза і коли, тому дати тут немає. Запитайте про це лікаря.",
+    },
+    "vax.gap_discuss": {
+        "en": "Nothing on file. The published schedules differ on who should have this vaccination, so no date is given here; ask your doctor.",
+        "uk": "У картці таких щеплень немає. Календарі по-різному визначають, кому це щеплення потрібне, тому дати тут немає. Запитайте про це лікаря.",
+    },
     "vax.urgency_overdue": {"en": "Past due", "uk": "Прострочено"},
     "vax.urgency_soon": {"en": "Within six months", "uk": "Протягом пів року"},
     "vax.urgency_later": {"en": "Later", "uk": "Пізніше"},
@@ -6764,6 +6847,10 @@ MESSAGES: dict[str, dict[str, str]] = {
 
     "vax.agreement_agreed": {"en": "Ukraine, the EU and the US agree", "uk": "Україна, ЄС і США одностайні"},
     "vax.agreement_differs": {"en": "The three schedules differ", "uk": "Три календарі розходяться"},
+    "vax.agreement_agreed_ua_us": {
+        "en": "Ukraine and the US agree; EU countries vary",
+        "uk": "Україна і США одностайні, у країнах ЄС по-різному",
+    },
     "vax.agreement_agreed_help": {
         "en": "All three published schedules state the same interval for a healthy adult, so this date does not depend on which of them you follow.",
         "uk": "Усі три календарі вказують для здорової дорослої людини однаковий інтервал, тож дата не залежить від того, якого календаря ви дотримуєтеся.",
@@ -6772,9 +6859,13 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "The authorities do not say the same thing here, so no single answer is presented as settled. Read all three, and ask your doctor which applies to you.",
         "uk": "Тут відомства радять різне, тому жодну відповідь ми не подаємо як остаточну. Прочитайте всі три й запитайте лікаря, яка з них стосується саме вас.",
     },
+    "vax.agreement_agreed_ua_us_help": {
+        "en": "Ukraine's calendar and the US schedule both state a booster every ten years for a healthy adult, and the date here follows them. EU countries set their own adult schedules (some every ten years, some at fixed ages, some none after childhood), so if you follow another country's calendar, check it in the ECDC Vaccine Scheduler.",
+        "uk": "Календар України та календар США передбачають для здорової дорослої людини ревакцинацію кожні десять років, і дату тут розраховано за ними. Країни ЄС визначають календарі для дорослих самостійно: десь ревакцинація кожні десять років, десь у певному віці, а десь після дитячих щеплень її не передбачено. Якщо ви орієнтуєтеся на календар іншої країни, перевірте його в ECDC Vaccine Scheduler.",
+    },
     "vax.note_covid_booster": {
-        "en": "For the 2025/26 season the United States moved most adults from a routine recommendation to a decision made together with a clinician, while Ukraine and EU member states continue to recommend by age and risk group.",
-        "uk": "Із сезону 2025/26 у США для більшості дорослих це вже не планова рекомендація, а рішення, яке людина ухвалює разом із лікарем. Україна та країни ЄС і далі рекомендують щеплення за віком і групою ризику.",
+        "en": "For the 2025/26 season the United States moved most adults from a routine recommendation to a decision made together with a clinician, while EU member states recommend by age and risk group. Ukraine's vaccination calendar (Ministry of Health order 595, edition of 1 January 2026) does not list COVID-19 vaccination.",
+        "uk": "Із сезону 2025/26 у США для більшості дорослих це вже не планова рекомендація, а рішення, яке людина ухвалює разом із лікарем. Країни ЄС рекомендують щеплення за віком і групою ризику. У Календарі профілактичних щеплень України (наказ МОЗ № 595, редакція від 01.01.2026) щеплення від COVID-19 немає.",
     },
     "vax.note_influenza_season": {
         "en": "The United States recommends a dose every season for everyone from six months of age. Ukraine and most EU states recommend it for named risk groups and leave the choice to everyone else.",
@@ -8179,16 +8270,16 @@ MESSAGES: dict[str, dict[str, str]] = {
         "uk": "Перша порція сечі: наповніть контейнер найпершою порцією.",
     },
     "plan.prep_rule_antibiotics": {
-        "en": "{tests}: before antibiotics or antifungals, or {d} after the course.",
-        "uk": "{tests}: до антибіотиків чи протигрибкових або через {d} після курсу.",
+        "en": "{tests}: before antibiotics or antifungals, or {d} after the course. Never delay a prescribed course: ask your doctor.",
+        "uk": "{tests}: до антибіотиків чи протигрибкових або через {d} після курсу. Призначений курс не відкладайте: запитайте лікаря.",
     },
     "plan.prep_rule_antibiotics_plain": {
-        "en": "{tests}: before starting antibiotics or antifungals.",
-        "uk": "{tests}: до початку антибіотиків чи протигрибкових.",
+        "en": "{tests}: before starting antibiotics or antifungals. Never delay a prescribed course: ask your doctor.",
+        "uk": "{tests}: до початку антибіотиків чи протигрибкових. Призначений курс не відкладайте: запитайте лікаря.",
     },
     "plan.prep_rule_biotin": {
-        "en": "Biotin over {mg} mg a day: last dose at least {d} before the draw.",
-        "uk": "Біотин понад {mg} мг на добу: остання доза щонайменше за {d} до забору.",
+        "en": "Biotin over {mg} mg a day: last dose at least {d} before the draw; if prescribed, ask your doctor.",
+        "uk": "Біотин понад {mg} мг на добу: остання доза щонайменше за {d} до забору; якщо призначив лікар, запитайте його.",
     },
     "plan.prep_rule_biotin_plain": {"en": "High-dose biotin: tell the staff.", "uk": "Біотин у високих дозах: скажіть персоналу."},
     "plan.prep_rule_menstruation": {
@@ -8266,6 +8357,14 @@ MESSAGES: dict[str, dict[str, str]] = {
     "special.once_note": {
         "en": "Your DNA does not change, so it never needs repeating.",
         "uk": "ДНК не змінюється, тож повторювати не потрібно.",
+    },
+    "special.once_note_lifetime": {
+        "en": "European guidance advises measuring it at least once in adult life. The level is set mostly by your genes and changes little, though a doctor may repeat it in some situations.",
+        "uk": "Європейські настанови радять виміряти його принаймні раз у дорослому житті. Рівень здебільшого визначають гени, і він мало змінюється, хоча в окремих ситуаціях лікар може призначити аналіз повторно.",
+    },
+    "special.done_once_lifetime": {
+        "en": "Done {date}. The level is set mostly by your genes and changes little, so it is rarely repeated; a doctor may still ask for it again in some situations.",
+        "uk": "Зроблено {date}. Рівень здебільшого визначають гени, і він мало змінюється, тому аналіз рідко повторюють; в окремих ситуаціях лікар може призначити його ще раз.",
     },
     "special.covered_one": {
         "en": "Your allergy test of {date} already measured {count} allergen.",
@@ -8395,8 +8494,8 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
     "special.gen-hemochromatosis": {"en": "Hereditary haemochromatosis (HFE)", "uk": "Спадковий гемохроматоз (HFE)"},
     "special.gen-hemochromatosis_what": {
-        "en": "The C282Y and H63D variants behind iron overload; for a high ferritin and transferrin saturation.",
-        "uk": "Варіанти C282Y і H63D, що спричиняють перевантаження залізом; при високих феритині й насиченні трансферину.",
+        "en": "The C282Y variant, which in two copies is behind most inherited iron overload, and H63D, which is also reported but rarely causes it; for a high ferritin and transferrin saturation.",
+        "uk": "Варіант C282Y, дві копії якого спричиняють більшість випадків спадкового перевантаження залізом, і H63D, який теж визначають, але він рідко його спричиняє; при високих феритині й насиченні трансферину.",
     },
     "special.gen-thrombophilia": {"en": "Inherited clotting risk (F5 Leiden, F2)", "uk": "Спадковий ризик тромбозів (F5 Лейден, F2)"},
     "special.gen-thrombophilia_what": {

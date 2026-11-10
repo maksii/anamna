@@ -22,7 +22,9 @@ Anamna stores personal health information. Treat every installation as sensitive
 
 - Serve it only over TLS, behind a reverse proxy or tunnel you control, and set
   `ANAMNA_SECURE_COOKIES=1` when TLS terminates in front of the app.
-- Set a long random `ANAMNA_SECRET`. The built-in default is for local development only.
+- `ANAMNA_SECRET` is optional. Without it a random secret is generated on first start and stored as
+  `secret.key` beside the database, readable only by the server's user. Protect it and back it up
+  with the database.
 - Do not expose a fresh installation to the internet before finishing `/setup`; the one-time setup
   code in the server log is what keeps a stranger from claiming it. Keep sign-up closed unless you
   mean to open it.
@@ -34,3 +36,14 @@ Anamna stores personal health information. Treat every installation as sensitive
   expiry, and revoke tokens you no longer use from `/profile` or `/admin/tokens`.
 - Optional integrations (AI providers, Telegram, Paperless-ngx, OpenWearables, lab accounts) send
   data to the services you configure. Enable only the ones you trust with that data.
+- The container runs the server as an unprivileged user (uid 10001). It starts as root only to take
+  ownership of the data volume, then drops privileges. Start it with `--user` to skip that step when
+  the volume is already owned by the user you choose.
+- Sign-in attempts are limited per account and per visitor. Behind Cloudflare the visitor is taken
+  from the `CF-Connecting-IP` header; behind another proxy every visitor shares one address, and the
+  per-account limit is what bounds password guessing.
+- A record can be shared only with an account that already exists on the server. Sign-up does not
+  verify email addresses, so keep sign-up closed unless you trust everyone who can reach the form.
+- AI requests sent through OpenRouter are routed only to providers that do not store or train on
+  prompts. An administrator can lift that on the AI page; decide deliberately, because the text
+  sent is medical.

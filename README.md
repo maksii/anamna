@@ -25,13 +25,17 @@ With Docker (OCR included):
 ```bash
 docker run -d --name anamna -p 127.0.0.1:8000:8000 \
   -v anamna-data:/data \
-  -e ANAMNA_SECRET="$(openssl rand -hex 32)" \
   ghcr.io/maksii/anamna:latest
 ```
 
 The image keeps the database and uploaded files on the `/data` volume and carries no health data
 itself. It stores health information: put it behind TLS and do not expose it without
 authentication in front of it (see [SECURITY.md](SECURITY.md)).
+
+The server runs as an unprivileged user inside the container. On first start it takes ownership of
+the `/data` volume, so a volume created by an earlier image keeps working. A ready-made
+[compose.yaml](compose.yaml) is in this repository: `docker compose up -d`, then
+`docker compose logs anamna` for the first-run setup code.
 
 ## Configure
 
@@ -42,8 +46,8 @@ Administration pages, where a saved value wins over the environment.
 |---|---|
 | `ANAMNA_DB` | SQLite database path. Default `data/anamna.sqlite3` (`/data/anamna.sqlite3` in the image). |
 | `ANAMNA_SOURCES` | Directory for original files. Default `sources/` (`/data/sources` in the image). |
-| `ANAMNA_SECRET` | Signing secret for sessions. Set a long random value for any real use; the built-in default is for local development only. |
-| `ANAMNA_SECURE_COOKIES` | `1` when TLS terminates at a proxy in front of the app, so the session cookie is always marked `Secure`. |
+| `ANAMNA_SECRET` | Optional. Secret that keys the stored hashes of one-time doctor codes. Unset, a random one is generated on first start and kept in `secret.key` beside the database; back that file up together with the database. |
+| `ANAMNA_SECURE_COOKIES` | `1` when TLS terminates at a proxy in front of the app, so the session cookie is always marked `Secure`. It also turns on the `Strict-Transport-Security` header. |
 | `ANAMNA_SETUP_CODE` | Optional first-run setup code. Unset, one is generated and printed to the log. |
 | `ANAMNA_AGENT_TOKEN` | Optional operator-pinned `anamna_agent_` credential, recreated on every start. |
 | `ANAMNA_PUBLIC_URL` | Public origin used for OAuth redirects and links (Oura, Garmin, Telegram). |
@@ -106,7 +110,8 @@ Other integrations:
   full-text search matches. Paperless is never a source of values.
 - **AI assist** (OpenRouter by default, Anthropic, OpenAI): optional transcription review of
   documents, suggested titles and metadata, and a plain-language summary of changes. Its output is
-  a suggestion and never marks anything verified.
+  a suggestion and never marks anything verified. Requests to OpenRouter go only to providers that
+  do not store prompts or train on them, unless an administrator allows otherwise on the AI page.
 
 Anamna can merge many overlapping sources, but imported data is still best checked by you: use
 your own agent or tools to fix, verify and map what was imported, and verify values against the

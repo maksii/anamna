@@ -265,7 +265,8 @@
 .export-hero dd, .export-paper dd { margin:3px 0 0; font-weight:700; }
 
 .export-workspace { display:grid; grid-template-columns:minmax(280px, 340px) minmax(0, 1fr); gap:24px; align-items:start; }
-.export-builder { position:sticky; top:18px; max-height:calc(100vh - 36px); overflow:hidden; display:flex; flex-direction:column; }
+.export-builder { position:sticky; top:18px; max-height:calc(100vh - 36px);
+  max-height:calc(100dvh - 36px); overflow:hidden; display:flex; flex-direction:column; }
 .export-search { display:grid; gap:6px; margin:8px 0 10px; font-size:12px; font-weight:760; }
 .export-search input { min-height:44px; width:100%; }
 .export-select-actions { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:12px; }
@@ -627,7 +628,8 @@
 
 html { background: var(--paper); color: var(--ink); font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
 
-body { margin: 0; min-height: 100vh; background: radial-gradient(circle at 85% 0%, var(--page-glow), transparent 28rem), var(--paper); }
+body { margin: 0; min-height: 100vh;
+  min-height: 100dvh; background: radial-gradient(circle at 85% 0%, var(--page-glow), transparent 28rem), var(--paper); }
 
 a { color: var(--teal-dark); text-decoration: none; }
 
@@ -1211,7 +1213,8 @@ img.viewer-media { object-fit: contain; padding: 16px; background: var(--surface
 
 .review-bench-main .viewer { border: 0; border-radius: 14px; }
 
-.review-bench-main .viewer-stage { min-height: 560px; height: calc(100vh - 220px); max-height: 960px; }
+.review-bench-main .viewer-stage { min-height: 560px; height: calc(100vh - 220px);
+  height: calc(100dvh - 220px); max-height: 960px; }
 
 /* The printed row of the value the reader is on (source-viewer.js places it
    from observations.evidence_bbox_json).  A frame with a light wash, so the
@@ -1234,7 +1237,8 @@ img.viewer-media { object-fit: contain; padding: 16px; background: var(--surface
 
 .section-chip:hover, .section-chip.is-active { border-color: var(--teal); background: var(--mint); }
 
-.review-bench-side { display: grid; gap: 0; min-width: 0; position: sticky; top: 88px; max-height: calc(100vh - 104px); }
+.review-bench-side { display: grid; gap: 0; min-width: 0; position: sticky; top: 88px; max-height: calc(100vh - 104px);
+  max-height: calc(100dvh - 104px); }
 
 .side-tabs { display: grid; grid-template-columns: repeat(auto-fit, minmax(112px, 1fr)); gap: 4px; padding: 4px; margin-bottom: 10px; background: var(--surface-sunken); border-radius: 12px; }
 
@@ -1242,7 +1246,8 @@ img.viewer-media { object-fit: contain; padding: 16px; background: var(--surface
 
 .side-tab.is-active { background: var(--surface); color: var(--teal-dark); box-shadow: 0 3px 12px rgba(30,60,52,.08); }
 
-.side-panel { margin: 0; max-height: calc(100vh - 160px); overflow: auto; }
+.side-panel { margin: 0; max-height: calc(100vh - 160px);
+  max-height: calc(100dvh - 160px); overflow: auto; }
 
 .obs-list { display: grid; gap: 10px; }
 
@@ -1299,7 +1304,8 @@ img.viewer-media { object-fit: contain; padding: 16px; background: var(--surface
    the numbers being certified below the fold and off the page they belong to. */
 .review-workspace { display: grid; grid-template-columns: minmax(230px, 290px) minmax(0, 1.3fr) minmax(300px, .95fr); gap: 18px; align-items: start; }
 
-.review-queue { position: sticky; top: 88px; max-height: calc(100vh - 110px); overflow: auto; padding-bottom: 14px; }
+.review-queue { position: sticky; top: 88px; max-height: calc(100vh - 110px);
+  max-height: calc(100dvh - 110px); overflow: auto; padding-bottom: 14px; }
 
 .review-file-list { display: grid; gap: 8px; }
 
@@ -1327,7 +1333,8 @@ img.viewer-media { object-fit: contain; padding: 16px; background: var(--surface
 
 .review-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 
-.review-stage .viewer-stage { min-height: 560px; height: calc(100vh - 250px); max-height: 920px; }
+.review-stage .viewer-stage { min-height: 560px; height: calc(100vh - 250px);
+  height: calc(100dvh - 250px); max-height: 920px; }
 
 /* Where the reviewer is, and how far through. A queue with no counter is a
    queue nobody can tell they are winning. */
@@ -1359,7 +1366,8 @@ img.viewer-media { object-fit: contain; padding: 16px; background: var(--surface
 
 
 
-.login-page { min-height: 100vh; display: grid; grid-template-columns: 1.25fr .75fr; background: var(--paper); }
+.login-page { min-height: 100vh;
+  min-height: 100dvh; display: grid; grid-template-columns: 1.25fr .75fr; background: var(--paper); }
 
 /* The card comes first in the DOM (heading order, tab order); on a wide
    screen the story is drawn in the left column all the same. */
@@ -1487,7 +1495,8 @@ img.viewer-media { object-fit: contain; padding: 16px; background: var(--surface
      toolbar wraps onto two rows at this width, so the stage gives up the
      height that keeps the whole viewer under the sticky header on an iPad
      held sideways (820px tall). */
-  .review-bench-main .viewer-stage { min-height: 0; height: calc(100vh - 270px); }
+  .review-bench-main .viewer-stage { min-height: 0; height: calc(100vh - 270px);
+    height: calc(100dvh - 270px); }
 
   /* Stack the trailing columns instead of dropping them — a hidden column is
 
@@ -4840,7 +4849,8 @@ body { overflow-x: clip; }
 
    can actually see what they are confirming. */
 
-.an-obs-evidence { display: grid; gap: var(--space-2); max-height: calc(100vh - 220px); overflow-y: auto; align-content: start; position: sticky; top: 88px; }
+.an-obs-evidence { display: grid; gap: var(--space-2); max-height: calc(100vh - 220px);
+  max-height: calc(100dvh - 220px); overflow-y: auto; align-content: start; position: sticky; top: 88px; }
 
 /* Reset for the same 1400px breakpoint as .review-workspace above: this rule
    must come after the base .an-obs-evidence rule it overrides, because a
@@ -4909,6 +4919,12 @@ body { overflow-x: clip; }
 .an-home-recent li strong { font-size: var(--text-sm); line-height: 1.35; }
 .an-home-recent li span { color: var(--muted); font-size: var(--text-2xs); }
 .an-home-recent .panel-head > a { display: inline-flex; align-items: center; min-height: 44px; }
+
+/* The first-run panel: three next steps, each a full-width button with its
+   hint underneath on a phone, side by side once there is room. */
+.an-home-welcome__steps { list-style: none; margin: var(--space-3) 0 0; padding: 0; display: grid; gap: var(--space-3); }
+.an-home-welcome__steps li { display: grid; gap: var(--space-1); align-content: start; }
+.an-home-welcome__steps a { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; text-align: center; white-space: normal; padding-block: var(--space-2); }
 
 .an-index-disclosures, .an-insight-sections { display: grid; gap: var(--space-3); }
 .an-index-disclosure, .an-insight-section {
@@ -4990,6 +5006,11 @@ details.panel.an-page-disclosure { padding: 0; }
      above them pushed the chart off the bottom of an iPhone SE. */
   .an-corr-options { max-height: 190px; }
 
+}
+
+/* Three across only on a wide screen: the labels are sentences, and on a phone or an iPad in portrait each needs the full width. */
+@media (min-width: 1100px) {
+  .an-home-welcome__steps { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -6563,7 +6584,7 @@ details.panel.an-page-disclosure { padding: 0; }
 .pill[data-vax-urgency="overdue"] { background: var(--st-high-bg); color: var(--st-high-fg); }
 .pill[data-vax-urgency="soon"] { background: var(--st-borderline-bg); color: var(--st-borderline-fg); }
 .pill[data-vax-urgency="later"], .pill[data-vax-urgency="unknown"] { background: var(--st-absent-bg); color: var(--st-absent-fg); }
-.pill[data-vax-agreement="agreed"] { background: var(--st-normal-bg); color: var(--st-normal-fg); }
+.pill[data-vax-agreement="agreed"], .pill[data-vax-agreement="agreed_ua_us"] { background: var(--st-normal-bg); color: var(--st-normal-fg); }
 .pill[data-vax-agreement="differs"] { background: var(--st-conflict-bg); color: var(--st-conflict-fg); }
 
 .an-vax-dose__actions {

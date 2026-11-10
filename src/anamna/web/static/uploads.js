@@ -77,6 +77,11 @@
                        // enqueued a moment after the last one finishes is seen
   let quiet = 0;
   let timer = null;
+  // One dropped request is retried on the next tick; only a run of them stops
+  // refreshing, and then the section says so rather than freezing on "processing".
+  const FAILURES_BEFORE_STALLED = 3;
+  let failures = 0;
+  const LIVE_ROLES = ["status", "alert", "log"];
 
   const el = (tag, className, text) => {
     const node = document.createElement(tag);
@@ -161,9 +166,15 @@
       payload = await response.json();
     } catch {
       // A failed poll is not a failed import: the worker is server-side and
-      // keeps going. Stop refreshing rather than blanking what is on screen.
-      return stop();
+      // keeps going. The last good render stays on screen; it is only replaced
+      // once polling has clearly stopped.
+      failures += 1;
+      if (failures < FAILURES_BEFORE_STALLED) return;
+      stop();
+      stalled();
+      return;
     }
+    failures = 0;
     const empty = document.getElementById("an-queue-empty");
     if (empty && payload.jobs.length) empty.remove();
     list.replaceChildren(...payload.jobs.map(render));
@@ -190,9 +201,19 @@
     timer = null;
   }
 
+  // The wording comes from the template; without it the page stops silently,
+  // as it always did. Resuming polls rewrites this line on the next success.
+  function stalled() {
+    const text = section.dataset.msgStalled;
+    if (!summary || !text) return;
+    if (!LIVE_ROLES.includes(summary.getAttribute("role"))) summary.setAttribute("role", "status");
+    summary.textContent = text;
+  }
+
   function start() {
     if (timer) return;
     quiet = 0;
+    failures = 0;
     timer = setInterval(poll, 1200);
     poll().catch(stop);
   }

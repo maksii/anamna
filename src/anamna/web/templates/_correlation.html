@@ -32,6 +32,7 @@
 
   <h3 class="an-corr-subhead">{{ t('corr.suggested_heading') }}</h3>
   {% if correlation.suggestions %}
+  <p class="tiny muted">{{ t('corr.suggested_note') }}</p>
   <ul class="an-corr-cards">
     {% for item in correlation.suggestions %}
     <li>

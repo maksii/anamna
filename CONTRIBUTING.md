@@ -22,10 +22,14 @@ the server output. For experiments, point `ANAMNA_DB` at a throwaway file such a
 ## Tests
 
 ```bash
+uv tool run --from ruff==0.17.4 ruff check src scripts tests
 uv run pytest --basetemp=work/pytest-run
 node --test tests/js/*.test.mjs
 uv run python -m compileall -q src
 ```
+
+The lint step checks correctness only (undefined names, unused imports, repeated dictionary keys);
+style is not gated.
 
 The Python suite runs in parallel by default (`-n auto`) and takes about a minute. Pass `-n 0` to
 run serially while debugging. Use your own `--basetemp`, and a different one for each concurrent
@@ -62,7 +66,8 @@ defect even when it reads fine in English.
 
 - Keep each change focused, and explain what it changes for the person using the app.
 - Check pages you touched at phone and tablet widths, in both languages.
-- CI runs the Python and JavaScript tests and builds the container image; it must be green.
+- CI lints, runs the Python and JavaScript tests, builds the container image and starts it once to
+  check that it serves, runs unprivileged and offers first-run setup. It must be green.
 
 By contributing you agree that your contribution is licensed under the
 [GNU AGPL v3.0 only](LICENSE).

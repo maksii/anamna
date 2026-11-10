@@ -190,7 +190,6 @@ def build_tools(connection, owner_id: str) -> dict[str, chat.Tool]:
     from . import app as web
     from .. import allergy, genetics, testplan
     from .. import immunizations as vaccines
-    from ..devices.queries import device_history_summary
     from ..health import HEALTH_AREAS
     from ..i18n import translate_phrase
 
@@ -236,7 +235,7 @@ def build_tools(connection, owner_id: str) -> dict[str, chat.Tool]:
         metric_id = _clean_id(_text(args, "metric_id", 120))
         rows = web._linked_observation_rows(connection, owner_id, metric_id) if metric_id else []
         if not rows:
-            summaries = [item for item in device_history_summary(connection, owner_id)
+            summaries = [item for item in web.device_history(connection, owner_id)
                          if str(item["metric_key"]) == metric_id]
             if summaries:
                 return _device_detail(summaries[0])
@@ -337,7 +336,7 @@ def build_tools(connection, owner_id: str) -> dict[str, chat.Tool]:
             return f"No document {raw!r} in this record. list_documents or search_record finds the id."
         document = subject["document"]
         out = [f"{_document_name(document)}; {document.get('vendor')}; {document.get('report_date') or '-'}; "
-               f"file {document.get('original_filename') or '-'} {_doc(document_id)}"]
+               f"{_doc(document_id)}"]
         observations = list(subject.get("observations") or ())
         if observations and not first_page:
             dated = str(document.get("report_date") or "")[:10]
@@ -433,7 +432,7 @@ def build_tools(connection, owner_id: str) -> dict[str, chat.Tool]:
 
     def get_devices(args: dict) -> str:
         key = _clean_id(_text(args, "metric_key", 80))
-        summaries = device_history_summary(connection, owner_id)
+        summaries = web.device_history(connection, owner_id)
         if not summaries:
             return "No wearable or home-device data in this record."
         if key:
@@ -681,7 +680,8 @@ def error_text(reason: str, *, admin: bool) -> str:
     return message
 
 
-_ERROR_KEYS = {"chat.error_disabled", "chat.error_budget", "chat.error_provider_error", "chat.error_truncated"}
+_ERROR_KEYS = {"chat.error_disabled", "chat.error_budget", "chat.error_provider_error", "chat.error_truncated",
+               "chat.error_in_progress"}
 
 
 # --- one turn ------------------------------------------------------------------------
@@ -780,6 +780,15 @@ def _run_turn(settings, *, viewer: dict, owner: dict, conversation_id: str, mess
         connection.close()
 
 
+#: People with an answer being written right now.  One turn at a time each:
+#: a second POST would interleave two answers in one conversation and spend
+#: the installation's shared daily budget twice as fast.
+# ponytail: process-local, like the document-review lock; move to a table if
+# the server ever runs more than one worker.
+_TURNS: set[tuple[str, str]] = set()
+_TURNS_LOCK = threading.Lock()
+
+
 def register_routes(app, settings, *, templates, template_context, require_user, record_user, require_csrf,
                     viewing_row) -> None:
     def people(request: Request) -> tuple[dict, dict]:
@@ -835,36 +844,59 @@ def register_routes(app, settings, *, templates, template_context, require_user,
         message = str(form.get("message") or "").strip()[: chat.MAX_MESSAGE_CHARS]
         if not message:
             return RedirectResponse(f"/chat/{form.get('conversation_id')}" if form.get("conversation_id") else "/chat", 303)
-        conversation_id = str(form.get("conversation_id") or "")
-        if not conversation_id:
-            conversation_id = await run_in_threadpool(
-                chat.create_conversation, settings, viewer["id"], owner["id"], message)
-        known = await run_in_threadpool(chat.conversation, settings, conversation_id, viewer["id"], owner["id"])
-        if known is None:
-            raise HTTPException(404)
-        title = str(known["title"])
-        # Only a model the admin offers; anything else answers on the default.
-        choice = str(form.get("model") or "")
-        if choice not in {item["key"] for item in await run_in_threadpool(chat.choices, settings)}:
-            choice = ""
-        if choice != str(known.get("model_key") or ""):
-            await run_in_threadpool(chat.set_model, settings, conversation_id, choice)
-        locale = get_locale()
-        events: queue.Queue = queue.Queue()
+        key = (str(settings.database_path), str(viewer["id"]))
+        with _TURNS_LOCK:
+            busy = key in _TURNS
+            if not busy:
+                _TURNS.add(key)
+        if busy:
+            if "text/event-stream" in request.headers.get("accept", ""):
+                async def refused():
+                    yield _sse({"type": "error", "reason": "in_progress",
+                                "message": error_text("in_progress", admin=False), "html": ""})
 
-        def work() -> None:
-            try:
-                _run_turn(settings, viewer=viewer, owner=owner, conversation_id=conversation_id,
-                          message=message, locale=locale, emit=events.put, choice=choice)
-            except Exception:
-                events.put({"type": "error", "reason": "provider_error",
-                            "message": error_text("provider_error", admin=False), "html": ""})
-                raise
-            finally:
-                events.put(None)
+                return StreamingResponse(refused(), media_type="text/event-stream",
+                                         headers={"X-Accel-Buffering": "no"})
+            return RedirectResponse(f"/chat/{form.get('conversation_id')}" if form.get("conversation_id") else "/chat", 303)
+        try:
+            conversation_id = str(form.get("conversation_id") or "")
+            if not conversation_id:
+                conversation_id = await run_in_threadpool(
+                    chat.create_conversation, settings, viewer["id"], owner["id"], message)
+            known = await run_in_threadpool(chat.conversation, settings, conversation_id, viewer["id"], owner["id"])
+            if known is None:
+                raise HTTPException(404)
+            title = str(known["title"])
+            # Only a model the admin offers; anything else answers on the default.
+            choice = str(form.get("model") or "")
+            if choice not in {item["key"] for item in await run_in_threadpool(chat.choices, settings)}:
+                choice = ""
+            if choice != str(known.get("model_key") or ""):
+                await run_in_threadpool(chat.set_model, settings, conversation_id, choice)
+            locale = get_locale()
+            events: queue.Queue = queue.Queue()
 
-        thread = threading.Thread(target=contextvars.Context().run, args=(work,), daemon=True)
-        thread.start()
+            def work() -> None:
+                try:
+                    _run_turn(settings, viewer=viewer, owner=owner, conversation_id=conversation_id,
+                              message=message, locale=locale, emit=events.put, choice=choice)
+                except Exception:
+                    events.put({"type": "error", "reason": "provider_error",
+                                "message": error_text("provider_error", admin=False), "html": ""})
+                    raise
+                finally:
+                    # Released before the stream ends, so a retry that follows the
+                    # last event is not refused as still in progress.
+                    with _TURNS_LOCK:
+                        _TURNS.discard(key)
+                    events.put(None)
+
+            thread = threading.Thread(target=contextvars.Context().run, args=(work,), daemon=True)
+            thread.start()
+        except BaseException:
+            with _TURNS_LOCK:
+                _TURNS.discard(key)
+            raise
         if "text/event-stream" not in request.headers.get("accept", ""):
             # Without script the form posts normally: wait for the answer,
             # then show the conversation with it.

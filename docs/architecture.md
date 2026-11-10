@@ -56,7 +56,7 @@ Every imported document has a `review_tasks` record. A review can verify all obs
 - Source downloads are resolved through an owned database record rather than a user-supplied path.
 - SQLite foreign keys, WAL mode, indexes, and ordered migrations are enabled.
 
-For LAN or internet use, add TLS, set `ANAMNA_SECURE_COOKIES=1` when TLS terminates at a proxy, supply a non-default `ANAMNA_SECRET`, add backup encryption, and put the service behind a hardened reverse proxy. `anamna-web` binds to `127.0.0.1`; the container listens on all interfaces inside its own network namespace, so publish its port only to the proxy.
+For LAN or internet use, add TLS, set `ANAMNA_SECURE_COOKIES=1` when TLS terminates at a proxy, keep the `secret.key` that the server generates beside the database safe or set your own `ANAMNA_SECRET`, add backup encryption, and put the service behind a hardened reverse proxy. `anamna-web` binds to `127.0.0.1`; the container listens on all interfaces inside its own network namespace, so publish its port only to the proxy.
 
 ## Expansion paths
 

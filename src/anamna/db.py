@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Iterator
 
 from .config import Settings, get_settings, resource_path
 
 
 MIGRATIONS_DIR = resource_path("migrations")
+#: A migration that opens its own transaction or sets a PRAGMA (which a
+#: wrapping transaction silently ignores) runs as written.  A trigger body's
+#: BEGIN on its own line also matches, so such a file is simply not wrapped.
+_SELF_MANAGED = re.compile(r"^\s*(BEGIN|COMMIT|PRAGMA)\b", re.IGNORECASE | re.MULTILINE)
 
 
 def utc_now() -> str:
@@ -57,7 +61,8 @@ def transaction(
 
 def migrate(settings: Settings | None = None) -> None:
     settings = settings or get_settings()
-    with connect(settings) as connection:
+    connection = connect(settings)
+    try:
         connection.execute(
             "CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)"
         )
@@ -66,9 +71,27 @@ def migrate(settings: Settings | None = None) -> None:
             version = int(path.name.split("_", 1)[0])
             if version in applied:
                 continue
-            connection.executescript(path.read_text(encoding="utf-8"))
-            connection.execute(
-                "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
-                (version, utc_now()),
+            script = path.read_text(encoding="utf-8")
+            record = (
+                "INSERT INTO schema_migrations(version, applied_at) "
+                f"VALUES ({version}, '{utc_now()}');"
             )
+            if _SELF_MANAGED.search(script):
+                # Opens its own transaction or sets a PRAGMA that a wrapping
+                # transaction would silence: runs as written.
+                connection.executescript(script)
+                connection.executescript(record)
+                continue
+            try:
+                # One transaction per migration, version row included: a
+                # failure half-way leaves nothing behind, so the next start
+                # runs the same file again from a clean schema.
+                connection.executescript(f"BEGIN IMMEDIATE;\n{script}\n{record}\nCOMMIT;")
+            except BaseException:
+                if connection.in_transaction:
+                    connection.rollback()
+                raise
         connection.execute("PRAGMA optimize")
+        connection.commit()
+    finally:
+        connection.close()

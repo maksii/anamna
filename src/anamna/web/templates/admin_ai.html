@@ -63,6 +63,11 @@
       <input type="checkbox" name="enabled" value="1" {{ 'checked' if ai.enabled == '1' else '' }}>
       {{ t('aiassist.enable_label') }}
     </label>
+    <label>
+      <input type="checkbox" name="data_collection" value="allow" {{ 'checked' if ai.data_collection == 'allow' else '' }} aria-describedby="ai-data-collection-hint">
+      {{ t('aiadmin.data_collection_label') }}
+    </label>
+    <p class="tiny muted" id="ai-data-collection-hint">{{ t('aiadmin.data_collection_help') }}</p>
 
     <fieldset class="ai-fieldset">
       <legend>{{ t('aiassist.keys_heading') }}</legend>

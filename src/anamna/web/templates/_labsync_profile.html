@@ -95,8 +95,8 @@
     <li>{{ t('labsync.synevo_step2') }}</li>
     <li>{{ t('labsync.synevo_step3') }}
       <pre class="an-lab-snippet" role="figure" aria-label="{{ t('labsync.cookie_name_label') }}"><code>next-auth.session-token</code></pre>
-      <button type="button" class="secondary an-lab-copy" data-copied="{{ t('labsync.copied') }}"
-        onclick="var b=this;navigator.clipboard.writeText(b.previousElementSibling.textContent.trim()).then(function(){b.textContent=b.dataset.copied;})">{{ t('labsync.copy') }}</button>
+      <button type="button" class="secondary an-lab-copy" data-copied="{{ t('labsync.copied') }}" data-failed="{{ t('labsync.copy_failed') }}"
+        onclick="var b=this,s=b.previousElementSibling,f=function(){var r=document.createRange();r.selectNodeContents(s);var g=getSelection();g.removeAllRanges();g.addRange(r);b.textContent=b.dataset.failed;};try{navigator.clipboard.writeText(s.textContent.trim()).then(function(){b.textContent=b.dataset.copied;},f);}catch(e){f();}">{{ t('labsync.copy') }}</button>
 </li>
     <li>{{ t('labsync.synevo_step4') }}</li>
   </ol>

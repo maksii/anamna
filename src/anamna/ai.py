@@ -28,7 +28,7 @@ import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from difflib import SequenceMatcher
 from functools import wraps
 from typing import cast
@@ -273,6 +273,8 @@ def ai_settings(settings: Settings) -> dict:
     default = tasks["default"]
     return {
         "enabled": stored.get("ai_enabled", "1"),
+        # Deny unless an administrator allowed it: providers that keep or train on prompts are not a default for a medical record.
+        "data_collection": "allow" if stored.get("ai_openrouter_data_collection") == "allow" else "deny",
         "keys": keys,
         "key_sources": key_sources,
         "tasks": tasks,
@@ -327,8 +329,15 @@ def parse_chat_models(text: str) -> list[dict] | None:
     return models if len(models) <= MAX_CHAT_MODELS else None
 
 
-def save_ai_settings(settings: Settings, values: dict[str, str]) -> None:
+def save_ai_settings(
+    settings: Settings, values: dict[str, str], *, data_collection: str | None = None
+) -> None:
     """Upsert the given ``app_settings`` keys (same pattern as open_registration)."""
+    if data_collection is not None:
+        values = {
+            **values,
+            "ai_openrouter_data_collection": "allow" if data_collection == "allow" else "deny",
+        }
     with connect(settings) as connection:
         for key, value in values.items():
             connection.execute(
@@ -431,6 +440,7 @@ def task_route(settings: Settings, task: str) -> dict:
     config = ai_settings(settings)
     route = dict(config["tasks"][task_for(task)])
     route["api_key"] = config["keys"][route["provider"]]
+    route["data_collection"] = config["data_collection"]
     route["active"] = config["enabled"] == "1" and route["enabled"] and bool(route["api_key"])
     route["daily_cap"] = (
         config["caps"][route["provider"]] if route["provider"] in PAID_PROVIDERS else DAILY_BUDGET
@@ -784,6 +794,7 @@ def _openrouter_request(
     messages: list[dict],
     max_tokens: int,
     response_format: dict | None = None,
+    data_collection: str = "deny",
 ) -> dict:
     request: dict = {
         "model": model,
@@ -791,6 +802,9 @@ def _openrouter_request(
         "max_tokens": max_tokens,
         "temperature": 0,
     }
+    # "deny" asks OpenRouter to route only to providers that do not retain or
+    # train on the prompt; the medical text must not reach one that does.
+    request["provider"] = {"data_collection": data_collection}
     if model.endswith(":free"):
         request["models"] = [model] + [m for m in FALLBACK_MODELS if m != model]
     if response_format:
@@ -798,7 +812,7 @@ def _openrouter_request(
         # provider that silently ignores response_format.  Healing handles the
         # remaining syntax-level slips (fences, preambles, trailing commas).
         request["response_format"] = response_format
-        request["provider"] = {"require_parameters": True}
+        request["provider"]["require_parameters"] = True
         request["plugins"] = [{"id": "response-healing"}]
     return request
 
@@ -812,9 +826,10 @@ def _openrouter_complete(
     response_format: dict | None = None,
     *,
     effort: str = "",
+    data_collection: str = "deny",
 ) -> AIResult:
     body = json.dumps(
-        _openrouter_request(model, messages, max_tokens, response_format)
+        _openrouter_request(model, messages, max_tokens, response_format, data_collection)
     ).encode("utf-8")
     request = urllib.request.Request(
         "https://openrouter.ai/api/v1/chat/completions",
@@ -1093,10 +1108,16 @@ def complete(
     )
     started = time.monotonic()
     result: AIResult
+    # The retention policy is passed only when the admin allowed it: "deny" is
+    # the OpenRouter builder's default, so every other seam (Anthropic, OpenAI,
+    # the stubs that tests register) keeps the signature it has always had.
+    retention: dict[str, str] = {}
+    if provider_name == "openrouter" and route["data_collection"] == "allow":
+        retention["data_collection"] = "allow"
     try:
         result = provider(
             route["api_key"], route["model"], messages, output_limit, timeout,
-            response_format, effort=route["effort"],
+            response_format, effort=route["effort"], **retention,
         )
     except Exception as exc:
         # Every failure leaves as AIUnavailable, whatever the provider raised.
@@ -1544,7 +1565,13 @@ def _structured_review(
 
 def _clean_date(value: object) -> str:
     text = str(value or "").strip()
-    return text if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text) else ""
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+        return ""
+    try:
+        parsed = date.fromisoformat(text)
+    except ValueError:
+        return ""
+    return text if parsed <= date.today() else ""
 
 
 _LAB_INTERPRETATION_SENTENCE = re.compile(
@@ -1832,7 +1859,7 @@ def _review_input(document: dict, pages: list[dict], observations: list[dict], i
     return _ReviewInput(
         language=_LANGUAGE.get(locale, "English"),
         meta={
-            "current_title": document.get("title") or document.get("original_filename") or "",
+            "current_title": document.get("title") or "",
             "clinical_type": document.get("clinical_type") or "",
             "vendor": document.get("vendor") or "",
             "report_date": document.get("report_date") or "",
@@ -1934,7 +1961,12 @@ class _Grounding:
         quote = _match_key(quote_value)
         if page is None or not quote:
             return False
-        return quote in self.source_by_page.get(page, "") or bool(image_ok and self.images)
+        page_text = self.source_by_page.get(page, "")
+        if page_text:
+            return quote in page_text
+        # A scanned page has no text to check against; only then may the
+        # image the model was shown stand in for it.
+        return bool(image_ok and self.images)
 
 
 def _review_prompts(language: str, audit_limit: int) -> dict[str, str]:

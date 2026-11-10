@@ -488,7 +488,7 @@ def test_openrouter_free_request_requires_and_heals_structured_output():
     assert "models" not in request
     assert request["response_format"]["type"] == "json_schema"
     assert request["response_format"]["json_schema"]["strict"] is True
-    assert request["provider"] == {"require_parameters": True}
+    assert request["provider"] == {"data_collection": "deny", "require_parameters": True}
     assert request["plugins"] == [{"id": "response-healing"}]
 
 

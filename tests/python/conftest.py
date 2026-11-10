@@ -34,3 +34,16 @@ def english_for_unlabelled_visits(monkeypatch):
     token = i18n._locale.set(i18n.DEFAULT_LOCALE)
     yield
     i18n._locale.reset(token)
+
+
+@pytest.fixture(autouse=True)
+def empty_sign_in_meters():
+    """Sign-in throttling counts failures per address in a module-level dict.
+    Every test client shares one address, and a working sign-in no longer
+    resets that address's count, so one test's wrong passwords would lock the
+    next test out."""
+    from anamna import security
+
+    security._attempts.clear()
+    yield
+    security._attempts.clear()

@@ -581,6 +581,11 @@
     <strong>{{ t('openwearables.unreachable') }}</strong>
     <p class="tiny">{{ t('openwearables.unreachable_hint') }}</p>
   </div>
+  {% elif openwearables_card.none_for_you %}
+  {#- The server may hold accounts, just none under this person's email; saying
+      "no accounts" would be wrong, so the card names the address it looked for
+      and offers no chooser. -#}
+  <p class="alert" role="status">{{ t('openwearables.none_for_you', email=user.email) }}</p>
   {% elif openwearables_card.people %}
   <form action="/profile/openwearables/link" method="post" class="stack-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">

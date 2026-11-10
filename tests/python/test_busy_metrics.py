@@ -30,7 +30,8 @@ def test_changes_ai_and_period_use_shared_busy_helper():
 
 def test_device_chart_switches_track_the_pressed_button():
     js = _read("static/device-chart.js")
-    assert js.count("track(button, load(activeSource))") == 2
+    assert js.count("refresh(button, activeSource)") == 2
+    assert "track(button, load(id))" in js
     assert "host.setAttribute('aria-busy', 'true')" in js
 
 

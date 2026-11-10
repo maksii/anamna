@@ -26,6 +26,7 @@ from __future__ import annotations
 import logging
 import shutil
 import threading
+import time
 import uuid
 import zipfile
 from dataclasses import dataclass, field
@@ -96,6 +97,13 @@ _CONTENT_SIGNATURES = {
 }
 _PEEK_FILES = 40
 _PEEK_BYTES = 8192
+#: Windows resolves these stems to a device whatever extension follows, so
+#: `nul.pdf` is written to nowhere at all.
+_RESERVED_STEMS = frozenset({
+    "con", "prn", "aux", "nul",
+    *(f"com{n}" for n in range(1, 10)),
+    *(f"lpt{n}" for n in range(1, 10)),
+})
 
 
 # --- detection --------------------------------------------------------------
@@ -166,7 +174,11 @@ def _content_scores(listed: list[str], read: Callable[[str], bytes]) -> dict[str
 def detect_archive_adapter(archive: Path) -> tuple[str | None, str]:
     """Read a zip's directory and a slice of its files, without unpacking it."""
     with zipfile.ZipFile(archive) as bundle:
-        names = [info.filename for info in bundle.infolist() if not info.is_dir()]
+        # An unsafe name is never read, so it cannot pick the adapter's root either.
+        names = [
+            info.filename for info in bundle.infolist()
+            if not info.is_dir() and not _unsafe(info.filename)
+        ]
 
         def read(name: str) -> bytes:
             with bundle.open(name) as handle:
@@ -193,10 +205,17 @@ def _unsafe(name: str) -> bool:
     """Reject anything that would write outside the extraction directory.
 
     `ZipFile.extract` already neutralises these, but a skipped entry that is
-    named in the audit trail beats a silently relocated one.
+    named in the audit trail beats a silently relocated one.  Names of Windows
+    devices are refused too: on Windows they are written to the device and
+    silently dropped rather than kept as a file.
     """
     candidate = PurePath(name.replace("\\", "/"))
-    return candidate.is_absolute() or ".." in candidate.parts or name.startswith("/")
+    return (
+        candidate.is_absolute()
+        or ".." in candidate.parts
+        or name.startswith("/")
+        or any(part.split(".", 1)[0].casefold() in _RESERVED_STEMS for part in candidate.parts)
+    )
 
 
 @dataclass
@@ -272,8 +291,11 @@ def _expand_nested(inner: Path, depth: int, budget: _ExpansionBudget) -> list[Pa
         return expand_archive(inner, inner.with_suffix(""), depth=depth + 1, _budget=budget)
     except _ArchiveCollisionError:
         raise
-    except (zipfile.BadZipFile, OSError):
+    except (zipfile.BadZipFile, OSError, RuntimeError, NotImplementedError):
         logger.warning("intake: nested archive %s could not be expanded", inner.name)
+        # Whatever it extracted before failing is not in the record and nothing
+        # names it; leaving it behind is the same orphan the validator reports.
+        shutil.rmtree(inner.with_suffix(""), ignore_errors=True)
         return []
 
 
@@ -691,10 +713,21 @@ def _run_archive(settings: Settings, job) -> None:
         discard_upload_tree(settings, target)
         _finish(settings, job["id"], "failed", "intake.failed_too_big")
         return
+    except Exception:
+        # Anything else escaping expansion (an encrypted member, an unsupported
+        # compression method, a full disk) would leave the partial tree on disk
+        # for good. run_job's handler still records the job as failed.
+        discard_upload_tree(settings, target)
+        raise
 
     if adapter:
-        _hand_on_device_export(settings, job, archive, target / relative_root if relative_root else target,
-                               adapter, produced)
+        # The root comes from names inside the archive and must never leave the
+        # directory it was unpacked into; anything that resolves outside falls
+        # back to the whole expansion.
+        root = target / relative_root if relative_root else target
+        if not root.resolve().is_relative_to(target.resolve()):
+            root = target
+        _hand_on_device_export(settings, job, archive, root, adapter, produced)
         return
 
     documents = sorted(
@@ -792,20 +825,34 @@ _LOCK = threading.Lock()
 
 
 def _drain(settings: Settings, key: str) -> None:
+    # One failing iteration (a SQLite lock, a disk error) must not end the only
+    # thread draining this database: _WORKERS would keep pointing at a dead thread
+    # and the claimed job would stay `running` for good.
     while True:
-        job = _claim(settings)
-        if job is False:  # another worker took it first
-            continue
-        if job is None:
-            # Deciding to stop happens under the same lock that starts a
-            # worker, so a job enqueued at this instant either is seen here or
-            # starts a replacement thread; it cannot fall between the two.
-            with _LOCK:
-                if _pending(settings):
-                    continue
-                _WORKERS.pop(key, None)
-                return
-        run_job(settings, job)
+        job = None
+        try:
+            job = _claim(settings)
+            if job is False:  # another worker took it first
+                continue
+            if job is None:
+                # Deciding to stop happens under the same lock that starts a
+                # worker, so a job enqueued at this instant either is seen here or
+                # starts a replacement thread; it cannot fall between the two.
+                with _LOCK:
+                    if _pending(settings):
+                        continue
+                    _WORKERS.pop(key, None)
+                    return
+            run_job(settings, job)
+        except Exception as exc:  # noqa: BLE001
+            # The class name only: a message or traceback can carry a file name, and file names carry patients' names.
+            logger.error("intake: worker iteration failed: %s", type(exc).__name__)
+            if job is not None and job is not False:
+                try:
+                    _finish(settings, job["id"], "failed", "intake.failed_error")
+                except Exception:  # noqa: BLE001
+                    pass
+            time.sleep(1)
 
 
 def start_worker(settings: Settings) -> None:
@@ -885,5 +932,10 @@ def clear_finished(settings: Settings, owner_user_id: str) -> int:
             (owner_user_id,),
         ).rowcount
     for path in abandoned:
-        _discard_upload_copy(settings, Path(path))
+        # A failed device export is a directory, and the whole tree is what must go.
+        target = Path(path)
+        if target.is_dir():
+            discard_upload_tree(settings, target)
+        else:
+            _discard_upload_copy(settings, target)
     return cleared

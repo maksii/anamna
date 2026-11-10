@@ -5,6 +5,7 @@ import logging
 import math
 import os
 import re
+import shutil
 import sqlite3
 import threading
 import time
@@ -33,6 +34,7 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.concurrency import run_in_threadpool
+from starlette.middleware.gzip import GZipMiddleware
 
 from ..ai import (
     DEFAULT_MODELS as AI_DEFAULT_MODELS,
@@ -55,7 +57,7 @@ from ..ai import (
     save_ai_settings,
     usage_summary,
 )
-from .. import garmin, garmin_personal, integrations, openwearables, oura, paperless
+from .. import garmin, garmin_personal, integrations, labsync, openwearables, oura, paperless
 from .. import openwearables_webhooks as ow_hooks
 from ..telegram import TelegramService
 from .telegram_routes import register_telegram_routes
@@ -88,7 +90,6 @@ from ..devices.reconcile import (
     SLEEP_FAMILY, bridge_origin, human_source_label, preference_group, source_key, source_kind, valid_row,
 )
 from ..devices.timezone import timezone_choices, user_timezone, valid_timezone
-from ..devices.units import PLAUSIBLE_RANGES
 from .experience import build_overview, build_area_experience
 from . import search as record_search
 from .. import immunizations as immunization_records
@@ -176,7 +177,6 @@ from ..ingest.pipeline import (
     ensure_vendor,
     file_sha256,
     backfill_search_keys,
-    ingest_file,
     interpretation,
     repair_observation_semantics,
     apply_reread_proposals,
@@ -199,6 +199,7 @@ from ..ingest.pipeline import (
 )
 from ..derived import refresh_derived_observations
 from ..ingest.classifier import repair_order_identifiers
+from ..ingest.extract import PDFIUM_LOCK
 from ..ingest.parsers import PARSER_VERSION, ParsedObservation, reference_bounds
 from ..ingest.positions import backfill_positions, page_box, position_key
 from ..ingest.text import collapse_space, normalized_key, parse_decimal, search_key
@@ -230,7 +231,6 @@ from ..reference import (
     range_text,
     rule_applies_to_context,
     rule_label,
-    rule_note,
     rule_requirement,
     sources_for,
     staleness,
@@ -248,13 +248,15 @@ from ..security import (
     DOCTOR_PIN_GLOBAL_KEY,
     DOCTOR_PIN_GLOBAL_LIMIT,
     DOCTOR_PIN_REDEEM_WINDOW,
+    LOGIN_ACCOUNT_LIMIT,
     LOGIN_ATTEMPT_WINDOW,
     MINIMUM_PASSWORD_LENGTH,
-    ROLES,
+    PASSWORD_CHANGE_LIMIT,
     SETUP_CODE_GLOBAL_KEY,
     SETUP_CODE_GLOBAL_LIMIT,
     TOKEN_KINDS,
     AlreadySetUp,
+    access_token_row,
     access_token_user,
     authenticate,
     clear_attempts,
@@ -302,6 +304,9 @@ _INTEGRATION_SYNC_SAVED_URL = "/profile?saved=integration_sync"
 _PAPERLESS_URL_ERROR_URL = "/admin/paperless?error=paperless.error_url"
 _RESCAN_QUEUED_QUERY = "?rescan=queued"
 _PDF_MEDIA_TYPE = "application/pdf"
+#: Forms a visitor fills in before there is any session, so no CSRF token can
+#: guard them; `token_scope` refuses a cross-site post to any of these.
+_PRE_AUTH_FORMS = frozenset({_LOGIN_URL, "/register", _SETUP_URL, _DOCTOR_URL})
 _JSON_MEDIA_TYPE = "application/json"
 _DEVICE_METRIC_PREFIX = "device:"
 _UNKNOWN_PROVIDER = "Unknown provider"
@@ -541,6 +546,8 @@ MAX_ARCHIVE_UPLOAD_BYTES = 6 * 1024**3
 #: the assembled file joins the ordinary intake path.
 UPLOAD_CHUNK_BYTES = 32 * 1024 * 1024
 UPLOAD_CHUNK_THRESHOLD = 64 * 1024 * 1024
+#: Form fields and multipart part headers ride in the same body as the file.
+_MULTIPART_OVERHEAD_BYTES = 1024 * 1024
 #: `upload_error` arrives in a URL, so only a key the handler itself can emit is
 #: ever resolved back onto the page.
 UPLOAD_ERRORS = frozenset(
@@ -607,7 +614,7 @@ _MEMO_SIZE = 32
 _MEMO_LOCK = threading.Lock()
 
 #: Which half of the record each memoised read summarises.
-_MEMO_SCOPE = {"lab_catalog": "lab", "device_catalog": "device", "devices": "device"}
+_MEMO_SCOPE = {"lab_catalog": "lab", "device_catalog": "device", "devices": "device", "device_history": "device"}
 
 
 def invalidate_catalog(owner_user_id: str | None = None) -> None:
@@ -656,7 +663,8 @@ def _memoised[T](connection, owner_user_id: str, name: str, build: Callable[[], 
     def resolve() -> T:
         # Cards carry localised names and labels, so the locale is part of the key.
         key = (owner_user_id, get_locale(), name)
-        fingerprint = _fingerprint(connection, owner_user_id, _MEMO_SCOPE.get(name, "all"))
+        # The day is part of the print: cards carry "N days ago" and due states computed when they were built.
+        fingerprint = (date.today().isoformat(), _fingerprint(connection, owner_user_id, _MEMO_SCOPE.get(name, "all")))
         with _MEMO_LOCK:
             entry = _MEMO.get(key)
             if entry is not None and entry[0] == fingerprint:
@@ -1013,20 +1021,24 @@ def _render_pdf_page(cache_dir: Path, source: Path, cache_key: str, page_number:
     if target.is_file() and target.stat().st_mtime_ns >= source.stat().st_mtime_ns:
         return target
     target.parent.mkdir(parents=True, exist_ok=True)
-    document = pdfium.PdfDocument(source)
-    try:
-        if page_number < 1 or page_number > len(document):
-            raise IndexError(page_number)
-        page = document[page_number - 1]
+    # PDFium is not thread-safe, and the intake worker runs it for OCR on another
+    # thread: the lock covers every PDFium call. convert() copies the pixels so the
+    # image outlives the page; the PNG write stays outside the lock.
+    with PDFIUM_LOCK:
+        document = pdfium.PdfDocument(source)
         try:
-            image = page.render(scale=2.0).to_pil().convert("RGB")
-            temporary = target.with_name(f".{target.stem}-{uuid.uuid4().hex}.png")
-            image.save(temporary, format="PNG", optimize=True)
-            temporary.replace(target)
+            if page_number < 1 or page_number > len(document):
+                raise IndexError(page_number)
+            page = document[page_number - 1]
+            try:
+                image = page.render(scale=2.0).to_pil().convert("RGB")
+            finally:
+                page.close()
         finally:
-            page.close()
-    finally:
-        document.close()
+            document.close()
+    temporary = target.with_name(f".{target.stem}-{uuid.uuid4().hex}.png")
+    image.save(temporary, format="PNG", optimize=True)
+    temporary.replace(target)
     return target
 
 
@@ -1968,6 +1980,15 @@ _DEVICE_PANEL_BY_METRIC.update(
 )
 
 
+def _comparator_of(row) -> str | None:
+    """The laboratory's printed comparator for a censored result (`<`, `>`…),
+    or None.  A device reading and a hand-built row have none."""
+    try:
+        return row["comparator"] or None
+    except (KeyError, IndexError):
+        return None
+
+
 def _reading_verdict(
     connection, concept_id: str, row: dict[str, object], age: int | None, sex: str | None
 ) -> tuple[str | None, dict[str, object]]:
@@ -1998,6 +2019,7 @@ def _reading_verdict(
         concept_id=concept_id,
         value_numeric=row["value_numeric"],
         value_text=row["value_text"],
+        comparator=_comparator_of(row),
         unit=unit_source,
         age_years=age,
         sex=sex,
@@ -2371,6 +2393,16 @@ def _device_overview(connection, owner_user_id: str) -> dict[str, object]:
     )
 
 
+def device_history(connection, owner_user_id: str) -> list[dict[str, object]]:
+    """`device_history_summary`, rebuilt only when the owner's device data
+    changes.  It reads every daily row the owner has; the chat's tools and the
+    AI export ask for it repeatedly within one answer."""
+    return _memoised(
+        connection, owner_user_id, "device_history",
+        lambda: device_history_summary(connection, owner_user_id),
+    )
+
+
 def _metric_catalog(
     connection,
     owner_user_id: str,
@@ -2497,7 +2529,9 @@ def _partial_day(connection, owner_user_id: str, metric_key: str, day: object) -
     """Whether `day` is a day the device is still recording (CONTRACTS §6)."""
     from ..devices.timezone import user_timezone
 
-    zone = user_timezone(connection, owner_user_id)
+    # `_complete_days` asks once per device card; the zone is one row, so it is
+    # resolved once per request.
+    zone = _cached(("user_timezone", owner_user_id), lambda: user_timezone(connection, owner_user_id))
     return bool(device_queries.is_partial_day(metric_key, str(day or "")[:10], zone))
 
 
@@ -3910,13 +3944,17 @@ def _correlation_context(connection, owner_user_id: str, primary_id: str) -> dic
     primary_id = _twin_concept_id(primary_id)
     key = (owner_user_id, get_locale(), primary_id)
     fingerprint = _fingerprint(connection, owner_user_id)
-    entry = _CORRELATION_MEMO.get(key)
+    # `invalidate_catalog` iterates this dict under `_MEMO_LOCK` from another
+    # thread, so every access takes the lock.  The build itself runs outside it.
+    with _MEMO_LOCK:
+        entry = _CORRELATION_MEMO.get(key)
     if entry is not None and entry[0] == fingerprint:
         return entry[1]
     section = _build_correlation_context(connection, owner_user_id, primary_id)
-    if len(_CORRELATION_MEMO) >= 128:
-        _CORRELATION_MEMO.clear()
-    _CORRELATION_MEMO[key] = (fingerprint, section)
+    with _MEMO_LOCK:
+        if len(_CORRELATION_MEMO) >= 128:
+            _CORRELATION_MEMO.clear()
+        _CORRELATION_MEMO[key] = (fingerprint, section)
     return section
 
 
@@ -3979,7 +4017,8 @@ def _correlation_weakest_opening(
         (
             found
             for queue in _correlation_ranked_by_pool(
-                primary_id, windows, pools, min_pairs=MIN_PAIRS_EXPLORER, min_abs_r=0.0, top=1
+                primary_id, windows, pools, min_pairs=MIN_PAIRS_EXPLORER, min_abs_r=0.0, top=1,
+                require_significance=False,
             )
             for found in queue
         ),
@@ -4292,6 +4331,7 @@ def _document_observation_item(
         concept_id=str(row["concept_id"]),
         value_numeric=shown["value_numeric"],
         value_text=row["value_text"],
+        comparator=_comparator_of(row),
         unit=unit_source if numeric else row["unit_raw"],
         age_years=age,
         sex=sex,
@@ -5020,6 +5060,24 @@ def _upload_target(settings: Settings, name: str) -> Path:
     return target
 
 
+def _place_exclusively(partial: Path, pick_target) -> Path:
+    """Move a finished partial to a name nothing else holds.  A hard link
+    fails if the name exists, on every platform, which a rename does not; on a
+    filesystem without hard links the move falls back to a plain replace."""
+    for _ in range(5):
+        target = pick_target()
+        try:
+            os.link(partial, target)
+        except FileExistsError:
+            continue
+        except OSError:
+            partial.replace(target)
+            return target
+        partial.unlink()
+        return target
+    raise FileExistsError(str(partial))
+
+
 async def _admit_upload(
     settings: Settings, common: dict[str, str], kind: str, name: str, target: Path, written: int
 ) -> None:
@@ -5043,21 +5101,27 @@ async def _admit_upload(
         # of an OCR pass, keeps one copy of the bytes on disk, and can
         # say what happened.
         digest = await run_in_threadpool(file_sha256, target)
-        with connect(settings) as connection:
-            held = connection.execute(
-                """SELECT id FROM documents WHERE owner_user_id=? AND sha256=?
-                   ORDER BY imported_at LIMIT 1""",
-                (common["owner_user_id"], digest),
-            ).fetchone()
+
+        def held_document():
+            with connect(settings) as connection:
+                return connection.execute(
+                    """SELECT id FROM documents WHERE owner_user_id=? AND sha256=?
+                       ORDER BY imported_at LIMIT 1""",
+                    (common["owner_user_id"], digest),
+                ).fetchone()
+
+        held = await run_in_threadpool(held_document)
         if held:
             target.unlink(missing_ok=True)
-            record_duplicate(
+            await run_in_threadpool(
+                record_duplicate,
                 settings, **common, filename=name,
                 document_id=str(held["id"]), byte_size=written,
             )
             return
 
-    enqueue(
+    await run_in_threadpool(
+        enqueue,
         settings, **common, kind=job_kind, adapter_key=adapter,
         filename=name, source_path=target, byte_size=written,
     )
@@ -5431,6 +5495,32 @@ async def token_scope(request: Request, call_next):
             permitted = path in GUEST_ALLOWED_POSTS
         if not permitted:
             return JSONResponse({"detail": t("token.error_guest_only")}, status_code=403)
+    # Uploads are refused here rather than in the handler: FastAPI spools every
+    # multipart file part to disk before the handler, and its `require_user`,
+    # runs, so an anonymous or oversized body would be written in full first.
+    # Who is asking and how much they declare are both known from the headers
+    # already, so the body is never read for a request that cannot succeed.
+    if request.method == "POST" and path in (_UPLOAD_URL, _UPLOAD_URL + "/chunk"):
+        if request.state.anamna_user is None:
+            return login_redirect(request, HTTPException(401))
+        limit = (
+            MAX_ARCHIVE_UPLOAD_BYTES if path == _UPLOAD_URL else UPLOAD_CHUNK_BYTES
+        ) + _MULTIPART_OVERHEAD_BYTES
+        declared = (request.headers.get("content-length") or "").strip()
+        if not (declared.isascii() and declared.isdigit()):
+            return PlainTextResponse(t("intake.failed_too_big"), status_code=411)
+        if int(declared) > limit:
+            return PlainTextResponse(t("intake.failed_too_big"), status_code=413)
+    # No session exists yet on these forms, so no CSRF token can guard them.
+    # A browser says where a form post came from; one that came from another
+    # site is refused.  A client that sends no such header (a script, an old
+    # browser) is unaffected.
+    if (
+        request.method == "POST"
+        and path in _PRE_AUTH_FORMS
+        and (request.headers.get("sec-fetch-site") or "").lower() == "cross-site"
+    ):
+        return PlainTextResponse(t("auth.error_cross_site"), status_code=403)
     return await call_next(request)
 
 async def security_headers(request: Request, call_next):
@@ -5448,9 +5538,11 @@ async def security_headers(request: Request, call_next):
         response.headers["Cache-Control"] = _static_cache_control(request)
     else:
         response.headers["Cache-Control"] = "private, no-store, no-transform"
-    if request.url.scheme == "https":
+    if _secure_cookie(request):
         # Only over TLS: sent on a plain-http reply it is ignored by every
-        # browser, and pins a scheme the deployment may not have yet.
+        # browser, and pins a scheme the deployment may not have yet.  The
+        # same test as the cookies also covers TLS ending at a proxy, where
+        # the request arrives as plain http but the visitor's connection is not.
         response.headers.setdefault(
             "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
         )
@@ -5552,6 +5644,8 @@ def viewing_row(request: Request):
 
     A missing, self-referring, or revoked grant silently falls back to the
     session user's own record, so a stale cookie can never expose anything.
+    A grant is matched on the account it was given to, never on an address, because a share
+    addressed to someone who had no account yet must not pass to whoever registers that address.
     """
     settings = request.app.state.settings
     user = current_user(request)
@@ -5565,8 +5659,8 @@ def viewing_row(request: Request):
         with connect(settings) as connection:
             return connection.execute(
                 """SELECT u.* FROM record_shares s JOIN users u ON u.id = s.owner_user_id
-                       WHERE s.owner_user_id = ? AND s.grantee_email = ? AND u.disabled_at IS NULL""",
-                (target, user["email"]),
+                       WHERE s.owner_user_id = ? AND s.grantee_user_id = ? AND u.disabled_at IS NULL""",
+                (target, user["id"]),
             ).fetchone()
 
     return _cached(("viewing", user["id"]), resolve)
@@ -5746,6 +5840,16 @@ def _signed_in(request: Request, destination: str, user_id: str) -> RedirectResp
 def _client_key(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
+def _visitor_key(request: Request) -> str:
+    """Who is knocking, for per-visitor meters only.  Behind the Cloudflare
+    tunnel every request arrives from the tunnel's own address, so the peer
+    address would put every visitor in one bucket; ``CF-Connecting-IP`` is what
+    Cloudflare says the visitor was.  Anyone reaching the origin directly can
+    forge it, which is why it only ever chooses a bucket: the per-account meter
+    beside it counts every failure whatever this header says."""
+    forwarded = (request.headers.get("cf-connecting-ip") or "").strip()[:64]
+    return forwarded or _client_key(request)
+
 @router.post(_LOGIN_URL)
 def login(
     request: Request,
@@ -5754,16 +5858,24 @@ def login(
     next: Annotated[str, Form()] = "/",
 ):
     settings = request.app.state.settings
-    client = _client_key(request)
-    if throttled(client):
+    # Two meters, both counted on failure.  The address meter stops one source
+    # working through many accounts; the account meter stops a guesser who
+    # rotates addresses from working through one.  Either one refuses.
+    visitor = "login-ip:" + _visitor_key(request)
+    account = "login:" + email.strip().casefold()[:254]
+    if throttled(visitor) or throttled(account, LOGIN_ACCOUNT_LIMIT):
         return RedirectResponse(_LOGIN_THROTTLED_URL, status_code=303)
     user = authenticate(settings, email, password)
     if user is None:
-        record_attempt(client)
+        record_attempt(visitor)
+        record_attempt(account)
         return RedirectResponse("/login?error=invalid", status_code=303)
-    # Only failures count here: somebody who knows their own password must
-    # never be locked out of their own record by a noisy neighbour.
-    clear_attempts(client)
+    # Only failures count here, and a success clears only the account's own
+    # count: somebody who knows their own password must never be locked out
+    # of their own record by a noisy neighbour, but a working sign-in to one
+    # account must not reset the address meter either, or it would be a way to
+    # keep guessing at another account from the same address indefinitely.
+    clear_attempts(account)
     return _signed_in(request, _safe_next(next), user["id"])
 
 @router.get("/t/{token}")
@@ -5784,7 +5896,7 @@ def token_sign_in(request: Request, token: str):
     # reaches the database on every call, and leaving one of those open is
     # how a handful of connections becomes a saturated box.
     settings = request.app.state.settings
-    client = _client_key(request)
+    client = "token:" + _visitor_key(request)
     if throttled(client):
         return RedirectResponse(_LOGIN_THROTTLED_URL, status_code=303)
     row = access_token_user(settings, token)
@@ -5846,8 +5958,7 @@ def _doctor_client_key(request: Request) -> str:
     it only ever chooses a bucket: the global meter below it counts every
     failure no matter what this header says.
     """
-    forwarded = (request.headers.get("cf-connecting-ip") or "").strip()[:64]
-    return "doctor-pin:" + (forwarded or _client_key(request))
+    return "doctor-pin:" + _visitor_key(request)
 
 def _doctor_page(request: Request, error: str | None = None, status_code: int = 200):
     return templates.TemplateResponse(
@@ -5972,7 +6083,7 @@ def setup(
         return RedirectResponse(_LOGIN_URL, status_code=303)
     values = {"display_name": display_name.strip(), "email": email.strip(),
               "date_of_birth": date_of_birth.strip(), "sex_at_birth": sex_at_birth.strip()}
-    client = "setup-code:" + _client_key(request)
+    client = "setup-code:" + _visitor_key(request)
     if throttled(client) or throttled(SETUP_CODE_GLOBAL_KEY, SETUP_CODE_GLOBAL_LIMIT):
         minutes = t_plural(_DOCTOR_MINUTES_KEY, int(LOGIN_ATTEMPT_WINDOW.total_seconds() // 60))
         return _setup_page(request, t("setup.error_throttled", minutes=minutes), values, 429)
@@ -6040,7 +6151,7 @@ def register(
         return RedirectResponse(_SETUP_URL, status_code=303)
     if not open_registration(settings):
         return RedirectResponse("/login?error=closed", status_code=303)
-    client = _client_key(request)
+    client = "register:" + _visitor_key(request)
     if throttled(client):
         return RedirectResponse(_LOGIN_THROTTLED_URL, status_code=303)
     # Every attempt counts, not only the failed ones: an open sign-up form
@@ -6374,7 +6485,9 @@ PROFILE_ERRORS = frozenset(
         "profile.error_timezone",
         "profile.error_share_email",
         "profile.error_share_self",
+        "profile.error_share_unknown",
         "profile.error_password_current",
+        "profile.error_password_throttled",
         "profile.error_password_match",
         "profile.error_password_short",
         "token.error_label",
@@ -6395,6 +6508,8 @@ PROFILE_ERRORS = frozenset(
         "integrations.error_garmin_unreachable",
         "openwearables.error_user",
         "openwearables.error_unreachable",
+        "openwearables.error_taken",
+        "openwearables.error_not_yours",
         "profile.error_session",
     }
 )
@@ -6513,9 +6628,14 @@ def _openwearables_panel(settings, user) -> dict[str, object] | None:
     server — an integration nobody can use is not an empty card.
 
     Unlinked, the card is a list of the accounts that server holds, with
-    the one whose address matches this person's preselected.  A server that
-    will not answer must still render a page: the card says so and offers
-    nothing to submit, rather than taking the whole profile down with it.
+    the one whose address matches this person's preselected.  That list is
+    every account on a shared server, so an ordinary user is shown only the
+    entry under their own address; an administrator, who configured the
+    server, sees all of them.  ``none_for_you`` says the server holds nothing
+    under this address, so the card can say so instead of showing an empty
+    list.  A server that will not answer must still render a page: the card
+    says so and offers nothing to submit, rather than taking the whole profile
+    down with it.
     """
     if not openwearables.configured(settings):
         return None
@@ -6524,8 +6644,10 @@ def _openwearables_panel(settings, user) -> dict[str, object] | None:
             people = openwearables.remote_users(settings)
         except openwearables.OpenWearablesError as exc:
             openwearables.logger.warning("openwearables: user list unavailable: %s", exc)
-            return {"linked": False, "unreachable": True, "people": []}
+            return {"linked": False, "unreachable": True, "people": [], "none_for_you": False}
         mine = str(user["email"]).casefold()
+        if user["role"] != "admin":
+            people = [person for person in people if str(person["email"]).casefold() == mine]
         return {
             "linked": False,
             "unreachable": False,
@@ -6533,6 +6655,7 @@ def _openwearables_panel(settings, user) -> dict[str, object] | None:
                 {**person, "selected": str(person["email"]).casefold() == mine}
                 for person in people
             ],
+            "none_for_you": user["role"] != "admin" and not people,
         }
     state = openwearables.sync_state(settings, user["id"])
     with connect(settings) as db:
@@ -6652,9 +6775,9 @@ def _profile_response(request: Request, user, error=None, saved=None, new_token=
         shared_with_me = connection.execute(
             """SELECT s.owner_user_id, u.display_name FROM record_shares s
                    JOIN users u ON u.id = s.owner_user_id
-                   WHERE s.grantee_email = ? AND u.disabled_at IS NULL
+                   WHERE s.grantee_user_id = ? AND u.disabled_at IS NULL
                    ORDER BY u.display_name""",
-            (user["email"],),
+            (user["id"],),
         ).fetchall()
     active_tab = _profile_active_tab(error, saved, new_token, tab, new_pin)
     paperless_on = paperless.paperless_active(settings)
@@ -6859,6 +6982,19 @@ def change_token(
             expires_at = _token_expiry(expires_on)
         except ValueError:
             return RedirectResponse(f"{destination}?error=token.error_expiry", status_code=303)
+        row = access_token_row(settings, token_id, scope)
+        if row is None:
+            return RedirectResponse(f"{destination}?error=token.error_unknown", status_code=303)
+        # A PIN-opened access keeps the window its code was minted with; the
+        # submitted date cannot lengthen a doctor's access after the fact.
+        if row["pin_hash"]:
+            expires_at = row["expires_at"]
+        elif expires_at is not None and expires_at <= utc_now():
+            return RedirectResponse(f"{destination}?error=token.error_expiry", status_code=303)
+        # A guest link must stay time-limited, as create_token requires; removing
+        # its expiry would leave a link to a record that never stops being shared.
+        elif row["kind"] == "guest" and expires_at is None:
+            return RedirectResponse(f"{destination}?error=token.error_expiry", status_code=303)
         if not update_access_token(settings, token_id, label, expires_at, scope):
             return RedirectResponse(f"{destination}?error=token.error_unknown", status_code=303)
         _audit(settings, user["id"], user["id"], "token_updated", "access_token", token_id,
@@ -7036,9 +7172,15 @@ async def admin_ai_save(request: Request):
     if isinstance(parsed, str):
         return RedirectResponse(f"/admin/ai?error={parsed}", status_code=303)
     values, audit = parsed
-    save_ai_settings(settings, values)
+    # An unchecked box is absent from the form altogether, so absence has to
+    # store the stricter policy rather than leave the previous one in place.
+    data_collection = "allow" if form.get("data_collection") == "allow" else "deny"
+    await run_in_threadpool(save_ai_settings, settings, values, data_collection=data_collection)
     # The keys themselves must never reach the audit log; only which changed.
-    _audit(settings, admin["id"], admin["id"], "admin_ai_changed", "app_settings", "ai", audit)
+    await run_in_threadpool(
+        _audit, settings, admin["id"], admin["id"], "admin_ai_changed", "app_settings", "ai",
+        {**audit, "data_collection": data_collection},
+    )
     return RedirectResponse("/admin/ai?done=saved", status_code=303)
 
 @router.get("/admin/ai/models", responses=_RESPONSES_401_403_404)
@@ -7328,9 +7470,15 @@ def change_password(
     require_csrf(user, csrf_token)
     # The current password is re-checked even though the session is valid:
     # otherwise an unattended logged-in browser is enough to take the
-    # account over permanently.
+    # account over permanently.  Wrong guesses are counted against the account
+    # like sign-in failures, so the form cannot be used to search for it.
+    key = "pwchange:" + str(user["id"])
+    if throttled(key, PASSWORD_CHANGE_LIMIT):
+        return RedirectResponse("/profile?error=profile.error_password_throttled", status_code=303)
     if authenticate(settings, user["email"], current_password) is None:
+        record_attempt(key)
         return RedirectResponse("/profile?error=profile.error_password_current", status_code=303)
+    clear_attempts(key)
     if new_password != confirm_password:
         return RedirectResponse("/profile?error=profile.error_password_match", status_code=303)
     if len(new_password) < MINIMUM_PASSWORD_LENGTH:
@@ -7470,12 +7618,19 @@ def openwearables_link(
         )
     # The submitted id is checked against the server's own list rather than
     # trusted: a hand-written form post must not be able to point this
-    # record at an account the person was never shown.
+    # record at an account the person was never shown.  An ordinary user may
+    # link only the account under their own address, because that account's
+    # wearable data is theirs; and no remote account already linked to another
+    # local record may be taken, whoever is asking.
     chosen = next(
         (person for person in people if person["id"] == remote_user_id.strip()), None
     )
     if chosen is None:
         return RedirectResponse("/profile?error=openwearables.error_user", status_code=303)
+    if user["role"] != "admin" and str(chosen["email"]).casefold() != str(user["email"]).casefold():
+        return RedirectResponse("/profile?error=openwearables.error_not_yours", status_code=303)
+    if openwearables.linked_elsewhere(settings, user["id"], str(chosen["id"])):
+        return RedirectResponse("/profile?error=openwearables.error_taken", status_code=303)
     replaced = openwearables.link_account(
         settings, user["id"], str(chosen["id"]), str(chosen["email"])
     )
@@ -7671,17 +7826,20 @@ def garmin_personal_remove(request: Request, csrf_token: Annotated[str, Form()] 
 # store the raw payload, and return; parsing into observations is a later,
 # idempotent processing step over provider_events.
 
-def _oversized(request: Request) -> bool:
-    try:
-        return int(request.headers.get("content-length") or 0) > integrations.MAX_EVENT_BYTES
-    except ValueError:
-        return True
+#: Oura sends a small JSON notice per change; nothing it posts approaches this.
+OURA_EVENT_BYTES = 1024 * 1024
+
+def _oversized(request: Request, limit: int) -> bool:
+    """Refuse before reading: a body with no declared length cannot be bounded
+    ahead of time, and neither provider sends one."""
+    declared = (request.headers.get("content-length") or "").strip()
+    return not (declared.isascii() and declared.isdigit()) or int(declared) > limit
 
 @router.get("/integrations/oura/webhook", responses=_RESPONSES_429)
 def oura_webhook_verify(request: Request, verification_token: str = "", challenge: str = ""):
     """Oura's one-time subscription handshake: echo the challenge back."""
     settings = request.app.state.settings
-    client = request.client.host if request.client else ""
+    client = "webhook:" + _client_key(request)
     if throttled(client):
         raise HTTPException(429)
     expected = integrations.oura_verification_token(settings)
@@ -7695,13 +7853,15 @@ def oura_webhook_verify(request: Request, verification_token: str = "", challeng
 @router.post("/integrations/oura/webhook", responses=_RESPONSES_413_429)
 async def oura_webhook(request: Request):
     settings = request.app.state.settings
-    client = request.client.host if request.client else ""
+    client = "webhook:" + _client_key(request)
     if throttled(client):
         raise HTTPException(429)
-    if _oversized(request):
+    if _oversized(request, OURA_EVENT_BYTES):
         raise HTTPException(413)
     body = await request.body()
-    _, client_secret = integrations.client_config(settings, integrations.PROVIDERS["oura"])
+    _, client_secret = await run_in_threadpool(
+        integrations.client_config, settings, integrations.PROVIDERS["oura"]
+    )
     if not integrations.verify_oura_signature(
         client_secret,
         request.headers.get("x-oura-timestamp", ""),
@@ -7725,17 +7885,19 @@ async def garmin_webhook(request: Request):
     # user ids are matched to stored connections at processing time, never
     # trusted here.
     settings = request.app.state.settings
-    client = request.client.host if request.client else ""
+    client = "webhook:" + _client_key(request)
     if throttled(client):
         raise HTTPException(429)
-    client_id, _ = integrations.client_config(settings, integrations.PROVIDERS["garmin"])
+    client_id, _ = await run_in_threadpool(
+        integrations.client_config, settings, integrations.PROVIDERS["garmin"]
+    )
     if not client_id:
         raise HTTPException(404)
     if not csrf_matches(client_id, request.headers.get("garmin-client-id", "")):
         record_attempt(client)
         # Returned, not raised — see oura_webhook_verify.
         return JSONResponse({"detail": "unknown client"}, status_code=401)
-    if _oversized(request):
+    if _oversized(request, integrations.MAX_EVENT_BYTES):
         raise HTTPException(413)
     body = await request.body()
     if not integrations.acceptable_event(body):
@@ -7876,12 +8038,17 @@ async def update_profile(request: Request):
     if choices is None:
         return failed(_PROFILE_ERROR_CHOICE)
 
-    with connect(settings) as connection:
-        _profile_store(connection, user["id"], name, nickname, dob, sex, blood,
-                       measurements, choices, timezone_name)
-    # Sex, age and the cardiovascular risk category all change verdicts;
-    # the memoised catalogue must not keep judging by the old profile.
-    invalidate_catalog(user["id"])
+    def store() -> None:
+        with connect(settings) as connection:
+            _profile_store(connection, user["id"], name, nickname, dob, sex, blood,
+                           measurements, choices, timezone_name)
+        # Sex, age and the cardiovascular risk category all change verdicts;
+        # the memoised catalogue must not keep judging by the old profile.
+        invalidate_catalog(user["id"])
+
+    # A write that waits on the database lock must not hold up every other
+    # request on the event loop while it waits.
+    await run_in_threadpool(store)
     return RedirectResponse("/profile?saved=1", status_code=303)
 
 @router.post("/profile/shares", responses=_RESPONSES_401_403)
@@ -7899,10 +8066,19 @@ def add_share(
     if grantee == user["email"]:
         return RedirectResponse("/profile?error=profile.error_share_self", status_code=303)
     with connect(settings) as connection:
+        # The share names the account it was given to. An address with no account
+        # is refused, because nothing verifies addresses at sign-up and a share
+        # left open would pass to whoever registers that address first.
+        grantee_row = connection.execute(
+            "SELECT id FROM users WHERE email = ? COLLATE NOCASE AND disabled_at IS NULL",
+            (grantee,),
+        ).fetchone()
+        if grantee_row is None:
+            return RedirectResponse("/profile?error=profile.error_share_unknown", status_code=303)
         connection.execute(
-            """INSERT OR IGNORE INTO record_shares(id, owner_user_id, grantee_email, created_at)
-                   VALUES (?, ?, ?, ?)""",
-            (str(uuid.uuid4()), user["id"], grantee, utc_now()),
+            """INSERT OR IGNORE INTO record_shares(id, owner_user_id, grantee_email, grantee_user_id, created_at)
+                   VALUES (?, ?, ?, ?, ?)""",
+            (str(uuid.uuid4()), user["id"], grantee, grantee_row["id"], utc_now()),
         )
     return RedirectResponse(_PROFILE_URL, status_code=303)
 
@@ -7937,8 +8113,8 @@ def switch_record(
         return response
     with connect(settings) as connection:
         allowed = connection.execute(
-            "SELECT 1 FROM record_shares WHERE owner_user_id=? AND grantee_email=?",
-            (owner_user_id, user["email"]),
+            "SELECT 1 FROM record_shares WHERE owner_user_id=? AND grantee_user_id=?",
+            (owner_user_id, user["id"]),
         ).fetchone()
     if allowed is None:
         raise HTTPException(404)
@@ -8205,7 +8381,7 @@ def _scope_device(connection, owner_user_id: str, metric_key: str) -> dict[str, 
         return _scope_metric(connection, owner_user_id, concept_id)
     summaries = [
         item
-        for item in device_history_summary(connection, owner_user_id)
+        for item in device_history(connection, owner_user_id)
         if str(item["metric_key"]) == metric_key
     ]
     if not summaries:
@@ -8238,7 +8414,7 @@ def _scope_metric(connection, owner_user_id: str, key: str) -> dict[str, object]
         "label": str(card["name"]),
         "cards": [card],
         "device_summaries": [
-            item for item in device_history_summary(connection, owner_user_id)
+            item for item in device_history(connection, owner_user_id)
             if str(item["metric_key"]) in twins
         ] if twins else [],
         "related_cards": related,
@@ -8565,6 +8741,13 @@ def _gap_row(gap, rows: list[dict[str, object]]) -> dict[str, object]:
             "vax.gap_series",
             given=gap.dose_number, total=gap.doses_in_series,
             date=format_date(gap.last_date),
+        )
+    elif gap.kind == "discuss":
+        # The schedules disagree on who needs this, so no date is ever shown;
+        # the sentence says so and points the person to their doctor.
+        sentence = (
+            t("vax.gap_discuss_dated", date=format_date(gap.last_date))
+            if gap.last_date else t("vax.gap_discuss")
         )
     elif gap.last_date and gap.due_date:
         key = "vax.gap_overdue" if gap.urgency == "overdue" else "vax.gap_due"
@@ -8930,6 +9113,7 @@ def add_vaccination(
     page_number: Annotated[int, Form()] = 1,
     evidence_text: Annotated[str, Form()] = "",
     next: Annotated[str, Form()] = _VACCINATIONS_URL,
+    ai_suggested: Annotated[str, Form()] = "",
     csrf_token: Annotated[str, Form()] = "",
 ):
     """Add a human-reviewed dose, optionally linked to its source document.
@@ -8940,10 +9124,16 @@ def add_vaccination(
     own vaccination history.  Unlinked doses remain `manual`; a suggestion
     accepted beside a card keeps the document, page and source evidence and
     is marked human-corrected so a re-read cannot silently overwrite it.
+
+    A suggestion a model proposed is kept as unchecked (`extracted`, method
+    `ai_suggested_entry`) until the person verifies it against the card. A
+    re-read of the document leaves it in place.
     """
     settings = request.app.state.settings
     user = require_user(request)
     require_csrf(user, csrf_token)
+    from_ai = ai_suggested == "1"
+    status, method = ("extracted", "ai_suggested_entry") if from_ai else ("corrected", "human_entered")
     destination = _safe_next(next, _VACCINATIONS_URL)
     joiner = "&" if "?" in destination else "?"
     values, problem = _dose_form_values(
@@ -8974,8 +9164,8 @@ def add_vaccination(
                        lot_number, note, entry_source, entered_by_user_id, verification_status,
                        evidence_text, confidence, extraction_method, parser_version,
                        created_at, updated_at
-                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'corrected',
-                             ?, 1.0, 'human_entered', 'human', ?, ?)""",
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                             ?, 1.0, ?, 'human', ?, ?)""",
             (
                 str(uuid.uuid4()), user["id"], patient["id"],
                 source_id, source_page,
@@ -8983,7 +9173,7 @@ def add_vaccination(
                 values["vaccine_code"], values["diseases"], values["product_name"],
                 *_dose_details(dose),
                 values["dose_number"], values["doses_in_series"], lot, dose.note.strip()[:500],
-                source_kind, user["id"], evidence, now, now,
+                source_kind, user["id"], status, evidence, method, now, now,
             ),
         )
         if source_document is not None:
@@ -10206,7 +10396,8 @@ def document_page_image(request: Request, document_id: str, page_number: int):
         )
     except (IndexError, ValueError):
         raise HTTPException(404) from None
-    return FileResponse(rendered, media_type="image/png", headers={"Cache-Control": "private, max-age=86400"})
+    # No cache header here: security_headers marks every record response no-store, so a page image cannot outlive a sign-out or a revoked share.
+    return FileResponse(rendered, media_type="image/png")
 
 def _ai_hint_images(settings, row, pages, limits: dict | None = None) -> list[bytes]:
     """Render pages when text extraction is absent or too thin to support
@@ -10871,7 +11062,8 @@ def _reassign_document_dependants(connection, owner_user_id: str, document, docu
     return None, None
 
 def _remove_unused_source(settings, document) -> bool:
-    """Unlink a deleted document's source file if it lies inside `sources/`."""
+    """Unlink a deleted document's source file if it lies inside `sources/`,
+    and the page images rendered from those bytes with it."""
     source = resolve_source_path(settings, str(document["source_path"] or ""))
     try:
         inside_sources = source.resolve().is_relative_to(settings.source_dir.resolve())
@@ -10883,6 +11075,12 @@ def _remove_unused_source(settings, document) -> bool:
         source.unlink()
     except OSError:
         return False
+    # Rendered pages are keyed by the first 24 characters of the sha256 and
+    # live beside the database, outside `sources/`, so nothing else removes
+    # them.  An empty key would name the whole cache, hence the guard.
+    digest = str(document["sha256"] or "")[:24]
+    if digest:
+        shutil.rmtree(settings.database_path.parent / "source-page-cache" / digest, ignore_errors=True)
     return True
 
 @router.post("/documents/{document_id}/delete", responses=_RESPONSES_401_403_404)
@@ -11160,11 +11358,17 @@ def _unnamed_upload_detail(filename: str) -> str:
     return _INTAKE_FAILED_UNREADABLE if supported else _INTAKE_FAILED_UNSUPPORTED
 
 async def _write_upload(upload: UploadFile, target: Path, limit: int) -> tuple[int, bool]:
-    """Stream one upload to `target`; the bytes written and whether it overran `limit`."""
+    """Stream one upload to `target`; the bytes written and whether it overran `limit`.
+
+    The file is created exclusively, so a `target` another upload has just taken
+    raises FileExistsError before a byte of the upload is read, and the caller
+    may pick a new name. The upload is closed only once it has been read here.
+    """
     written = 0
     oversized = False
+    handle = await anyio.open_file(target, "xb")
     try:
-        async with await anyio.open_file(target, "wb") as handle:
+        async with handle:
             while chunk := await upload.read(1 << 20):
                 written += len(chunk)
                 if written > limit:
@@ -11179,7 +11383,8 @@ async def _receive_upload(settings, common: dict[str, object], kind: str, upload
     """Put one file of a submission on disk and in the queue, or queue its rejection."""
     name = _sanitised_upload_name(upload.filename)
     if not name:
-        record_rejected(
+        await run_in_threadpool(
+            record_rejected,
             settings,
             **common,
             filename=PurePath(upload.filename.replace("\\", "/")).name[:120] or "?",
@@ -11190,10 +11395,24 @@ async def _receive_upload(settings, common: dict[str, object], kind: str, upload
 
     limit = upload_limit_for(name)
     target = _upload_target(settings, name)
-    written, oversized = await _write_upload(upload, target, limit)
+    # Two uploads of the same name (every iPhone photo is IMG_0001.jpg) can both
+    # be handed the same free path before either creates it. _write_upload opens
+    # exclusively, so the loser gets FileExistsError with none of its bytes read,
+    # and asks for a fresh path. Five attempts, then the error stands.
+    attempts = 5
+    for attempt in range(1, attempts + 1):
+        try:
+            written, oversized = await _write_upload(upload, target, limit)
+            break
+        except FileExistsError:
+            if attempt == attempts:
+                await upload.close()
+                raise
+            target = _upload_target(settings, name)
     if oversized or not written:
         target.unlink(missing_ok=True)
-        record_rejected(
+        await run_in_threadpool(
+            record_rejected,
             settings,
             **common,
             filename=name,
@@ -11202,7 +11421,12 @@ async def _receive_upload(settings, common: dict[str, object], kind: str, upload
         )
         return
 
-    await _admit_upload(settings, common, kind, name, target, written)
+    try:
+        await _admit_upload(settings, common, kind, name, target, written)
+    except Exception:
+        # Nothing names this file yet: left behind, it is indistinguishable from an upload that was lost.
+        target.unlink(missing_ok=True)
+        raise
 
 @router.post(_UPLOAD_URL, responses=_RESPONSES_400_401)
 async def upload_document(
@@ -11242,8 +11466,11 @@ async def upload_document(
     if kind != "auto" and kind not in DEVICE_ADAPTERS:
         raise HTTPException(400)
 
-    with connect(settings) as connection:
-        patient = _patient_row(connection, user["id"])
+    def load_patient():
+        with connect(settings) as connection:
+            return _patient_row(connection, user["id"])
+
+    patient = await run_in_threadpool(load_patient)
     if patient is None:
         return failed(_UPLOAD_ERROR_NO_SOURCE)
 
@@ -11310,15 +11537,30 @@ async def _finish_chunked_upload(
         # here too.
         partial.unlink(missing_ok=True)
         detail_key = _unnamed_upload_detail(filename) if written else "intake.failed_missing"
-        record_rejected(
+        await run_in_threadpool(
+            record_rejected,
             settings, **common, filename=display, byte_size=written or None,
             detail_key=detail_key,
         )
         return JSONResponse({"status": "rejected"})
+    if written > upload_limit_for(name):
+        # Each slice was judged under the limit of the name it carried, so a .zip
+        # slice could carry a final .pdf past the PDF limit. The whole file is judged here.
+        partial.unlink(missing_ok=True)
+        await run_in_threadpool(
+            record_rejected,
+            settings, **common, filename=display, byte_size=written,
+            detail_key="intake.failed_too_big",
+        )
+        return JSONResponse({"status": "rejected"})
 
-    target = _upload_target(settings, name)
-    partial.replace(target)
-    await _admit_upload(settings, common, kind, name, target, written)
+    target = await run_in_threadpool(_place_exclusively, partial, lambda: _upload_target(settings, name))
+    try:
+        await _admit_upload(settings, common, kind, name, target, written)
+    except Exception:
+        # Nothing names this file yet: left behind, it is indistinguishable from an upload that was lost.
+        target.unlink(missing_ok=True)
+        raise
     return JSONResponse({"status": "done"})
 
 @router.post("/upload/chunk", responses=_RESPONSES_400_401)
@@ -11353,8 +11595,11 @@ async def upload_chunk(
         raise HTTPException(400)
     if kind != "auto" and kind not in DEVICE_ADAPTERS:
         raise HTTPException(400)
-    with connect(settings) as connection:
-        patient = _patient_row(connection, user["id"])
+    def load_patient():
+        with connect(settings) as connection:
+            return _patient_row(connection, user["id"])
+
+    patient = await run_in_threadpool(load_patient)
     if patient is None:
         return JSONResponse({"error": _UPLOAD_ERROR_NO_SOURCE}, status_code=409)
     common = {
@@ -11377,7 +11622,8 @@ async def upload_chunk(
         # first byte lands rather than after the last slice of a file
         # that was never going to be accepted.
         await chunk.close()
-        record_rejected(
+        await run_in_threadpool(
+            record_rejected,
             settings, **common, filename=display,
             detail_key=_unnamed_upload_detail(filename),
         )
@@ -11386,7 +11632,8 @@ async def upload_chunk(
     written, oversized = await _append_chunk(chunk, partial, have, upload_limit_for(filename))
     if oversized:
         partial.unlink(missing_ok=True)
-        record_rejected(
+        await run_in_threadpool(
+            record_rejected,
             settings, **common, filename=display, byte_size=written,
             detail_key="intake.failed_too_big",
         )
@@ -11803,6 +12050,8 @@ def _remap_concept(
     vendor_id: str | None,
     value_type: str,
     unit_raw: str | None,
+    *,
+    learn: bool,
 ) -> tuple[str, str | None]:
     """The concept a corrected observation belongs to.
 
@@ -11812,13 +12061,13 @@ def _remap_concept(
     begin with.  An empty or unknown name falls back to the parser's own
     resolution.
 
-    The printed label is also offered to the alias table so a label the
-    parser has never seen is learned, but only where nothing is claiming
-    it yet: `concept_aliases` carries no owner column and vendors are
-    shared between accounts, so overwriting an existing row would let one
-    person's correction silently refile another person's next import.  The
-    correction always lands on this observation either way; what it does
-    not do is rewrite a rule someone else depends on.
+    The printed label can also be offered to the alias table so a label the
+    parser has never seen is learned. `concept_aliases` is shared by every
+    account, because vendors are shared, and it carries no owner column. Only
+    an administrator's correction teaches it (`learn`): another account's
+    correction would otherwise refile every other account's next import. The
+    correction always lands on this observation either way, and an existing
+    alias is never overwritten (INSERT OR IGNORE).
     """
     concept = _picked_concept(_concept_picker(connection), canonical_name[:300])
     if concept is None:
@@ -11830,11 +12079,12 @@ def _remap_concept(
             unit_raw=unit_raw,
             clinical_type="laboratory",
         )
-    connection.execute(
-        """INSERT OR IGNORE INTO concept_aliases(concept_id, vendor_id, alias, normalized_alias)
-               VALUES (?, ?, ?, ?)""",
-        (concept["id"], vendor_id, collapse_space(raw_name), normalized_key(raw_name)),
-    )
+    if learn:
+        connection.execute(
+            """INSERT OR IGNORE INTO concept_aliases(concept_id, vendor_id, alias, normalized_alias)
+                   VALUES (?, ?, ?, ?)""",
+            (concept["id"], vendor_id, collapse_space(raw_name), normalized_key(raw_name)),
+        )
     return str(concept["id"]), concept["preferred_unit"]
 
 _proposals_template = templates.env.from_string('{% include "_reread_proposals.html" %}')
@@ -11975,6 +12225,7 @@ def correct_observation(
             row["vendor_id"],
             value_type,
             unit,
+            learn=user["role"] == "admin",
         )
         provisional = ParsedObservation(
             raw_name=clean_name,
@@ -12205,6 +12456,7 @@ def add_observation(
     observed_at: Annotated[str, Form()] = "",
     evidence_text: Annotated[str, Form()] = "",
     next: Annotated[str, Form()] = "",
+    ai_suggested: Annotated[str, Form()] = "",
     csrf_token: Annotated[str, Form()] = "",
 ):
     """Record a value the parser missed entirely.
@@ -12214,10 +12466,20 @@ def add_observation(
     certifying the rest of the page as correct would quietly bless that
     gap.  The row is marked as entered by hand, so it is never mistaken
     for something the parser found.
+
+    A missed value a model proposed (`ai_suggested=1`) is not a human entry:
+    it is stored as unchecked (`extracted`) so the review queue asks a person
+    to verify it against the document, the same way an AI correction is kept.
     """
     settings = request.app.state.settings
     user = require_user(request)
     require_csrf(user, csrf_token)
+    from_ai = ai_suggested == "1"
+    status, method, audit_action = (
+        ("extracted", "ai_suggested_entry", "observation_ai_entry_added")
+        if from_ai
+        else ("corrected", "human_entered", "observation_entered")
+    )
     (
         clean_name, numeric, stored_text, value_type, comparator,
         reference, low, high, clean_observed, clean_evidence,
@@ -12250,6 +12512,7 @@ def add_observation(
             vendor_id,
             value_type,
             unit,
+            learn=user["role"] == "admin",
         )
         provisional = ParsedObservation(
             raw_name=clean_name,
@@ -12274,7 +12537,7 @@ def add_observation(
                        verification_status, extraction_method, confidence, evidence_text,
                        parser_version, created_at
                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                             'corrected', 'human_entered', 1.0, ?, 'human', ?)""",
+                             ?, ?, 1.0, ?, 'human', ?)""",
             (
                 observation_id, user["id"], document["patient_id"], document_id,
                 report_id, page, concept_id, clean_name,
@@ -12282,19 +12545,22 @@ def add_observation(
                 stored_text, comparator, unit, preferred_unit,
                 clean_observed or report_date or document["report_date"],
                 reference, low, high, interpretation(provisional, concept_id),
+                status, method,
                 provisional.evidence_text, utc_now(),
             ),
         )
         connection.execute(
             """INSERT INTO audit_events(
                        owner_user_id, actor_user_id, action, entity_type, entity_id, details_json, created_at
-                   ) VALUES (?, ?, 'observation_entered', 'observation', ?, ?, ?)""",
+                   ) VALUES (?, ?, ?, 'observation', ?, ?, ?)""",
             (
-                user["id"], user["id"], observation_id,
+                user["id"], user["id"], audit_action, observation_id,
                 json.dumps({"document_id": document_id, "concept_id": concept_id}, ensure_ascii=False),
                 utc_now(),
             ),
         )
+        # An unchecked suggestion is one more value the open review task asks for.
+        recount_review_tasks(connection, user["id"], document_id, user["id"])
     invalidate_catalog(user["id"])
     return RedirectResponse(
         _safe_next(next, f"/documents/{document_id}") + f"#observation-{observation_id}",
@@ -14152,7 +14418,7 @@ def resolve_review(
 # URL with an anonymous fetch, so neither route may require a session.
 # `shell=True` gives the signed-out render the same page width the
 # signed-in chrome gets for free.
-@router.get("/healthz", include_in_schema=False)
+@router.api_route("/healthz", methods=["GET", "HEAD"], include_in_schema=False)
 def healthz(request: Request):
     """Liveness for the container healthcheck: the process answers and the
     database opens.  Public and content-free on purpose."""
@@ -14209,6 +14475,38 @@ async def _lifespan(app: FastAPI):
             await run_in_threadpool(ow_hooks.stop_worker, ow_worker)
 
 
+class _Compression:
+    """GZip for responses, without losing the messages Starlette's GZip drops.
+
+    Its responder forwards only the response start and body.  Anything else an
+    application sends — the debug message a template response carries for the
+    test client, a server's zero-copy file send — never reaches the client.
+    Those are handed straight to the real `send`, around the compressor.
+    """
+
+    def __init__(self, app, minimum_size: int = 1024) -> None:
+        self._app = app
+        self._gzip = GZipMiddleware(self._inner, minimum_size=minimum_size)
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self._app(scope, receive, send)
+            return
+        scope["anamna.send"] = send
+        await self._gzip(scope, receive, send)
+
+    async def _inner(self, scope, receive, compressed_send) -> None:
+        direct = scope["anamna.send"]
+
+        async def route(message) -> None:
+            if message["type"] in ("http.response.start", "http.response.body"):
+                await compressed_send(message)
+            else:
+                await direct(message)
+
+        await self._app(scope, receive, route)
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
     configure_logging()
@@ -14232,7 +14530,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     reclaim_abandoned_jobs(settings)
     telegram_service = TelegramService(settings)
 
-    app = FastAPI(title="Anamna", docs_url=None, redoc_url=None, lifespan=_lifespan)
+    app = FastAPI(title="Anamna", docs_url=None, redoc_url=None, openapi_url=None, lifespan=_lifespan)
     app.state.settings = settings
     app.state.telegram = telegram_service
     # ponytail: the generated code lives in this process's memory, so a
@@ -14244,10 +14542,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         announce_setup_code(app)
     app.mount("/static", StaticFiles(directory=WEB_DIR / "static"), name="static")
     app.include_router(router)
+    # A lab sync runs on its own thread and edits results in place, which the
+    # catalog's fingerprint cannot see; it reports the owners it touched here.
+    labsync.on_record_change(invalidate_catalog)
     app.middleware('http')(token_scope)
     app.middleware('http')(security_headers)
     app.middleware('http')(locale_middleware)
     app.middleware('http')(derived_values)
+    # Outermost, so it compresses what the others produce.  Starlette leaves
+    # text/event-stream alone, which the chat's streamed answers depend on.
+    app.add_middleware(_Compression, minimum_size=1024)
     app.add_exception_handler(401, login_redirect)
 
     register_openwearables_routes(app, settings, require_admin, require_csrf)

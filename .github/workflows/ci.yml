@@ -24,6 +24,8 @@ jobs:
       - name: Install OCR engines exercised by scanned-page tests
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-ukr tesseract-ocr-eng
       - run: uv sync --locked --all-extras
+      - name: Lint (pyflakes-level rules configured in pyproject.toml)
+        run: uv tool run --from ruff==0.17.4 ruff check src scripts tests
       - run: uv run --no-sync pytest -q -n auto --basetemp=${{ runner.temp }}/pytest
       - run: uv run --no-sync python -m compileall -q src
       - run: uv build --out-dir ${{ runner.temp }}/packages
@@ -60,7 +62,37 @@ jobs:
       - uses: docker/build-push-action@v7.3.0
         with:
           context: .
-          push: ${{ github.event_name == 'push' }}
+          load: true
+          push: false
           tags: |
             ${{ env.IMAGE }}:latest
             ${{ env.IMAGE }}:${{ github.sha }}
+      - name: Smoke-test the image before it can be published
+        run: |
+          set -euo pipefail
+          docker run -d --name smoke -p 127.0.0.1:8000:8000 "$IMAGE:${{ github.sha }}"
+          ready=0
+          for attempt in $(seq 1 45); do
+            if curl -fsS -o /dev/null http://127.0.0.1:8000/healthz; then ready=1; break; fi
+            sleep 2
+          done
+          if [ "$ready" != "1" ]; then docker logs smoke; exit 1; fi
+          # The server process must have dropped root, and must own its data.
+          test "$(docker exec smoke stat -c %u /proc/1)" = "10001"
+          test "$(docker exec smoke stat -c %u /data/anamna.sqlite3)" = "10001"
+          # A fresh volume leads to first-run setup, with its code in the log.
+          test "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/setup)" = "200"
+          logs="$(docker logs smoke 2>&1)"
+          grep -q "First-run setup code:" <<<"$logs"
+          # OCR language data the application depends on is present.
+          langs="$(docker exec smoke tesseract --list-langs 2>&1)"
+          grep -qx ukr <<<"$langs"
+          grep -qx eng <<<"$langs"
+          # The image's own healthcheck command succeeds.
+          docker exec smoke /app/.venv/bin/python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=8).status == 200 else 1)"
+          docker rm -f smoke
+      - name: Publish
+        if: github.event_name == 'push'
+        run: |
+          docker push "$IMAGE:latest"
+          docker push "$IMAGE:${{ github.sha }}"

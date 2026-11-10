@@ -18,6 +18,7 @@ table is refused rather than guessed.
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
 import unicodedata
 import uuid
@@ -52,15 +53,26 @@ _NO_UNIVERSAL_TARGET = "no_universal_target"
 #: publisher must never mask an abnormal band from another.
 BENIGN_INTERPRETATIONS = frozenset({"normal", "optimal", "negative"})
 
+#: What a laboratory's own reading can be while still meaning "nothing to see".
+_VENDOR_WITHIN = BENIGN_INTERPRETATIONS | {"within_vendor_range"}
+
 #: Analytes where a positive result is the desirable outcome.  Mumps IgG means
 #: immunity; rendering it as an abnormal finding would be alarming and wrong.
-POSITIVE_IS_GOOD = frozenset({"mumps-virus-igg"})
+#: The library's ``positive_is_good: true`` flag is mirrored here; a test keeps
+#: the two in step.
+POSITIVE_IS_GOOD = frozenset({"mumps-virus-igg", "normal-site-microbiota"})
 
 #: Fixed inherited attributes.  They are facts, not measurements, and must be
-#: structurally incapable of producing a high/low/attention state.
+#: structurally incapable of producing a high/low/attention state.  The
+#: library's ``never_verdict`` and ``not_a_measurement`` flags are mirrored here;
+#: a test keeps them in step.
 NOT_A_MEASUREMENT = frozenset(
-    {"blood-group", "rhesus-factor", "hla-b27", "body_height"}
+    {"blood-group", "rhesus-factor", "hla-b27", "body_height", "blood-pressure-category"}
 )
+
+#: The censored comparators a laboratory prints ("<1.0", ">60").  The printed
+#: number is a limit, and the true value lies on the stated side of it.
+_CENSORED = ("<", "<=", ">", ">=")
 
 #: How alarming an interpretation is, lowest first.  When several bands from
 #: different bodies contain one value the most cautious reading leads: an LDL
@@ -763,10 +775,19 @@ def _authority_positions(containing) -> list[dict[str, object]]:
     interpretation -- the most cautious -- but every position travels with it.
     """
     by_source: dict[str, dict[str, object]] = {}
-    for rule, _context, _converted in containing:
+    # One position per body, taken from that body's best band by the order the
+    # chip uses (_band_rank), so a body never shows one reading beside the chip
+    # and another in its own row.  Bands of one body can overlap (WHO folate has
+    # a "<4.4 low" criterion inside its "3.0-6.0 possible deficiency" band).
+    # Declining bands sort last, whatever their rank.
+    ordered = sorted(
+        containing,
+        key=lambda item: (item[0]["interpretation"] == _NO_UNIVERSAL_TARGET, _band_rank(item)),
+    )
+    for rule, _context, _converted in ordered:
         set_id = str(rule["reference_set_id"])
         if set_id in by_source:
-            continue  # one position per body; bands within a body do not overlap
+            continue  # the body's best band already holds its position
         interpretation = str(rule["interpretation"])
         declines = interpretation == _NO_UNIVERSAL_TARGET
         by_source[set_id] = {
@@ -958,6 +979,7 @@ def evaluate(
     vendor_low: float | None = None,
     vendor_high: float | None = None,
     vendor_interpretation: str | None = None,
+    comparator: str | None = None,
     clinical_context: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Judge one value.  Curated guidance first, then the laboratory's own range.
@@ -965,6 +987,11 @@ def evaluate(
     ``clinical_context`` carries inputs a band may require -- the
     cardiovascular risk category from :func:`clinical_context`.  Without it a
     risk-stratified goal never judges.
+
+    ``comparator`` is the laboratory's printed comparator for a censored result
+    (``"<"``, ``"<="``, ``">"``, ``">="``, as in ``<1.0`` or ``>60``).  The
+    printed number is then a limit, not the value, and a curated band judges it
+    only when that band is open on the stated side.
     """
     if concept_id in NOT_A_MEASUREMENT:
         return _verdict("not_a_measurement", "none")
@@ -972,6 +999,7 @@ def evaluate(
     verdict, blocked = _curated_verdict(
         rules, concept_id, value_numeric, value_text, unit, age_years, sex,
         clinical_context=clinical_context or {}, vendor_high=vendor_high,
+        comparator=comparator,
     )
     if verdict is None:
         # A curated rule that could not be applied (unknown sex, unknown age,
@@ -979,7 +1007,8 @@ def evaluate(
         # at.  The laboratory's own range speaks instead, and the block stays
         # visible so the interface can explain the gap.
         verdict = _vendor_verdict(
-            value_numeric, unit, vendor_low, vendor_high, vendor_interpretation
+            value_numeric, unit, vendor_low, vendor_high, vendor_interpretation,
+            comparator=comparator,
         )
         if blocked and verdict["interpretation"] == "unjudged":
             verdict["unjudged_reason"] = blocked
@@ -994,7 +1023,8 @@ def evaluate(
         # universal interval, and the laboratory's own printed range governs.
         verdict["no_universal_target"] = True
     _record_vendor_claim(
-        verdict, value_numeric, unit, vendor_low, vendor_high, vendor_interpretation
+        verdict, value_numeric, unit, vendor_low, vendor_high, vendor_interpretation,
+        comparator=comparator,
     )
     return _apply_polarity(verdict, concept_id)
 
@@ -1006,6 +1036,7 @@ def _record_vendor_claim(
     vendor_low: float | None,
     vendor_high: float | None,
     vendor_interpretation: str | None,
+    comparator: str | None = None,
 ) -> None:
     """Keep the laboratory's own claim beside the curated one, and flag clashes.
 
@@ -1031,14 +1062,19 @@ def _record_vendor_claim(
     if vendor_status is None and value_numeric is not None and (
         vendor_low is not None or vendor_high is not None
     ):
-        vendor_status = _vendor_side(float(value_numeric), vendor_low, vendor_high)
+        vendor_status = _vendor_side(
+            float(value_numeric), vendor_low, vendor_high, comparator=comparator
+        )
     verdict["vendor_status"] = vendor_status
     verdict["conflicts_with_vendor"] = False
     if verdict["authority"] != "curated" or value_numeric is None:
         return
-    if vendor_low is None and vendor_high is None:
-        return
-    vendor_in_range = _contains(float(value_numeric), vendor_low, vendor_high, True, True)
+    if vendor_status is None:
+        return  # the laboratory said nothing about this value
+    # The laboratory's own reading of its result outranks a fresh comparison
+    # against its printed numbers: the flag is what the report told the
+    # patient, and at ingest it already accounts for strict bounds.
+    vendor_in_range = vendor_status in _VENDOR_WITHIN
     curated_benign = verdict["interpretation"] in BENIGN_INTERPRETATIONS
     if curated_benign == vendor_in_range:
         return
@@ -1052,8 +1088,30 @@ def _record_vendor_claim(
         verdict["label"] = t(f"verdict.lab_{side}_official_within")
 
 
-def _vendor_side(value: float, vendor_low: float | None, vendor_high: float | None) -> str:
-    """Where a value sits against the laboratory's printed interval."""
+def _vendor_side(
+    value: float,
+    vendor_low: float | None,
+    vendor_high: float | None,
+    comparator: str | None = None,
+) -> str | None:
+    """Where a value sits against the laboratory's printed interval.
+
+    A censored value (``comparator`` set) is placed only where its side is
+    certain; otherwise ``None``, meaning the laboratory's range says nothing.
+    """
+    if comparator in ("<", "<="):
+        if vendor_low is not None and (value < vendor_low or (value == vendor_low and comparator == "<")):
+            return "low"
+        # A range that starts at zero has no lower side to fall below.
+        if (vendor_low is None or vendor_low <= 0) and vendor_high is not None and value <= vendor_high:
+            return "within_vendor_range"
+        return None
+    if comparator in (">", ">="):
+        if vendor_high is not None and (value > vendor_high or (value == vendor_high and comparator == ">")):
+            return "high"
+        if vendor_high is None and vendor_low is not None and value >= vendor_low:
+            return "within_vendor_range"
+        return None
     if vendor_high is not None and value > vendor_high:
         return "high"
     if vendor_low is not None and value < vendor_low:
@@ -1237,6 +1295,7 @@ def _curated_verdict(
     *,
     clinical_context: dict[str, object] | None = None,
     vendor_high: float | None = None,
+    comparator: str | None = None,
 ) -> tuple[dict[str, object] | None, str | None]:
     if not rules:
         return None, None
@@ -1275,10 +1334,12 @@ def _curated_verdict(
     candidates = [item for item in candidates if item not in declining]
     if value_numeric is None:
         return _text_verdict(candidates, value_text), blocked
-    return _numeric_verdict(candidates, declining, risk), blocked
+    return _numeric_verdict(candidates, declining, risk, comparator), blocked
 
 
-def _numeric_verdict(candidates, declining, risk: dict[str, object] | None) -> dict[str, object] | None:
+def _numeric_verdict(
+    candidates, declining, risk: dict[str, object] | None, comparator: str | None = None,
+) -> dict[str, object] | None:
     """Judge a number against the candidate bands that carry bounds."""
     # A band with no bounds states an expected qualitative result ("negative -
     # the expected dipstick result"). It must never swallow a numeric value,
@@ -1291,11 +1352,17 @@ def _numeric_verdict(candidates, declining, risk: dict[str, object] | None) -> d
     ]
     if not numeric_rules:
         return None
+    # A strict censored result is judged just inside the side the laboratory
+    # stated: "<1.0" lands in the band below 1.0, not in the band that starts at it.
+    judged = {
+        "<": lambda value: math.nextafter(value, -math.inf),
+        ">": lambda value: math.nextafter(value, math.inf),
+    }.get(comparator, lambda value: value)
     containing = [
         item
         for item in numeric_rules
         if _contains(
-            item[2],
+            judged(item[2]),
             item[0]["lower_bound"],
             item[0]["upper_bound"],
             bool(item[0]["lower_inclusive"]),
@@ -1303,15 +1370,33 @@ def _numeric_verdict(candidates, declining, risk: dict[str, object] | None) -> d
         )
     ]
     match = min(containing, key=_band_rank) if containing else None
-    rule, _context, converted = match or numeric_rules[0]
+    if comparator in _CENSORED:
+        # The true value lies anywhere on the stated side of the printed number,
+        # so only a band that is open on that side can judge it.
+        open_side = "lower_bound" if comparator in ("<", "<=") else "upper_bound"
+        if match is None or match[0][open_side] is not None:
+            return None
+    if match is not None:
+        rule, _context, converted = match
+        interpretation = rule["interpretation"]
+    else:
+        # Only a band that states what is normal can say which side of normal a
+        # value lies on.  Without one that contains the value, the bands that do
+        # state normal judge it, and only when every one of them puts it on the
+        # same side; otherwise the laboratory's own range governs.
+        benign = [item for item in numeric_rules if item[0]["interpretation"] in BENIGN_INTERPRETATIONS]
+        if not benign:
+            return None
+        if all(item[0]["lower_bound"] is not None and item[2] <= item[0]["lower_bound"] for item in benign):
+            interpretation = "low"
+            rule, _context, converted = min(benign, key=lambda item: item[0]["lower_bound"])
+        elif all(item[0]["upper_bound"] is not None and item[2] >= item[0]["upper_bound"] for item in benign):
+            interpretation = "high"
+            rule, _context, converted = max(benign, key=lambda item: item[0]["upper_bound"])
+        else:
+            return None
     low, high = rule["lower_bound"], rule["upper_bound"]
     positions = _authority_positions(containing + declining)
-    if match is not None:
-        interpretation = rule["interpretation"]
-    elif low is not None and converted < low:
-        interpretation = "low"
-    else:
-        interpretation = "high"
     return _verdict(
         interpretation,
         "curated",
@@ -1461,6 +1546,7 @@ def _vendor_verdict(
     vendor_low: float | None,
     vendor_high: float | None,
     vendor_interpretation: str | None,
+    comparator: str | None = None,
 ) -> dict[str, object]:
     interpretation = _VENDOR_INTERPRETATIONS.get(vendor_interpretation or "")
     if vendor_low is None and vendor_high is None and interpretation is None:
@@ -1474,9 +1560,27 @@ def _vendor_verdict(
         # this the recovered interval was recorded, displayed, and never
         # actually compared to anything -- a urinary leukocyte count of 107.6
         # sat beside its own printed limit of 11.2 and reported "no comparison
-        # available".
+        # available".  A censored result ("<5") is only a limit, so it is judged
+        # only where its side is certain; otherwise it stays "unjudged".
         value = float(value_numeric)
-        if vendor_high is not None and value > vendor_high:
+        if comparator in ("<", "<="):
+            # The true value lies at or below the printed number.
+            if vendor_low is not None and (value < vendor_low or (value == vendor_low and comparator == "<")):
+                interpretation = "low"
+            # A range that starts at zero has no lower side to fall below.
+            elif (vendor_low is None or vendor_low <= 0) and vendor_high is not None and value <= vendor_high:
+                interpretation = "normal"
+            else:
+                interpretation = "unjudged"
+        elif comparator in (">", ">="):
+            # The true value lies at or above the printed number.
+            if vendor_high is not None and (value > vendor_high or (value == vendor_high and comparator == ">")):
+                interpretation = "high"
+            elif vendor_high is None and vendor_low is not None and value >= vendor_low:
+                interpretation = "normal"
+            else:
+                interpretation = "unjudged"
+        elif vendor_high is not None and value > vendor_high:
             interpretation = "high"
         elif vendor_low is not None and value < vendor_low:
             interpretation = "low"

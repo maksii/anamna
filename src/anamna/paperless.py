@@ -47,6 +47,10 @@ logger = logging.getLogger("anamna.paperless")
 REQUEST_TIMEOUT = 15
 UPLOAD_TIMEOUT = 120  # a scanned bundle is tens of megabytes on a home LAN
 
+#: Largest response body read into memory.  Every answer these calls expect is
+#: JSON of a few kilobytes to a few megabytes; anything larger is not one.
+MAX_RESPONSE_BYTES = 32 * 1024 * 1024
+
 #: Give up re-sending a document after this many refusals; see migration 020.
 MAX_UPLOAD_ATTEMPTS = 3
 
@@ -58,7 +62,19 @@ _inflight_lock = threading.Lock()
 
 
 class PaperlessError(Exception):
-    """The server is unreachable, refused the request, or answered nonsense."""
+    """The server is unreachable, refused the request, or answered nonsense.
+
+    ``status`` is the HTTP code when Paperless answered at all.  When not given
+    it is read from an ``HTTP NNN:`` message prefix, the form :func:`_request`
+    builds, so a message carrying the code also carries it as an attribute.
+    """
+
+    def __init__(self, message: str, status: int | None = None):
+        super().__init__(message)
+        if status is None:
+            match = re.match(r"HTTP (\d{3})\b", message)
+            status = int(match.group(1)) if match else None
+        self.status = status
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -253,10 +269,12 @@ def _request(
     )
     try:
         with _opener.open(request, timeout=timeout) as response:
-            body = response.read()
+            body = response.read(MAX_RESPONSE_BYTES + 1)
+            if len(body) > MAX_RESPONSE_BYTES:
+                raise PaperlessError("paperless: response too large")
     except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", "replace")[:300]
-        raise PaperlessError(f"HTTP {exc.code}: {detail}") from exc
+        detail = exc.read(MAX_RESPONSE_BYTES).decode("utf-8", "replace")[:300]
+        raise PaperlessError(f"HTTP {exc.code}: {detail}", status=exc.code) from exc
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         raise PaperlessError(str(exc)) from exc
     if not body:
@@ -464,6 +482,17 @@ def push_document(settings: Settings, document_id: str) -> bool:
             _inflight.discard(claim)
 
 
+def _refused_by_paperless(exc: Exception) -> bool:
+    """A 4xx that Paperless answered with, other than 408 (timeout) and 429
+    (rate limit): the server judged the request, and will judge it the same way."""
+    return (
+        isinstance(exc, PaperlessError)
+        and exc.status is not None
+        and 400 <= exc.status <= 499
+        and exc.status not in (408, 429)
+    )
+
+
 def _push_document(settings: Settings, document_id: str) -> bool:
     with connect(settings) as connection:
         row = connection.execute(
@@ -503,11 +532,15 @@ def _push_document(settings: Settings, document_id: str) -> bool:
                 (task_id, document_id),
             )
     except Exception as exc:  # noqa: BLE001 - a copy service degrades, never raises
-        with connect(settings) as connection:
-            connection.execute(
-                "UPDATE documents SET paperless_attempts=paperless_attempts+1 WHERE id=?",
-                (document_id,),
-            )
+        # Only Paperless turning the document down counts towards the cap.  An
+        # outage, a timeout or a 5xx says nothing about this document, and
+        # counting it would stop mirroring for good after three scheduler passes.
+        if _refused_by_paperless(exc):
+            with connect(settings) as connection:
+                connection.execute(
+                    "UPDATE documents SET paperless_attempts=paperless_attempts+1 WHERE id=?",
+                    (document_id,),
+                )
         logger.warning("paperless: upload of document %s failed: %s", document_id, exc)
         return False
     return True

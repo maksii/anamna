@@ -3,9 +3,11 @@ from __future__ import annotations
 import csv
 import hashlib
 import io
+import logging
 import mimetypes
 import subprocess
 import tempfile
+import threading
 from functools import lru_cache
 from pathlib import Path
 
@@ -17,6 +19,15 @@ import pypdfium2.raw as pdfium_c
 
 from ..config import ROOT
 from .text import text_sha256
+
+logger = logging.getLogger(__name__)
+
+#: PDFium is not thread-safe, and it is called from the intake worker (OCR
+#: rendering, here) and from web threads (page images for the viewer) at the
+#: same time.  Every call into it happens under this lock.  It is never held
+#: across a Tesseract run: OCR takes seconds to minutes, and the viewer must
+#: not wait for it.
+PDFIUM_LOCK = threading.RLock()
 
 
 def file_sha256(path: Path) -> str:
@@ -43,6 +54,8 @@ FULL_PAGE_PSM = "3"
 #: A scan is embedded at whatever size the phone produced.  Anything much past
 #: this on the long edge costs minutes of OCR for no extra characters.
 PAGE_RENDER_LONG_EDGE = 3000
+#: No rendered page may exceed this many pixels on its long edge, whatever the PDF claims its page size is.
+MAX_RENDER_EDGE_PX = 6000
 #: An image whose long edge is under half this is enlarged by a whole factor
 #: (at most 3) before OCR.
 SMALL_IMAGE_EDGE = 2600
@@ -51,6 +64,11 @@ SMALL_IMAGE_EDGE = 2600
 #: uses to call a document `ocr_required`, so the two cannot disagree about which
 #: pages are scans.
 SCANNED_PAGE_CHARS = 80
+#: Most pages one document may send to OCR.  Each page costs up to three
+#: Tesseract runs at 120 s apiece, so this bounds OCR time, not what is stored:
+#: a PDF past it keeps its native text, and a TIFF past it is refused outright,
+#: because a frame cannot be stored without being read.
+MAX_OCR_PAGES = 400
 #: The Windows launcher for the WSL install that carries tesseract.
 WSL_EXE = "wsl.exe"
 #: Tesseract's language argument: Ukrainian reports with English terms.
@@ -230,23 +248,44 @@ def significant_image_regions(page) -> list[dict[str, object]]:
     return regions
 
 
+def _render_scale(page, wanted: float) -> float:
+    """`wanted`, lowered where the page would otherwise render past `MAX_RENDER_EDGE_PX`.
+
+    A PDF may declare a page up to 14,400 pt on a side. Rendered at a fixed
+    scale that is ~200 megapixels, and pypdfium's `to_pil()` skips Pillow's
+    decompression-bomb check, so nothing else stops it.
+    """
+    return min(wanted, MAX_RENDER_EDGE_PX / max(page.get_size()))
+
+
+@lru_cache(maxsize=1)
+def _pdf_reader(path: str, modified_ns: int) -> PdfReader:
+    # Keyed by modification time so a replaced file is re-read; one entry,
+    # because a document is read page after page and then never again.
+    return PdfReader(path)
+
+
 def ocr_pdf_image_regions(pdf_path: Path, page_index: int, regions) -> str:
     if not regions:
         return ""
     scratch_root = ROOT / "tmp"
     scratch_root.mkdir(parents=True, exist_ok=True)
-    blocks = []
-    with (
-        tempfile.TemporaryDirectory(prefix="anamna-ocr-", dir=scratch_root) as directory,
-        pdfium.PdfDocument(pdf_path) as document,
-    ):
+    # Only the render touches PDFium. `convert()` returns a Pillow image with
+    # its own memory, so the crops and Tesseract below run without the lock.
+    with PDFIUM_LOCK, pdfium.PdfDocument(pdf_path) as document:
         page = document[page_index]
-        source_images = {
-            Path(item.name).stem: item.image
-            for item in PdfReader(pdf_path).pages[page_index].images
-        }
-        scale = 3.5
-        rendered = page.render(scale=scale).to_pil().convert("RGB")
+        scale = _render_scale(page, 3.5)
+        bitmap = page.render(scale=scale)
+        try:
+            rendered = bitmap.to_pil().convert("RGB")
+        finally:
+            bitmap.close()
+    source_images = {
+        Path(item.name).stem: item.image
+        for item in _pdf_reader(str(pdf_path), pdf_path.stat().st_mtime_ns).pages[page_index].images
+    }
+    blocks = []
+    with tempfile.TemporaryDirectory(prefix="anamna-ocr-", dir=scratch_root) as directory:
         for index, region in enumerate(regions, start=1):
             x0, top, x1, bottom = region["box"]
             crop_path = Path(directory) / f"region-{index}.png"
@@ -289,15 +328,16 @@ def ocr_pdf_page(pdf_path: Path, page_index: int) -> str:
         # A single image can be a logo beside vector text, and an embedded
         # scan can have rotation/cropping in the PDF. Render the actual visible
         # page instead of assuming its only image is the entire document.
-        with pdfium.PdfDocument(pdf_path) as document:
+        with PDFIUM_LOCK, pdfium.PdfDocument(pdf_path) as document:
             page = document[page_index]
-            scale = min(3.5, max(1.0, PAGE_RENDER_LONG_EDGE / max(page.get_size())))
+            scale = _render_scale(page, min(3.5, max(1.0, PAGE_RENDER_LONG_EDGE / max(page.get_size()))))
             bitmap = page.render(scale=scale)
             try:
-                bitmap.to_pil().convert("RGB").save(target)
+                page_image = bitmap.to_pil().convert("RGB")
             finally:
                 bitmap.close()
             source = _embedded_scan(page, scale)
+        page_image.save(target)
         upright_image_file(target)
         rendered = _read_scan(target)
         if source is None:
@@ -336,18 +376,24 @@ def _embedded_scan(page, scale: float):
     Only an image placed upright and unmirrored is read this way; any other
     placement is the render's to read.
     """
-    images = list(page.get_objects(filter=(pdfium_c.FPDF_PAGEOBJ_IMAGE,), max_depth=1))
-    if not images or page.get_rotation():
-        return None
-    image = max(images, key=lambda item: item.get_px_size()[0] * item.get_px_size()[1])
-    width, height = image.get_px_size()
-    a, b, c, d, _, _ = image.get_matrix().get()
-    if b or c or a <= 0 or d <= 0 or (a * scale >= width and d * scale >= height):
-        return None
-    try:
-        return image.get_bitmap(render=False).to_pil()
-    except pdfium.PdfiumError:
-        return None
+    with PDFIUM_LOCK:
+        images = list(page.get_objects(filter=(pdfium_c.FPDF_PAGEOBJ_IMAGE,), max_depth=1))
+        if not images or page.get_rotation():
+            return None
+        image = max(images, key=lambda item: item.get_px_size()[0] * item.get_px_size()[1])
+        width, height = image.get_px_size()
+        a, b, c, d, _, _ = image.get_matrix().get()
+        if b or c or a <= 0 or d <= 0 or (a * scale >= width and d * scale >= height):
+            return None
+        try:
+            bitmap = image.get_bitmap(render=False)
+            try:
+                # `copy()`: to_pil() can share the bitmap's buffer, and the bitmap is closed here.
+                return bitmap.to_pil().copy()
+            finally:
+                bitmap.close()
+        except pdfium.PdfiumError:
+            return None
 
 
 def page_word_positions(page) -> list[tuple[float, float, float, str]]:
@@ -412,8 +458,14 @@ def _extract_pdf(path: Path, run_ocr: bool) -> dict[str, object]:
         for key, value in (reader.metadata or {}).items()
         if value is not None
     }
+    # The page count alone goes to the log: the file name can carry a patient's name.
+    if run_ocr and len(reader.pages) > MAX_OCR_PAGES:
+        logger.warning("PDF has %d pages; OCR runs on the first %d only", len(reader.pages), MAX_OCR_PAGES)
     with pdfplumber.open(path) as pdf:
-        pages = [_pdf_page(path, index, page, run_ocr) for index, page in enumerate(pdf.pages, start=1)]
+        pages = [
+            _pdf_page(path, index, page, run_ocr and index <= MAX_OCR_PAGES)
+            for index, page in enumerate(pdf.pages, start=1)
+        ]
     return {
         "mime_type": "application/pdf",
         "page_count": len(reader.pages),
@@ -438,6 +490,8 @@ def extract_document(path: Path, run_ocr: bool = True) -> dict[str, object]:
         # second frame the HDR gain map of the same picture: read as a page,
         # it filed one photographed sheet as a two-page bundle.
         sheets = getattr(image, "n_frames", 1) if image.format == "TIFF" else 1
+        if sheets > MAX_OCR_PAGES:
+            raise ValueError(f"image has {sheets} frames; at most {MAX_OCR_PAGES} are read")
         for index in range(sheets):
             image.seek(index)
             ocr_text = ""

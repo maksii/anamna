@@ -11,7 +11,6 @@ import hashlib
 import hmac
 import json
 import logging
-import os
 import re
 import secrets
 import threading
@@ -284,7 +283,7 @@ class TelegramService:
             raise TelegramError("telegram.off", permanent=True)
         if webhook_secret is not None:
             secret = self.webhook_secret()
-            if cfg["mode"] != "webhook" or not secret or not hmac.compare_digest(secret, webhook_secret):
+            if cfg["mode"] != "webhook" or not secret or not hmac.compare_digest(secret.encode("utf-8"), webhook_secret.encode("utf-8")):
                 raise TelegramError("telegram.error_credentials", permanent=True)
         uid = update.get("update_id")
         raw = json.dumps(update, ensure_ascii=False)
@@ -1117,8 +1116,10 @@ class TelegramService:
         for update in updates:
             try:
                 self.receive(update)
-            except (TypeError, ValueError, OverflowError):
-                raise TelegramError(ERR_CONNECTION) from None
+            except (TypeError, ValueError, OverflowError) as error:
+                # receive rejects this update's content (oversized or malformed).
+                # Skip it and advance the offset below, or every poll re-fetches it.
+                logger.warning("telegram: skipped an update that could not be accepted: %s", type(error).__name__)
             with transaction(self.settings, immediate=True) as db:
                 db.execute("UPDATE telegram_config SET poll_offset=MAX(poll_offset,?) WHERE id=1", (update["update_id"] + 1,))
         with transaction(self.settings, immediate=True) as db:
@@ -1202,8 +1203,8 @@ class TelegramService:
                     try:
                         with transaction(self.settings, immediate=True) as db:
                             db.execute("UPDATE telegram_config SET last_error='telegram.error_internal',last_error_at=? WHERE id=1", (utc_now(),))
-                    except Exception:
-                        pass
+                    except Exception as write_error:
+                        logger.debug("telegram: %s ignored: %s", "recording the internal error state", type(write_error).__name__)
                     self.idle_wait = 5
                 if worked:
                     continue

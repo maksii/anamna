@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import sys
 import time
 from contextvars import ContextVar
@@ -105,10 +106,43 @@ class Settings:
     setup_code: str = ""
 
 
+#: The installation's own secret when ``ANAMNA_SECRET`` is not set: generated
+#: once and kept beside the database, so it survives restarts and travels with
+#: a backup of the data directory, and no two installations share one.
+SECRET_FILE = "secret.key"
+
+
+@functools.cache
+def _stored_secret(directory: Path) -> str:
+    path = directory / SECRET_FILE
+    try:
+        stored = path.read_text(encoding="utf-8").strip()
+        if stored:
+            return stored
+    except FileNotFoundError:
+        pass
+    value = secrets.token_hex(32)
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        # Exclusive create: of two processes starting at once, one writes the
+        # file and the other reads what it wrote.  0600 because it is a key.
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        return path.read_text(encoding="utf-8").strip() or value
+    except OSError:
+        # A data directory that cannot be written cannot hold a database
+        # either; a secret that lasts for this process is still not the
+        # published default.
+        return value
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        handle.write(value)
+    return value
+
+
 def get_settings() -> Settings:
     database_path = Path(env("DB", ROOT / "data" / "anamna.sqlite3"))
     source_dir = Path(env("SOURCES", ROOT / "sources"))
-    secret_key = env("SECRET", "local-development-only-change-me")
+    secret_key = (env("SECRET") or "").strip() or _stored_secret(database_path.parent)
     return Settings(
         database_path=database_path,
         source_dir=source_dir,

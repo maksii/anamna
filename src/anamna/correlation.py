@@ -31,7 +31,9 @@ from __future__ import annotations
 
 from bisect import bisect_left, bisect_right
 from datetime import date, timedelta
+import math
 import statistics
+from statistics import NormalDist
 
 from .panels import MEASUREMENT_TWINS
 
@@ -279,6 +281,32 @@ def sample_evenly(items: list, limit: int = 400) -> list:
     return [items[round(index * step)] for index in range(limit)]
 
 
+def _critical_r(n: int, comparisons: int, alpha: float = 0.05) -> float:
+    """The smallest |rho| that chance alone would rarely produce from ``n``
+    independent pairs, two-sided, Bonferroni-corrected for how many companions
+    were tried.  Fisher's z with the 1.06/(n-3) variance of a rank correlation
+    (Fieller, Hartley and Pearson, Biometrika 1957)."""
+    if n < 4:
+        return 1.0
+    z = NormalDist().inv_cdf(1 - alpha / (2 * max(comparisons, 1)))
+    return math.tanh(z * math.sqrt(1.06 / (n - 3)))
+
+
+def _independent_pairs(pairs: list[Pair], window: int) -> int:
+    """How many of the pairs do not share days with one another.  A trailing
+    average over ``window`` days reuses its days in every pair whose anchor day
+    falls inside the same window, so only anchors at least ``window`` days
+    apart count: daily pairs under a 30-day average are worth about one in
+    thirty, while blood draws months apart are each worth one."""
+    if window <= 1:
+        return len(pairs)
+    counted, last = 0, None
+    for day in sorted(_ordinal(pair[0]) for pair in pairs):
+        if last is None or day - last >= window:
+            counted, last = counted + 1, day
+    return counted
+
+
 def suggest(
     primary_id: str,
     primary_series: Series,
@@ -288,25 +316,37 @@ def suggest(
     min_pairs: int = 8,
     min_abs_r: float = 0.15,
     top: int = 5,
+    require_significance: bool = True,
 ) -> list[dict[str, object]]:
     """The companions worth offering unprompted, strongest first.
 
-    A suggestion is a claim the page makes on its own, so the bar is higher
-    than the explorer's: enough overlapping days to mean something, and enough
-    signal to be worth a reader's attention.  Trivial pairs are skipped here
-    and here only — the picker still offers them.
+    Gated (``require_significance``): ``effective_n`` independent pairs, from
+    :func:`_independent_pairs`, at least ``min_pairs`` of them, and ``|r|`` at
+    least ``min_abs_r`` and :func:`_critical_r` for ``effective_n`` and the
+    companions tried.  Ungated: ``n >= min_pairs`` and ``|r| >= min_abs_r``, for
+    showing the strongest pair the explorer draws, never as a claim.  Trivial
+    pairs are skipped here only; the ``top`` strongest by magnitude are returned.
     """
-    found: list[dict[str, object]] = []
+    window = WINDOW_DAYS.get(align, 1)
+    eligible = []
     for candidate_id, series in candidates.items():
-        if candidate_id == primary_id:
+        if candidate_id == primary_id or frozenset((primary_id, candidate_id)) in TRIVIAL_PAIRS:
             continue
-        if frozenset((primary_id, candidate_id)) in TRIVIAL_PAIRS:
-            continue
-        summary = correlate(align_pairs(primary_series, series, align))
-        r = summary["r"]
-        if r is None or summary["n"] < min_pairs or abs(float(r)) < min_abs_r:
-            continue
-        found.append({"id": candidate_id, **summary})
+        pairs = align_pairs(primary_series, series, align)
+        summary = correlate(pairs)
+        if summary["r"] is not None:
+            eligible.append((candidate_id, pairs, summary))
+    comparisons = len(eligible)
+    found: list[dict[str, object]] = []
+    for candidate_id, pairs, summary in eligible:
+        r = float(summary["r"])
+        effective = _independent_pairs(pairs, window)
+        if require_significance:
+            keep = effective >= min_pairs and abs(r) >= max(min_abs_r, _critical_r(effective, comparisons))
+        else:
+            keep = int(summary["n"]) >= min_pairs and abs(r) >= min_abs_r
+        if keep:
+            found.append({"id": candidate_id, **summary, "comparisons": comparisons, "effective_n": effective})
     # Ties broken by id so the same record always produces the same page.
     found.sort(key=lambda item: (-abs(float(item["r"])), str(item["id"])))
     return found[:top]

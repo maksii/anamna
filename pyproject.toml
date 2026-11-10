@@ -80,3 +80,16 @@ include = [
 testpaths = ["tests/python"]
 pythonpath = ["src"]
 addopts = "-n auto"
+
+[tool.ruff]
+target-version = "py312"
+
+[tool.ruff.lint]
+# Pyflakes-level correctness only: undefined names, unused imports, repeated
+# dictionary keys, syntax errors. Style is not gated.
+select = ["E9", "F"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests import pytest fixtures from sibling test modules; the import is what
+# registers the fixture, and the parameter of the same name "redefines" it.
+"tests/**" = ["F401", "F811"]

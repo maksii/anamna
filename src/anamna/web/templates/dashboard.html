@@ -6,6 +6,8 @@
 {% block content %}
 <link rel="stylesheet" href="{{ asset('patient-experience.css') }}">
 <script src="{{ asset('patient-experience.js') }}"></script>
+{#- A record with no documents and no device data yet is new: the page leads with the welcome panel instead of status. -#}
+{% set record_empty = not recent_documents and not counts.latest_result and not counts.latest_device %}
 
 <section class="an-home-hero">
   <div class="an-home-identity">
@@ -14,7 +16,7 @@
     <div class="overview-dates">
       {% if patient_age %}<span>{{ t('dashboard.years_old', age=patient_age) }}</span>{% endif %}
       {% if patient_sex_label %}<span>{{ patient_sex_label }}</span>{% endif %}
-      <span>{{ t('dashboard.medical_through', date=counts.latest_result|datefmt) }}</span>
+      {% if counts.latest_result %}<span>{{ t('dashboard.medical_through', date=counts.latest_result|datefmt) }}</span>{% endif %}
       {% if counts.latest_device %}<span>{{ t('dashboard.device_through', date=counts.latest_device|datefmt) }}</span>{% endif %}
     </div>
   </div>
@@ -27,6 +29,23 @@
   </form>
 </section>
 
+{% if record_empty %}
+{#- A new record has nothing to summarise yet, so the page leads with what
+    to do first instead of with "nothing needs attention". -#}
+<section class="panel an-home-welcome" aria-labelledby="home-welcome-heading">
+  <div class="panel-head"><div><h2 id="home-welcome-heading">{{ t('dashboard.welcome_heading') }}</h2></div></div>
+  <p>{{ t('dashboard.welcome_lead') }}</p>
+  <ul class="an-home-welcome__steps">
+    <li><a class="button primary" href="/upload">{{ t('dashboard.welcome_upload') }}</a>
+      <span class="tiny muted">{{ t('dashboard.welcome_upload_hint') }}</span></li>
+    <li><a class="button secondary" href="/profile?tab=connections">{{ t('dashboard.welcome_connect') }}</a>
+      <span class="tiny muted">{{ t('dashboard.welcome_connect_hint') }}</span>{% if user.role == 'admin' %}<span class="tiny muted">{{ t('dashboard.welcome_connect_admin') }}</span>{% endif %}</li>
+    <li><a class="button secondary" href="/profile">{{ t('dashboard.welcome_profile') }}</a>
+      <span class="tiny muted">{{ t('dashboard.welcome_profile_hint') }}</span></li>
+  </ul>
+</section>
+{% endif %}
+
 {#- Lab results a family member's lab account fetched for this person wait
     for their decision; without this nobody would know to look. -#}
 {% set lab_waiting = lab_inbox_count(user) %}
@@ -35,6 +54,7 @@
   <a href="/profile?tab=connections#lab-inbox">{{ t('labsync.inbox_notice_link') }}</a></p>
 {% endif %}
 
+{% if not record_empty %}
 {#- What needs attention comes first, as the results themselves; the tiles
     under it are shortcuts into the same filtered lists. The navigation
     already names the page, so the list opens without a visible heading (the
@@ -66,6 +86,7 @@
     {% for tile in tiles %}{{ stat_tile(tile) }}{% endfor %}
   </div>
 </section>
+{% endif %}
 
 {{ overview(experience) }}
 

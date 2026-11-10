@@ -14,6 +14,10 @@
   let activeSource = 'combined';
   let inspectPlot = null;
   let pending = '';
+  // Every switch takes a number. Only the newest may clear the busy state, show
+  // the failure note or repaint; an older fetch that lands late still fills the
+  // cache, so switching back to its source is instant.
+  let latest = 0;
   svg.addEventListener('click', event => { if (inspectPlot) inspectPlot(event); });
 
   // The payload is columnar (one array per field, sources as indexes into
@@ -29,11 +33,19 @@
   const newest = () => all().map(point => point.date).sort().at(-1);
   const selected = () => globalThis.AnamnaExperience.dailyWindow(all(), days, newest());
   let complete = payload.complete;
+  // Resolves true when this request is still the newest, so the caller repaints
+  // only for the switch the reader actually made last.
   const load = id => {
+    const mine = ++latest;
     // "All" on the selected series needs the years the page did not inline.
     const needAll = id === 'combined' && !days && !complete;
     const source = needAll ? {url: payload.full_url} : payload.sources.find(item => item.id === id);
-    if (!source || (series[id] && !needAll)) return Promise.resolve();
+    if (!source || (series[id] && !needAll)) {
+      // Nothing to wait for, so an earlier fetch must not keep the page busy.
+      pending = '';
+      host.removeAttribute('aria-busy');
+      return Promise.resolve(true);
+    }
     pending = id;
     C.note(host, host.dataset.msgLoading);
     host.setAttribute('aria-busy', 'true');
@@ -45,10 +57,19 @@
       .then(data => {
         series[id] = points(data.points, data.labels);
         if (needAll) complete = true;
+        return mine === latest;
       })
-      .catch(() => { C.note(host, host.dataset.msgFailed); throw new Error('load'); })
-      .finally(() => { pending = ''; host.removeAttribute('aria-busy'); });
+      .catch(() => {
+        if (mine === latest) C.note(host, host.dataset.msgFailed);
+        throw new Error('load');
+      })
+      .finally(() => {
+        if (mine !== latest) return;
+        pending = '';
+        host.removeAttribute('aria-busy');
+      });
   };
+  const refresh = (button, id) => track(button, load(id)).then(fresh => { if (fresh) repaint(); }, () => {});
 
   const bound = value => (value ?? null) === null ? null : Number(value);
   const hasValue = value => value !== null && value !== undefined;
@@ -184,12 +205,12 @@
   document.querySelectorAll('[data-days]').forEach(button => button.addEventListener('click', () => {
     document.querySelectorAll('[data-days]').forEach(node => node.classList.remove('active'));
     button.classList.add('active'); days = Number(button.dataset.days); tip.hidden = true;
-    track(button, load(activeSource)).then(repaint, () => {});
+    refresh(button, activeSource);
   }));
   document.querySelectorAll('[data-chart-source]').forEach(button => button.addEventListener('click', () => {
     document.querySelectorAll('[data-chart-source]').forEach(node => node.classList.remove('active'));
     button.classList.add('active'); activeSource = button.dataset.chartSource; tip.hidden = true;
-    track(button, load(activeSource)).then(repaint, () => {});
+    refresh(button, activeSource);
   }));
   document.addEventListener('click', event => { if (!host.contains(event.target)) tip.hidden = true; });
   document.addEventListener('keydown', event => { if (event.key === 'Escape') tip.hidden = true; });

@@ -765,8 +765,8 @@ def family_member(settings, owner_id: str, email: str, *, dob="1990-01-01", sex=
         )
         if share:
             connection.execute(
-                "INSERT INTO record_shares(id, owner_user_id, grantee_email, created_at) VALUES (?, ?, ?, ?)",
-                (str(uuid.uuid4()), owner_id, email, utc_now()),
+                "INSERT INTO record_shares(id, owner_user_id, grantee_email, grantee_user_id, created_at) VALUES (?, ?, ?, ?, ?)",
+                (str(uuid.uuid4()), owner_id, email, member, utc_now()),
             )
     return member
 

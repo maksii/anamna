@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import math
 import re
+from datetime import date, timedelta
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -281,6 +282,8 @@ def test_suggest_skips_itself_and_the_pairs_that_are_arithmetic():
     assert [item["id"] for item in found] == ["device:resting_heart_rate"]
     assert found[0]["r"] == -1.0
     assert found[0]["direction"] == "negative"
+    # One comparison left after the trivial pair is skipped; ten independent days.
+    assert found[0]["comparisons"] == 1 and found[0]["effective_n"] == 10
 
 
 def test_suggest_applies_its_thresholds_and_ranks_by_magnitude():
@@ -307,6 +310,10 @@ def test_suggest_applies_its_thresholds_and_ranks_by_magnitude():
         "device:sleep_duration",
     ]
     assert all(item["n"] == 10 for item in found)
+    # Four comparisons (body weight included, though its five days are too few
+    # to put forward). Sleep's rho of 0.9394 clears the chance level for ten
+    # days across four companions, which is about 0.75.
+    assert all(item["comparisons"] == 4 and item["effective_n"] == 10 for item in found)
 
 
 # --- the endpoint ------------------------------------------------------------
@@ -564,9 +571,24 @@ def test_a_device_page_suggests_laboratory_analytes_too(tmp_path: Path):
     """The complaint that started the revision: a wearable page offering only
     other wearable metrics, when the question was whether the month before a
     blood test shows up in it."""
-    settings, ferritin, _ = build(tmp_path)
+    settings = settings_for(tmp_path)
+    migrate(settings)
+    user_id = create_user(settings, "lab@example.test", "Lab", PASSWORD)
+    patient_id = seed_patient(settings, user_id, "Lab Patient")
+    # A year of steps climbing every day, so every trailing month climbs too.
+    span = [(date(2026, 1, 1) + timedelta(days=index)).isoformat() for index in range(240)]
+    seed_days(
+        settings, user_id, patient_id, "steps", "Daily steps", "device_activity", "steps", "sum",
+        [(day, 4000.0 + index * 20.0) for index, day in enumerate(span)],
+    )
+    # Eight draws a month apart: each one is an independent day for the gate,
+    # and the analyte rises with them, so the rank correlation is exact.
+    ferritin = seed_lab(
+        settings, user_id, patient_id, "Ferritin", "ng/mL",
+        [(span[3 + 30 * index], 30.0 + index * 5) for index in range(8)],
+    )
     with TestClient(create_app(settings)) as client:
-        login(client, "corr@example.test")
+        login(client, "lab@example.test")
         page = client.get("/devices/metrics/steps").text
     card = re.search(
         rf'data-corr-pick="{ferritin}"\s+data-corr-align="(\w+)" data-corr-period="(\w+)"', page

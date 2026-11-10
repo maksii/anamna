@@ -41,6 +41,7 @@ import threading
 import time
 import uuid
 from collections import Counter
+from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
@@ -89,6 +90,26 @@ from .common import (
 )
 
 logger = logging.getLogger("anamna.labsync")
+
+#: Called with an owner's user id after a run that may have changed their
+#: record.  The web layer registers its catalog invalidation here: this
+#: package cannot import the web application, and a background sync has no
+#: request to hang the invalidation on.
+_record_changed: list[Callable[[str], None]] = []
+
+
+def on_record_change(callback: Callable[[str], None]) -> None:
+    if callback not in _record_changed:
+        _record_changed.append(callback)
+
+
+def _notify_record_changed(owner_user_id: str) -> None:
+    for callback in list(_record_changed):
+        try:
+            callback(owner_user_id)
+        except Exception as exc:  # a listener must never fail a sync
+            logger.warning("labsync: record-change listener failed: %s", type(exc).__name__)
+
 
 PROVIDERS = {esculab.KEY: esculab, synevo.KEY: synevo, expert.KEY: expert, **doctoreleks.CLINICS}
 
@@ -509,10 +530,10 @@ def link_candidates(settings: Settings, user_id: str) -> list[dict]:
         rows = connection.execute(
             """SELECT DISTINCT u.id, u.display_name FROM users u
                 WHERE u.disabled_at IS NULL AND u.id<>? AND (
-                      u.id IN (SELECT owner_user_id FROM record_shares WHERE grantee_email=?)
-                   OR u.email IN (SELECT grantee_email FROM record_shares WHERE owner_user_id=?))
+                      u.id IN (SELECT owner_user_id FROM record_shares WHERE grantee_user_id=?)
+                   OR u.id IN (SELECT grantee_user_id FROM record_shares WHERE owner_user_id=?))
                 ORDER BY u.display_name COLLATE NOCASE""",
-            (user_id, me["email"], user_id),
+            (user_id, user_id, user_id),
         ).fetchall()
         return [
             {"id": str(row["id"]), "name": str(row["display_name"]), "self": str(row["id"]) == user_id,
@@ -2647,10 +2668,11 @@ def _progress(settings, account_user_id: str, key: str, summary: dict, order: di
     """Where a running sync is, for the card: how many of how many, and which
     one now (a clinic's name for the document, or the order number)."""
     with transaction(settings) as connection:
+        # Also a heartbeat: _claim_run treats a run whose sync_started_at is older than STALE_RUN as dead.
         connection.execute(
-            "UPDATE lab_accounts SET sync_summary_json=? WHERE user_id=? AND provider=? AND sync_state='running'",
+            "UPDATE lab_accounts SET sync_summary_json=?, sync_started_at=? WHERE user_id=? AND provider=? AND sync_state='running'",
             (json.dumps({**summary, "current": str(order.get("packet") or order["order_id"])[:200]},
-                        ensure_ascii=False), account_user_id, key),
+                        ensure_ascii=False), utc_now(), account_user_id, key),
         )
 
 
@@ -2692,8 +2714,22 @@ def sync(settings: Settings, user_id: str, key: str, *, secret: str | None = Non
         logger.exception("labsync: %s sync failed", key)
         _finish_run(settings, user_id, key, "failed", ERROR_INGEST, summary)
         raise
+    finally:
+        _notify_run_owners(settings, user_id, key)
     _finish_run(settings, user_id, key, "done", None, summary)
     return summary
+
+
+def _notify_run_owners(settings: Settings, user_id: str, key: str) -> None:
+    """The run may have filed results into the account holder's record and into
+    each record a family link names; the run does not track which, so tell them all."""
+    with connect(settings) as connection:
+        targets = connection.execute(
+            "SELECT target_user_id FROM lab_person_links WHERE account_user_id=? AND provider=?",
+            (user_id, key),
+        ).fetchall()
+    for owner in {user_id, *(str(row[0]) for row in targets)}:
+        _notify_record_changed(owner)
 
 
 def _sync_account(settings: Settings, user_id: str, key: str, secret: str | None, phone: str | None,

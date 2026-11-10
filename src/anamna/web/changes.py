@@ -642,6 +642,7 @@ def ai_payload(groups: list[dict]) -> list[dict]:
                     "value": entry["value_text"],
                     "unit": entry["unit"] or "",
                     "verdict": entry["verdict"]["label"],
+                    "verdict_code": entry["verdict"].get("interpretation") or "",
                     "target_range": entry["verdict"].get("target_range_text") or "",
                     "band": entry["verdict"].get("band_label") or "",
                     "beyond_target": _beyond(entry),
@@ -720,6 +721,59 @@ def _grounded(text: str, allowed: set[float]) -> bool:
     return _numbers(text) <= allowed
 
 
+#: Payload fields that hold a measured value, change, target bound or percent; dates, ids, counts, ages are not.
+_MEASUREMENT_FIELDS = ("value", "change", "target_range", "percent")
+
+
+def _measurement_numbers(payload) -> set[float]:
+    """The numbers the data holds as measurements, found by walking the payload's measurement fields."""
+    found: set[float] = set()
+    if isinstance(payload, dict):
+        for key, item in payload.items():
+            if key in _MEASUREMENT_FIELDS and isinstance(item, (str, int, float)):
+                found |= _numbers(str(item))
+            elif isinstance(item, (dict, list)):
+                found |= _measurement_numbers(item)
+    elif isinstance(payload, list):
+        for item in payload:
+            found |= _measurement_numbers(item)
+    return found
+
+
+#: Payload fields that hold a date or a month (the group date, a previous reading's date, earlier months).
+_DATE_FIELDS = ("date", "month")
+_YEAR = re.compile(r"\b\d{4}\b")
+
+
+def _payload_years(payload) -> set[float]:
+    """The years the data names in its date fields: a year is when a reading was taken, not a duration or a dose."""
+    found: set[float] = set()
+    if isinstance(payload, dict):
+        for key, item in payload.items():
+            if key in _DATE_FIELDS and isinstance(item, str):
+                found |= {float(year) for year in _YEAR.findall(item) if 1900 <= int(year) <= 2100}
+            elif isinstance(item, (dict, list)):
+                found |= _payload_years(item)
+    elif isinstance(payload, list):
+        for item in payload:
+            found |= _payload_years(item)
+    return found
+
+
+def _clamped_level(level: str, verdict: str) -> str:
+    """The model's severity, held inside what the reference engine's verdict
+    allows.  The engine is the only judge of a value; the model words the
+    change, it does not get to out-rank or under-rank that judgment."""
+    if level not in LEVELS:
+        return level
+    rank = LEVELS.index(level)
+    if verdict.startswith("critical"):
+        rank = max(rank, LEVELS.index("marked"))
+    elif verdict.startswith("borderline") or verdict in ("normal", "optimal"):
+        rank = min(rank, LEVELS.index("moderate"))
+    return LEVELS[rank]
+
+
 def messages_for(payload: list[dict], locale: str) -> list[dict]:
     language = _LANGUAGE.get(locale, "English")
     rules = (
@@ -728,7 +782,7 @@ def messages_for(payload: list[dict], locale: str) -> list[dict]:
         "worrying it is, what commonly causes it and what is usually done next. The data is the "
         "latest report: results from a few consecutive days, each compared with the previous result "
         "of the same test from before them. Each change carries the test, its value and unit, the "
-        "verdict from the reference engine, the target range, the band label of the published "
+        "verdict from the reference engine (`verdict_code` is its code), the target range, the band label of the published "
         "source, `beyond_target` (how far outside the target it is, already computed), earlier "
         "readings and the previous result.\n"
         "Rules:\n"
@@ -737,13 +791,16 @@ def messages_for(payload: list[dict], locale: str) -> list[dict]:
         "or durations) in any field. Describe the size of a change or a deviation only by quoting "
         "`change` or `beyond_target.percent`; never in words such as twice, almost double, several "
         "times or half.\n"
+        "- When you mention when an earlier reading was taken, name the month and year only, never the day of the month.\n"
         "- Severity (`level`): judge it for THAT test using general medical knowledge and the data "
         "-- how far outside the range, the direction, whether it is rising, and how much that test "
         "usually matters. `slight`: just outside, commonly not significant on its own. `moderate`: "
         "clearly outside, worth raising at the next routine visit. `marked`: far outside or "
         "steadily worsening, worth seeing a doctor about soon. `urgent`: a value that usually "
         "needs prompt medical attention. Be honest in both directions: do not alarm about a "
-        "slight deviation and do not soften a marked one. `how_serious` says this in one or two "
+        "slight deviation and do not soften a marked one. The level must not contradict the verdict "
+        "given for that test: a critical verdict is never `slight`, and a borderline, normal or "
+        "optimal verdict is never `marked` or `urgent`. `how_serious` says this in one or two "
         "sentences, referring to the value, the range and the earlier readings.\n"
         "- `what_it_is`: one sentence on what the test measures and why it matters.\n"
         "- `possible_reasons`: two to four common general causes of a result like this, most "
@@ -780,16 +837,20 @@ def _clean_items(values: object, cap: int, allowed: set[float]) -> list[str]:
     return [item for item in kept if item][:cap]
 
 
-def _clean_finding(raw: object, tests: set[str], allowed: set[float]) -> dict | None:
-    """One model finding, or None when it names an unknown test, level or has no grounded gist."""
-    if not isinstance(raw, dict) or raw.get("test") not in tests or raw.get("level") not in LEVELS:
+def _clean_finding(raw: object, verdicts: dict[str, str], allowed: set[float]) -> dict | None:
+    """One model finding, or None when it names an unknown test, level or has no grounded gist.
+
+    ``verdicts`` maps each test in the payload to its engine verdict code; the
+    level is held inside that verdict.
+    """
+    if not isinstance(raw, dict) or raw.get("test") not in verdicts or raw.get("level") not in LEVELS:
         return None
     how_serious = _clean_text(raw.get("how_serious"), allowed)
     if not how_serious:
         return None
     return {
         "test": raw["test"],
-        "level": raw["level"],
+        "level": _clamped_level(raw["level"], verdicts[raw["test"]]),
         "how_serious": how_serious,
         "what_it_is": _clean_text(raw.get("what_it_is"), allowed),
         "possible_reasons": _clean_items(raw.get("possible_reasons"), 4, allowed),
@@ -807,13 +868,17 @@ def summarise(settings, payload: list[dict], locale: str) -> tuple[dict, str]:
     """
     result = ai.complete(settings, AI_FEATURE, messages_for(payload, locale), response_format=_SCHEMA)
     parsed = ai.parse_json_reply(result.content)
-    allowed = _numbers(json.dumps(payload, ensure_ascii=False))
-    tests = {change["test"] for group in payload for change in group["changes"]}
+    allowed = _measurement_numbers(payload) | _payload_years(payload)
+    # The newest group's verdict wins for a test named in several groups, as attach_notes does.
+    verdicts: dict[str, str] = {}
+    for group in payload:
+        for change in group["changes"]:
+            verdicts.setdefault(change["test"], change.get("verdict_code") or "")
 
     findings = []
     raw_findings = parsed.get("findings")
     for raw in raw_findings if isinstance(raw_findings, list) else []:
-        finding = _clean_finding(raw, tests, allowed)
+        finding = _clean_finding(raw, verdicts, allowed)
         if finding:
             findings.append(finding)
     sentences = re.split(r"(?<=[.!?])\s+", str(parsed.get("state") or "").strip())
@@ -854,8 +919,6 @@ def _summary_reply(location: str, wants_json: bool, *, cached: bool = False):
 
 
 def load_summary(connection, owner_user_id: str, locale: str, scope: str, current: str):
-    from . import app as web
-
     row = connection.execute(
         "SELECT * FROM ai_change_summaries WHERE owner_user_id=? AND locale=? AND scope=?",
         (owner_user_id, locale, scope),

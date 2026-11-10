@@ -80,6 +80,10 @@ class Entry:
     keys: tuple[str, ...]
     #: Your DNA does not change: measured once is measured.
     once: bool = False
+    #: Why once is enough: "dna" (a genotype cannot change) or "lifetime_level"
+    #: (a blood level set mostly by genes, which guidance says to measure at
+    #: least once in adult life but which a doctor may still repeat).
+    once_kind: str = "dna"
     #: Offered to one sex only ("M" / "F"); to both when the sex is unknown.
     sex: str | None = None
     #: The record's category whose results this test also gives (an
@@ -170,7 +174,9 @@ MARKERS: tuple[Marker, ...] = (
     # Pancreatitis panels read a few CFTR variants, not the carrier panel.
     Marker("gen-cftr", r"муковісцидоз|\bCFTR\b", exclude=r"панкреатит", kinds=_GENE, genes=frozenset({"CFTR"}),
            purpose=r"муковісцидоз|carrier|носійств", variant=r"F508del"),
-    Marker("gen-warfarin", r"VKORC1", kinds=_GENE, variant=r"rs9923231"),
+    # Warfarin dosing reads both genes (CPIC 2017): VKORC1 alone is half the panel.
+    Marker("gen-warfarin", r"(?=.*VKORC1)(?=.*CYP2C9)", kinds=_GENE, genes=frozenset({"VKORC1", "CYP2C9"}),
+           variant=r"(?=[\s\S]*CYP2C9)(?=[\s\S]*rs9923231)"),
     # Infections without a shared key.  «ВІЛ» in capitals: «Т4 віл» is free T4.
     Marker("hiv", r"(?-i:ВІЛ)|\bHIV\b", exclude=r"навантаж|РНК|ПЛР|генотип|резист", kinds=("single",)),
     Marker("sti-pcr", r"ІПСШ", kinds=("set",)),
@@ -233,7 +239,7 @@ ENTRIES: tuple[Entry, ...] = (
     # --- long-term conditions -------------------------------------------------
     Entry("hba1c", "chronic", ("hemoglobin-a1c",)),
     Entry("kidney-acr", "chronic", ("x:urine-albumin-creatinine-ratio",)),
-    Entry("lipoprotein-a", "chronic", ("lipoprotein-a",), once=True),
+    Entry("lipoprotein-a", "chronic", ("lipoprotein-a",), once=True, once_kind="lifetime_level"),
     Entry("thyroid-tpo", "chronic", ("thyroid-peroxidase-antibodies",)),
     Entry("celiac-serology", "chronic", ("x:ttg-iga", "x:immunoglobulin-a")),
     Entry("rheumatoid", "chronic", ("x:ccp-igg", "rheumatoid-factor")),

@@ -4922,7 +4922,7 @@ def _us_duplex_prose(flat: str, page_number: int) -> list[ParsedObservation]:
         side = _US_SIDE[found.group("side")]
         rows.append(_us_row("Vertebral artery diameter", found.group("d"), "мм", found.group(0)[:90], page_number,
                             specimen=side))
-        initial = re.search(rf"[Шш]видкість\s+у\s+початковому\s+сегменті\s+(?P<v>\d{{2,3}})\s*см/с(?:,\s*RI\s+(?P<ri>0[.,]\d+))?",
+        initial = re.search(r"[Шш]видкість\s+у\s+початковому\s+сегменті\s+(?P<v>\d{2,3})\s*см/с(?:,\s*RI\s+(?P<ri>0[.,]\d+))?",
                             found.group("rest"))
         if initial:
             rows.append(_us_row("Peak systolic velocity, vertebral artery", initial.group("v"), "см/с", initial.group(0),
@@ -6332,7 +6332,7 @@ _SILAB_ROWS: dict[str, tuple[_SilabRow, ...]] = {
                 r"Клітинні зміни, не пов'язані з неопластичним",
                 r"Не виявлені зміни\.|Плоскоклітинна метаплазія\.",
             ),
-            ("Лейкоцити ({n})", r"Лейкоцити \((?P<n>\d)\)", rf"[ВУ] (?:помірній|великій|невеликій) кількості\."),
+            ("Лейкоцити ({n})", r"Лейкоцити \((?P<n>\d)\)", r"[ВУ] (?:помірній|великій|невеликій) кількості\."),
             ("Інфекційні агенти", r"Інфекційні агенти", r"Не виявлені\.|Виявлені\."),
             # Synevo's print of the same test calls the conclusion
             # «Цитоморфологічний висновок»; one name keeps both on one concept.

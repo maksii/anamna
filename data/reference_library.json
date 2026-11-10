@@ -501,7 +501,7 @@
       "publisher": "American Heart Association",
       "name": "Understanding Blood Pressure Readings (blood pressure category table)",
       "url": "https://www.heart.org/en/health-topics/high-blood-pressure/understanding-blood-pressure-readings",
-      "identifier": null,
+      "identifier": "AHA web page: Understanding Blood Pressure Readings",
       "reviewed_at": "2026-08-03",
       "official": true
     },
@@ -521,7 +521,7 @@
       "publisher": "American Heart Association",
       "name": "All About Heart Rate (Pulse)",
       "url": "https://www.heart.org/en/health-topics/high-blood-pressure/the-facts-about-high-blood-pressure/all-about-heart-rate-pulse",
-      "identifier": null,
+      "identifier": "AHA web page: All About Heart Rate (Pulse)",
       "reviewed_at": "2026-08-03",
       "official": true
     },
@@ -541,7 +541,7 @@
       "publisher": "Agency for Healthcare Research and Quality",
       "name": "Emergency Severity Index (ESI): A Triage Tool for Emergency Departments (danger-zone vital signs for adults)",
       "url": "https://www.ahrq.gov/patient-safety/settings/emergency-dept/esi.html",
-      "identifier": null,
+      "identifier": "AHRQ web page: Emergency Severity Index (ESI): A Triage Tool for Emergency Departments",
       "reviewed_at": "2026-08-03",
       "official": true
     },
@@ -851,7 +851,7 @@
       "publisher": "American Thyroid Association, Laboratory Services Committee",
       "name": "Standardization and Harmonization (ATA Laboratory Services Library, 2019)",
       "url": "https://www.thyroid.org/wp-content/uploads/publications/lab-services/ata-harmonization-standardization.pdf",
-      "identifier": null,
+      "identifier": "ATA Laboratory Services Library: Standardization and Harmonization (2019, PDF)",
       "reviewed_at": "2026-08-03",
       "official": true
     },
@@ -907,7 +907,7 @@
       "publisher": "Centers for Disease Control and Prevention",
       "name": "Adult BMI Categories",
       "url": "https://www.cdc.gov/bmi/adult-calculator/bmi-categories.html",
-      "identifier": null,
+      "identifier": "CDC web page: Adult BMI Categories",
       "reviewed_at": "2026-08-03",
       "official": true
     },
@@ -1517,7 +1517,7 @@
       "publisher": "European Centre for Disease Prevention and Control (ECDC)",
       "name": "Vaccine Scheduler: vaccine schedules in all countries of the EU/EEA",
       "url": "https://vaccine-schedule.ecdc.europa.eu/",
-      "identifier": "ECDC Vaccine Scheduler, adult and child schedules across 29 diseases; tetanus/diphtheria adult booster every 10 years",
+      "identifier": "ECDC Vaccine Scheduler, adult and child schedules across 29 diseases, listed country by country; adult tetanus/diphtheria boosters differ between member states",
       "reviewed_at": "2026-08-07",
       "official": true,
       "kind": "guideline",
@@ -2205,7 +2205,7 @@
       "publisher": "U.S. Food and Drug Administration",
       "name": "Pulse Oximeters: accuracy and limitations (device information and safety communication)",
       "url": "https://www.fda.gov/medical-devices/products-and-medical-procedures/pulse-oximeters",
-      "identifier": null,
+      "identifier": "FDA web page: Pulse Oximeters",
       "reviewed_at": "2026-08-03",
       "official": true
     },
@@ -4370,7 +4370,7 @@
       "publisher": "National Cancer Institute (NIH)",
       "name": "Tumor Markers (fact sheet, reviewed 7 December 2023)",
       "url": "https://www.cancer.gov/about-cancer/diagnosis-staging/diagnosis/tumor-markers-fact-sheet",
-      "identifier": null,
+      "identifier": "NCI fact sheet: Tumor Markers (reviewed 7 December 2023)",
       "reviewed_at": "2026-11-07",
       "official": true,
       "kind": "patient_information",
@@ -4382,7 +4382,7 @@
       "publisher": "National Cancer Institute (NIH)",
       "name": "Tumor Markers in Common Use (reviewed 7 December 2023)",
       "url": "https://www.cancer.gov/about-cancer/diagnosis-staging/diagnosis/tumor-markers-list",
-      "identifier": null,
+      "identifier": "NCI web page: Tumor Markers in Common Use (reviewed 7 December 2023)",
       "reviewed_at": "2026-11-07",
       "official": true,
       "kind": "patient_information",
@@ -4415,7 +4415,7 @@
       "publisher": "National Heart, Lung, and Blood Institute (NIH)",
       "name": "Clinical Guidelines on the Identification, Evaluation, and Treatment of Overweight and Obesity in Adults",
       "url": "https://www.nhlbi.nih.gov/files/docs/guidelines/ob_gdlns.pdf",
-      "identifier": null,
+      "identifier": "NIH Publication No. 98-4083 (September 1998)",
       "reviewed_at": "2026-08-03",
       "official": true
     },
@@ -4790,7 +4790,7 @@
       "publisher": "National Institutes of Health, Office of Dietary Supplements",
       "name": "Vitamin B12 - Health Professional Fact Sheet",
       "url": "https://ods.od.nih.gov/factsheets/VitaminB12-HealthProfessional/",
-      "identifier": null,
+      "identifier": "NIH ODS Health Professional Fact Sheet: Vitamin B12",
       "reviewed_at": "2026-08-03",
       "official": true,
       "source_access": "ods.od.nih.gov returns HTTP 403 to scripted fetches. Text read through a plain-text rendering of this exact URL."
@@ -4801,7 +4801,7 @@
       "publisher": "National Institutes of Health, Office of Dietary Supplements",
       "name": "Calcium - Health Professional Fact Sheet",
       "url": "https://ods.od.nih.gov/factsheets/Calcium-HealthProfessional/",
-      "identifier": null,
+      "identifier": "NIH ODS Health Professional Fact Sheet: Calcium",
       "reviewed_at": "2026-08-03",
       "official": true,
       "source_access": "ods.od.nih.gov returns HTTP 403 to scripted fetches. Text read through a plain-text rendering of this exact URL."
@@ -4812,7 +4812,7 @@
       "publisher": "National Institutes of Health, Office of Dietary Supplements",
       "name": "Folate - Health Professional Fact Sheet",
       "url": "https://ods.od.nih.gov/factsheets/Folate-HealthProfessional/",
-      "identifier": null,
+      "identifier": "NIH ODS Health Professional Fact Sheet: Folate",
       "reviewed_at": "2026-08-03",
       "official": true,
       "source_access": "ods.od.nih.gov returns HTTP 403 to scripted fetches (Cloudflare). Text read through a plain-text rendering of this exact URL."
@@ -4823,7 +4823,7 @@
       "publisher": "National Institutes of Health, Office of Dietary Supplements",
       "name": "Iron - Health Professional Fact Sheet",
       "url": "https://ods.od.nih.gov/factsheets/Iron-HealthProfessional/",
-      "identifier": null,
+      "identifier": "NIH ODS Health Professional Fact Sheet: Iron",
       "reviewed_at": "2026-08-03",
       "official": true,
       "source_access": "ods.od.nih.gov returns HTTP 403 to scripted fetches. Text read through a plain-text rendering of this exact URL."
@@ -4834,7 +4834,7 @@
       "publisher": "National Institutes of Health, Office of Dietary Supplements",
       "name": "Magnesium - Health Professional Fact Sheet",
       "url": "https://ods.od.nih.gov/factsheets/Magnesium-HealthProfessional/",
-      "identifier": null,
+      "identifier": "NIH ODS Health Professional Fact Sheet: Magnesium",
       "reviewed_at": "2026-08-03",
       "official": true,
       "source_access": "ods.od.nih.gov returns HTTP 403 to scripted fetches. Text read through a plain-text rendering of this exact URL."
@@ -4845,7 +4845,7 @@
       "publisher": "National Institutes of Health, Office of Dietary Supplements",
       "name": "Potassium - Health Professional Fact Sheet",
       "url": "https://ods.od.nih.gov/factsheets/Potassium-HealthProfessional/",
-      "identifier": null,
+      "identifier": "NIH ODS Health Professional Fact Sheet: Potassium",
       "reviewed_at": "2026-08-03",
       "official": true,
       "source_access": "ods.od.nih.gov returns HTTP 403 to scripted fetches. Text read through a plain-text rendering of this exact URL."
@@ -4856,7 +4856,7 @@
       "publisher": "National Institutes of Health, Office of Dietary Supplements",
       "name": "Vitamin D - Health Professional Fact Sheet (carries the NASEM/Food and Nutrition Board 25(OH)D cut-off table)",
       "url": "https://ods.od.nih.gov/factsheets/VitaminD-HealthProfessional/",
-      "identifier": null,
+      "identifier": "NIH ODS Health Professional Fact Sheet: Vitamin D",
       "reviewed_at": "2026-08-03",
       "official": true,
       "source_access": "ods.od.nih.gov returns HTTP 403 to scripted fetches. Text read through a plain-text rendering of this exact URL."
@@ -5077,7 +5077,7 @@
       "publisher": "U.S. Department of Health and Human Services (ODPHP)",
       "name": "Physical Activity Guidelines for Americans, 2nd edition (2018)",
       "url": "https://odphp.health.gov/sites/default/files/2019-09/Physical_Activity_Guidelines_2nd_edition.pdf",
-      "identifier": null,
+      "identifier": "Physical Activity Guidelines for Americans, 2nd edition. Washington, DC: U.S. Department of Health and Human Services; 2018",
       "reviewed_at": "2026-08-03",
       "official": true
     },
@@ -5148,7 +5148,7 @@
       "publisher": "Royal College of Physicians (UK)",
       "name": "National Early Warning Score (NEWS) 2: standardising the assessment of acute-illness severity in the NHS (updated report of a working party, 2017)",
       "url": "https://www.rcp.ac.uk/media/a4ibkkbf/news2-final-report_0_0.pdf",
-      "identifier": null,
+      "identifier": "Royal College of Physicians. National Early Warning Score (NEWS) 2: updated report of a working party. London: RCP; 2017",
       "reviewed_at": "2026-08-03",
       "official": true
     },
@@ -5627,7 +5627,7 @@
       "publisher": "World Health Organization",
       "name": "Obesity and overweight (fact sheet)",
       "url": "https://www.who.int/news-room/fact-sheets/detail/obesity-and-overweight",
-      "identifier": null,
+      "identifier": "WHO fact sheet: Obesity and overweight",
       "reviewed_at": "2026-08-03",
       "official": true
     },
@@ -5669,7 +5669,7 @@
       "publisher": "World Health Organization",
       "name": "Waist circumference and waist-hip ratio: report of a WHO expert consultation, Geneva, 8-11 December 2008",
       "url": "https://iris.who.int/server/api/core/bitstreams/ca408ade-05c9-4b7c-8967-6ee5b5e0ccd8/content",
-      "identifier": null,
+      "identifier": "WHO. Waist circumference and waist-hip ratio: report of a WHO expert consultation, Geneva, 8-11 December 2008",
       "reviewed_at": "2026-08-03",
       "official": true
     },
@@ -6562,7 +6562,17 @@
           "Class 5 - very high": "Шкала класів ImmunoCAP (0-6). Клас показує кількість специфічних IgE, а не тяжкість алергії.",
           "Class 6 - very high": "Шкала класів ImmunoCAP (0-6). Клас показує кількість специфічних IgE, а не тяжкість алергії."
         }
-      }
+      },
+      "source_ids": [
+        "fda-immunocap-k122197",
+        "madx-alex2-ifu",
+        "sige-class-2018"
+      ],
+      "regions_covered": [
+        "INT",
+        "US"
+      ],
+      "agreement": "concordant"
     },
     {
       "concept_id": "a6e7ce0c-2a6a-52c7-a552-2f1fb23d5742",
@@ -9890,7 +9900,14 @@
         "short_description": "Гучність звуку, що доходить до вуха: з навколишнього середовища або через навушники.",
         "why_it_matters": "Пошкодження слуху від гучного звуку залежить і від гучності, і від тривалості впливу. Воно накопичується й не відновлюється.",
         "name": "Вплив шуму довкілля"
-      }
+      },
+      "source_ids": [
+        "who-itu-safe-listening"
+      ],
+      "regions_covered": [
+        "INT"
+      ],
+      "agreement": "single_source"
     },
     {
       "concept_id": "eosinophils",
@@ -11228,7 +11245,14 @@
         "short_description": "Гучність звуку, який доходить до вуха з навушників або з навколишнього середовища.",
         "why_it_matters": "Наскільки гучний звук шкодить слуху, залежить і від гучності, і від того, як довго ви його слухаєте. Ця шкода накопичується і не минає.",
         "name": "Вплив звуку в навушниках"
-      }
+      },
+      "source_ids": [
+        "who-itu-safe-listening"
+      ],
+      "regions_covered": [
+        "INT"
+      ],
+      "agreement": "single_source"
     },
     {
       "concept_id": "heart-rhythm",
@@ -12726,21 +12750,6 @@
       "divergence_note": null,
       "bands": [
         {
-          "label": "Not taking a vitamin K antagonist",
-          "lower": null,
-          "upper": 2.0,
-          "lower_inclusive": true,
-          "upper_inclusive": false,
-          "interpretation": "normal",
-          "sex": null,
-          "age_min": 18,
-          "age_max": null,
-          "source_id": "who-trs979-annex6-2013",
-          "corroborated_by": [],
-          "note": "The INR exists so prothrombin times mean the same thing everywhere: each thromboplastin carries an International Sensitivity Index calibrated against the WHO international standard, and the ratio is referenced to the mean normal prothrombin time of the local population. By construction a person with normal clotting and no anticoagulant sits close to 1.0. This band is wide because the next officially published boundary is the therapeutic range; a value clearly above 1.0 in someone not on an anticoagulant is not 'normal' by default and needs clinical interpretation (liver disease, vitamin K deficiency, factor deficiency).",
-          "notes_uk": "МНВ створили для того, щоб протромбіновий час означав одне й те саме будь-де. Кожен тромбопластин має міжнародний індекс чутливості, відкалібрований за міжнародним стандартом ВООЗ, а відношення рахують до середнього нормального протромбінового часу місцевого населення. Тому в людини з нормальним згортанням крові, яка не приймає антикоагулянтів, МНВ близьке до 1,0. Діапазон такий широкий, бо наступна офіційна межа вже належить до терапевтичного діапазону. Значення помітно вище за 1,0 у людини без антикоагулянтів не можна за замовчуванням вважати «нормою»: його має оцінити лікар (можливі причини: хвороби печінки, нестача вітаміну К, дефіцит факторів згортання)."
-        },
-        {
           "label": "Vitamin K antagonist therapeutic range",
           "lower": 2.0,
           "upper": 3.0,
@@ -12755,7 +12764,10 @@
             "acc-aha-af-2023"
           ],
           "note": "This band applies only to someone actually taking warfarin or another vitamin K antagonist. ESC and ACC/AHA both target 2.0-3.0 for atrial fibrillation and most venous thromboembolism indications; some mechanical valves are targeted higher. Both also judge control by time spent in range rather than by any one reading.",
-          "notes_uk": "Цей діапазон стосується лише тих, хто справді приймає варфарин або інший антагоніст вітаміну К. І ESC, і ACC/AHA ставлять ціль 2,0-3,0 при фібриляції передсердь і більшості показань, пов’язаних із венозною тромбоемболією; для деяких механічних клапанів ціль вища. Обидві настанови оцінюють якість лікування за тим, скільки часу МНВ тримається в терапевтичному діапазоні, а не за окремим аналізом."
+          "notes_uk": "Цей діапазон стосується лише тих, хто справді приймає варфарин або інший антагоніст вітаміну К. І ESC, і ACC/AHA ставлять ціль 2,0-3,0 при фібриляції передсердь і більшості показань, пов’язаних із венозною тромбоемболією; для деяких механічних клапанів ціль вища. Обидві настанови оцінюють якість лікування за тим, скільки часу МНВ тримається в терапевтичному діапазоні, а не за окремим аналізом.",
+          "requires": [
+            "vka_therapy"
+          ]
         },
         {
           "label": "Above the vitamin K antagonist therapeutic range",
@@ -12771,7 +12783,10 @@
           "corroborated_by": [
             "acc-aha-af-2023"
           ],
-          "note": null
+          "note": null,
+          "requires": [
+            "vka_therapy"
+          ]
         }
       ],
       "short_description": "The INR converts a prothrombin time into an internationally comparable ratio using the reagent's International Sensitivity Index, which is why it, and not the raw seconds, is the coagulation number that transfers between laboratories and countries.",
@@ -12783,7 +12798,6 @@
         "short_description": "МНВ перераховує протромбіновий час у відношення, яке можна порівнювати в усьому світі, з урахуванням міжнародного індексу чутливості (МІЧ) реагенту. Тому між лабораторіями й країнами порівнюють саме МНВ, а не час у секундах.",
         "why_it_matters": "За МНВ підбирають дозу антагоністів вітаміну К (наприклад, варфарину). У людини, яка їх не приймає, МНВ загалом показує, як швидко працює зовнішній шлях згортання крові.",
         "band_labels": {
-          "Not taking a vitamin K antagonist": "Без антагоністів вітаміну К",
           "Vitamin K antagonist therapeutic range": "Терапевтичний діапазон для антагоністів вітаміну К",
           "Above the vitamin K antagonist therapeutic range": "Вище терапевтичного діапазону для антагоністів вітаміну К"
         }
@@ -20151,7 +20165,10 @@
           "source_id": "eular-gout-2016",
           "corroborated_by": [],
           "note": "EULAR advises against holding serum urate below 3 mg/dl (180 µmol/L) long term in people on urate-lowering therapy. This is a caution about treatment, not a deficiency state in an untreated person.",
-          "notes_uk": "EULAR не радить тривало утримувати рівень сечової кислоти в сироватці нижче 3 мг/дл (180 мкмоль/л) у людей, які отримують уратознижувальну терапію. Це застереження щодо лікування, а не ознака дефіциту в людини, яка не лікується."
+          "notes_uk": "EULAR не радить тривало утримувати рівень сечової кислоти в сироватці нижче 3 мг/дл (180 мкмоль/л) у людей, які отримують уратознижувальну терапію. Це застереження щодо лікування, а не ознака дефіциту в людини, яка не лікується.",
+          "requires": [
+            "urate_lowering_therapy"
+          ]
         },
         {
           "label": "180-360 µmol/L - at or below the gout treat-to-target level",
@@ -20168,7 +20185,10 @@
             "eular-gout-2016"
           ],
           "note": "Both ACR 2020 and EULAR 2016 set <6 mg/dl (<360 µmol/L) as the serum urate target for people treated for gout. It is a treatment target, not a population reference limit; no official body publishes a health-based reference interval for serum urate.",
-          "notes_uk": "І ACR 2020, і EULAR 2016 встановлюють для людей, які лікуються з приводу подагри, цільовий рівень сечової кислоти в сироватці <6 мг/дл (<360 мкмоль/л). Це ціль лікування, а не популяційна референтна межа; жодна офіційна установа не публікує референтного інтервалу сечової кислоти в сироватці, заснованого на критеріях здоров’я."
+          "notes_uk": "І ACR 2020, і EULAR 2016 встановлюють для людей, які лікуються з приводу подагри, цільовий рівень сечової кислоти в сироватці <6 мг/дл (<360 мкмоль/л). Це ціль лікування, а не популяційна референтна межа; жодна офіційна установа не публікує референтного інтервалу сечової кислоти в сироватці, заснованого на критеріях здоров’я.",
+          "requires": [
+            "urate_lowering_therapy"
+          ]
         },
         {
           "label": "360-405 µmol/L - above the gout treatment target, below the saturation point",
@@ -20185,7 +20205,10 @@
             "acr-gout-2020"
           ],
           "note": "Urate in this band exceeds the level gout treatment aims for but is still below the point at which monosodium urate stops dissolving.",
-          "notes_uk": "У цьому діапазоні рівень сечової кислоти вищий за ціль лікування подагри, але ще нижчий за точку, вище якої моноурат натрію перестає розчинятися."
+          "notes_uk": "У цьому діапазоні рівень сечової кислоти вищий за ціль лікування подагри, але ще нижчий за точку, вище якої моноурат натрію перестає розчинятися.",
+          "requires": [
+            "urate_lowering_therapy"
+          ]
         },
         {
           "label": "405 µmol/L (6.8 mg/dl) and above - urate above the saturation point of monosodium urate",
@@ -20220,7 +20243,7 @@
           "405 µmol/L (6.8 mg/dl) and above - urate above the saturation point of monosodium urate": "405 мкмоль/л (6,8 мг/дл) і вище: вище точки насичення моноурату натрію"
         }
       },
-      "jurisdiction_note": "Настанова 00451 «Подагра і псевдоподагра»: «Рівень сечової кислоти плазми повинен бути нижче 360 мкмоль/л або, при тяжкому перебігу захворювання, нижче 300 мкмоль/л для пришвидшення розчинення накопичених уратів.» Настанова також рекомендує призначати уратознижувальну терапію після першого нападу подагри, якщо пацієнт молодший 40 років або рівень сечової кислоти перевищує 480 мкмоль/л; алопуринол титрують до цілі <360 мкмоль/л. / Ukraine takes a side in the disagreement this analyte already records. The library notes that EULAR (2016) adds a lower target of under 300 umol/L for severe gout and that ACR (2020) explicitly broke with EULAR and refused to specify such thresholds. MOZ 00451 states both the 360 umol/L target and the 300 umol/L severe-disease target, so Ukraine follows the European position, not the American one. It also contributes a threshold neither of the recorded sources gives: 480 umol/L, above which urate-lowering therapy is indicated after a first attack. That cut point falls inside the existing 405-and-above band, so the replacement below splits it rather than moving it. The patient's value on this report, 361 umol/L, sits one unit above the treat-to-target level that all three jurisdictions share. A Ukrainian source states a different interval; it is recorded here rather than substituted, so the recorded band and the disagreement are both visible."
+      "jurisdiction_note": "Настанова 00451 «Подагра і псевдоподагра»: «Рівень сечової кислоти плазми повинен бути нижче 360 мкмоль/л або, при тяжкому перебігу захворювання, нижче 300 мкмоль/л для пришвидшення розчинення накопичених уратів.» Настанова також рекомендує призначати уратознижувальну терапію після першого нападу подагри, якщо пацієнт молодший 40 років або рівень сечової кислоти перевищує 480 мкмоль/л; алопуринол титрують до цілі <360 мкмоль/л. / Ukraine takes a side in the disagreement this analyte already records. The library notes that EULAR (2016) adds a lower target of under 300 umol/L for severe gout and that ACR (2020) explicitly broke with EULAR and refused to specify such thresholds. MOZ 00451 states both the 360 umol/L target and the 300 umol/L severe-disease target, so Ukraine follows the European position, not the American one. It also contributes a threshold neither of the recorded sources gives: 480 umol/L, above which urate-lowering therapy is indicated after a first attack. That cut point falls inside the existing 405-and-above band. It is recorded here as the level at which the Ukrainian guideline starts treatment after a first attack; it is not encoded as a band, because it does not apply to a person who has not had gout. The patient's value on this report, 361 umol/L, sits one unit above the treat-to-target level that all three jurisdictions share. A Ukrainian source states a different interval; it is recorded here rather than substituted, so the recorded band and the disagreement are both visible."
     },
     {
       "concept_id": "urine-amorphous-phosphates",

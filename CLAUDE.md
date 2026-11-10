@@ -3,6 +3,9 @@
 Anamna: local-first personal medical record. Python 3.12 / FastAPI / Jinja2 / hand-written CSS +
 vanilla JS. The application is the Python package under `src/anamna/`.
 
+`AGENTS.md` points here: this file is the single set of engineering rules for every contributor,
+human or agent, whatever tool they use.
+
 **Privacy first.** `data/` and `sources/` hold patient health information and are gitignored. Use
 them freely in development, testing and verification, but never commit them and never ship them in
 the repository or a container image.
@@ -57,6 +60,7 @@ server for `preview_start`, plus a sandbox target on a throwaway database with b
 off.
 
 ```bash
+uv tool run --from ruff==0.17.4 ruff check src scripts tests
 uv run pytest --basetemp=work/pytest-run
 node --test tests/js/*.test.mjs
 ```
@@ -65,6 +69,9 @@ The Python suite runs in parallel by default (pytest-xdist, `-n auto` in the `py
 addopts) and takes about a minute; pass `-n 0` to run it serially when debugging. Always override
 `--basetemp`, and give each concurrent run its own: the default `work/pytest` is usually locked on
 Windows and produces phantom `PermissionError`s that have nothing to do with the code under test.
+
+The lint gate is correctness-only (pyflakes rules, configured in `pyproject.toml`). A docker build is
+not needed locally: CI builds the image and smoke-tests the running container.
 
 OCR tests need Tesseract with the `ukr` and `eng` language data (on `PATH`, or inside WSL on
 Windows); without it they skip.
@@ -118,6 +125,10 @@ shown once, on the page that mints it, and never appears in a URL.
 The development database is **`data/anamna.sqlite3`** and there is exactly one of it. No `-v2`,
 no `-v3`, no `-copy`, no dated duplicate beside it. Snapshots belong in `work/db-archive/`, which is
 gitignored, and each needs a `README.md` line saying what it is and when it may go.
+
+`data/secret.key` sits beside it when `ANAMNA_SECRET` is not set. It is not health data, but it is a
+secret: it is gitignored with the rest of `data/` and never belongs in a commit, an image or a
+report.
 
 ### Taking a backup
 
@@ -181,7 +192,8 @@ cramped, overflowing, or visibly unconsidered at those sizes.
 - Zero horizontal page scroll at every width. Wide content (tables, charts, code) scrolls inside
   its own container.
 - Interactive targets ≥44×44 CSS px with visible spacing between neighbours.
-- Existing breakpoints in `web/static/app.css` are 620, 720, 760, 900, 980, 1100, 1120 and 1280 px.
+- Existing breakpoints in `web/static/app.css` are 620, 720, 760, 900, 980, 1000, 1100, 1120,
+  1280 and 1400 px.
   Reuse them; a new breakpoint needs a reason. The file is source-order sensitive — late base rules
   override earlier media-query rules — so add responsive rules inside the matching existing block,
   not at the end of the file.
@@ -189,6 +201,8 @@ cramped, overflowing, or visibly unconsidered at those sizes.
   the browser cache and any CDN's on the next reload. Link a new asset through `asset()`, never
   as a bare `/static/...` — `tests/python/test_static_assets.py` fails if you do.
 - Respect `prefers-color-scheme` and `prefers-reduced-motion`; both are already wired.
+- Full-height panels use `100vh` followed by the same declaration in `100dvh`: on iPhone and iPad
+  Safari `100vh` is the large viewport and runs under the toolbar.
 
 ### 2. Never descope
 
@@ -235,8 +249,11 @@ diff is worth exactly as much as not running it.
 When a task is more than a contained edit — multi-file, multi-page, migration, audit, sweep — stop
 coding and orchestrate.
 
-- Delegate mechanical or well-specified work to `claude-sonnet-5`; give reasoning-heavy work
-  (clinical logic, reference bands, extraction correctness, architecture) to `claude-opus-5`.
+- Delegate mechanical or well-specified work to a smaller, faster model; keep reasoning-heavy work
+  (clinical logic, reference bands, extraction correctness, architecture) with the most capable
+  model available. A small model needs the exact change spelled out: the function, the rule, the
+  wording of every user-visible string in both languages, and the tests that prove it. Decide the
+  clinical content yourself and verify it against the official source before handing it over.
 - Partition the work **by file**, and tell each subagent exactly which files it owns and that others
   are editing the rest concurrently — see "You are probably not alone in this repository". Two agents
   told to "fix the review page" will overwrite each other.
@@ -315,9 +332,11 @@ across all three jurisdictions.
   favourite.
 - Ukrainian sources must be found in Ukrainian (MOZ orders, national protocols) and mapped, not
   back-translated from an American guideline.
-- Current coverage, as a baseline to improve rather than a target already met: 187 sources
-  (US 73, EU 64, INT 24, UA 18, 8 unregioned) across 263 analytes — 88 analytes cite a UA source and
-  33 cite no region at all. Closing those gaps is in scope whenever you touch the analyte.
+- Current coverage, as a baseline to improve rather than a target already met: 495 sources
+  (UA 149, US 148, EU 113, INT 85) across 478 analytes. 396 analytes cite a UA source, 82 carry
+  numeric bands, and 374 are `no_universal_target`. Every band's `source_id` appears in its
+  analyte's `source_ids`, and every source carries an `identifier`
+  (`tests/python/test_audit_reference.py` guards both).
 
 ## Repo-specific traps
 
@@ -367,11 +386,52 @@ Each of these has already produced a confident, wrong, or silently missing clini
 - **Extraction stays provisional until a person verifies it.** Never mark a value verified from a
   model output or a confidence threshold — see
   [docs/extraction-and-verification.md](docs/extraction-and-verification.md).
+- **A treatment target is not a reference interval, and must be gated.** The INR 2.0-3.0 range is
+  a goal for people taking warfarin; shown to everyone it turned an INR of 2.6 with no
+  anticoagulant green. Urate below 360 µmol/L is a goal for people treated for gout. Give such a
+  band `requires: ["<clinical fact>"]`; without that fact in the record it does not judge and
+  the laboratory's own range speaks.
+- **No band contains the value means no curated verdict.** Only a band that states what is normal
+  can say which side of normal a value is on. Judging against whichever band came first reported
+  a ferritin of 50 as "High" under an "Iron deficiency" label for a person of unknown sex.
+- **A censored result is a limit, not a value.** `<1.0` and `>60` are stored as the number plus a
+  `comparator`. Pass it to `evaluate()`: a band judges it only when the band is open on the stated
+  side, and the laboratory's range only when the side is certain. Dropping it files `>60` eGFR
+  under "mildly decreased".
+- **The laboratory's stored flag outranks a fresh comparison with its printed numbers.** The flag
+  is what the report told the patient, and at ingest it already accounts for strict bounds and for
+  a flag the lab's own system set. A curated "normal" over a result the lab flagged becomes
+  "indeterminate", with or without printed bounds.
+- **AI output is a suggestion at every door.** A value, correction or vaccination a model proposed
+  is stored `extracted` with an `ai_suggested_*` method even when a person pressed the button; only
+  a person checking it against the source page makes it verified. The change summary's severity is
+  clamped to the engine's verdict, and its sentences may only quote numbers that are measurements
+  in the data.
+- **Medical text goes to an AI provider only on terms an administrator chose.** OpenRouter requests
+  carry `provider.data_collection`, `deny` unless the administrator allowed otherwise. File names
+  are never sent: they carry surnames.
+- **A share names an account, never an address.** `record_shares.grantee_user_id` decides who may
+  read; sign-up does not verify email, so matching on the address handed a record to whoever
+  registered it first.
+- **PDFium is not thread-safe.** The intake worker and the viewer's page renderer run on different
+  threads. Every call into `pypdfium2` happens under `ingest.extract.PDFIUM_LOCK`, and the lock is
+  never held across a Tesseract run.
+- **One migration is one transaction.** `migrate()` wraps each file together with its version row,
+  so a failure half-way leaves nothing behind. A file that contains its own `BEGIN`, `COMMIT` or
+  `PRAGMA` at the start of a line runs unwrapped, as written: avoid those unless the migration
+  needs them.
+- **The container does not run as root.** The entrypoint takes ownership of the data volume and
+  drops to uid 10001; the only writable paths are the volume and `/app/tmp` (OCR scratch). Code
+  that writes anywhere else works on a developer machine and fails in the image.
+- **Throttle keys are namespaced.** `login:<email>`, `login-ip:<visitor>`, `register:`, `token:`,
+  `webhook:`, `pwchange:`. One shared bucket let ten wrong passwords from anyone lock sign-in for
+  everyone behind the tunnel, and let webhook noise do the same.
 
 ## Definition of done
 
 1. Checks pass: the same set CI runs, plus the data validators:
    ```bash
+   uv tool run --from ruff==0.17.4 ruff check src scripts tests
    uv run pytest -q --basetemp=work/pytest-run
    node --test tests/js/*.test.mjs
    uv run python -m compileall -q src
