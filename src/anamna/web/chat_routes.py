@@ -789,6 +789,11 @@ _TURNS: set[tuple[str, str]] = set()
 _TURNS_LOCK = threading.Lock()
 
 
+def _share_read_only(user, owner) -> bool:
+    """A viewer of someone else's record whom the owner gave read-only access."""
+    return owner["id"] != user["id"] and dict(owner).get("share_access") != "full"
+
+
 def register_routes(app, settings, *, templates, template_context, require_user, record_user, require_csrf,
                     viewing_row) -> None:
     def people(request: Request) -> tuple[dict, dict]:
@@ -817,8 +822,10 @@ def register_routes(app, settings, *, templates, template_context, require_user,
         return templates.TemplateResponse(request, "chat.html", template_context(
             request, active="chat", conversations=items, current=current, messages=messages,
             route={key: route[key] for key in ("provider", "model", "host")}, ai_ready=route["active"], is_owner=viewer["id"] == owner["id"],
+            share_read_only=_share_read_only(viewer, owner),
             record_name=owner.get("display_name") or "",
             disabled_text=error_text("disabled", admin=viewer.get("role") == "admin"),
+            busy_text=error_text("in_progress", admin=False) if request.query_params.get("busy") else "",
             message_limit=chat.MAX_MESSAGE_CHARS, choices=choices, chosen=chosen,
             context=context_view(current),
         ))
@@ -839,6 +846,9 @@ def register_routes(app, settings, *, templates, template_context, require_user,
     @app.post("/chat/send")
     async def chat_send(request: Request):
         viewer, owner = await run_in_threadpool(people, request)
+        if _share_read_only(viewer, owner):
+            # Before any conversation, message or model call: a read-only share is not asked about.
+            raise HTTPException(403, t("chat.error_share_read_only"))
         form = await request.form()
         require_csrf(viewer, str(form.get("csrf_token") or ""))
         message = str(form.get("message") or "").strip()[: chat.MAX_MESSAGE_CHARS]
@@ -857,7 +867,8 @@ def register_routes(app, settings, *, templates, template_context, require_user,
 
                 return StreamingResponse(refused(), media_type="text/event-stream",
                                          headers={"X-Accel-Buffering": "no"})
-            return RedirectResponse(f"/chat/{form.get('conversation_id')}" if form.get("conversation_id") else "/chat", 303)
+            # The page says why the message was not sent (see busy_text in page()).
+            return RedirectResponse((f"/chat/{form.get('conversation_id')}" if form.get("conversation_id") else "/chat") + "?busy=1", 303)
         try:
             conversation_id = str(form.get("conversation_id") or "")
             if not conversation_id:

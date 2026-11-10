@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import re
 import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -633,3 +634,33 @@ def record_attempt(client: str) -> None:
 
 def clear_attempts(client: str) -> None:
     _attempts.pop(client, None)
+
+
+#: Set on every successful sign-in.  It proves that this browser has signed in
+#: to this account before, so the browser's failed guesses are counted on a
+#: meter of their own: a stranger who knows the address cannot lock the owner
+#: out of the browser the owner actually uses.  It names a browser, not a session.
+DEVICE_COOKIE = "anamna_device"
+_DEVICE_NONCE = re.compile(r"[A-Za-z0-9_-]{10,64}")
+
+
+def _device_mac(settings: Settings, email: str, nonce: str) -> str:
+    message = f"device:{email.strip().casefold()}:{nonce}".encode("utf-8")
+    return hmac.new(settings.secret_key.encode("utf-8"), message, hashlib.sha256).hexdigest()
+
+
+def device_cookie_value(settings: Settings, email: str) -> str:
+    """A new device token for this account: a random nonce and its MAC."""
+    nonce = secrets.token_urlsafe(16)
+    return f"{nonce}.{_device_mac(settings, email, nonce)}"
+
+
+def device_cookie_nonce(settings: Settings, email: str, value: str | None) -> str | None:
+    """The nonce of a device cookie this account minted, or None for anything else."""
+    nonce, separator, mac = (value or "").partition(".")
+    if not separator or not _DEVICE_NONCE.fullmatch(nonce):
+        return None
+    expected = _device_mac(settings, email, nonce)
+    if not hmac.compare_digest(expected.encode("ascii"), mac.encode("utf-8")):
+        return None
+    return nonce

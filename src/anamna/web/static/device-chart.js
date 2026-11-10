@@ -14,11 +14,30 @@
   let activeSource = 'combined';
   let inspectPlot = null;
   let pending = '';
+  // The points of the chart on screen, and the one that is the Tab stop.
+  let pointNodes = [];
+  let pointStop = null;
   // Every switch takes a number. Only the newest may clear the busy state, show
   // the failure note or repaint; an older fetch that lands late still fills the
   // cache, so switching back to its source is instant.
   let latest = 0;
   svg.addEventListener('click', event => { if (inspectPlot) inspectPlot(event); });
+  // Roving tab stop: the chart is one Tab stop (its newest reading), and the
+  // arrow keys, Home and End walk the points instead of Tab visiting each one.
+  const moveStop = node => {
+    if (pointStop && pointStop !== node) pointStop.setAttribute('tabindex', '-1');
+    pointStop = node;
+    node.setAttribute('tabindex', '0');
+  };
+  svg.addEventListener('keydown', event => {
+    const at = pointNodes.indexOf(event.target);
+    if (at < 0) return;
+    const last = pointNodes.length - 1;
+    const to = {ArrowLeft: at - 1, ArrowRight: at + 1, Home: 0, End: last}[event.key];
+    if (to === undefined) return;
+    event.preventDefault();
+    if (to >= 0 && to <= last) pointNodes[to].focus();
+  });
 
   // The payload is columnar (one array per field, sources as indexes into
   // `labels`); the chart code below reads point objects, built once here.
@@ -115,6 +134,7 @@
 
   const draw = (W, H) => {
     inspectPlot = null;
+    pointNodes = [];
     if (pending) return;
     const source = selected();
     globalThis.AnamnaExperience?.periodSummary(host.closest('section'), source);
@@ -158,7 +178,8 @@
         : C.fullDate(C.asDate(point.date));
       const reading = `${C.num(point.value, integral ? 0 : 4)} ${point.unit}`;
       const vendorSuffix = grouped ? '' : `, ${point.vendor}`;
-      const node = C.el('g', {tabindex: '0', role: 'button', 'aria-label': `${when}, ${reading}${vendorSuffix}`});
+      // Only the newest reading is a Tab stop; the rest are reached with the arrow keys.
+      const node = C.el('g', {tabindex: index === points.length - 1 ? '0' : '-1', role: 'button', 'aria-label': `${when}, ${reading}${vendorSuffix}`});
       node.append(C.el('circle', {cx: x(index), cy: y(point.value), r: radius, class: 'dynamic-point information'}));
       const show = event => {
         event.preventDefault();
@@ -169,11 +190,14 @@
       };
       node.addEventListener('mouseenter', show);
       node.addEventListener('focus', show);
+      node.addEventListener('focus', () => moveStop(node));
       node.addEventListener('click', show);
       node.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') show(event); });
       hitPoints.push({x: x(index), y: y(point.value), show, node});
+      pointNodes.push(node);
       svg.append(node);
     });
+    pointStop = pointNodes.at(-1) || null;
     // The whole plot is a touch target. A finger need not hit a six-pixel
     // glyph; keyboard focus on each individual point remains available.
     inspectPlot = event => {

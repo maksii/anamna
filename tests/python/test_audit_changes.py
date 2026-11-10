@@ -115,6 +115,13 @@ def test_a_sentence_quoting_a_number_found_only_in_a_date_is_dropped(tmp_path, m
     assert stored["state"] == "Zeta marker is now 7.0 mmol/L, above range."
 
 
+def test_the_summary_prompt_asks_for_the_combined_picture_and_never_a_dose():
+    system = changes.messages_for([], "en")[0]["content"]
+    assert "what the combination suggests" in system
+    assert "Never a dose" in system
+    assert "No treatments, medicines or doses" not in system
+
+
 def test_payload_years_come_from_date_fields_only():
     payload = [{
         "date": "2026-03-14",

@@ -96,6 +96,22 @@ def test_migration_with_trigger_applies(tmp_path, monkeypatch):
     assert _versions(settings.database_path) == [1]
 
 
+def test_database_from_a_newer_version_is_refused(tmp_path):
+    settings = _settings(tmp_path)
+    db.migrate(settings)
+    connection = sqlite3.connect(settings.database_path)
+    connection.execute(
+        "INSERT INTO schema_migrations(version, applied_at) VALUES (9999, '2026-01-01T00:00:00+00:00')"
+    )
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(RuntimeError, match="newer Anamna"):
+        db.migrate(settings)
+
+    assert 9999 in _versions(settings.database_path)
+
+
 def test_real_migrations_apply_on_a_fresh_database(tmp_path):
     settings = _settings(tmp_path)
     expected = len(list(db.MIGRATIONS_DIR.glob("*.sql")))

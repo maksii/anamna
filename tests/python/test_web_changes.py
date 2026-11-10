@@ -358,7 +358,7 @@ def test_ai_summary_is_folded_after_the_changes_with_notes_in_their_rows(tmp_pat
     csrf = csrf_for(settings, user_id)
     client.post("/changes/ai-summary", data={"csrf_token": csrf}, headers={"Accept": "application/json"})
     page = client.get("/changes").text
-    block = page.split('id="changes-ai"', 1)[1].split("<script>", 1)[0]
+    block = page.split('id="changes-ai"', 1)[1].split("<script", 1)[0]
     # The per-test finding sits, folded, in the Theta marker change row.
     theta_row = page.split(">Theta marker</a>", 1)[1].split("</li>", 1)[0]
     assert 'class="an-change-note"' in theta_row and "Theta marker reached 8.0 mmol/L." in theta_row

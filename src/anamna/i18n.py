@@ -316,6 +316,9 @@ JS_KEYS = (
     "chat.writing",
     "chat.reading",
     "chat.error_network",
+    "chat.answer_ready",
+    # The upload page (uploads.js): said once when every file is in.
+    "upload.announce_done",
 )
 
 

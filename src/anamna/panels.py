@@ -350,7 +350,7 @@ PANELS: list[Panel] = [
         id="inflammation",
         name="Inflammation",
         short="Inflammation",
-        description="General markers that rise when there is inflammation somewhere in the body.",
+        description="Inflammation markers (CRP, ESR, fibrinogen) and related immune tests (ASO for a recent streptococcal infection, rheumatoid factor).",
         area_id="immunity",
         member_names=(
             "C-reactive protein",

@@ -55,8 +55,8 @@ RESULT_9001 = {"value": [
     {"name": "Лейкоцити", "value": "11.2", "unit": "10^9/л", "norm": "4 - 9", "isAbnormal": 1},
     {"name": "Колір", "value": "жовтий", "unit": None, "norm": None, "isAbnormal": None},
 ]}
-PDF = b"%PDF-1.4 synthetic"
-PDF_2 = b"%PDF-1.4 synthetic cardiology"
+PDF = b"%PDF-1.4 synthetic\n%%EOF"
+PDF_2 = b"%PDF-1.4 synthetic cardiology\n%%EOF"
 
 
 def ok(reply):
@@ -557,11 +557,14 @@ def test_an_account_without_a_patient_list_is_its_own_person(monkeypatch):
 def test_a_sentence_from_the_server_is_logged_by_shape_and_reported(monkeypatch, caplog):
     """The server answers a bad call with text, not data; it must say what, with no values."""
     fresh = json.dumps({"refresh": REFRESH, "login": "u7", "expires": "2100-01-01T00:00:00+00:00", "device_id": "d"})
-    install(monkeypatch, {"spiUserPatientDetails": "@Foo is not a parameter for procedure spiUserPatientDetails."})
+    reply = "@Foo is not a parameter for procedure spiUserPatientDetails."
+    install(monkeypatch, {"spiUserPatientDetails": reply})
     with pytest.raises(LabSyncError) as caught, caplog.at_level("WARNING"):
         PARASKEVA.Client(URL, ACCESS, "+380670000001", fresh).check()
     assert caught.value.key == "labsync.error_reply"
-    assert "is not a parameter for procedure spiUserPatientDetails" in caplog.text
+    # Only the length and the field names are logged, never the server's words.
+    assert f"replied {len(reply)} characters" in caplog.text
+    assert "is not a parameter" not in caplog.text and "Foo" not in caplog.text
 
 
 def test_a_chosen_person_without_a_renewal_token_still_signs_in(tmp_path: Path, monkeypatch):

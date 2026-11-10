@@ -357,7 +357,9 @@ def extract_date(text: str, filename: str) -> str | None:
             # A form's sign-off line: «підпис» / «дата 18.08.2023».
             rf"^[ \t]*дата[ \t]*:?[ \t]*{_LDATE}[ \t]*$",
             r"Дата здачі аналізу:\s*(\d{2})[./](\d{2})[./](\d{4})",
-            r"Пацієнт:.*?р\.н\.\s*(\d{2})[./](\d{2})[./](\d{4})",
+            # Expert's «Пацієнт: <name>, 01.01.1990 р.н. 02.03.2025»: the birth date precedes «р.н.»
+            # and the order date follows it.  A bare «Пацієнт: ... р.н. 12.03.1980» is the birth date.
+            r"Пацієнт:[^\n]*?\d{2}[./]\d{2}[./]\d{4}\s*р\.н\.\s*(\d{2})[./](\d{2})[./](\d{4})",
             # Expert Hospital's ultrasound footer is a two-column table that
             # text extraction reads across: «Дата дослідження: <doctor> /
             # Лікар: / 01.02.2025», and on one layout even «Дата <name> /
@@ -1590,6 +1592,35 @@ def _is_other_vaccination_record(folded: str) -> bool:
     return bool((booklet and "серія" in folded) or _is_rabies_card(folded))
 
 
+#: Units of length (and the volume an echo report prints beside its
+#: dimensions): a table mostly of these is a measurement table, not results.
+MEASUREMENT_UNITS = frozenset({"мм", "см", "мл", "см3", "см.куб", "mm", "cm", "ml"})
+#: Result rows a page needs before its results header outweighs a mention of
+#: another kind of document.
+RESULT_TABLE_MIN_ROWS = 4
+
+
+def _is_results_table(text: str) -> bool:
+    """A laboratory results table that also mentions a consultation or a scan.
+
+    The rows are counted by the parser that will read them, so the rule
+    cannot drift from what gets extracted.  The header check is what protects
+    an ultrasound without one: a «УЗД ... рекомендовано» note is a laboratory
+    report only when the table is there too.
+    """
+    # Imported here, as `_synevo_row_names` does, so classifier never depends
+    # on parsers at import time.
+    from .parsers import has_result_header, parse_unit_rows
+
+    if not has_result_header(text):
+        return False
+    rows = parse_unit_rows(text, 1)
+    if len(rows) < RESULT_TABLE_MIN_ROWS:
+        return False
+    measured = sum(1 for row in rows if (row.unit_raw or "").casefold() in MEASUREMENT_UNITS)
+    return measured * 2 <= len(rows)
+
+
 def _clinical_type(filename: str, mime_type: str, text: str, folded: str) -> str:
     if "kardia advanced determination" in folded:
         clinical_type = "electrocardiogram"
@@ -1600,6 +1631,11 @@ def _clinical_type(filename: str, mime_type: str, text: str, folded: str) -> str
         # report, however the clinic named the Word file it came in
         # («Консультація 1748171.docx»).
         clinical_type = "clinical_report"
+    elif _is_results_table(text):
+        # A results table that names a consultation, a biopsy or an MRI in its
+        # note is a laboratory report.  Those kinds are never parsed for values,
+        # so the whole page used to vanish.
+        clinical_type = "laboratory"
     elif _is_consultation(filename, folded):
         clinical_type = "consultation"
     elif "звіт про кров’яний тиск" in folded and "garmin connect" in folded:

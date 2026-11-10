@@ -48,7 +48,7 @@
             {% if order.rows %}
             <details class="an-lab-inbox-rows">
               <summary>{{ t('labsync.inbox_rows_summary', count=order.rows|length|countfmt) }}</summary>
-              <div class="table-wrap">
+              <div class="table-wrap" tabindex="0" role="region" aria-label="{{ t('labsync.inbox_from', holder=entry.holder, lab=entry.name) }}">
                 <table>
                   <thead><tr><th scope="col">{{ t('labsync.inbox_th_test') }}</th><th scope="col">{{ t('labsync.inbox_th_result') }}</th></tr></thead>
                   <tbody>

@@ -30,7 +30,7 @@
   <div id="search-results">{% include "_search_results.html" %}</div>
 </section>
 
-<script>
+<script nonce="{{ csp_nonce }}">
 (() => {
   const form = document.querySelector('#metric-search-form');
   const input = document.querySelector('#metric-search');

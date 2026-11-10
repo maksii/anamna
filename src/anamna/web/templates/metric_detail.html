@@ -110,7 +110,11 @@
     <span>{{ plural_t('metric.timeline', values|length) }}</span>
   </div>
   {% if mixed_sources %}<p class="an-twin-note">{{ t('twin.history_note') }}</p>{% endif %}
-  <div class="table-wrap table-wrap--stack">
+  {% if fasting_applies %}
+  <p class="muted">{{ t('glucose.assumed_fasting') }}</p>
+  {% if sample_saved %}<p class="alert" role="status">{{ t('glucose.saved') }}</p>{% endif %}
+  {% endif %}
+  <div class="table-wrap table-wrap--stack" tabindex="0" role="region" aria-label="{{ t('metric.every_result') }}">
     <table>
       <thead>
         <tr>
@@ -119,6 +123,7 @@
           <th scope="col">{{ t('metric.th_comparison') }}</th>
           <th scope="col">{{ t('metric.th_provider') }}</th>
           <th scope="col">{{ t('metric.th_trust') }}</th>
+          {% if fasting_applies %}<th scope="col">{{ t('glucose.question') }}</th>{% endif %}
         </tr>
       </thead>
       <tbody>
@@ -163,6 +168,25 @@
             {% endif %}
           </td>
           <td data-label="{{ t('metric.th_trust') }}">{% if item.is_device %}<span class="status device_measurement">{{ t('device.measurement') }}</span>{% else %}<span class="status {{ item.verification_status }}">{{ item.verification_status|statusfmt }}</span>{% endif %}</td>
+          {% if fasting_applies %}
+          {#- A device day is not a stored sample, so it has nothing to ask. -#}
+          <td data-label="{{ t('glucose.question') }}">
+            {% if item.is_device %}
+            {% elif can_mark_fasting %}
+            <form action="/observations/{{ item.id }}/sample-condition" method="post" class="an-sample-form">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <select name="condition" aria-label="{{ t('glucose.question') }}">
+                <option value="">{{ t('glucose.answer_unknown') }}</option>
+                <option value="fasting"{{ ' selected' if item.sample_condition == 'fasting' else '' }}>{{ t('glucose.answer_fasting') }}</option>
+                <option value="not_fasting"{{ ' selected' if item.sample_condition == 'not_fasting' else '' }}>{{ t('glucose.answer_not_fasting') }}</option>
+              </select>
+              <button type="submit" class="link-button">{{ t('glucose.save') }}</button>
+            </form>
+            {% elif item.fasting_state == 'fasting' %}{{ t('glucose.confirmed_fasting') }}
+            {% elif item.fasting_state == 'not_fasting' %}{{ t('glucose.marked_not_fasting') }}
+            {% endif %}
+          </td>
+          {% endif %}
         </tr>
         {% endfor %}
       </tbody>
@@ -304,9 +328,9 @@
 </div>
 
 {% if chart_points|length > 1 %}
-<script type="application/json" id="chart-data">{{ chart_points|tojson }}</script>
-<script type="application/json" id="chart-band">{{ (chart_band or none)|tojson }}</script>
-<script>
+<script type="application/json" nonce="{{ csp_nonce }}" id="chart-data">{{ chart_points|tojson }}</script>
+<script type="application/json" nonce="{{ csp_nonce }}" id="chart-band">{{ (chart_band or none)|tojson }}</script>
+<script nonce="{{ csp_nonce }}">
 (() => {
   const C = globalThis.AnamnaChart;
   const esc = globalThis.AnamnaExperience.escape;
@@ -362,11 +386,14 @@
   const pointWhen = (point, grouped) => (grouped
     ? C.text('chart.averaged_point', {count: point.hlGroup, from: C.fullDate(C.asDate(point.hlFrom)), to: C.fullDate(C.asDate(point.hlTo))})
     : C.fullDate(C.asDate(point.date), String(point.date).includes('T')));
-  const pointNode = (point, grouped, when, shown) => {
-    if (grouped) return C.el('g', {tabindex: '0', role: 'img', 'aria-label': `${when}, ${shown} ${point.unit}`});
+  // Only the newest point takes a tab stop: every point is in the table below,
+  // and a stop per point would make the chart a long run of Tab presses.
+  const pointNode = (point, grouped, when, shown, focusable) => {
+    const tab = focusable ? '0' : '-1';
+    if (grouped) return C.el('g', {tabindex: tab, role: 'img', 'aria-label': `${when}, ${shown} ${point.unit}`});
     const verdict = point.verdict_label || point.status_label;
     const source = mixed && point.source_text ? `${point.source_text}, ` : '';
-    return C.el('a', {href: point.document_url, tabindex: '0', 'aria-label': `${when}, ${shown} ${point.unit}, ${source}${point.vendor}, ${verdict}`});
+    return C.el('a', {href: point.document_url, tabindex: tab, 'aria-label': `${when}, ${shown} ${point.unit}, ${source}${point.vendor}, ${verdict}`});
   };
   const pointMarker = (point, grouped, x, y, radius) => {
     const state = grouped ? 'none' : (point.state || 'none');
@@ -498,7 +525,7 @@
       const grouped = point.hlGroup > 1;
       const when = pointWhen(point, grouped);
       const shown = grouped ? C.num(point.value, 2) : (point.value_text || C.num(point.value, 4));
-      const node = pointNode(point, grouped, when, shown);
+      const node = pointNode(point, grouped, when, shown, index === points.length - 1);
       // 44 px target around a 12 px dot; the svg-level handler below also
       // picks the nearest point for a tap that lands between targets.
       node.append(C.el('circle', {cx: x, cy: y, r: 22, class: 'chart-hit'}));

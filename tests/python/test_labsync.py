@@ -327,7 +327,7 @@ def esculab_routes(orders: list[dict], rows: dict[str, list], *, persons=None):
     }
     for order_id, order_rows in rows.items():
         routes[("GET", f"/api/customers/getOrdersResult/{order_id}/111")] = authorised(order_rows)
-        routes[("GET", f"/api/results/getResults/111/{order_id}")] = authorised(b"%PDF-1.4 synthetic " + order_id.encode())
+        routes[("GET", f"/api/results/getResults/111/{order_id}")] = authorised(b"%PDF-1.4 synthetic " + order_id.encode() + b"\n%%EOF")
     return routes
 
 
@@ -543,7 +543,7 @@ def test_synevo_links_old_reports_by_content_downloads_new_ones_and_rolls_the_co
         ("POST", "/api/cabinet/get-results"): cookie_needed({"pagesCount": 1, "items": results}),
         ("POST", "/api/order/download-pdf"): cookie_needed(
             {"res": "ok", "results": {"main": "http://127.0.0.1:9/files/main.pdf", "extra": []}}),
-        ("GET", "/files/main.pdf"): lambda body, headers: 401 if "Cookie" in headers else (200, [], b"%PDF-1.4 s"),
+        ("GET", "/files/main.pdf"): lambda body, headers: 401 if "Cookie" in headers else (200, [], b"%PDF-1.4 s\n%%EOF"),
     }
     monkeypatch.setattr(common, "_http", router(routes, seen))
     calls = stub_intake(monkeypatch, settings, user_id, {
@@ -655,7 +655,9 @@ def test_profile_card_never_echoes_the_secret_and_routes_need_csrf(tmp_path: Pat
     assert "lab_msg=labsync.saved_checked" in saved.headers["location"]  # signing in checks the account at once
     page = client.get(saved.headers["location"])
     assert TOKEN not in page.text
-    assert "..." + TOKEN[-6:] in page.text and "1 Jan 2100" in page.text  # tail and expiry only
+    # A hash marker and the expiry only; not a single character of the token's own tail.
+    assert "..." + labsync.secret_tail(TOKEN) in page.text and "1 Jan 2100" in page.text
+    assert TOKEN[-6:] not in page.text
     checked = client.post("/profile/lab/esculab/check", data={"csrf_token": csrf(settings, user_id)}, follow_redirects=False)
     assert "saved_checked" in checked.headers["location"]
     page = client.get("/profile?tab=connections")
@@ -779,7 +781,7 @@ def family_routes(orders, rows_111, rows_222):
 
     for order_id, order_rows in rows_222.items():
         routes[("GET", f"/api/customers/getOrdersResult/{order_id}/222")] = authorised(order_rows)
-        routes[("GET", f"/api/results/getResults/222/{order_id}")] = authorised(b"%PDF-1.4 synthetic " + order_id.encode())
+        routes[("GET", f"/api/results/getResults/222/{order_id}")] = authorised(b"%PDF-1.4 synthetic " + order_id.encode() + b"\n%%EOF")
     return routes
 
 
@@ -877,7 +879,7 @@ def test_two_lab_profiles_of_one_person_feed_one_record(tmp_path: Path, monkeypa
     orders = [order(9001, ready=1, total=1), order(9301, ready=1, total=1, patient=333)]
     routes = esculab_routes(orders, {"9001": [es_row("Гемоглобін (HGB)", "151", "г/л")]}, persons=persons)
     routes[("GET", "/api/customers/getOrdersResult/9301/333")] = lambda body, headers: [es_row("Глюкоза", "5.1", "ммоль/л")]
-    routes[("GET", "/api/results/getResults/333/9301")] = lambda body, headers: b"%PDF-1.4 synthetic 9301"
+    routes[("GET", "/api/results/getResults/333/9301")] = lambda body, headers: b"%PDF-1.4 synthetic 9301\n%%EOF"
     monkeypatch.setattr(common, "_http", router(routes))
     sign_in_esculab(settings, holder)
     labsync.check_account(settings, holder, "esculab")
@@ -1071,7 +1073,7 @@ def test_the_sync_links_the_exact_report_adopts_a_missing_unit_and_calls_a_known
     assert audit == 2
 
     # A PDF the lab serves that is byte-for-byte one already uploaded is a link.
-    pdf = b"%PDF-1.4 synthetic 9600"
+    pdf = b"%PDF-1.4 synthetic 9600\n%%EOF"
     target = settings.source_dir / "known.pdf"
     target.write_bytes(pdf)
     from anamna.ingest.extract import file_sha256

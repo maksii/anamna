@@ -239,7 +239,7 @@
 {% if view.scope and (summary or ai_can_ask) %}{{ ai_block() }}{% endif %}
 {% endif %}
 
-<script>
+<script nonce="{{ csp_nonce }}">
 (() => {
   // A closed bucket's charts are stamped in the first time it opens.
   document.addEventListener('toggle', event => {
@@ -276,7 +276,7 @@
 </script>
 
 {% if ai_can_ask %}
-<script>
+<script nonce="{{ csp_nonce }}">
 (() => {
   const form = document.querySelector('#changes-ai-form');
   if (!form) return;

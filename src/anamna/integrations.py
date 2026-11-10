@@ -693,7 +693,10 @@ def _request(
                 raise IntegrationError("integrations: response too large")
     except urllib.error.HTTPError as exc:
         detail = exc.read(MAX_RESPONSE_BYTES).decode("utf-8", "replace")[:300]
-        raise IntegrationError(f"HTTP {exc.code}: {detail}", status=exc.code) from exc
+        # Callers log the message, and a provider's error page can echo a
+        # document title, so the body is kept out of it and logged at DEBUG only.
+        logger.debug("upstream error body: %s", detail)
+        raise IntegrationError(f"HTTP {exc.code}", status=exc.code) from exc
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         raise IntegrationError(str(exc)) from exc
     if raw:

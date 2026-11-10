@@ -2,6 +2,9 @@
 # Starts as root only long enough to hand the data volume to the unprivileged
 # `anamna` account, then drops to it for good. A container started with
 # `--user` is already unprivileged and skips straight to the command.
+# If the volume cannot be handed over, the container exits rather than running
+# as root, unless ANAMNA_ALLOW_ROOT=1 explicitly allows root (for a network share
+# that refuses chown).
 set -eu
 
 if [ "$(id -u)" = "0" ]; then
@@ -19,9 +22,12 @@ if [ "$(id -u)" = "0" ]; then
     if [ "$writable" = "1" ]; then
         exec setpriv --reuid=anamna --regid=anamna --init-groups "$@"
     fi
-    # Some network shares refuse chown. Staying root there is what every
-    # earlier image did, and is better than a container that cannot start.
-    echo "anamna: could not take ownership of the data directory; continuing as root" >&2
+    if [ "${ANAMNA_ALLOW_ROOT:-}" = "1" ]; then
+        echo "anamna: could not take ownership of the data directory; continuing as root because ANAMNA_ALLOW_ROOT=1" >&2
+    else
+        echo "anamna: could not take ownership of the data directory. Fix its owner (uid 10001), start the container with --user, or set ANAMNA_ALLOW_ROOT=1 to run as root." >&2
+        exit 1
+    fi
 fi
 
 exec "$@"

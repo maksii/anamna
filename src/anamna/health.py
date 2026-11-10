@@ -406,6 +406,11 @@ UNIT_SYNONYMS = {
     # split its trend into two series that never meet.
     "10^9": _GIGA_PER_L,
     "10^12": _TERA_PER_L,
+    # «х 10*9/л» with no space after the «х» («х10*9/л») is the same unit as the
+    # spaced form in UNIT_TRANSLATIONS; unfolded it split platelet and leukocyte
+    # series by whitespace alone.
+    "х10*9/л": _GIGA_PER_L,
+    "х10*12/л": _TERA_PER_L,
     # Latin-script spellings of the same three quantities «мкМО/мл», «кл/мкл»
     # and «тис/мкл» name.  µIU/mL is exactly mIU/L (10^-6 IU per 10^-3 L), and
     # a thousand cells per microlitre is exactly 10^9 per litre.  Written out
@@ -471,12 +476,6 @@ UNIT_SYNONYMS = {
     # The trailing full stop is the lab's, not a new unit -- as for «мм/год.»
     # above. Left unfolded, «Од.» and «Од» are two units for one quantity.
     "од.": "units",
-    # Expert Hospital labels urine specific gravity «Питома вага, г/мл 1,035».
-    # The figure is the relative density every other laboratory here prints
-    # without a unit (Esculab 1.032, St. Paraskeva 1.005), and the reference
-    # library files the analyte unitless; folded to "" so the three stay one
-    # series instead of the Expert reading starting a second, g/mL one.
-    "г/мл": "",
     # The same units with a plain digit for the exponent, a Latin "m" in a
     # Cyrillic word («сm3» on the thyroid report), a dot for the comma, or a
     # space before m².  One spelling each -- the library's (mL, mL/min/1.73m²)
@@ -541,6 +540,13 @@ CONCEPT_UNIT_ALIASES: dict[tuple[str, str], str] = {
     # same number.  Not folded globally: elsewhere "U" is an enzyme or an
     # arbitrary assay unit and is no international unit at all.
     ("insulin", "uu/ml"): "miu/l",
+    # Expert Hospital labels urine specific gravity «Питома вага, г/мл 1,035».
+    # The figure is the relative density every other laboratory here prints
+    # without a unit (Esculab 1.032, St. Paraskeva 1.005), and the reference
+    # library files the analyte unitless; folded to "" for this concept only, so
+    # the three stay one series.  Global, it erased the unit of any analyte
+    # printed in g/mL.
+    ("urine-specific-gravity", "г/мл"): "",
 }
 
 # Merged only after the reverse map is built, deliberately.  Folding has to

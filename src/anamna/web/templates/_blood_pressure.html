@@ -67,6 +67,7 @@
     <div class="an-verdict-details__body"><p>{{ t('bp.authorities_note') }}</p></div>
   </details>
   {% endif %}
+  <p class="muted">{{ t('bp.single_reading_note') }}</p>
 
   <div class="dynamic-chart an-bp-chart" id="bp-chart">
     {# viewBox is set from the container width by chart.js so one unit is one CSS pixel. #}
@@ -83,7 +84,7 @@
   {% if blood_pressure.weekly %}
   <section class="an-bp-weekly">
     <h3>{{ t('bp.weekly_heading') }}</h3>
-    <div class="table-wrap table-wrap--stack">
+    <div class="table-wrap table-wrap--stack" tabindex="0" role="region" aria-label="{{ t('bp.weekly_heading') }}">
       <table>
         <thead>
           <tr>
@@ -111,8 +112,8 @@
   {{ empty_state(t('bp.heading'), t('bp.no_reading')) }}
   {% endif %}
 </section>
-<script type="application/json" id="bp-data">{{ blood_pressure|tojson }}</script>
-<script>
+<script type="application/json" nonce="{{ csp_nonce }}" id="bp-data">{{ blood_pressure|tojson }}</script>
+<script nonce="{{ csp_nonce }}">
 (() => {
   const C = globalThis.AnamnaChart;
   const anchorFor = (order, last) => {

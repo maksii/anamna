@@ -61,13 +61,17 @@ defect even when it reads fine in English.
   synthetic fixtures instead.
 - The reference library holds published clinical guidance only. Every interval cites its source;
   never invent a number.
+- Log lines must not contain file names, document titles or the text of an upstream reply. Log an
+  id, a count, a file suffix or the exception class.
 
 ## Pull requests
 
 - Keep each change focused, and explain what it changes for the person using the app.
 - Check pages you touched at phone and tablet widths, in both languages.
 - CI lints, runs the Python and JavaScript tests, builds the container image and starts it once to
-  check that it serves, runs unprivileged and offers first-run setup. It must be green.
+  check that it serves, runs unprivileged and offers first-run setup. CI also starts the image a
+  second time with the hardened settings from `compose.yaml`: read-only root filesystem, all Linux
+  capabilities dropped except the four the entrypoint needs. It must be green.
 
 By contributing you agree that your contribution is licensed under the
 [GNU AGPL v3.0 only](LICENSE).

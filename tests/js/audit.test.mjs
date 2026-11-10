@@ -57,3 +57,52 @@ test('app.css styles the first-run welcome steps inside the 1100px breakpoint', 
     assert.doesNotMatch(src.slice(block.index, end), /\.an-home-welcome__steps/);
   }
 });
+
+// The rest need a DOM to run against, which this harness does not stub; each
+// asserts on the source instead, so a revert of the fix fails the test.
+
+test('uploads.js updates queue rows in place instead of replacing the whole list each poll', () => {
+  const src = read('uploads.js');
+  // The old poll rebuilt every row, so the screen reader re-read the queue and
+  // keyboard focus inside a row was lost every 1.2 s.
+  assert.doesNotMatch(src, /replaceChildren\(\.\.\.payload\.jobs\.map\(render\)\)/);
+  assert.match(src, /sync\(payload\.jobs\);/);
+  // An unchanged row is kept as the same node; a changed one is swapped alone.
+  assert.match(src, /if \(node\.outerHTML === fresh\.outerHTML\) \{\s*target = node;/);
+  assert.match(src, /item\.dataset\.job = job\.id;/);
+  assert.match(src, /if \(!wanted\.has\(id\)\) node\.remove\(\);/);
+  // The focused link is found again in the new row.
+  assert.match(src, /restoreFocus\(focused, fresh\)/);
+});
+
+test('uploads.js writes progress to the bar only and says the queue count only when it moves', () => {
+  const src = read('uploads.js');
+  const show = src.slice(src.indexOf('const show = (percent) =>'), src.indexOf('const announce = (text) =>'));
+  assert.doesNotMatch(show, /chosen/);
+  assert.match(src, /bar\.value = percent/);
+  assert.match(src, /getElementById\("an-upload-status"\)/);
+  assert.match(src, /strings\["upload\.announce_done"\]/);
+  assert.match(src, /if \(counts === spokenCounts\) return;/);
+});
+
+test('device-chart.js makes only the newest point a Tab stop and walks the rest with the arrow keys', () => {
+  const src = read('device-chart.js');
+  assert.doesNotMatch(src, /tabindex: '0', role: 'button'/);
+  assert.match(src, /tabindex: index === points\.length - 1 \? '0' : '-1'/);
+  assert.match(src, /ArrowLeft: at - 1, ArrowRight: at \+ 1, Home: 0, End: last/);
+  assert.match(src, /node\.addEventListener\('focus', \(\) => moveStop\(node\)\);/);
+});
+
+test('source-viewer.js marks the pager edge with aria-disabled, never the disabled property', () => {
+  const src = read('source-viewer.js');
+  assert.doesNotMatch(src, /\.disabled =/);
+  assert.match(src, /button\.setAttribute\("aria-disabled", "true"\)/);
+  assert.match(src, /if \(!isBlocked\(prev\)\) setPage/);
+  assert.match(src, /if \(!isBlocked\(next\)\) setPage/);
+});
+
+test('chat.js announces a finished answer and makes errors alerts', () => {
+  const src = read('chat.js');
+  assert.match(src, /answered \? say\("chat\.answer_ready"\) : ""/);
+  assert.match(src, /note\.setAttribute\("role", "alert"\)/);
+});

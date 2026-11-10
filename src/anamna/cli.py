@@ -3,15 +3,26 @@ from __future__ import annotations
 import argparse
 import getpass
 import json
+import shutil
+import sqlite3
 import sys
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import NoReturn
 
-from .config import get_settings
-from .db import connect, migrate, utc_now
+from .config import SECRET_FILE, env, get_settings
+from .db import connect, migrate, transaction, utc_now
 from .devices import import_device_export
+from .export import write_record_archive
 from .ingest.pipeline import audit_inventory, ingest_directory
-from .security import create_user
+from .security import MINIMUM_PASSWORD_LENGTH, create_user, set_password
+
+
+def _refuse(message: str) -> NoReturn:
+    """Say why nothing was changed on stderr, and exit with status 1."""
+    print(message, file=sys.stderr)
+    raise SystemExit(1)
 
 
 def ensure_patient(user_id: str, display_name: str, dob: str | None, sex: str | None) -> str:
@@ -41,11 +52,98 @@ def user_by_email(email: str):
 def command_init(args: argparse.Namespace) -> None:
     settings = get_settings()
     migrate(settings)
+    if user_by_email(args.email):
+        _refuse(
+            "An account with this email already exists; nothing was changed. "
+            f"To change its password run: anamna set-password --email {args.email}"
+        )
     password = args.password or getpass.getpass("Password (10+ characters): ")
-    existing = user_by_email(args.email)
-    user_id = existing["id"] if existing else create_user(settings, args.email, args.name, password)
+    user_id = create_user(settings, args.email, args.name, password)
     patient_id = ensure_patient(user_id, args.patient_name or args.name, args.dob, args.sex)
     print(json.dumps({"user_id": user_id, "patient_id": patient_id}, indent=2))
+
+
+def command_set_password(args: argparse.Namespace) -> None:
+    settings = get_settings()
+    user = user_by_email(args.email)
+    if not user:
+        _refuse("No account with this email.")
+    # The environment carries the new password under `docker exec`, where no
+    # terminal is attached; a command-line argument would sit in shell history.
+    password = env("NEW_PASSWORD")
+    if not password:
+        password = getpass.getpass("New password: ")
+        if password != getpass.getpass("Repeat it: "):
+            _refuse("The two entries differ; nothing was changed.")
+    if len(password) < MINIMUM_PASSWORD_LENGTH:
+        _refuse(f"The password must be at least {MINIMUM_PASSWORD_LENGTH} characters; nothing was changed.")
+    # Ends every session of the account, as the profile page's password change does.
+    set_password(settings, user["id"], password)
+    message = f"Password changed for {user['email']}. All its sessions were ended."
+    if args.admin:
+        # A sole administrator locked out by a disabled flag or a lost role can
+        # come back in through here; the change is one transaction.
+        with transaction(settings) as connection:
+            connection.execute("UPDATE users SET role = 'admin', disabled_at = NULL WHERE id = ?", (user["id"],))
+        message += " The account is now an administrator."
+    print(message)
+
+
+def command_backup(args: argparse.Namespace) -> None:
+    settings = get_settings()
+    if not settings.database_path.is_file():
+        raise SystemExit(f"No database at {settings.database_path}; nothing to back up.")
+    target = Path(args.to).resolve()
+    sources = settings.source_dir.resolve()
+    if target.is_relative_to(sources) or target == settings.database_path.resolve():
+        raise SystemExit("The backup directory must not be inside the sources directory or be the database file.")
+    if not args.no_sources and target / "sources" == sources:
+        raise SystemExit("The backup's sources copy would land on the sources directory itself; choose another directory.")
+    target.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+    database_copy = target / f"anamna-{stamp}.sqlite3"
+    if database_copy.exists():
+        raise SystemExit(f"{database_copy} already exists; wait a second and run the backup again.")
+    # SQLite's online backup is consistent while the server is writing; a file copy is not.
+    source = sqlite3.connect(settings.database_path)
+    destination = sqlite3.connect(database_copy)
+    try:
+        source.backup(destination)
+    finally:
+        destination.close()
+        source.close()
+    lines = [f"Database: {database_copy}"]
+    key = settings.database_path.parent / SECRET_FILE
+    if key.is_file():
+        shutil.copy2(key, target / SECRET_FILE)
+        lines.append(f"Secret key: {target / SECRET_FILE}")
+    if args.no_sources:
+        lines.append(f"Original files were not copied: back up {settings.source_dir} separately.")
+    else:
+        if settings.source_dir.is_dir():
+            shutil.copytree(settings.source_dir, target / "sources", dirs_exist_ok=True)
+            lines.append(f"Sources: {target / 'sources'}")
+    print("\n".join(lines))
+
+
+def command_export(args: argparse.Namespace) -> None:
+    settings = get_settings()
+    user = user_by_email(args.email)
+    if not user:
+        _refuse("No account with this email.")
+    path = Path(args.to)
+    try:
+        handle = path.open("xb")
+    except FileExistsError:
+        _refuse(f"{path} already exists; nothing was written.")
+    with handle:
+        try:
+            counts = write_record_archive(settings, user["id"], handle)
+        except BaseException:
+            handle.close()
+            path.unlink(missing_ok=True)
+            raise
+    print(", ".join(f"{name} {count}" for name, count in counts.items()) + f"; written to {path}")
 
 
 def command_ingest(args: argparse.Namespace) -> None:
@@ -173,6 +271,26 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--sex", choices=["female", "male", "intersex", "unknown"])
     init.add_argument("--password")
     init.set_defaults(func=command_init)
+    set_password_parser = subparsers.add_parser(
+        "set-password",
+        help="Set an account's password, ending its sessions (reads ANAMNA_NEW_PASSWORD or prompts)",
+    )
+    set_password_parser.add_argument("--email", required=True)
+    set_password_parser.add_argument(
+        "--admin", action="store_true",
+        help="Also make the account an administrator and re-enable it, to recover a locked-out installation",
+    )
+    set_password_parser.set_defaults(func=command_set_password)
+    backup = subparsers.add_parser(
+        "backup", help="Copy the database, its secret key and the original files into a directory",
+    )
+    backup.add_argument("--to", required=True, help="Directory to write into (created if missing)")
+    backup.add_argument("--no-sources", action="store_true", help="Do not copy the original files")
+    backup.set_defaults(func=command_backup)
+    export = subparsers.add_parser("export", help="Write one account's whole record as a ZIP archive")
+    export.add_argument("--email", required=True)
+    export.add_argument("--to", required=True, help="The ZIP file to create; an existing file is not overwritten")
+    export.set_defaults(func=command_export)
     ingest = subparsers.add_parser("ingest", help="Classify and ingest supported source documents")
     ingest.add_argument("--email", required=True)
     ingest.add_argument("--source-dir")
@@ -198,10 +316,10 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
-    args = build_parser().parse_args()
+    args = build_parser().parse_args(argv)
     args.func(args)
 
 

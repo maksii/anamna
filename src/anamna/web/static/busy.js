@@ -139,5 +139,29 @@
     }
   }
 
+  // A form marked data-confirm asks first; the message is the attribute. A
+  // cancelled submit stops here, before any other submit handler runs.
+  document.addEventListener('submit', (event) => {
+    const form = event.target;
+    const message = form && form.getAttribute && form.getAttribute('data-confirm');
+    if (message && !window.confirm(message)) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  }, true);
+
+  // Controls that used to carry inline handlers (the strict CSP blocks those).
+  // Focus does not bubble, so the focus listener captures.
+  document.addEventListener('focus', (event) => {
+    const node = event.target;
+    if (node && node.dataset && node.dataset.action === 'select-all') node.select();
+  }, true);
+  document.addEventListener('change', (event) => {
+    const node = event.target;
+    if (node && node.dataset && node.dataset.action === 'token-kind' && node.form) {
+      node.form.expires_on.required = node.value === 'guest';
+    }
+  });
+
   globalThis.anamnaBusy = { track, navigating, reset };
 })();

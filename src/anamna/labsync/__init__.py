@@ -140,6 +140,8 @@ CLASSES = ("match", "value_mismatch", "unit_mismatch", "name_mismatch", "missing
 
 ERROR_OFF = "labsync.error_off"
 ERROR_AUTH = "labsync.error_auth"
+#: One order the lab refuses (403 on its PDF); the rest of the run carries on.
+ERROR_ORDER_FORBIDDEN = "labsync.error_order_forbidden"
 ERROR_EXPIRED = "labsync.error_expired"
 ERROR_NO_CREDENTIALS = "labsync.error_no_credentials"
 ERROR_PATIENT_UNKNOWN = "labsync.error_patient_unknown"
@@ -153,6 +155,7 @@ ERROR_KEYS = frozenset(
         ERROR_OFF,
         "labsync.error_credentials",
         ERROR_AUTH,
+        ERROR_ORDER_FORBIDDEN,
         ERROR_EXPIRED,
         "labsync.error_unreachable",
         "labsync.error_reply",
@@ -320,8 +323,8 @@ SAVED_CHOOSE = "labsync.sms_choose_person"
 
 def _device_state(row) -> dict:
     """This connection's device id and trusted-device token, kept across
-    reconnects (``forget`` keeps them) so the lab knows the device and need
-    not text a code every time."""
+    reconnects so the lab knows the device and need not text a code every
+    time.  ``forget`` keeps only the device id."""
     try:
         state = json.loads(row["refresh_secret"]) if row and row["refresh_secret"] else {}
     except (json.JSONDecodeError, TypeError):
@@ -398,13 +401,15 @@ def _sign_in(settings: Settings, user_id: str, key: str, form: dict[str, str]) -
 
 def forget(settings: Settings, user_id: str, key: str) -> None:
     """Drop the credential and the lab's person list.  The chosen person and
-    the order history stay, so reconnecting later never re-imports.  For a
-    password lab only the device identity stays (no token): the next sign-in
-    from here is the same device to the lab."""
+    the order history stay, so reconnecting later never re-imports.  Only the
+    device id stays, never the lab's trusted-device token: that token skips the
+    texted code, so a copy of the database must not be able to sign in with it.
+    The next sign-in from here is the same device to the lab, and still gets a code."""
     with _PENDING_LOCK:
         _PENDING.pop((user_id, key), None)
     row = account(settings, user_id, key)
-    device = (json.dumps(_device_state(row)) if row and row["refresh_secret"] and signs_in(provider(key)) else "")
+    device = (json.dumps({"device_id": _device_state(row)["device_id"]})
+              if row and row["refresh_secret"] and signs_in(provider(key)) else "")
     with transaction(settings) as connection:
         connection.execute(
             """UPDATE lab_accounts SET secret='', refresh_secret=?, phone='', secret_expires_at=NULL,
@@ -652,6 +657,28 @@ def unlink_person(settings: Settings, user_id: str, key: str, remote_id: str) ->
         )
 
 
+def drop_links_between(settings: Settings, user_a: str, user_b: str) -> int:
+    """Remove every lab-person link that files one of these accounts' lab
+    people into the other's record; returns how many links were removed."""
+    with transaction(settings) as connection:
+        links = connection.execute(
+            """SELECT account_user_id, provider, remote_person_id, target_user_id FROM lab_person_links
+                WHERE account_user_id<>target_user_id AND (
+                      (account_user_id=? AND target_user_id=?) OR (account_user_id=? AND target_user_id=?))""",
+            (user_a, user_b, user_b, user_a),
+        ).fetchall()
+        for link in links:
+            # As unlink_person does: what was held for the other user and never
+            # entered their record goes; orders already imported stay.
+            _drop_held(connection, str(link["target_user_id"]), str(link["account_user_id"]),
+                       str(link["provider"]), str(link["remote_person_id"]))
+            connection.execute(
+                "DELETE FROM lab_person_links WHERE account_user_id=? AND provider=? AND remote_person_id=?",
+                (str(link["account_user_id"]), str(link["provider"]), str(link["remote_person_id"])),
+            )
+    return len(links)
+
+
 # --- the receiving side: results another user's lab account fetched for you -------
 
 
@@ -796,23 +823,28 @@ def _real_number(value: object) -> bool:
     return bool(value) and len(str(value)) > 2
 
 
-def _documents_by_number(connection, owner_user_id: str, numbers: set[str]) -> dict[str, list[str]]:
+def _documents_by_number(connection, owner_user_id: str, numbers: set[str], key: str) -> dict[str, list[str]]:
     """number → every document carrying it, on the document itself or on one
     of its reports (a compound PDF), oldest first; one query for any number of
-    orders.  Duplicates of another document are left out — they hold no
-    observations of their own — and so is the lab's own record of an order
-    (:data:`LAB_RECORD`): it is the lab's rows, not a reading of them."""
+    orders of one lab.  Only documents of that lab's vendor match (a document
+    with no vendor recorded may still match by number): another laboratory's
+    report can print the same order number.  Duplicates of another document
+    are left out — they hold no observations of their own — and so is the
+    lab's own record of an order (:data:`LAB_RECORD`): it is the lab's rows,
+    not a reading of them."""
     if not numbers:
         return {}
     marks = ",".join("?" for _ in numbers)
     found: dict[str, list[str]] = {"": []}  # "" keeps every hit in order, oldest first
     for row in connection.execute(
         f"""SELECT d.id, d.order_identifier, r.order_identifier report_order FROM documents d
+              LEFT JOIN vendors v ON v.id=d.vendor_id
               LEFT JOIN reports r ON r.document_id=d.id AND r.order_identifier IN ({marks})
              WHERE d.owner_user_id=? AND d.duplicate_of_document_id IS NULL AND d.extraction_strategy<>'lab_api'
+               AND (d.vendor_id IS NULL OR v.canonical_name=?)
                AND (d.order_identifier IN ({marks}) OR r.id IS NOT NULL)
              ORDER BY d.imported_at, d.id""",
-        (*numbers, owner_user_id, *numbers),
+        (*numbers, owner_user_id, provider(key).VENDOR, *numbers),
     ):
         for number in ({str(row["order_identifier"] or ""), str(row["report_order"] or "")} & numbers) | {""}:
             if str(row["id"]) not in found.setdefault(number, []):
@@ -850,10 +882,10 @@ def _duplicate_pairs(connection, document_ids: set[str]) -> list[tuple[str, str]
         (NOT_DUPLICATE_NOTE, *ids, *ids))]
 
 
-def documents_for_order(connection, owner_user_id: str, numbers: list[str]) -> list[str]:
-    """Every document carrying one of these order numbers (oldest first)."""
+def documents_for_order(connection, owner_user_id: str, numbers: list[str], key: str) -> list[str]:
+    """Every document of this lab carrying one of these order numbers (oldest first)."""
     wanted = {str(number) for number in numbers if number}
-    return _pick(_documents_by_number(connection, owner_user_id, wanted), list(wanted))
+    return _pick(_documents_by_number(connection, owner_user_id, wanted, key), list(wanted))
 
 
 _OBS_COLUMNS = """o.id, o.document_id, o.page_number, o.raw_name, o.value_numeric, o.value_text, o.comparator,
@@ -1260,9 +1292,12 @@ def check_orders(connection, owner_user_id: str, order_rows: list) -> dict[tuple
     # report every value as "matches the lab record" and offer to verify it.
     records = _lab_records(connection, [row["document_id"] for row in with_rows])
     with_rows = [row for row in with_rows if str(row["document_id"] or "") not in records]
-    found = _documents_by_number(connection, owner_user_id,
-                                 {number for row in with_rows for number in _numbers(row)})
-    picked = {_order_key(row): _pick(found, _numbers(row)) for row in with_rows}
+    numbers_by_key: dict[str, set[str]] = {}
+    for row in with_rows:
+        numbers_by_key.setdefault(str(row["provider"]), set()).update(_numbers(row))
+    found = {key: _documents_by_number(connection, owner_user_id, numbers, key)
+             for key, numbers in numbers_by_key.items()}
+    picked = {_order_key(row): _pick(found[str(row["provider"])], _numbers(row)) for row in with_rows}
     kept = _kept_documents(connection, [row["document_id"] for row in with_rows])
     pairs = _duplicate_pairs(connection, {doc for docs in picked.values() for doc in docs} | set(kept.values()))
     plan = {}
@@ -1911,8 +1946,9 @@ class _OrderSync:
                             "error_key": "labsync.partial_imported" if self.stalled else None,
                             **({"rows_changed_at": utc_now()} if self.changed else {})}
         # An accepted order that fails stays accepted (with its reason), so the
-        # next run retries it instead of asking the person a second time.
-        self.failed = "accepted" if self.previous == "accepted" else "failed"
+        # next run retries it instead of asking the person a second time; the
+        # same holds for one already imported or linked (see _KEPT_ON_FAILURE).
+        self.failed = self.previous if self.previous in _KEPT_ON_FAILURE else "failed"
 
     def hold(self) -> tuple[str, bool]:
         """Keep the lab's rows for the record's owner to decide on."""
@@ -1931,7 +1967,7 @@ class _OrderSync:
                 connection, [self.tracked["document_id"] if self.tracked is not None else None])), None)
             if self.record and self.linked_before == self.record:
                 self.linked_before = None
-            self.held = documents_for_order(connection, self.user_id, numbers)
+            self.held = documents_for_order(connection, self.user_id, numbers, self.key)
             if not self.held and not self.linked_before:
                 found = _content_match(connection, self.user_id, self.key, self.order, self.rows)
                 self.held = [found] if found else []
@@ -1967,6 +2003,9 @@ class _OrderSync:
                     _retire_lab_record(connection, self.user_id, self.record, document_id, self.key, self.order_id)
         self.save("imported", document_id=document_id,
                   **{**self.rows_fields, "error_key": self.order.get("unavailable")})
+        if self.changed and document_id:
+            with transaction(self.settings) as connection:
+                _review_lab_rows_changed(connection, document_id)
         return ("reported" if document_id != self.record else "already"), self.changed
 
     def file_record_only(self) -> tuple[str, bool]:
@@ -2049,6 +2088,8 @@ class _OrderSync:
                 _retire_lab_record(connection, self.user_id, self.record, document_id, self.key, self.order_id)
             self.upsert(connection, self.user_id, self.key, self.person["id"], self.order, state=state,
                         document_id=document_id, **self.rows_fields)
+            if self.changed and document_id:
+                _review_lab_rows_changed(connection, document_id)
             row = connection.execute(
                 "SELECT * FROM lab_orders WHERE owner_user_id=? AND provider=? AND order_id=?",
                 (self.user_id, self.key, self.order_id),
@@ -2485,6 +2526,25 @@ def _review_missing(connection, user_id: str, key: str, row, check: dict | None)
     return 1
 
 
+#: The lab amended the rows of an order already in the record: its report may be the corrected one.
+REVIEW_LAB_ROWS_CHANGED = "review.lab_rows_changed"
+
+
+def _review_lab_rows_changed(connection, document_id: str) -> None:
+    """One open task on the document, for its owner, while the lab's amended
+    rows are unread; a further change while that task is open adds nothing."""
+    owner = connection.execute("SELECT owner_user_id FROM documents WHERE id=?", (document_id,)).fetchone()
+    if owner is None:
+        return
+    user_id = str(owner["owner_user_id"])
+    open_now = connection.execute(
+        """SELECT 1 FROM review_tasks WHERE owner_user_id=? AND entity_type='document' AND entity_id=?
+               AND reason_key=? AND state='open' LIMIT 1""",
+        (user_id, document_id, REVIEW_LAB_ROWS_CHANGED)).fetchone()
+    if open_now is None:
+        open_review_task(connection, user_id, document_id, [reason_part(REVIEW_LAB_ROWS_CHANGED)])
+
+
 def _close_review_tasks(connection, open_tasks: list) -> int:
     """Nothing is missing any more: resolve what was open."""
     for task in open_tasks:
@@ -2622,7 +2682,7 @@ def recheck(settings: Settings) -> dict[str, int]:
             summary["orders"] += 1
             linked, numbers = str(row["document_id"]), _numbers(row)
             best = _results_document(connection, owner, key, numbers,
-                                     [linked, *documents_for_order(connection, owner, numbers)])
+                                     [linked, *documents_for_order(connection, owner, numbers, key)])
             if best and best != linked:
                 connection.execute("UPDATE lab_orders SET document_id=? WHERE owner_user_id=? AND provider=? "
                                    "AND order_id=?", (best, owner, key, row["order_id"]))
@@ -2636,8 +2696,12 @@ def recheck(settings: Settings) -> dict[str, int]:
     return summary
 
 
-def _sync_link(settings, account_user_id, key, client, link, person, record_patient_id, summary, inline) -> None:
-    """Every order of one lab person, into the record its link names."""
+def _sync_link(settings, account_user_id, key, client, link, person, record_patient_id, summary, inline,
+               refusals: list[int]) -> None:
+    """Every order of one lab person, into the record its link names.
+    ``refusals[0]`` counts the orders refused in a row across the run: one
+    refused order is that order's failure; two in a row mean the credential
+    itself is refused, and the run stops with that reason."""
     owner = str(link["target_user_id"]) if link is not None else account_user_id
     hold = link is not None and link["consent"] == "asked"
     orders = sorted(client.orders(person), key=lambda order: str(order.get("ordered_at") or ""))
@@ -2651,12 +2715,20 @@ def _sync_link(settings, account_user_id, key, client, link, person, record_pati
         try:
             outcome, changed = _sync_order(settings, account_user_id, owner, key, record_patient_id, client, person,
                                            order, inline, hold)
+            refusals[0] = 0
         except LabSyncError as exc:
             if exc.key == ERROR_AUTH:
-                raise
+                refusals[0] += 1
+                if refusals[0] >= 2:
+                    raise
+                error_key = ERROR_ORDER_FORBIDDEN
+            else:
+                refusals[0] = 0
+                error_key = exc.key
             outcome = "failed"
-            _record_failure(settings, account_user_id, owner, key, person, order, exc.key)
+            _record_failure(settings, account_user_id, owner, key, person, order, error_key)
         except Exception:  # noqa: BLE001 -- one bad order must not end the run
+            refusals[0] = 0
             logger.exception("labsync: %s order failed", key)
             outcome = "failed"
             _record_failure(settings, account_user_id, owner, key, person, order, ERROR_INGEST)
@@ -2676,13 +2748,19 @@ def _progress(settings, account_user_id: str, key: str, summary: dict, order: di
         )
 
 
+#: States an order keeps when a sync fails on it: the person's own decision
+#: (accepted) or a result already in the record (imported, linked).  A transient
+#: error only records its reason; the next run retries the order.
+_KEPT_ON_FAILURE = ("accepted", "imported", "linked")
+
+
 def _record_failure(settings, account_user_id, owner, key, person, order, error_key) -> None:
     with transaction(settings) as connection:
         previous = connection.execute(
             "SELECT state FROM lab_orders WHERE owner_user_id=? AND provider=? AND order_id=?",
             (owner, key, order["order_id"]),
         ).fetchone()
-        state = "accepted" if previous is not None and previous["state"] == "accepted" else "failed"
+        state = previous["state"] if previous is not None and previous["state"] in _KEPT_ON_FAILURE else "failed"
         _upsert_order(connection, owner, key, person["id"], order, account_user_id=account_user_id,
                       state=state, error_key=error_key)
 
@@ -2756,13 +2834,24 @@ def _sync_account(settings: Settings, user_id: str, key: str, secret: str | None
             (link, json.loads(link["remote_person_json"]), patients[str(link["target_user_id"])])
             for link in links
         ]
+        refusals = [0]
         for link, lab_person, patient in work:
             if patient is None:
                 # That record has no profile (deleted since the link was
                 # made); nothing can be imported into it.
                 continue
             summary["people"] += 1
-            _sync_link(settings, user_id, key, client, link, lab_person, str(patient["id"]), summary, inline)
+            try:
+                _sync_link(settings, user_id, key, client, link, lab_person, str(patient["id"]), summary, inline,
+                           refusals)
+            except LabSyncError as exc:
+                # A credential refusal, or the one person a manual sync names, still stops
+                # the run.  Any other failure to list one linked person's orders is
+                # logged, and the people after it still sync.
+                if exc.key == ERROR_AUTH or link is None:
+                    raise
+                logger.warning("lab sync: listing orders failed for one linked person (%s)", exc.key)
+                summary["failed"] += 1
     finally:
         if secret == stored_secret:
             _store_rolled_secret(settings, user_id, key, stored_secret, client)
@@ -2935,7 +3024,7 @@ def _card(settings: Settings, user_id: str, key: str) -> dict:
         "sign_in": getattr(provider(key), "SIGN_IN", "paste"),
         "url": provider_settings(settings, key)["url"],
         "connected": bool(secret),
-        "secret_tail": secret[-6:] if secret else "",
+        "secret_tail": secret_tail(secret),
         "expires_at": row["secret_expires_at"] if row else None,
         "expired": _expired(row["secret_expires_at"]) if row else False,
         "phone": _mask_phone(str(row["phone"])) if secret else "",
@@ -2946,6 +3035,13 @@ def _card(settings: Settings, user_id: str, key: str) -> dict:
         **_card_sync_fields(row),
         "orders": [_card_order(order, records, live, titles) for order in orders],
     }
+
+
+def secret_tail(secret: str) -> str:
+    """A short marker that tells two stored credentials apart on the card,
+    without showing any part of the credential: the first six hex digits of
+    its SHA-256.  Empty without a credential."""
+    return hashlib.sha256(secret.encode()).hexdigest()[:6] if secret else ""
 
 
 _SYNC_STATUS_COLUMNS = ("sync_state", "sync_finished_at")

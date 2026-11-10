@@ -45,7 +45,7 @@
   <button class="secondary" type="submit">{{ t('documents.filter') }}</button>
 </form>
 </details>
-<script>
+<script nonce="{{ csp_nonce }}">
 (() => {
   const box = document.currentScript.previousElementSibling;
   if (box.dataset.collapseNarrow === '1' && matchMedia('(max-width: 620px)').matches) box.open = false;
@@ -92,7 +92,7 @@
 
 <div id="document-pagination">{{ pagination_nav(page) }}</div>
 
-<script>
+<script nonce="{{ csp_nonce }}">
 (() => {
   const form = document.querySelector('.filters');
   const input = form?.querySelector('input[name="q"]');

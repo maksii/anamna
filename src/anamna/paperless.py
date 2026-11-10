@@ -69,12 +69,14 @@ class PaperlessError(Exception):
     builds, so a message carrying the code also carries it as an attribute.
     """
 
-    def __init__(self, message: str, status: int | None = None):
+    def __init__(self, message: str, status: int | None = None, body: str = ""):
         super().__init__(message)
         if status is None:
             match = re.match(r"HTTP (\d{3})\b", message)
             status = int(match.group(1)) if match else None
         self.status = status
+        #: The first 300 characters of an upstream error body, when there was one.
+        self.body = body
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -274,7 +276,11 @@ def _request(
                 raise PaperlessError("paperless: response too large")
     except urllib.error.HTTPError as exc:
         detail = exc.read(MAX_RESPONSE_BYTES).decode("utf-8", "replace")[:300]
-        raise PaperlessError(f"HTTP {exc.code}: {detail}", status=exc.code) from exc
+        # Callers log the message, and Paperless can echo a document title, so the
+        # body is kept out of it: DEBUG here, and on the exception for a caller
+        # that needs it.
+        logger.debug("upstream error body: %s", detail)
+        raise PaperlessError(f"HTTP {exc.code}", status=exc.code, body=detail) from exc
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         raise PaperlessError(str(exc)) from exc
     if not body:
@@ -289,7 +295,15 @@ def test_connection(url: str, token: str) -> int:
     """How many documents this token can see; raises :class:`PaperlessError`.
     One authenticated round trip, so "configured" and "working" stay
     different claims."""
-    payload = _request(url, token, "/api/documents/?page_size=1")
+    try:
+        payload = _request(url, token, "/api/documents/?page_size=1")
+    except PaperlessError as exc:
+        # The admin test button tells a proxy's refusal from a token problem by
+        # the page body in the message (web/app.py: blocked_by_proxy(str(exc))).
+        # This path keeps the body in the message; it is shown, never logged.
+        if exc.body:
+            raise PaperlessError(f"{exc}: {exc.body}", status=exc.status, body=exc.body) from exc
+        raise
     if not isinstance(payload, dict) or "count" not in payload:
         raise PaperlessError("that server does not answer like Paperless")
     return int(payload["count"] or 0)

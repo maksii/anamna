@@ -41,7 +41,7 @@ erDiagram
 
 ### Current guidance
 
-`reference_sets` and `curated_reference_rules` are versioned, dated, sourced, and contextual. Rules can express decision limits or explicitly state that no universal numeric target exists. They are rendered separately from vendor intervals to avoid presenting a laboratory interval as universal clinical guidance.
+`reference_sets` and `curated_reference_rules` are versioned, dated, sourced, and contextual. Rules can express decision limits or explicitly state that no universal numeric target exists. A band can be gated by facts the record holds (`requires`) and refused for facts the sample carries (`excludes`). They are rendered separately from vendor intervals to avoid presenting a laboratory interval as universal clinical guidance.
 
 ### Trust and audit
 
@@ -55,6 +55,7 @@ Every imported document has a `review_tasks` record. A review can verify all obs
 - Mutations require a per-session CSRF token.
 - Source downloads are resolved through an owned database record rather than a user-supplied path.
 - SQLite foreign keys, WAL mode, indexes, and ordered migrations are enabled.
+- Online backup: `anamna backup` (database, `secret.key`, originals).
 
 For LAN or internet use, add TLS, set `ANAMNA_SECURE_COOKIES=1` when TLS terminates at a proxy, keep the `secret.key` that the server generates beside the database safe or set your own `ANAMNA_SECRET`, add backup encryption, and put the service behind a hardened reverse proxy. `anamna-web` binds to `127.0.0.1`; the container listens on all interfaces inside its own network namespace, so publish its port only to the proxy.
 

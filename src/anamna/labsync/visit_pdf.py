@@ -21,7 +21,13 @@ import re
 import zipfile
 from xml.etree import ElementTree
 
+from .common import LabSyncError
+
 logger = logging.getLogger("anamna.labsync")
+
+#: Largest uncompressed member of a lab-supplied .docx that is read; a zip
+#: bomb or an oversized picture is refused as an unreadable document.
+MAX_MEMBER_BYTES = 50 * 1024 * 1024
 
 CLINIC = "Лікарня «Експерт» · Expert Hospital"
 #: The record's fields in the order a consultation reads, with the labels the
@@ -174,12 +180,24 @@ def _paragraphs(element) -> list[str]:
     return lines
 
 
+def _member(archive: zipfile.ZipFile, name: str) -> bytes:
+    """One member's bytes, refused when it declares or decompresses past the limit."""
+    if archive.getinfo(name).file_size > MAX_MEMBER_BYTES:
+        raise LabSyncError("labsync.error_pdf")
+    with archive.open(name) as member:
+        # The declared size is the lab's header; the read itself stays bounded.
+        data = member.read(MAX_MEMBER_BYTES + 1)
+    if len(data) > MAX_MEMBER_BYTES:
+        raise LabSyncError("labsync.error_pdf")
+    return data
+
+
 def docx_pdf(data: bytes, name: str) -> bytes:
     """A Word document's text and pictures as a PDF."""
     archive = zipfile.ZipFile(io.BytesIO(data))
-    lines = _paragraphs(ElementTree.fromstring(archive.read("word/document.xml")))
+    lines = _paragraphs(ElementTree.fromstring(_member(archive, "word/document.xml")))
     text = re.sub(r"\n{3,}", "\n\n", "\n".join(line.rstrip() for line in lines)).strip()
-    images = [archive.read(item) for item in sorted(archive.namelist())
+    images = [_member(archive, item) for item in sorted(archive.namelist())
               if item.startswith("word/media/") and item.lower().endswith((".png", ".jpg", ".jpeg"))]
     label = f"«{name}»" if name else ""
     note = ("note", f"Перетворено Anamna з файлу Word {label}, виданого Лікарнею «Експерт». / Converted by Anamna "

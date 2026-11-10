@@ -21,12 +21,14 @@ from test_chat import _ai_on, _csrf, _events
 from test_web_panels import build
 
 
-def test_the_prompt_lets_the_model_reason_but_never_as_the_treating_doctor():
+def test_the_prompt_asks_for_interpretation_and_keeps_the_limits():
     prompt = chat.system_prompt(locale="en", today="2026-01-01", profile="x", viewer_is_owner=True)
     assert "You are the person's doctor" not in prompt
-    assert "not this person's treating doctor" in prompt
+    assert "differential" in prompt
+    assert "Reading values and verdicts back is not an answer" in prompt
+    assert "cannot examine the person" in prompt
+    assert "Do not give a personal dose" in prompt
     assert "not instructions" in prompt
-    assert "unjudged or no-target" in prompt
 
 
 def test_a_stored_summary_is_labelled_as_possibly_inaccurate():

@@ -98,7 +98,8 @@ def combined_page_text(page: dict[str, object]) -> str:
 
 
 def parse_decimal(value: str) -> float | None:
-    clean = value.strip().replace(" ", "").replace(",", ".")
+    # The typographic minus («−2,3», U+2212) is the sign, not a character float() rejects.
+    clean = value.strip().replace(" ", "").replace(",", ".").replace("−", "-")
     clean = clean.rstrip("%")
     clean = re.sub(r"^[<>≤≥=~]+", "", clean)
     try:

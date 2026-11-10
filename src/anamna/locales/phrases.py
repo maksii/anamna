@@ -533,10 +533,10 @@ PHRASES: dict[str, str] = {
         "Описано МРТ-ознаки тендинопатії триголового м’яза плеча."
     ),
     "ACL ligament change, minor medial meniscus change, a Baker cyst, patella alta and grade I patellar chondromalacia were reported.": (
-        "Описано зміни ПХЗ, незначні зміни медіального меніска, кісту Бейкера, високе стояння надколінка (patella alta) і хондромаляцію надколінка I ступеня."
+        "Описано зміни передньої хрестоподібної зв’язки (ПХЗ), незначні зміни медіального меніска, кісту Бейкера, високе стояння надколінка (patella alta) і хондромаляцію надколінка I ступеня."
     ),
     "Popliteus strain, patellar-ligament and ACL changes, minor medial meniscus change, mild synovitis, patella alta and grade I patellar chondromalacia were reported.": (
-        "Описано розтягнення підколінного м’яза, зміни власної зв’язки надколінка та ПХЗ, незначні зміни медіального меніска, легкий синовіт, високе стояння надколінка (patella alta) і хондромаляцію надколінка I ступеня."
+        "Описано розтягнення підколінного м’яза, зміни власної зв’язки надколінка та передньої хрестоподібної зв’язки (ПХЗ), незначні зміни медіального меніска, легкий синовіт, високе стояння надколінка (patella alta) і хондромаляцію надколінка I ступеня."
     ),
     "Lipomas of the back were reported; interval observation was recommended.": (
         "Описано ліпоми спини; рекомендовано динамічне спостереження."
@@ -808,7 +808,7 @@ PHRASES: dict[str, str] = {
     'Circulating iron and the protein that stores it.': 'Залізо в крові та білок, який його запасає.',
     'Vitamin D, the B-vitamins and the marker that reflects their supply.': 'Вітамін D, вітаміни групи B та показник, що відображає їх забезпеченість.',
     'The salts and minerals that keep nerves, muscle and bone working.': 'Солі й мінерали, які забезпечують роботу нервів, м’язів і кісток.',
-    'General markers that rise when there is inflammation somewhere in the body.': 'Загальні маркери, які зростають, коли десь в організмі є запалення.',
+    'Inflammation markers (CRP, ESR, fibrinogen) and related immune tests (ASO for a recent streptococcal infection, rheumatoid factor).': 'Маркери запалення (СРБ, ШОЕ, фібриноген) і споріднені імунні тести (АСЛ-О для недавньої стрептококової інфекції, ревматоїдний фактор).',
     'How quickly blood forms a clot.': 'Як швидко згортається кров.',
     "Antibodies directed at the body's own tissue, plus the HLA-B27 marker.": 'Антитіла проти власних тканин організму та маркер HLA-B27.',
     'Total IgE and the allergen-specific IgE results from the ImmunoCAP panel.': 'Загальний IgE та алергенспецифічні IgE з панелі ImmunoCAP.',

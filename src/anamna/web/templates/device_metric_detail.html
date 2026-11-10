@@ -134,7 +134,7 @@
   </div>
   <details class="an-disclosure" {% if total_days <= 14 %}open{% endif %}>
     <summary>{{ t('device.daily_aggs') }} ({{ total_days_text }})</summary>
-    <div class="table-wrap table-wrap--stack">
+    <div class="table-wrap table-wrap--stack" tabindex="0" role="region" aria-label="{{ t('device.daily_aggs') }}">
       <table>
         <thead>
           <tr>
@@ -211,8 +211,8 @@
 {{ correlation_block(correlation, chart_band) }}
 
 {% if chart_available %}
-<script type="application/json" id="device-chart-data">{{ chart_payload|tojson }}</script>
-<script type="application/json" id="device-chart-band">{{ (chart_band or none)|tojson }}</script>
+<script type="application/json" nonce="{{ csp_nonce }}" id="device-chart-data">{{ chart_payload|tojson }}</script>
+<script type="application/json" nonce="{{ csp_nonce }}" id="device-chart-band">{{ (chart_band or none)|tojson }}</script>
 <script src="{{ asset('device-chart.js') }}"></script>
 {% endif %}
 {% endblock %}

@@ -23,7 +23,7 @@
         <label for="setup-code">{{ t('setup.code_label') }}</label>
         <input id="setup-code" name="setup_code" type="text" autocomplete="one-time-code"
                autocapitalize="off" spellcheck="false" required
-               aria-describedby="setup-code-why setup-code-where{% if error %} setup-error{% endif %}">
+               aria-describedby="setup-code-why setup-code-where{% if error %} setup-error{% endif %}"{% if error %} aria-invalid="true"{% endif %}>
         <div class="tiny muted setup-where" id="setup-code-where">
           {% if code_from_env %}
           <p>{{ t('setup.code_where_env') }}</p>
@@ -40,8 +40,8 @@
       <fieldset class="setup-fieldset">
         <legend>{{ t('setup.account_heading') }}</legend>
         <label>{{ t('profile.full_name') }}<input name="display_name" autocomplete="name" required value="{{ form.display_name or '' }}"></label>
-        <label>{{ t('login.email') }}<input name="email" type="email" autocomplete="username" required value="{{ form.email or '' }}"></label>
-        <label>{{ t('login.password') }}<input name="password" type="password" autocomplete="new-password" minlength="{{ minimum_password }}" required aria-describedby="setup-password-hint"></label>
+        <label>{{ t('login.email') }}<input name="email" type="email" autocomplete="username" required value="{{ form.email or '' }}"{% if error %} aria-describedby="setup-error" aria-invalid="true"{% endif %}></label>
+        <label>{{ t('login.password') }}<input name="password" type="password" autocomplete="new-password" minlength="{{ minimum_password }}" required aria-describedby="setup-password-hint{% if error %} setup-error{% endif %}"{% if error %} aria-invalid="true"{% endif %}></label>
         <p class="tiny muted" id="setup-password-hint">{{ t('register.error_password') }}</p>
       </fieldset>
       <fieldset class="setup-fieldset">

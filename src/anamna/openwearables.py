@@ -100,8 +100,9 @@ class OpenWearablesError(Exception):
     """The server is unreachable, refused the request, or answered nonsense.
 
     ``status`` carries the HTTP code when one was received — callers branch on
-    it as an integer, never by substring-matching the message, which embeds up
-    to 300 characters of response body that can contain anything.
+    it as an integer, never by substring-matching the message. The message does
+    not carry the response body: callers log it, and a body can echo names. The
+    body is logged at DEBUG instead.
     """
 
     def __init__(self, message: str, status: int | None = None):
@@ -165,7 +166,10 @@ def _request(
                 raise OpenWearablesError("openwearables: response too large")
     except urllib.error.HTTPError as exc:
         detail = exc.read(MAX_RESPONSE_BYTES).decode("utf-8", "replace")[:300]
-        raise OpenWearablesError(f"HTTP {exc.code}: {detail}", status=exc.code) from exc
+        # Callers log the message, and a server's error page can echo a name, so the
+        # body is kept out of it and logged at DEBUG only.
+        logger.debug("upstream error body: %s", detail)
+        raise OpenWearablesError(f"HTTP {exc.code}", status=exc.code) from exc
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         raise OpenWearablesError(str(exc)) from exc
     if not body:

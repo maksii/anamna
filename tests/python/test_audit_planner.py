@@ -59,7 +59,7 @@ def test_an_esculab_order_with_a_garbled_total_goes_back_to_the_planner(app_for)
     html = client.get("/plan-tests").text
     reply = client.post("/plan-tests/order/esculab", data={
         "csrf_token": csrf(html), "region": "3201", "expected": "abc", "item": ["1"],
-        "plan_query": "touched=1&plan=1"}, follow_redirects=False)
+        "plan_query": "touched=1&plan=1", "order_nonce": "garbled-total"}, follow_redirects=False)
     assert reply.status_code == 303 and "notice=items_gone" in reply.headers["location"]
 
 

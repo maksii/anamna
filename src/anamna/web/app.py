@@ -5,8 +5,10 @@ import logging
 import math
 import os
 import re
+import secrets
 import shutil
 import sqlite3
+import tempfile
 import threading
 import time
 import uuid
@@ -16,6 +18,7 @@ from datetime import UTC, date, datetime, timedelta
 from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import lru_cache, partial
+from http import HTTPStatus
 from pathlib import Path, PurePath
 from typing import Annotated, Callable
 from urllib.parse import quote, urlencode, urlsplit, urlunsplit
@@ -30,10 +33,13 @@ from fastapi.responses import (
     PlainTextResponse,
     RedirectResponse,
     Response,
+    StreamingResponse,
 )
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.concurrency import run_in_threadpool
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.gzip import GZipMiddleware
 
 from ..ai import (
@@ -161,11 +167,13 @@ from ..immunizations import (
 )
 from ..locales.messages import MESSAGES
 from .health_export import AGGREGATION_KEYS, prepare_metric, render_pdf
+from ..export import write_record_archive
 from ..ingest.intake import (
     ARCHIVE_SUFFIXES,
     INTAKE_SUFFIXES,
     batch_progress,
     clear_finished,
+    discard_upload_tree,
     enqueue,
     reclaim_abandoned_jobs,
     record_duplicate,
@@ -220,10 +228,12 @@ from ..panels import (
     roll_up,
 )
 from ..reference import (
+    _SILENT_REQUIRES,
     RULE_CACHE,
     canonical_unit,
     clinical_context,
     convert_value,
+    curated_rules,
     edge_safe_decimals,
     evaluate,
     interpretation_label,
@@ -243,6 +253,7 @@ from .ai_export import (
     build_subject_prompt,
 )
 from ..security import (
+    DEVICE_COOKIE,
     DOCTOR_PIN_ACCESS,
     DOCTOR_PIN_CLIENT_LIMIT,
     DOCTOR_PIN_GLOBAL_KEY,
@@ -265,6 +276,8 @@ from ..security import (
     create_session,
     create_user,
     csrf_matches,
+    device_cookie_nonce,
+    device_cookie_value,
     ensure_seeded_token,
     has_users,
     list_access_tokens,
@@ -335,6 +348,12 @@ _INTAKE_FAILED_UNSUPPORTED = "intake.failed_unsupported"
 
 THEME_COOKIE = "anamna_theme"
 VIEW_COOKIE = "anamna_record"
+#: What a share lets the viewer do: "read" the record only, or "full", which
+#: also covers the AI assistant and ordering tests through the owner's lab account.
+SHARE_LEVELS = ("read", "full")
+#: Confirmations for the profile's sharing panel, keyed by the `saved` query value.
+SHARE_SAVED = {"share_level": "profile.share_level_saved"}
+EMAIL_SAVED = {"email": "profile.email_saved"}
 #: Pages that show results, and so carry the "Ask an AI" button.
 AI_EXPORT_PAGES = frozenset(
     {"dashboard", "panels", "metrics", "devices", "documents"}
@@ -1699,6 +1718,77 @@ def _clinical_context(connection, owner_user_id: str | None) -> dict[str, object
     )
 
 
+#: A pregnancy is counted 280 days (40 weeks) back from its expected due date.
+PREGNANCY_DAYS = 280
+
+
+def _pregnancy_due_date(connection, owner_user_id: str | None) -> date | None:
+    """The expected due date the profile records, or None; once per request."""
+    if not owner_user_id:
+        return None
+
+    def load() -> date | None:
+        row = connection.execute(
+            "SELECT pregnancy_due_date FROM patients WHERE owner_user_id=? ORDER BY created_at LIMIT 1",
+            (owner_user_id,),
+        ).fetchone()
+        if not row or not row[0]:
+            return None
+        try:
+            return date.fromisoformat(str(row[0]))
+        except ValueError:
+            return None
+
+    return _cached(("pregnancy_due_date", owner_user_id), load)
+
+
+def _field(row, name: str):
+    """One column of a sqlite3.Row or a dict; a column the row does not carry is None."""
+    try:
+        return row[name]
+    except (KeyError, IndexError):
+        return None
+
+
+def _sample_facts(connection, row) -> dict[str, object]:
+    """Facts about one stored result that a published band may refuse:
+    a sample the person marked as not fasting, and a result dated within a
+    pregnancy recorded in the profile."""
+    facts: dict[str, object] = {}
+    if _field(row, "sample_condition") == "not_fasting":
+        facts["not_fasting_sample"] = True
+    due = _pregnancy_due_date(connection, _field(row, "owner_user_id"))
+    observed = str(_field(row, "observed_at") or "")[:10]
+    if due is not None and observed:
+        try:
+            taken = date.fromisoformat(observed)
+        except ValueError:
+            taken = None
+        if taken is not None and due - timedelta(days=PREGNANCY_DAYS) <= taken <= due:
+            facts["pregnant"] = True
+    return facts
+
+
+def _fasting_state(row) -> str | None:
+    """Whether a result's sample was fasting: what the person said, else what the
+    laboratory printed in the name; None when neither says."""
+    condition = _field(row, "sample_condition")
+    if condition in ("fasting", "not_fasting"):
+        return str(condition)
+    printed = str(_field(row, "raw_name") or "").casefold()
+    if "натще" in printed or "fasting" in printed:
+        return "fasting"
+    return None
+
+
+def _fasting_applies(connection, concept_id: str) -> bool:
+    """True when a published band for this analyte is written for a fasting sample only."""
+    return any(
+        "not_fasting_sample" in (rule_context(rule["context_json"]).get("excludes") or ())
+        for rule in curated_rules(connection, concept_id)
+    )
+
+
 def _first_on_page(key: str) -> bool:
     """True the first time a template asks about ``key`` in this request: an
     explanation that applies to every value on a page is printed once."""
@@ -1720,6 +1810,8 @@ BLOCKED_NOTICE_KEYS = {
     "requires_clinical_context": "verdict.blocked_clinical_context",
     "requires_cv_risk_category": "verdict.blocked_cv_risk_category",
     "sex_not_covered": "verdict.blocked_sex_not_covered",
+    "excluded_not_fasting_sample": "verdict.blocked_not_fasting",
+    "excluded_pregnant": "verdict.blocked_pregnancy",
 }
 
 
@@ -2026,7 +2118,10 @@ def _reading_verdict(
         vendor_low=vendor_low,
         vendor_high=vendor_high,
         vendor_interpretation=vendor_interpretation,
-        clinical_context=_clinical_context(connection, row.get("owner_user_id")),
+        clinical_context={
+            **_clinical_context(connection, row.get("owner_user_id")),
+            **_sample_facts(connection, row),
+        },
     )
     return unit_source, verdict
 
@@ -4338,7 +4433,10 @@ def _document_observation_item(
         vendor_low=vendor_low,
         vendor_high=vendor_high,
         vendor_interpretation=vendor_reading,
-        clinical_context=_clinical_context(connection, owner_user_id),
+        clinical_context={
+            **_clinical_context(connection, owner_user_id),
+            **_sample_facts(connection, row),
+        },
     )
     row["url"] = f"/metrics/{row['concept_id']}"
     return row
@@ -5405,17 +5503,28 @@ router = APIRouter()
 
 
 
-#: Sent on every response.  The application serves one person's medical
-#: record, so the defaults are the restrictive ones: nothing off-origin
-#: loads, nothing frames it, and no referrer carries a document id to
-#: another site.  `'unsafe-inline'` is present because the templates carry
-#: inline theme, i18n and chart bootstrapping that runs during parse —
-#: it is the one relaxation, and `default-src 'self'` still stops a
-#: successful injection from reaching an external collector.
-SECURITY_HEADERS = {
-    "Content-Security-Policy": (
+#: Every inline <script> carries the request's nonce and no template uses an
+#: inline event-handler attribute, so the policy is strict: `script-src` allows
+#: only 'self' and this request's nonce.  The switch exists so a deployment
+#: that injects its own inline scripts can be diagnosed by turning it off; it is
+#: not a supported mode.
+CSP_STRICT_SCRIPTS = True
+
+
+def _content_security_policy(nonce: str, strict: bool) -> str:
+    """The policy for one response.  The application serves one person's
+    medical record, so the defaults are the restrictive ones: nothing
+    off-origin loads, nothing frames it, and no referrer carries a document id
+    to another site.  Only `script-src` depends on the arguments; every other
+    directive is sent exactly as it always was.  In strict mode inline scripts
+    run only when they carry this request's nonce.  `default-src 'self'` still
+    stops a successful injection from reaching an external collector."""
+    script_src = (
+        f"script-src 'self' 'nonce-{nonce}'" if strict else "script-src 'self' 'unsafe-inline'"
+    )
+    return (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline'; "
+        f"{script_src}; "
         "style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data:; "
         "connect-src 'self'; "
@@ -5428,7 +5537,11 @@ SECURITY_HEADERS = {
         "form-action 'self'; "
         "base-uri 'self'; "
         "frame-ancestors 'none'"
-    ),
+    )
+
+
+#: Sent on every response (the Content-Security-Policy is built per response).
+SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "no-referrer",
@@ -5524,7 +5637,14 @@ async def token_scope(request: Request, call_next):
     return await call_next(request)
 
 async def security_headers(request: Request, call_next):
+    # One nonce per request, set before the handler runs so that every template
+    # rendered for it, including an exception page, can carry it.
+    nonce = secrets.token_urlsafe(16)
+    request.state.csp_nonce = nonce
     response = await call_next(request)
+    response.headers.setdefault(
+        "Content-Security-Policy", _content_security_policy(nonce, CSP_STRICT_SCRIPTS)
+    )
     for header, value in SECURITY_HEADERS.items():
         response.headers.setdefault(header, value)
     # Record pages, API payloads and source previews must be fetched under
@@ -5646,6 +5766,7 @@ def viewing_row(request: Request):
     session user's own record, so a stale cookie can never expose anything.
     A grant is matched on the account it was given to, never on an address, because a share
     addressed to someone who had no account yet must not pass to whoever registers that address.
+    The row carries `share_access`, the level its owner granted.
     """
     settings = request.app.state.settings
     user = current_user(request)
@@ -5658,7 +5779,7 @@ def viewing_row(request: Request):
             return None
         with connect(settings) as connection:
             return connection.execute(
-                """SELECT u.* FROM record_shares s JOIN users u ON u.id = s.owner_user_id
+                """SELECT u.*, s.access AS share_access FROM record_shares s JOIN users u ON u.id = s.owner_user_id
                        WHERE s.owner_user_id = ? AND s.grantee_user_id = ? AND u.disabled_at IS NULL""",
                 (target, user["id"]),
             ).fetchone()
@@ -5676,10 +5797,12 @@ def record_user(request: Request, user):
 def template_context(request: Request, **values):
     user = current_user(request)
     locale = get_locale()
+    viewing = viewing_row(request)
     return {
         "request": request,
         "user": user,
-        "viewing": viewing_row(request),
+        "viewing": viewing,
+        "viewing_full": bool(viewing) and viewing["share_access"] == "full",
         # A guest is not the account holder even though the pages render
         # that account's record, so the chrome has to say whose record this
         # is and drop every control the visitor cannot use.  The end date is
@@ -5688,6 +5811,9 @@ def template_context(request: Request, **values):
         "guest": bool(user) and user.get("token_kind") == "guest",
         "guest_until": format_date(user["token_expires_at"]) if user and user.get("token_expires_at") else None,
         "csrf_token": user["csrf_token"] if user else None,
+        # Set by security_headers for every request; the empty default only
+        # covers a page rendered where that middleware did not run.
+        "csp_nonce": getattr(request.state, "csp_nonce", ""),
         "locale": locale,
         "html_lang": "uk" if locale == "uk" else "en",
         # "system" follows the operating system; the explicit values pin it.
@@ -5774,8 +5900,54 @@ def login_redirect(request: Request, exc: HTTPException):
         return JSONResponse({"detail": t("auth.required")}, status_code=401)
     return RedirectResponse(f"/login?next={request.url.path}", status_code=303)
 
+#: Statuses that have a plain-language sentence of their own in the catalog.
+_ERROR_PAGE_STATUSES = (400, 403, 404, 413, 429)
+
+def _is_page_navigation(request: Request) -> bool:
+    """A browser loading a page, as opposed to a script or an API client.
+
+    Scripts send `X-Requested-With` or a credential header, and `Sec-Fetch-Dest`
+    names what the browser is fetching; only a document load gets the HTML page.
+    """
+    headers = request.headers
+    return (
+        "text/html" in headers.get("accept", "")
+        and not request.url.path.startswith("/api/")
+        and "authorization" not in headers
+        and "x-api-key" not in headers
+        and "x-requested-with" not in headers
+        and headers.get("sec-fetch-dest", "document") == "document"
+    )
+
+async def http_error_page(request: Request, exc: StarletteHTTPException):
+    """Show an HTML error page to a browser; leave every other caller its JSON."""
+    if exc.status_code == 401:
+        return login_redirect(request, exc)
+    if not _is_page_navigation(request):
+        return await http_exception_handler(request, exc)
+    status_code = exc.status_code
+    try:
+        default_phrase = HTTPStatus(status_code).phrase
+    except ValueError:
+        default_phrase = ""
+    # Handlers here pass translated text as the detail; FastAPI's default
+    # English phrase carries nothing a reader can act on, so it is replaced.
+    if isinstance(exc.detail, str) and exc.detail and exc.detail != default_phrase:
+        message = exc.detail
+    elif status_code in _ERROR_PAGE_STATUSES:
+        message = t(f"error.{status_code}")
+    else:
+        message = t("error.other", status=status_code)
+    return templates.TemplateResponse(
+        request,
+        "error.html",
+        template_context(request, error_message=message),
+        status_code=status_code,
+        headers=exc.headers,
+    )
+
 @router.get(_LOGIN_URL, response_class=HTMLResponse)
-def login_page(request: Request, error: str | None = None):
+def login_page(request: Request, error: str | None = None, notice: str | None = None):
     # A guest is signed in to somebody else's record, not to an account of
     # their own, so bouncing them back to it is the one thing they did not
     # ask for.  They get the form; signing in replaces the guest session.
@@ -5802,7 +5974,13 @@ def login_page(request: Request, error: str | None = None):
     return templates.TemplateResponse(
         request,
         "login.html",
-        template_context(request, error=error, registration_open=open_registration(settings)),
+        template_context(
+            request,
+            error=error,
+            # Only the one notice this app sends; any other ?notice= is ignored.
+            notice=t("auth.account_deleted") if notice == "account_deleted" else None,
+            registration_open=open_registration(settings),
+        ),
     )
 
 def _secure_cookie(request: Request) -> bool:
@@ -5858,25 +6036,49 @@ def login(
     next: Annotated[str, Form()] = "/",
 ):
     settings = request.app.state.settings
-    # Two meters, both counted on failure.  The address meter stops one source
-    # working through many accounts; the account meter stops a guesser who
-    # rotates addresses from working through one.  Either one refuses.
-    visitor = "login-ip:" + _visitor_key(request)
-    account = "login:" + email.strip().casefold()[:254]
-    if throttled(visitor) or throttled(account, LOGIN_ACCOUNT_LIMIT):
-        return RedirectResponse(_LOGIN_THROTTLED_URL, status_code=303)
-    user = authenticate(settings, email, password)
-    if user is None:
-        record_attempt(visitor)
-        record_attempt(account)
-        return RedirectResponse("/login?error=invalid", status_code=303)
-    # Only failures count here, and a success clears only the account's own
-    # count: somebody who knows their own password must never be locked out
-    # of their own record by a noisy neighbour, but a working sign-in to one
-    # account must not reset the address meter either, or it would be a way to
-    # keep guessing at another account from the same address indefinitely.
-    clear_attempts(account)
-    return _signed_in(request, _safe_next(next), user["id"])
+    # Three meters, all counted on failure.  A browser holding a device cookie
+    # from an earlier sign-in to this account is counted only on its own meter,
+    # so a stranger who knows the address cannot lock the owner out of the
+    # browser the owner uses.  Any other browser is counted on two shared
+    # meters: the address meter stops one source working through many accounts,
+    # and the account meter stops a guesser who rotates addresses from working
+    # through one.  Either shared meter refuses.
+    account_key = email.strip().casefold()[:254]
+    nonce = device_cookie_nonce(settings, email, request.cookies.get(DEVICE_COOKIE))
+    if nonce is not None:
+        device = f"login-dev:{account_key}:{nonce}"
+        if throttled(device, LOGIN_ACCOUNT_LIMIT):
+            return RedirectResponse(_LOGIN_THROTTLED_URL, status_code=303)
+        user = authenticate(settings, email, password)
+        if user is None:
+            record_attempt(device)
+            return RedirectResponse("/login?error=invalid", status_code=303)
+        clear_attempts(device)
+        # The browser already holds a valid cookie: re-set it to refresh its life.
+        device_value = request.cookies[DEVICE_COOKIE]
+    else:
+        visitor = "login-ip:" + _visitor_key(request)
+        account = "login:" + account_key
+        if throttled(visitor) or throttled(account, LOGIN_ACCOUNT_LIMIT):
+            return RedirectResponse(_LOGIN_THROTTLED_URL, status_code=303)
+        user = authenticate(settings, email, password)
+        if user is None:
+            record_attempt(visitor)
+            record_attempt(account)
+            return RedirectResponse("/login?error=invalid", status_code=303)
+        # Only failures count here, and a success clears only the account's own
+        # count: somebody who knows their own password must never be locked out
+        # of their own record by a noisy neighbour, but a working sign-in to one
+        # account must not reset the address meter either, or it would be a way
+        # to keep guessing at another account from the same address indefinitely.
+        clear_attempts(account)
+        device_value = device_cookie_value(settings, email)
+    response = _signed_in(request, _safe_next(next), user["id"])
+    response.set_cookie(
+        DEVICE_COOKIE, device_value, max_age=365 * 86400, httponly=True, samesite="lax",
+        secure=_secure_cookie(request), path="/",
+    )
+    return response
 
 @router.get("/t/{token}")
 def token_sign_in(request: Request, token: str):
@@ -6332,6 +6534,7 @@ def _delete_orphaned_sources(settings, connection, user_id: str) -> int:
     `sources/` has not deleted their record, it has only stopped showing
     it.  Only paths that resolve inside the configured sources directory
     are touched, and only when no surviving document still points at them.
+    Device exports the application unpacked are removed the same way.
     """
     paths = [
         row["source_path"]
@@ -6355,7 +6558,83 @@ def _delete_orphaned_sources(settings, connection, user_id: str) -> int:
         if inside and path.is_file():
             path.unlink()
             removed += 1
+    source_root = settings.source_dir.resolve()
+    device_paths = [
+        row["source_path"]
+        for row in connection.execute(
+            "SELECT DISTINCT source_path FROM device_imports WHERE owner_user_id = ?", (user_id,)
+        )
+    ]
+    for stored in device_paths:
+        # An API feed such as openwearables://api has no file on disk.
+        if not stored or "://" in stored:
+            continue
+        still_used = connection.execute(
+            """SELECT 1 FROM device_imports WHERE source_path = ? AND owner_user_id <> ?
+               UNION ALL
+               SELECT 1 FROM documents WHERE source_path = ? AND owner_user_id <> ?
+               LIMIT 1""",
+            (stored, user_id, stored, user_id),
+        ).fetchone()
+        if still_used:
+            continue
+        try:
+            path = resolve_source_path(settings, stored).resolve()
+            inside = path.is_relative_to(source_root) and path != source_root
+            if not inside:
+                continue
+            if path.is_file():
+                path.unlink()
+                removed += 1
+            # ponytail: only trees the application unpacked itself are removed; a folder an operator placed in sources/ by hand and imported from the command line stays for the operator.
+            elif path.is_dir() and path.is_relative_to(source_root / "uploads"):
+                discard_upload_tree(settings, path)
+                if not path.exists():
+                    removed += 1
+        except OSError:
+            continue
     return removed
+
+def _delete_account(settings, connection, user_id: str) -> int:
+    """Remove one account, its files and its rows; returns how many files went.
+
+    Shared by an administrator deleting someone and by a person deleting
+    their own account, so the two cannot drift apart.  Every child table
+    cascades from users(id).  Two columns reference users without a cascade:
+    a deleted account that acted on somebody else's rows is detached from
+    them first, so the rows stay and no longer name a deleted person.
+    """
+    removed = _delete_orphaned_sources(settings, connection, user_id)
+    connection.execute("UPDATE review_tasks SET assigned_user_id=NULL WHERE assigned_user_id=?", (user_id,))
+    connection.execute("UPDATE audit_events SET actor_user_id=NULL WHERE actor_user_id=?", (user_id,))
+    connection.execute("DELETE FROM users WHERE id = ?", (user_id,))
+    return removed
+
+
+logger = logging.getLogger("anamna.account")
+
+
+def _disconnect_providers(settings, user_id: str) -> None:
+    """Tell every provider the account is going, best effort, before it is deleted.
+
+    The local connection rows go with the account, but a link left registered
+    at the provider keeps delivering data for someone who no longer has an
+    account here.  Each provider is tried on its own: one that is unreachable
+    must not block the deletion, so a failure is only logged.  Each call here
+    is a no-op when the account holds no such connection.
+    """
+    attempts: list[tuple[str, object, tuple]] = [
+        (key, integrations.disconnect, (settings, user_id, spec))
+        for key, spec in integrations.PROVIDERS.items()
+    ]
+    attempts.append((garmin_personal.PROVIDER_KEY, garmin_personal.unlink, (settings, user_id)))
+    attempts.append((openwearables.PROVIDER, openwearables.unlink_account, (settings, user_id)))
+    for key, action, args in attempts:
+        try:
+            action(*args)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("account deletion: disconnecting %s failed (%s)", key, type(exc).__name__)
+
 
 def _admin_apply_action(settings, connection, admin, target, user_id: str, action: str) -> str:
     """Carry out one validated account action; returns what was done."""
@@ -6375,11 +6654,10 @@ def _admin_apply_action(settings, connection, admin, target, user_id: str, actio
             ("admin" if action == "promote" else "user", user_id),
         )
         return "promoted" if action == "promote" else "demoted"
-    removed = _delete_orphaned_sources(settings, connection, user_id)
-    # Every child table cascades from users(id); the audit line is
-    # written against the acting administrator so it is not
-    # deleted along with the account it describes.
-    connection.execute("DELETE FROM users WHERE id = ?", (user_id,))
+    _disconnect_providers(settings, user_id)
+    removed = _delete_account(settings, connection, user_id)
+    # The audit line is written against the acting administrator so it is
+    # not deleted along with the account it describes.
     _audit(settings, admin["id"], admin["id"], "admin_user_deleted", "user", user_id,
            {"email": target["email"], "files_removed": removed},
            connection=connection)
@@ -6490,6 +6768,12 @@ PROFILE_ERRORS = frozenset(
         "profile.error_password_throttled",
         "profile.error_password_match",
         "profile.error_password_short",
+        "profile.error_email_invalid",
+        "profile.error_email_password",
+        "profile.error_email_taken",
+        "profile.error_delete_password",
+        "profile.error_delete_email",
+        "profile.error_delete_last_admin",
         "token.error_label",
         "token.error_kind",
         _TOKEN_ERROR_EXPIRY,
@@ -6686,9 +6970,13 @@ def _profile_active_tab(error, saved, new_token, tab: str, new_pin) -> str:
     # instead of on a personal-details form with an error about a password
     # scrolled off somewhere below it.
     key = error or ""
-    if key.startswith("profile.error_password") or key == "profile.error_session" or saved in ("password", *SESSION_SAVED):
+    if (
+        key.startswith(("profile.error_password", "profile.error_email", "profile.error_delete"))
+        or key == "profile.error_session"
+        or saved in ("password", "email", *SESSION_SAVED)
+    ):
         return "security"
-    if key.startswith(("profile.error_share", "doctor.")) or saved == "doctor_revoked" or new_pin is not None:
+    if key.startswith(("profile.error_share", "doctor.")) or saved == "doctor_revoked" or saved in SHARE_SAVED or new_pin is not None:
         return "sharing"
     if key.startswith("token.") or saved in ("revoked", "token") or new_token is not None:
         return "tokens"
@@ -6716,6 +7004,8 @@ def _profile_saved_flag(saved) -> bool:
         and saved not in ("password", "revoked", "token", "doctor_revoked", *SESSION_SAVED)
         and saved not in PAPERLESS_SAVED
         and saved not in INTEGRATION_SAVED
+        and saved not in SHARE_SAVED
+        and saved not in EMAIL_SAVED
     )
 
 def _profile_paperless_fields(settings, user_id: str, saved, paperless_on: bool, paperless_account) -> dict[str, object]:
@@ -6773,7 +7063,7 @@ def _profile_response(request: Request, user, error=None, saved=None, new_token=
             (user["id"],),
         ).fetchall()
         shared_with_me = connection.execute(
-            """SELECT s.owner_user_id, u.display_name FROM record_shares s
+            """SELECT s.owner_user_id, s.access, u.display_name FROM record_shares s
                    JOIN users u ON u.id = s.owner_user_id
                    WHERE s.grantee_user_id = ? AND u.disabled_at IS NULL
                    ORDER BY u.display_name""",
@@ -6822,6 +7112,8 @@ def _profile_response(request: Request, user, error=None, saved=None, new_token=
             token_saved=t(f"token.saved_{saved}") if saved in ("revoked", "token") else None,
             **_profile_paperless_fields(settings, user["id"], saved, paperless_on, paperless_account),
             integration_saved=t(INTEGRATION_SAVED[saved]) if saved in INTEGRATION_SAVED else None,
+            share_saved=t(SHARE_SAVED[saved]) if saved in SHARE_SAVED else None,
+            email_saved=t(EMAIL_SAVED[saved]) if saved in EMAIL_SAVED else None,
             integrations_providers=_profile_integration_providers(settings, user["id"]),
             openwearables_card=_openwearables_panel(settings, user),
             garmin_personal_card=garmin_personal.panel(settings, user["id"]),
@@ -7492,6 +7784,154 @@ def change_password(
     _audit(settings, user["id"], user["id"], "password_changed", "user", user["id"], {})
     return RedirectResponse("/profile?saved=password", status_code=303)
 
+def _own_browser_session(request: Request):
+    """The account behind this request if it is a browser session of its own.
+
+    A bearer credential and a guest link reach the account but are not its
+    holder, so neither may delete it or change the address it signs in with.
+    """
+    user = require_user(request)
+    if user.get("bearer") or user.get("token_kind"):
+        raise HTTPException(403)
+    return user
+
+@router.post("/profile/delete-account", responses=_RESPONSES_401_403)
+def delete_account(
+    request: Request,
+    password: Annotated[str, Form()] = "",
+    email: Annotated[str, Form()] = "",
+    csrf_token: Annotated[str, Form()] = "",
+):
+    """Delete the signed-in account and every record it holds.
+
+    Two proofs before anything is removed: the password, metered like the
+    password change, and the account's own address typed in full, so a stray
+    or scripted click cannot end a record.  An administrator is removed only
+    while another enabled administrator remains.
+    """
+    settings = request.app.state.settings
+    user = _own_browser_session(request)
+    require_csrf(user, csrf_token)
+    key = "pwchange:" + str(user["id"])
+    if throttled(key, PASSWORD_CHANGE_LIMIT):
+        return RedirectResponse("/profile?error=profile.error_password_throttled", status_code=303)
+    if authenticate(settings, user["email"], password) is None:
+        record_attempt(key)
+        return RedirectResponse("/profile?error=profile.error_delete_password", status_code=303)
+    clear_attempts(key)
+    if email.strip().casefold() != user["email"].casefold():
+        return RedirectResponse("/profile?error=profile.error_delete_email", status_code=303)
+    with connect(settings) as connection:
+        if user["role"] == "admin":
+            other_admins = connection.execute(
+                "SELECT COUNT(*) FROM users WHERE role = 'admin' AND disabled_at IS NULL AND id <> ?",
+                (user["id"],),
+            ).fetchone()[0]
+            if other_admins == 0:
+                return RedirectResponse("/profile?error=profile.error_delete_last_admin", status_code=303)
+        _disconnect_providers(settings, user["id"])
+        _delete_account(settings, connection, user["id"])
+    # Same ending as sign-out: the session and the shared-record view go.
+    response = RedirectResponse("/login?notice=account_deleted", status_code=303)
+    response.delete_cookie("anamna_session")
+    response.delete_cookie(VIEW_COOKIE)
+    return response
+
+@router.post("/profile/email", responses=_RESPONSES_401_403)
+def change_email(
+    request: Request,
+    new_email: Annotated[str, Form()] = "",
+    password: Annotated[str, Form()] = "",
+    csrf_token: Annotated[str, Form()] = "",
+):
+    """Change the address this account signs in with.
+
+    Checked like a share's address (one "@", no spaces), the password is
+    re-checked on the same meter as the password change, and the address must
+    not belong to another account.  Shares that name this account carry the
+    new address, so the owners' lists stay true.
+    """
+    settings = request.app.state.settings
+    user = _own_browser_session(request)
+    require_csrf(user, csrf_token)
+    address = new_email.strip().casefold()
+    if "@" not in address or " " in address:
+        return RedirectResponse("/profile?error=profile.error_email_invalid", status_code=303)
+    key = "pwchange:" + str(user["id"])
+    if throttled(key, PASSWORD_CHANGE_LIMIT):
+        return RedirectResponse("/profile?error=profile.error_password_throttled", status_code=303)
+    if authenticate(settings, user["email"], password) is None:
+        record_attempt(key)
+        return RedirectResponse("/profile?error=profile.error_email_password", status_code=303)
+    clear_attempts(key)
+    try:
+        with connect(settings) as connection:
+            taken = connection.execute(
+                "SELECT 1 FROM users WHERE email = ? COLLATE NOCASE AND id <> ?",
+                (address, user["id"]),
+            ).fetchone()
+            if taken is not None:
+                return RedirectResponse("/profile?error=profile.error_email_taken", status_code=303)
+            connection.execute("UPDATE users SET email = ? WHERE id = ?", (address, user["id"]))
+            connection.execute(
+                "UPDATE record_shares SET grantee_email = ? WHERE grantee_user_id = ?",
+                (address, user["id"]),
+            )
+    except sqlite3.IntegrityError:
+        # Lost a race with a registration for the same address.
+        return RedirectResponse("/profile?error=profile.error_email_taken", status_code=303)
+    # No address in the audit line: the record of the change is that it happened.
+    _audit(settings, user["id"], user["id"], "email_changed", "user", user["id"], {})
+    response = RedirectResponse("/profile?saved=email", status_code=303)
+    # This browser keeps its known-device standing under the new address.
+    response.set_cookie(
+        DEVICE_COOKIE, device_cookie_value(settings, address), max_age=365 * 86400,
+        httponly=True, samesite="lax", secure=_secure_cookie(request), path="/",
+    )
+    return response
+
+def _write_export(settings, user_id: str, spool) -> None:
+    write_record_archive(settings, user_id, spool)
+    spool.seek(0)
+    _audit(settings, user_id, user_id, "record_exported", "user", user_id, {})
+
+@router.get("/profile/export.zip", responses=_RESPONSES_401_403)
+async def export_my_record(request: Request):
+    """The signed-in account's own record as one ZIP, for the person to keep.
+
+    Always the session's own account, never the record being viewed: a viewer
+    who downloads a shared record would be copying somebody else's data out
+    under their name.  Built in a worker thread into a spooled file (memory up
+    to 32 MiB, then disk) and streamed out in chunks.
+    """
+    settings = request.app.state.settings
+    user = require_user(request)
+    if user.get("token_kind") == "guest":
+        raise HTTPException(403)
+    spool = tempfile.SpooledTemporaryFile(max_size=32 * 1024 * 1024)
+    try:
+        await run_in_threadpool(_write_export, settings, user["id"], spool)
+    except BaseException:
+        spool.close()
+        raise
+
+    def chunks():
+        try:
+            while block := spool.read(1024 * 1024):
+                yield block
+        finally:
+            spool.close()
+
+    stamp = datetime.now(UTC).strftime("%Y%m%d")
+    return StreamingResponse(
+        chunks(),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="anamna-export-{stamp}.zip"',
+            "Cache-Control": "no-store",
+        },
+    )
+
 @router.post("/profile/sessions/revoke", responses=_RESPONSES_401_403)
 def revoke_one_session(
     request: Request,
@@ -7958,6 +8398,26 @@ def _profile_choices(form) -> dict[str, str | None] | None:
         choices[column] = raw or None
     return choices
 
+def _profile_pregnancy_due(form) -> tuple[bool, str | None]:
+    """Whether this save sets the expected due date, and to what (None clears it).
+
+    The field is not rendered for a male profile, so an absent field leaves
+    the stored date alone.  A date more than 300 days either side of today is
+    ignored rather than failing the whole save.
+    """
+    if "pregnancy_due_date" not in form:
+        return False, None
+    raw = _profile_text(form, "pregnancy_due_date")
+    if not raw:
+        return True, None
+    try:
+        parsed = date.fromisoformat(raw)
+    except ValueError:
+        return False, None
+    if abs((parsed - datetime.now(UTC).date()).days) > 300:
+        return False, None
+    return True, parsed.isoformat()
+
 def _profile_store(connection, user_id: str, name: str, nickname, dob, sex, blood,
                    measurements: dict[str, float | None], choices: dict[str, str | None],
                    timezone_name: str) -> None:
@@ -8037,11 +8497,23 @@ async def update_profile(request: Request):
     choices = _profile_choices(form)
     if choices is None:
         return failed(_PROFILE_ERROR_CHOICE)
+    due_set, due = _profile_pregnancy_due(form)
+    # A profile recorded as male carries no due date, whatever a stale form
+    # field or an earlier female profile left behind.
+    if sex == "male":
+        due_set, due = True, None
 
     def store() -> None:
         with connect(settings) as connection:
             _profile_store(connection, user["id"], name, nickname, dob, sex, blood,
                            measurements, choices, timezone_name)
+            if due_set:
+                connection.execute(
+                    """UPDATE patients SET pregnancy_due_date=?
+                           WHERE id=(SELECT id FROM patients WHERE owner_user_id=?
+                                     ORDER BY created_at LIMIT 1)""",
+                    (due, user["id"]),
+                )
         # Sex, age and the cardiovascular risk category all change verdicts;
         # the memoised catalogue must not keep judging by the old profile.
         invalidate_catalog(user["id"])
@@ -8055,11 +8527,13 @@ async def update_profile(request: Request):
 def add_share(
     request: Request,
     email: Annotated[str, Form()],
+    access: Annotated[str, Form()] = "read",
     csrf_token: Annotated[str, Form()] = "",
 ):
     settings = request.app.state.settings
     user = require_user(request)
     require_csrf(user, csrf_token)
+    level = access if access in SHARE_LEVELS else "read"
     grantee = email.strip().casefold()
     if "@" not in grantee or " " in grantee:
         return RedirectResponse("/profile?error=profile.error_share_email", status_code=303)
@@ -8075,10 +8549,13 @@ def add_share(
         ).fetchone()
         if grantee_row is None:
             return RedirectResponse("/profile?error=profile.error_share_unknown", status_code=303)
+        # Re-sharing with the same address is the way to change its level: the
+        # (owner, address) pair is unique, so the existing row takes the new level.
         connection.execute(
-            """INSERT OR IGNORE INTO record_shares(id, owner_user_id, grantee_email, grantee_user_id, created_at)
-                   VALUES (?, ?, ?, ?, ?)""",
-            (str(uuid.uuid4()), user["id"], grantee, grantee_row["id"], utc_now()),
+            """INSERT INTO record_shares(id, owner_user_id, grantee_email, grantee_user_id, created_at, access)
+                   VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(owner_user_id, grantee_email) DO UPDATE SET access = excluded.access""",
+            (str(uuid.uuid4()), user["id"], grantee, grantee_row["id"], utc_now(), level),
         )
     return RedirectResponse(_PROFILE_URL, status_code=303)
 
@@ -8092,11 +8569,38 @@ def remove_share(
     user = require_user(request)
     require_csrf(user, csrf_token)
     with connect(settings) as connection:
-        connection.execute(
-            "DELETE FROM record_shares WHERE id=? AND owner_user_id=?",
+        grant = connection.execute(
+            "SELECT grantee_user_id FROM record_shares WHERE id=? AND owner_user_id=?",
             (share_id, user["id"]),
-        )
+        ).fetchone()
+        if grant is not None:
+            connection.execute(
+                "DELETE FROM record_shares WHERE id=? AND owner_user_id=?",
+                (share_id, user["id"]),
+            )
+    # A share that is gone takes the lab links it carried with it.
+    if grant is not None and grant["grantee_user_id"]:
+        labsync.drop_links_between(settings, user["id"], grant["grantee_user_id"])
     return RedirectResponse(_PROFILE_URL, status_code=303)
+
+@router.post("/profile/shares/level", responses=_RESPONSES_401_403)
+def set_share_level(
+    request: Request,
+    share_id: Annotated[str, Form()],
+    access: Annotated[str, Form()],
+    csrf_token: Annotated[str, Form()] = "",
+):
+    settings = request.app.state.settings
+    user = require_user(request)
+    require_csrf(user, csrf_token)
+    if access not in SHARE_LEVELS:
+        raise HTTPException(400)
+    with connect(settings) as connection:
+        connection.execute(
+            "UPDATE record_shares SET access=? WHERE id=? AND owner_user_id=?",
+            (access, share_id, user["id"]),
+        )
+    return RedirectResponse(f"{_PROFILE_URL}?saved=share_level", status_code=303)
 
 @router.post("/profile/view", responses=_RESPONSES_401_403_404)
 def switch_record(
@@ -12442,6 +12946,49 @@ def set_observation_state(
         status_code=303,
     )
 
+@router.post("/observations/{observation_id}/sample-condition", responses=_RESPONSES_400_401_403_404)
+def set_observation_sample_condition(
+    request: Request,
+    observation_id: str,
+    condition: Annotated[str, Form()] = "",
+    csrf_token: Annotated[str, Form()] = "",
+):
+    """Record whether one result's blood sample was taken fasting, or clear it.
+
+    The person's answer outranks the laboratory's printed name, so it is stored
+    as given and is what the verdict reads.  A guest link reaches the account
+    without being its holder, so it may not write here.
+    """
+    settings = request.app.state.settings
+    user = require_user(request)
+    require_csrf(user, csrf_token)
+    if user.get("token_kind") == "guest":
+        raise HTTPException(403)
+    if condition not in ("fasting", "not_fasting", ""):
+        raise HTTPException(400)
+    stored = condition or None
+    with connect(settings) as connection:
+        row = connection.execute(
+            "SELECT concept_id, sample_condition FROM observations WHERE id=? AND owner_user_id=?",
+            (observation_id, user["id"]),
+        ).fetchone()
+        if not row:
+            raise HTTPException(404)
+        connection.execute(
+            "UPDATE observations SET sample_condition=? WHERE id=? AND owner_user_id=?",
+            (stored, observation_id, user["id"]),
+        )
+        _audit(
+            settings, user["id"], user["id"], "observation_sample_condition", "observation",
+            observation_id, {"previous": row["sample_condition"], "condition": stored},
+            connection=connection,
+        )
+    invalidate_catalog(user["id"])
+    return RedirectResponse(
+        f"/metrics/{row['concept_id']}?saved=sample_condition", status_code=303
+    )
+
+
 @router.post("/documents/{document_id}/observations", responses=_RESPONSES_400_401_403_404)
 def add_observation(
     request: Request,
@@ -13224,6 +13771,12 @@ def _metric_history_row(connection, concept_id: str, row, date_of_birth, sex) ->
         )
     )
 
+def _shown_requires(value) -> list[str]:
+    """A rule's ``requires`` values the reader is told about: the silent ones
+    (a non-fasting sample, planning a pregnancy) are matching machinery only."""
+    keys = [value] if isinstance(value, str) else list(value or ())
+    return [key for key in keys if key not in _SILENT_REQUIRES]
+
 def _metric_rule(raw_rule, age, sex, page_context) -> dict[str, object]:
     rule = dict(raw_rule)
     # label_uk / verdict.* in the reader's language (F4 helpers); a note
@@ -13237,11 +13790,18 @@ def _metric_rule(raw_rule, age, sex, page_context) -> dict[str, object]:
     rule["publisher"] = translate_phrase(str(rule["publisher"]))
     # Matching keys (assay cut-off, risk category, its requirement) are
     # machinery the applicability chip already states in words.
-    rule["context"] = localize_mapping({
+    context = {
         key: value for key, value in rule_context(rule["context_json"]).items()
-        if key not in {"vendor_upper", "not_vendor_upper", "cv_risk_category", "requires"}
+        if key not in {"vendor_upper", "not_vendor_upper", "cv_risk_category", "requires", "excludes", "lower_source_id"}
         or (key == "requires" and "cv_risk_category" not in value)
-    })
+    }
+    if "requires" in context:
+        shown = _shown_requires(context["requires"])
+        if shown:
+            context["requires"] = shown
+        else:
+            del context["requires"]
+    rule["context"] = localize_mapping(context)
     rule["range_text"] = _bounds_text(rule["lower_bound"], rule["upper_bound"], rule["unit"])
     # Two bands named "Within the reference interval" with different
     # numbers are unreadable until each says whose numbers they are.
@@ -13250,9 +13810,11 @@ def _metric_rule(raw_rule, age, sex, page_context) -> dict[str, object]:
     # all five LDL tiers used to read "Applies to you".
     requirement = rule_requirement(raw_rule)
     if requirement:
-        rule["applicability"] = " · ".join(
-            part for part in (rule.get("applicability"), str(requirement["label"])) if part
-        )
+        # A band that needs only a silent fact names no requirement to the reader.
+        if _shown_requires(requirement["requires"]):
+            rule["applicability"] = " · ".join(
+                part for part in (rule.get("applicability"), str(requirement["label"])) if part
+            )
         rule["applies_to_you"] = bool(rule["applies_to_you"]) and rule_applies_to_context(
             raw_rule, page_context
         )
@@ -13423,6 +13985,19 @@ def metric_detail(request: Request, concept_id: str, offset: int = 0):
         method_series = _method_series(connection, user["id"], concept, date_of_birth, age, sex)
     for row in values:
         _metric_history_row(connection, concept_id, row, date_of_birth, sex)
+    # Only an analyte whose published bands are written for fasting samples
+    # asks the question; everywhere else the column and its sentence are absent.
+    fasting_applies = _fasting_applies(connection, concept_id)
+    if fasting_applies:
+        for row in values:
+            row["fasting_state"] = _fasting_state(row)
+    # The answer is the owner's to give: a shared record or a guest link reads it.
+    can_mark_fasting = (
+        fasting_applies
+        and viewing_row(request) is None
+        and current_user(request).get("token_kind") != "guest"
+    )
+    sample_saved = request.query_params.get("saved") == "sample_condition"
     parsed_rules = [_metric_rule(raw_rule, age, sex, page_context) for raw_rule in rules]
     chart_points = _metric_chart(connection, values, concept["preferred_unit"], date_of_birth, sex)
     chart_unit = canonical_unit(str(chart_points[0]["unit"])) if chart_points else None
@@ -13456,6 +14031,9 @@ def metric_detail(request: Request, concept_id: str, offset: int = 0):
             latest=latest, previous_numeric=previous_numeric,
             card=card,
             verdict=verdict,
+            fasting_applies=fasting_applies,
+            can_mark_fasting=can_mark_fasting,
+            sample_saved=sample_saved,
             blocked_notice=_blocked_notice(verdict),
             trend=(card or {}).get("trend"),
             staleness=(card or {}).get("staleness")
@@ -14313,6 +14891,7 @@ def _apply_review_action(connection, user_id: str, entity_type: str, entity_id: 
             *allowed,
         ),
     )
+    details = "{}"
     if action == "verify" and entity_type == "document":
         # Only the values nobody has ruled on move: a correction and a
         # set-aside are decisions a bulk verification must not overwrite.
@@ -14341,6 +14920,16 @@ def _apply_review_action(connection, user_id: str, entity_type: str, entity_id: 
             (entity_id,),
         )
     elif action == "reopen" and entity_type == "document":
+        # Named before they change, so the audit line says which values the
+        # reopening moved back to provisional.
+        reopened_ids = [
+            row["id"] for row in connection.execute(
+                """SELECT id FROM observations
+                       WHERE document_id=? AND owner_user_id=? AND verification_status='verified'""",
+                (entity_id, user_id),
+            )
+        ]
+        details = json.dumps({"reopened_observation_ids": reopened_ids})
         connection.execute(
             """UPDATE observations SET verification_status='extracted'
                    WHERE document_id=? AND owner_user_id=? AND verification_status='verified'""",
@@ -14358,7 +14947,7 @@ def _apply_review_action(connection, user_id: str, entity_type: str, entity_id: 
     connection.execute(
         """INSERT INTO audit_events(owner_user_id, actor_user_id, action, entity_type, entity_id, details_json, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
-        (user_id, user_id, f"review_{action}", entity_type, entity_id, "{}", utc_now()),
+        (user_id, user_id, f"review_{action}", entity_type, entity_id, details, utc_now()),
     )
     if entity_type == "document":
         recount_review_tasks(connection, user_id, entity_id, user_id)
@@ -14553,6 +15142,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # text/event-stream alone, which the chat's streamed answers depend on.
     app.add_middleware(_Compression, minimum_size=1024)
     app.add_exception_handler(401, login_redirect)
+    app.add_exception_handler(StarletteHTTPException, http_error_page)
 
     register_openwearables_routes(app, settings, require_admin, require_csrf)
     register_telegram_routes(
@@ -14601,4 +15191,8 @@ async def app(scope, receive, send) -> None:
 
 def run() -> None:
     port = int(os.environ.get("PORT") or 8000)
-    uvicorn.run("anamna.web.app:app", host="127.0.0.1", port=port, reload=False)
+    # The access log would print guest-link secrets (/t/<secret>) and search
+    # text from the query string, so it stays off.
+    uvicorn.run(
+        "anamna.web.app:app", host="127.0.0.1", port=port, reload=False, access_log=False,
+    )

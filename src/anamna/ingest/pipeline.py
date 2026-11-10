@@ -9,7 +9,7 @@ import sqlite3
 import uuid
 from collections import Counter
 from dataclasses import asdict, dataclass, replace
-from datetime import datetime
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import cast
 
@@ -27,7 +27,7 @@ from ..i18n import (
     translate_review_reason,
 )
 from ..immunizations import is_visit_vaccination, parse_immunizations, parse_visit_vaccinations, store_document_doses
-from ..reference import canonical_unit
+from ..reference import _vendor_side, canonical_unit
 from .classifier import (
     DISCHARGE_027_TITLE, KNOWN_CLINICAL_TYPES, RESULT_TYPES, UNKNOWN_VENDOR, Classification, classify_document,
     misread_order,
@@ -1214,18 +1214,24 @@ def interpretation(observation: ParsedObservation, concept_id: str | None = None
     if scaled is not None:
         return scaled
     low, high = observation.reference_low, observation.reference_high
+    # A censored result («<0.5», «>60») is a limit, not a value: it is placed
+    # against the printed range only where its side is certain, the rule the
+    # engine applies in reference._vendor_side. None means the range says nothing.
+    if observation.comparator in _CENSORED_SIGN:
+        return _vendor_side(value, low, high, comparator=_CENSORED_SIGN[observation.comparator])
     if low is None and high is None:
         return _time_of_day_interpretation(value, observation.reference_text)
     # A strict bound excludes the value equal to it: CA-125 35.0 against «< 35»
     # is not inside the laboratory's range, and was published as though it were.
-    # A value printed with its own sign is not equal to it: «<1.0» against «<1»
-    # is inside.
-    below, above = observation.comparator in {"<", "≤"}, observation.comparator in {">", "≥"}
-    if low is not None and (value < low or (value == low and not observation.reference_low_inclusive and not above)):
+    if low is not None and (value < low or (value == low and not observation.reference_low_inclusive)):
         return "low"
-    if high is not None and (value > high or (value == high and not observation.reference_high_inclusive and not below)):
+    if high is not None and (value > high or (value == high and not observation.reference_high_inclusive)):
         return "high"
     return "within_vendor_range"
+
+
+#: The printed censoring signs, mapped to the ASCII comparators `_vendor_side` takes.
+_CENSORED_SIGN = {"<": "<", "≤": "<=", ">": ">", "≥": ">="}
 
 
 def _time_of_day_interpretation(value: float, reference: str | None) -> str | None:
@@ -2033,6 +2039,81 @@ def patient_demographics(connection: sqlite3.Connection, patient_id: str) -> tup
     return (row["date_of_birth"], row["sex_at_birth"]) if row else (None, None)
 
 
+_PRINTED_DMY = r"(?<!\d)\d{1,2}[./-]\d{1,2}[./-]\d{4}(?!\d)"
+_PRINTED_ISO = r"(?<!\d)\d{4}-\d{1,2}-\d{1,2}(?!\d)"
+#: «Дата народження: 17.03.1988», «Дата нар. 17/03/1988».
+_BIRTH_LABEL_UK = re.compile(r"дата\s+нар(?:одження|\.)?\s*:?\s*(?P<date>" + _PRINTED_DMY + ")", re.I)
+#: «Date of birth: 1988-03-17», «DOB 17.03.1988».
+_BIRTH_LABEL_EN = re.compile(
+    r"\b(?:date\s+of\s+birth|dob)\s*:?\s*(?P<date>" + _PRINTED_DMY + "|" + _PRINTED_ISO + ")", re.I
+)
+#: «17.03.1988 р.н.» (the date before the suffix is the birth date) and «р.н. 17.03.1988».
+#: Both shapes are one pattern so a date that the first shape took is never
+#: claimed again by the second: «01.01.1990 р.н. 02.03.2025» prints one birth date.
+_BORN_SUFFIX = re.compile(
+    r"(?P<before>" + _PRINTED_DMY + r")\s*р\.\s?н\.?|(?<!\w)р\.\s?н\.?\s*:?\s*(?P<after>" + _PRINTED_DMY + ")",
+    re.I,
+)
+
+
+def _printed_date(raw: str) -> str | None:
+    """The ISO form of a printed date, or None when no such day exists."""
+    if match := re.fullmatch(r"(\d{1,2})[./-](\d{1,2})[./-](\d{4})", raw):
+        day, month, year = (int(part) for part in match.groups())
+    elif match := re.fullmatch(r"(\d{4})-(\d{1,2})-(\d{1,2})", raw):
+        year, month, day = (int(part) for part in match.groups())
+    else:
+        return None
+    try:
+        return date(year, month, day).isoformat()
+    except ValueError:
+        return None
+
+
+def printed_birth_dates(text: str) -> set[str]:
+    """The dates of birth a document prints, as ISO dates.
+
+    Only a date a label or the «р.н.» suffix names counts.  The collection,
+    issue or vaccination dates on a report say nothing about whose report it is.
+    """
+    raw = [match.group("date") for pattern in (_BIRTH_LABEL_UK, _BIRTH_LABEL_EN) for match in pattern.finditer(text)]
+    raw.extend(match.group("before") or match.group("after") for match in _BORN_SUFFIX.finditer(text))
+    return {iso for iso in (_printed_date(item) for item in raw) if iso}
+
+
+def _birth_date_mismatch(date_of_birth: str | None, text: str) -> bool:
+    """Whether a document prints a date of birth, and not the patient's own."""
+    known = _printed_date(str(date_of_birth or "")[:10])
+    printed = printed_birth_dates(text)
+    return bool(known and printed and known not in printed)
+
+
+def _report_date_implausible(report_date: str | None, date_of_birth: str | None) -> bool:
+    """A report dated before its patient was born, or after tomorrow (UTC).
+
+    Such a date is a misread, not a fact about the results; the document is then
+    filed undated, as one with no date is.  An unreadable date is left alone.
+    """
+    try:
+        dated = date.fromisoformat(str(report_date or "")[:10])
+    except ValueError:
+        return False
+    born = _printed_date(str(date_of_birth or "")[:10])
+    if born and dated < date.fromisoformat(born):
+        return True
+    return dated > datetime.now(timezone.utc).date() + timedelta(days=1)
+
+
+def _plausible_analysis(analysis: Analysis, date_of_birth: str | None) -> Analysis:
+    """`analysis` with each implausible report date cleared, for the document and
+    for its pages (an observation's date is read from its page's report date)."""
+
+    def clear(item: Classification) -> Classification:
+        return replace(item, report_date=None) if _report_date_implausible(item.report_date, date_of_birth) else item
+
+    return replace(analysis, classification=clear(analysis.classification), per_page=[clear(page) for page in analysis.per_page])
+
+
 def parse_pages(
     classification: Classification,
     per_page: list[Classification],
@@ -2148,12 +2229,22 @@ def _ingest_review_reasons(
     doses: int,
     duplicate_id: str | None,
     issues: list[ParseIssue],
+    undated: bool = False,
+    person_mismatch: bool = False,
 ) -> list[dict[str, object]]:
     review_reasons = []
     companion = any(issue.kind == COMPANION_SUMMARY for issue in issues)
     issues = [issue for issue in issues if issue.kind != COMPANION_SUMMARY]
     if duplicate_id:
         review_reasons.append(reason_part("review.duplicate"))
+    # The report prints another person's date of birth: it may be a family
+    # member's, filed under this patient.  Stored all the same; someone decides.
+    if person_mismatch:
+        review_reasons.append(reason_part("review.person_mismatch"))
+    # Without a report date its results sort by upload date, which can put a
+    # 2019 panel in front of a 2024 one; a person has to say when it was taken.
+    if undated and not classification.report_date:
+        review_reasons.append(reason_part("review.no_date"))
     if doses:
         # A card's doses are read out of a photograph of handwriting and
         # tender-length product names, so every field of every row is
@@ -2193,9 +2284,19 @@ def ingest_file(
     extracted = {"mime_type": analysis.mime_type, "page_count": analysis.page_count}
     document_id = str(uuid.uuid4())
     with connect(settings) as connection:
-        connection.execute("BEGIN")
+        # The write lock is taken up front and waited for, as in reingest_document:
+        # a plain BEGIN defers it to the first write after long work, and the
+        # default five-second wait then fails an import behind a running re-read.
+        connection.execute("PRAGMA busy_timeout = 60000")
+        connection.execute("BEGIN IMMEDIATE")
         try:
             seed_concepts(connection)
+            date_of_birth, sex = patient_demographics(connection, patient_id)
+            # Before anything is stored: a report date the calendar rules out is
+            # filed undated, and the document keeps every other field.
+            analysis = _plausible_analysis(analysis, date_of_birth)
+            classification, per_page = analysis.classification, analysis.per_page
+            document_text = " ".join(combined_page_text(page) for page in pages)
             vendor_id = ensure_vendor(connection, classification.vendor, classification.website)
             # The kept document, never another copy: the earliest file with
             # these bytes may itself have been marked a copy since.
@@ -2267,17 +2368,19 @@ def ingest_file(
             observations: list[ParsedObservation] = []
             issues: list[ParseIssue] = []
             doses = 0
+            undated = False
             if not duplicate_id:
                 doses = store_doses(
                     connection, classification, pages, owner_user_id, patient_id, document_id, per_page
                 )
-                date_of_birth, sex = patient_demographics(connection, patient_id)
                 parsed_with_context = parse_pages(
                     classification, per_page, pages, issues=issues, date_of_birth=date_of_birth, sex=sex
                 )
                 observations = [item[0] for item in parsed_with_context]
                 for parsed, page_class in parsed_with_context:
                     report_id = page_to_report[parsed.page_number]
+                    observed_at = observation_date(parsed, page_class)
+                    undated = undated or observed_at is None
                     insert_observation(
                         connection,
                         owner_user_id=owner_user_id,
@@ -2285,7 +2388,7 @@ def ingest_file(
                         document_id=document_id,
                         report_id=report_id,
                         vendor_id=report_to_vendor[report_id],
-                        observed_at=observation_date(parsed, page_class),
+                        observed_at=observed_at,
                         parsed=parsed,
                         specimen=page_class.specimen,
                     )
@@ -2294,7 +2397,10 @@ def ingest_file(
             # Narrative reports must reach their health areas on upload, not
             # only after a later application restart or explicit re-read.
             sync_clinical_findings(connection)
-            review_reasons = _ingest_review_reasons(classification, observations, doses, duplicate_id, issues)
+            review_reasons = _ingest_review_reasons(
+                classification, observations, doses, duplicate_id, issues, undated=undated,
+                person_mismatch=_birth_date_mismatch(date_of_birth, document_text),
+            )
             if review_reasons:
                 open_review_task(connection, owner_user_id, document_id, review_reasons)
             search_content = " ".join(
@@ -3736,6 +3842,17 @@ def _concept_twin(a: dict[str, object], b: dict[str, object]) -> bool:
     )
 
 
+def _concept_fits(old: dict[str, object], new: dict[str, object]) -> bool:
+    """Whether a loose pair may stand: the same concept, or a checked row filed
+    under an auto concept.  A checked row under a catalogue analyte is not
+    re-labelled as another catalogue analyte that shares its value and line:
+    a verified «Білірубін» 5.1 is not «Білірубін прямий» 5.1."""
+    previous = str(old.get("concept_id") or "")
+    if previous and previous not in _DEFINED_CONCEPT_IDS:
+        return True
+    return bool(previous) and previous == str(new.get("concept_id") or "")
+
+
 class _Pairing:
     """One pairing in progress: which rows each side has already given."""
 
@@ -3776,12 +3893,24 @@ class _Pairing:
         return self.labels_old[oi] == self.labels_new[ni] and _same_reading(o, n)
 
     def contained_label(self, oi, o, ni, n) -> bool:
-        return _labels_contain(self.labels_old[oi], self.labels_new[ni]) and _same_reading(o, n)
+        return _labels_contain(self.labels_old[oi], self.labels_new[ni]) and _same_reading(o, n) and _concept_fits(o, n)
 
     @staticmethod
     def same_line(oi, o, ni, n) -> bool:
         line = collapse_space(str(o.get("evidence_text") or ""))
-        return bool(line) and line == collapse_space(str(n.get("evidence_text") or "")) and _same_reading(o, n)
+        return (
+            bool(line) and line == collapse_space(str(n.get("evidence_text") or ""))
+            and _same_reading(o, n) and _concept_fits(o, n)
+        )
+
+    @staticmethod
+    def corrected_line(oi, o, ni, n) -> bool:
+        """The printed line a person corrected, read again.  The name and value
+        were changed by the person, so no reading matches; the line does."""
+        if str(o.get("verification_status")) != "corrected":
+            return False
+        line = str(o.get("evidence_text") or "").strip()
+        return bool(line) and line == str(n.get("evidence_text") or "").strip()
 
     def _only_pair(self, oi, o, ni, n, alike) -> bool:
         """Whether `o` and `n` are the only free rows on either side that are `alike`."""
@@ -3795,7 +3924,7 @@ class _Pairing:
         return self._only_pair(oi, o, ni, n, _concept_twin)
 
     def lone_number(self, oi, o, ni, n) -> bool:
-        if o.get("value_numeric") is None or not _same_reading(o, n):
+        if o.get("value_numeric") is None or not _same_reading(o, n) or not _concept_fits(o, n):
             return False
         page = int(o["page_number"] or 0)
 
@@ -3851,6 +3980,10 @@ def pair_rereading(
     #    stays set aside under its own label whatever the parser now reads
     #    there; it is not resurrected as a fresh row beside the rejection.
     pairing.run(pairing.differs, pairing.changed)
+    # 5. A row a person corrected (name and value changed) whose printed line
+    #    the re-read still reads: that fresh row is the line already corrected,
+    #    so it is neither inserted beside the correction nor applied to it.
+    pairing.run(pairing.corrected_line, pairing.same)
     return pairing.same, pairing.changed
 
 
@@ -4395,9 +4528,14 @@ def _audit_reread_refresh(
 
 
 def _reread_record_reasons(
-    connection: sqlite3.Connection, document_id: str, unfiled: int, issues: list[ParseIssue]
+    connection: sqlite3.Connection, document_id: str, unfiled: int, issues: list[ParseIssue],
+    person_mismatch: bool = False,
 ) -> list[dict[str, object]]:
     reasons = []
+    # Same wording and meaning as `_ingest_review_reasons`: a printed date of
+    # birth that is someone else's may be a family member's report.
+    if person_mismatch:
+        reasons.append(reason_part("review.person_mismatch"))
     unchecked_doses = connection.execute(
         "SELECT COUNT(*) FROM immunizations WHERE document_id=? AND verification_status='extracted'",
         (document_id,),
@@ -4456,6 +4594,8 @@ def reingest_document(
     were verified, corrected or set aside are never deleted and their value,
     unit and comparator are never rewritten; only rows still sitting at
     `extracted`, which nobody has looked at, are replaced by the current parse.
+    Rows a person added or corrected from an AI suggestion are `extracted` too,
+    but are kept like the checked rows.
     A freshly parsed row that is the same reading as a preserved one
     (`pair_rereading`) is not inserted; a verified twin takes the new label,
     evidence and reference (`_apply_pairs`).  A row read *differently*, and a
@@ -4501,8 +4641,18 @@ def reingest_document(
             if document is None:
                 raise LookupError(document_id)
             analysis = _apply_human_classification(analysis, document)
-            classification = analysis.classification
             patient_id = str(document["patient_id"])
+            date_of_birth, _sex = patient_demographics(connection, patient_id)
+            if not _date_is_human(document):
+                # The same rule as a first import; a date a person set stands.
+                analysis = _plausible_analysis(analysis, date_of_birth)
+            # The same check as a first import (ingest_file): a printed date of
+            # birth that is not the patient's is queued on every re-read too, or
+            # the first re-read that finds something else supersedes it silently.
+            person_mismatch = _birth_date_mismatch(
+                date_of_birth, " ".join(combined_page_text(page) for page in analysis.pages),
+            )
+            classification = analysis.classification
             _refuse_lost_ocr(connection, document_id, analysis)
             # Parse before touching anything: the parse depends on the file and
             # the classification only, and its result decides whether this
@@ -4511,12 +4661,19 @@ def reingest_document(
             _refuse_emptying(connection, document, classification, parsed_with_context, document_id, issues)
             date_by_person = _date_is_human(document)
             _update_reread_document(connection, document, analysis, document_id, date_by_person)
+            # A row a person added or corrected from an AI suggestion is stored
+            # `extracted` (unverified), but nobody has merely looked at it: the
+            # parser never finds an entry again, so deleting it would silently
+            # undo the person's work.  It is kept, and pairs with the parse as
+            # a checked row does (so a corrected value's original is not
+            # re-inserted beside it); it is never refreshed or reported.
             preserved = [
                 dict(row)
                 for row in connection.execute(
                     f"""SELECT * FROM observations
-                        WHERE document_id=? AND verification_status IN
+                        WHERE document_id=? AND (verification_status IN
                               ({",".join("?" * len(HUMAN_RULED))})
+                              OR COALESCE(extraction_method, '') LIKE 'ai_suggested%')
                         ORDER BY page_number, rowid""",
                     (document_id, *HUMAN_RULED),
                 )
@@ -4532,7 +4689,8 @@ def reingest_document(
             previous_values = _content_counts(connection, document_id)
             previous_concepts = _content_concepts(connection, document_id)
             discarded = connection.execute(
-                "DELETE FROM observations WHERE document_id=? AND verification_status='extracted'",
+                """DELETE FROM observations WHERE document_id=? AND verification_status='extracted'
+                   AND COALESCE(extraction_method, '') NOT LIKE 'ai_suggested%'""",
                 (document_id,),
             ).rowcount
             _replace_pages(connection, document_id, analysis)
@@ -4641,7 +4799,7 @@ def reingest_document(
                 appeared, vanished, sum(current_values.values()), changed_items, orphaned_items
             )
             _audit_reread_refresh(connection, owner_user_id, document_id, reference_items, date_moves)
-            reasons.extend(_reread_record_reasons(connection, document_id, unfiled, issues))
+            reasons.extend(_reread_record_reasons(connection, document_id, unfiled, issues, person_mismatch))
             _replace_open_tasks(connection, owner_user_id, document_id, reasons)
             connection.execute(
                 """INSERT INTO audit_events(owner_user_id, actor_user_id, action, entity_type, entity_id, details_json, created_at)
@@ -4717,7 +4875,8 @@ def ingest_directory(
                 # stops itself, exactly as it does in the upload queue.  The
                 # exception's own text is not recorded - it carries absolute
                 # paths and sometimes the patient's filenames.
-                logger.exception("ingest: %s could not be read", path.name)
+                logger.error("ingest: a %s file could not be read (%s)", path.suffix.lower() or "file", type(error).__name__)
+                logger.debug("ingest: traceback", exc_info=True)
                 results.append(
                     {"filename": path.name, "action": "failed", "error": type(error).__name__}
                 )

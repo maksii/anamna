@@ -67,6 +67,16 @@ def migrate(settings: Settings | None = None) -> None:
             "CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)"
         )
         applied = {row[0] for row in connection.execute("SELECT version FROM schema_migrations")}
+        code_max = max((int(path.name.split("_", 1)[0]) for path in MIGRATIONS_DIR.glob("*.sql")), default=0)
+        db_max = max(applied, default=0)
+        if db_max > code_max:
+            # An older build opening a newer schema would run against tables it
+            # does not understand; refuse before anything is applied.
+            raise RuntimeError(
+                f"This database was last opened by a newer Anamna (schema {db_max}; "
+                f"this version knows up to {code_max}). Start the newer version, "
+                "or restore a backup made before the upgrade."
+            )
         for path in sorted(MIGRATIONS_DIR.glob("*.sql")):
             version = int(path.name.split("_", 1)[0])
             if version in applied:

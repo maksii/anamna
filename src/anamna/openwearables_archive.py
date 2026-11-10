@@ -24,7 +24,7 @@ the whole table and vacuums, a documented maintenance step.
     uv run python -m anamna.openwearables_archive verify
     uv run python -m anamna.openwearables_archive fingerprint OUT.json [--db PATH]
     uv run python -m anamna.openwearables_archive compare BEFORE.json AFTER.json
-    uv run python -m anamna.openwearables_archive reclaim
+    uv run python -m anamna.openwearables_archive reclaim --yes
 """
 from __future__ import annotations
 
@@ -507,6 +507,15 @@ def main(argv: list[str]) -> int:
             cursor = convert_step(settings, budget=5.0, cursor=cursor)
         result = {"done": True}
     elif command == "reclaim":
+        if "--yes" not in argv:
+            # Reclaim drops a table and vacuums the live file: a backup comes first.
+            print(
+                "Refusing to reclaim without --yes. Take a backup first: "
+                f"python -c \"import sqlite3;sqlite3.connect('{settings.database_path}')"
+                ".backup(sqlite3.connect('backup.sqlite3'))\"",
+                file=sys.stderr,
+            )
+            return 2
         result = reclaim(settings)
     elif command == "compare":
         result = compare(json.loads(Path(argv[1]).read_text()), json.loads(Path(argv[2]).read_text()))

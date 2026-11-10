@@ -21,7 +21,7 @@
   <aside class="panel export-builder export-no-print" aria-labelledby="export-builder-title">
     <div class="panel-head">
       <h2 id="export-builder-title">{{ t('export.builder_title') }}</h2>
-      <span data-selected-count data-template="{{ t('export.selected_count', count='{count}') }}">{{ t('export.selected_count', count=selected_ids|length) }}</span>
+      <span data-selected-count role="status" data-template="{{ t('export.selected_count', count='{count}') }}">{{ t('export.selected_count', count=selected_ids|length) }}</span>
     </div>
     <label class="export-search">
       <span>{{ t('export.search_label') }}</span>
@@ -43,7 +43,7 @@
         {% endfor %}
       </section>
       {% endfor %}
-      <p class="export-no-search-results" data-no-results hidden>{{ t('export.no_search_results') }}</p>
+      <p class="export-no-search-results" data-no-results role="status" hidden>{{ t('export.no_search_results') }}</p>
     </div>
   </aside>
 
@@ -88,7 +88,7 @@
           </dl>
         </div>
         {% if metric.was_aggregated %}<p class="export-aggregation-note">{{ t('export.aggregation_note', original=metric.point_count, shown=metric.displayed_count, mode=metric.aggregation_label) }}</p>{% endif %}
-        <div class="table-wrap export-table-wrap">
+        <div class="table-wrap export-table-wrap" tabindex="0" role="region" aria-label="{{ t('table.scroll_region') }}">
           <table>
             <thead><tr>
               <th scope="col">{{ t('export.th_date') }}</th>

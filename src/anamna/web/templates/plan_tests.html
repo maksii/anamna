@@ -51,12 +51,17 @@
 </section>
 
 {% if notice %}
-<div class="alert {{ 'warning' if notice in ('prices_changed', 'items_gone', 'suggestion_empty') else ('neutral' if notice == 'suggestion_saved' else 'error') }}" role="alert">{{ t('plan.notice_' ~ notice) }}</div>
+{#- Order outcomes that have no `plan.notice_*` text of their own. -#}
+{% set notice_keys = {'order_repeat': 'plan.error_order_repeat', 'order_uncertain': 'plan.error_order_uncertain'} %}
+<div class="alert {{ 'warning' if notice in ('prices_changed', 'items_gone', 'suggestion_empty') else ('neutral' if notice == 'suggestion_saved' else 'error') }}" role="alert">{{ t(notice_keys[notice]) if notice in notice_keys else t('plan.notice_' ~ notice) }}</div>
 {% endif %}
 
 {#- A doctor reads the record through an access code: they plan, and save
     the selection for the patient; the order is the patient's to place. -#}
 {% if doctor and labs_on %}<p class="alert neutral an-plan-doctor">{{ t('plan.doctor_lead') }}</p>{% endif %}
+
+{#- A read-only share: the planner works as for a doctor, but no order is offered. -#}
+{% if share_read_only and labs_on %}<p class="alert" role="status">{{ t('plan.share_read_only', name=viewing.display_name) }}</p>{% endif %}
 
 {#- What a doctor saved for this person: open it (the planner as the doctor
     left it, plan built) to review, change and order, or put it away. -#}
@@ -397,11 +402,11 @@
   {% if request.query_params.get('plan') %}<input type="hidden" name="plan" value="1">{% endif %}
   <div class="an-plan-go">
     <button class="primary" type="submit" name="plan" value="1" formaction="/plan-tests#plan-result" data-busy="{{ t('plan.building') }}">{{ t('plan.submit') }}</button>
-    {% if doctor %}<button class="secondary" type="submit" form="plan-suggest" data-busy="{{ t('plan.suggest_saving') }}">{{ t('plan.suggest_submit') }}</button>{% endif %}
+    {% if can_suggest %}<button class="secondary" type="submit" form="plan-suggest" data-busy="{{ t('plan.suggest_saving') }}">{{ t('plan.suggest_submit') }}</button>{% endif %}
     <p class="tiny muted" aria-live="polite">{{ t('plan.selected_label') }} <span data-selected-count>{{ (spec.picked|length if special else selected|length)|countfmt }}</span></p>
   </div>
 </form>
-{% if doctor %}
+{% if can_suggest %}
 {#- Its own form, so the CSRF token never rides in the planner's address:
     the list as last loaded, refreshed from the ticks on submit by script. -#}
 <form id="plan-suggest" action="/plan-tests/suggest" method="post" hidden>
@@ -412,7 +417,7 @@
 
 {% include "_plan_result.html" %}
 {% endif %}
-<script>
+<script nonce="{{ csp_nonce }}">
 (function () {
   // The mode switch answers on its own; its button is for script-off pages.
   var modeForm = document.querySelector('[data-mode-form]');

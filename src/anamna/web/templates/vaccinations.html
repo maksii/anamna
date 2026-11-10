@@ -318,7 +318,7 @@
 </section>
 {% endif %}
 
-<script>
+<script nonce="{{ csp_nonce }}">
 (() => {
   const form = document.querySelector("[data-vax-filter]");
   const status = document.querySelector("[data-vax-filter-status]");

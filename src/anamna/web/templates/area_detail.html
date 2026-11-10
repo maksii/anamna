@@ -203,7 +203,7 @@
   </header>
   {% if big_table %}
   {% macro area_table_rows(rows) -%}
-  <div class="area-result-table-wrap">
+  <div class="area-result-table-wrap" tabindex="0" role="region" aria-label="{{ t('area.measurement_heading') }}">
     <table class="area-result-table">
       <thead><tr>
         <th scope="col">{{ t('area.table_name') }}</th>

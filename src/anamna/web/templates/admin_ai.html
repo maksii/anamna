@@ -213,7 +213,7 @@
 
   {% macro rollup_table(rows, label_prefix, heading_key) %}
   <h3>{{ t(heading_key) }}</h3>
-  <div class="table-wrap table-wrap--stack">
+  <div class="table-wrap table-wrap--stack" tabindex="0" role="region" aria-label="{{ t(heading_key) }}">
     <table>
       <thead><tr>
         <th scope="col">{{ t('aiassist.col_name') }}</th>
@@ -250,7 +250,7 @@
 
   <h3>{{ t('aiassist.recent_heading') }}</h3>
   {% if usage.recent %}
-  <div class="table-wrap table-wrap--stack">
+  <div class="table-wrap table-wrap--stack" tabindex="0" role="region" aria-label="{{ t('aiassist.recent_heading') }}">
     <table>
       <thead>
         <tr>
@@ -293,7 +293,7 @@
 
 <p class="muted"><a href="/admin/users">{{ t('token.back_to_people') }}</a></p>
 
-<script>
+<script nonce="{{ csp_nonce }}">
 (() => {
   // Switching a task's provider swaps the model suggestions and the effort
   // choices to that provider's.  Without this script the server still drops

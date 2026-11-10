@@ -395,7 +395,7 @@ class Client:
         # A conclusion's text is the visit itself, whatever it attached.  An
         # examination's typed findings are its report when no PDF came: an
         # X-ray's files are the radiographs, its report is only that text.
-        if record and (kind == "conclusions" or not any(data.startswith(b"%PDF") for data in attached)):
+        if record and (kind == "conclusions" or not any(_complete_pdf(data) for data in attached)):
             attached.insert(0, record)
         if not attached:
             raise LabSyncError("labsync.error_pdf")
@@ -407,7 +407,13 @@ class Client:
         data = self._get(path, person, want="file")
         if not isinstance(data, bytes):
             return None
-        if data.startswith(b"%PDF") or any(data.startswith(magic) for magic in _SCANS):
+        if data.startswith(b"%PDF"):
+            if not _complete_pdf(data):
+                # A PDF cut short in transit: retry later, never store it (as common.call does for want="pdf").
+                common.logger.warning("labsync: expert PDF without its end marker (%s bytes)", len(data))
+                raise LabSyncError("labsync.error_unreachable")
+            return data
+        if any(data.startswith(magic) for magic in _SCANS):
             return data
         if visit_pdf.is_docx(data):
             return visit_pdf.docx_pdf(data, str(name or ""))
@@ -421,6 +427,11 @@ DOCUMENT_KINDS = {"conclusions": "c", "research": "r"}
 _KIND_OF = {letter: kind for kind, letter in DOCUMENT_KINDS.items()}
 #: A scanned report: JPEG, PNG, TIFF.
 _SCANS = (b"\xff\xd8\xff", b"\x89PNG\r\n\x1a\n", b"II*\x00", b"MM\x00*")
+
+
+def _complete_pdf(body: bytes) -> bool:
+    """A PDF whose end marker arrived; a download cut short has none."""
+    return body.startswith(b"%PDF") and b"%%EOF" in body[-2048:]
 
 
 def _remote(order_id: str) -> tuple[str, str]:

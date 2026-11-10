@@ -149,7 +149,6 @@
             `onsubmit` rather than a second page: one irreversible button, one
             confirmation, and the form still submits without JavaScript. -#}
         <form action="/admin/users/{{ person.id }}" method="post"
-              onsubmit="return confirm(this.dataset.confirm)"
               data-confirm="{{ t('admin.delete_confirm') }}">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <input type="hidden" name="action" value="delete">

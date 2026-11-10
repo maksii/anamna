@@ -14,7 +14,9 @@ import difflib
 import logging
 import math
 import re
-from datetime import date, datetime
+import secrets
+import sqlite3
+from datetime import UTC, date, datetime, timedelta
 from urllib.parse import parse_qsl, quote, unquote, urlencode
 from uuid import uuid4
 
@@ -941,6 +943,11 @@ def _plan_view(plan: dict, required: set[str], names: dict[str, str], selected: 
     return plan
 
 
+def _share_read_only(user, owner) -> bool:
+    """A viewer of someone else's record whom the owner gave read-only access."""
+    return owner["id"] != user["id"] and dict(owner).get("share_access") != "full"
+
+
 def register_routes(app, settings, *, templates, template_context, require_user, record_user, require_csrf,
                     audit) -> None:
     templates.env.filters["uah"] = uah
@@ -1289,7 +1296,10 @@ def register_routes(app, settings, *, templates, template_context, require_user,
         # patient; ordering is the patient's, or anyone they share the record
         # with, through a lab account that holds them (_order_account).
         doctor = user.get("token_kind") == "guest"
-        can_order = not doctor
+        # A share viewer with read-only access plans and saves a suggestion, as a doctor does, but never orders.
+        read_only = _share_read_only(user, owner)
+        can_order = not doctor and not read_only
+        can_suggest = doctor or read_only
         order_forms = {}
         if can_order and view["best"] is not None:
             for plan in view["plans"]:
@@ -1312,7 +1322,7 @@ def register_routes(app, settings, *, templates, template_context, require_user,
                             "url": f"/plan-tests?{row['query']}&plan=1#plan-result"} for row in rows]
         response = templates.TemplateResponse(request, "plan_tests.html", template_context(
             request, active="plan_tests", can_order=can_order, order_forms=order_forms, doctor=doctor,
-            suggestions=suggestions, suggestion_source=suggestion_query(str(request.url.query)),
+            can_suggest=can_suggest, share_read_only=read_only, suggestions=suggestions, suggestion_source=suggestion_query(str(request.url.query)),
             notice=request.query_params.get("notice", ""), today=date.today().isoformat(), **view))
         # The city, the lab and the samples chosen here are where the next visit starts.
         remember = {cookie: request.query_params[name][:80] for name, cookie in REMEMBER.items()
@@ -1364,7 +1374,7 @@ def register_routes(app, settings, *, templates, template_context, require_user,
         if person:
             client = labsync._client(settings, "esculab", row["secret"], row["phone"], row["refresh_secret"])
             last = esculab_shop.last_point(client, person)
-        return {"connected": True, "person": person, "points": points,
+        return {"connected": True, "person": person, "points": points, "nonce": secrets.token_urlsafe(16),
                 "point": last if any(p["id"] == last for p in points) else (points[0]["id"] if points else "")}
 
     def back(request_query: str, notice: str) -> RedirectResponse:
@@ -1373,30 +1383,38 @@ def register_routes(app, settings, *, templates, template_context, require_user,
     @app.post("/plan-tests/suggest")
     async def plan_suggest(request: Request):
         """A doctor's selection, saved for the patient (a guest credential's
-        one write).  ``query`` is the planner's query string as it stands."""
+        one write), or a selection a share viewer saves for the owner of the
+        record they were given.  ``query`` is the planner's query string as it stands."""
         user = await run_in_threadpool(require_user, request)
         form = await request.form()
         await run_in_threadpool(require_csrf, user, str(form.get("csrf_token") or ""))
-        if user.get("token_kind") != "guest":
+        guest = user.get("token_kind") == "guest"
+        owner = user if guest else await run_in_threadpool(record_user, request, user)
+        if not guest and owner["id"] == user["id"]:
             raise HTTPException(403)
         query = suggestion_query(str(form.get("query") or ""))
         params = QueryParams(query)
-        view = await run_in_threadpool(build, request, user, user, params)
+        view = await run_in_threadpool(build, request, user, owner, params)
         count = (len(view["spec"]["picked"]) if view["special"] else len(view["selected"])) + len(view["include_rows"])
         if not count:
             return RedirectResponse(f"/plan-tests?{query}&notice=suggestion_empty#plan-needs", status_code=303)
         suggestion_id = str(uuid4())
+        if guest:
+            token_id, author = user.get("token_id"), user.get("token_label") or ""
+            replace = ("""DELETE FROM plan_suggestions WHERE owner_user_id=? AND token_id IS ? AND dismissed_at IS NULL""",
+                       (owner["id"], token_id))
+        else:
+            token_id, author = None, user.get("display_name") or ""
+            replace = ("""DELETE FROM plan_suggestions WHERE owner_user_id=? AND token_id IS NULL AND author=?
+                          AND dismissed_at IS NULL""", (owner["id"], author))
         with transaction(settings) as connection:
-            # One pending suggestion per doctor link and record: the newer replaces the older.
-            connection.execute(
-                """DELETE FROM plan_suggestions WHERE owner_user_id=? AND token_id IS ? AND dismissed_at IS NULL""",
-                (user["id"], user.get("token_id")))
+            # One pending suggestion per doctor link (or per share viewer) and record: the newer replaces the older.
+            connection.execute(*replace)
             connection.execute(
                 """INSERT INTO plan_suggestions(id, owner_user_id, query, test_count, token_id, author, created_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (suggestion_id, user["id"], query, count, user.get("token_id"), user.get("token_label") or "",
-                 utc_now()))
-        audit(user["id"], user["id"], "plan_suggestion_saved", "plan_suggestion", suggestion_id, {"tests": count})
+                (suggestion_id, owner["id"], query, count, token_id, author, utc_now()))
+        audit(owner["id"], user["id"], "plan_suggestion_saved", "plan_suggestion", suggestion_id, {"tests": count})
         return RedirectResponse(f"/plan-tests?{query}&notice=suggestion_saved#plan-needs", status_code=303)
 
     @app.post("/plan-tests/suggestion/{suggestion_id}/dismiss")
@@ -1419,13 +1437,21 @@ def register_routes(app, settings, *, templates, template_context, require_user,
         await run_in_threadpool(require_csrf, user, str(form.get("csrf_token") or ""))
         if user.get("token_kind") == "guest" or not labsync.active(settings, "esculab"):
             raise HTTPException(403)
+        if user.get("bearer"):
+            raise HTTPException(403, t("plan.error_order_session"))
+        # For the record on screen: one's own, or one shared with this person.
+        owner = await run_in_threadpool(record_user, request, user)
+        if _share_read_only(user, owner):
+            raise HTTPException(403, t("plan.error_share_read_only"))
         region, plan_query = str(form.get("region") or ""), str(form.get("plan_query") or "")
+        # The form's one-time token: spent below, before the lab is asked.  A form without one is not sent.
+        nonce = str(form.get("order_nonce") or "")
+        if not nonce:
+            return back(plan_query, "order_repeat")
         ids = [str(value) for value in form.getlist("item")]
         expected = _expected_total(form)
         if expected is None or not _known_region(settings, "esculab", region):
             return back(plan_query, "items_gone")
-        # For the record on screen: one's own, or one shared with this person.
-        owner = await run_in_threadpool(record_user, request, user)
         account_id, person = _order_account(settings, user["id"], owner["id"], "esculab")
         row = labsync.account(settings, account_id, "esculab")
         if not (row and row["secret"] and person):
@@ -1452,6 +1478,16 @@ def register_routes(app, settings, *, templates, template_context, require_user,
                     connection.execute("DELETE FROM lab_catalog_cache WHERE provider='esculab' AND region=? AND cache_key='catalog'",
                                        (region,))
             return back(plan_query, "prices_changed")
+        # Spent before the lab is asked, and kept spent whatever it answers: a second press of the same form
+        # never files a second order.  Rows older than two days are no longer a risk and are dropped here.
+        cutoff = (datetime.now(UTC) - timedelta(days=2)).replace(microsecond=0).isoformat()
+        try:
+            with transaction(settings) as connection:
+                connection.execute("DELETE FROM lab_order_nonces WHERE created_at < ?", (cutoff,))
+                connection.execute("INSERT INTO lab_order_nonces(nonce, user_id, created_at) VALUES (?, ?, ?)",
+                                   (nonce, user["id"], utc_now()))
+        except sqlite3.IntegrityError:
+            return back(plan_query, "order_repeat")
         client = labsync._client(settings, "esculab", row["secret"], row["phone"], row["refresh_secret"])
         try:
             visit = date.fromisoformat(str(form.get("date") or ""))
@@ -1463,7 +1499,8 @@ def register_routes(app, settings, *, templates, template_context, require_user,
                 online=form.get("payment") == "online", day=max(visit, date.today()))
         except LabSyncError as exc:
             logger.warning("esculab order refused: %s", exc.key)
-            return back(plan_query, "order_failed")
+            # Unreachable or timed out: the lab may have filed the order before the answer was lost.
+            return back(plan_query, "order_uncertain" if exc.key == "labsync.error_unreachable" else "order_failed")
         audit(owner["id"], user["id"], "lab_order_created", "lab_order", f"esculab:{created['number']}",
               {"items": len(fresh), "total": total, "account": account_id})
         return templates.TemplateResponse(request, "plan_tests_done.html", template_context(
@@ -1477,10 +1514,14 @@ def register_routes(app, settings, *, templates, template_context, require_user,
         await run_in_threadpool(require_csrf, user, str(form.get("csrf_token") or ""))
         if synevo_shop is None or user.get("token_kind") == "guest" or not labsync.active(settings, "synevo"):
             raise HTTPException(403)
+        if user.get("bearer"):
+            raise HTTPException(403, t("plan.error_order_session"))
+        owner = await run_in_threadpool(record_user, request, user)
+        if _share_read_only(user, owner):
+            raise HTTPException(403, t("plan.error_share_read_only"))
         region, plan_query = str(form.get("region") or ""), str(form.get("plan_query") or "")
         if not _known_region(settings, "synevo", region):
             return back(plan_query, "items_gone")
-        owner = await run_in_threadpool(record_user, request, user)
         account_id, _person = _order_account(settings, user["id"], owner["id"], "synevo")
         catalogue = {item["id"]: item for item in synevo_shop.catalog(settings, region) or []}
         chosen = [catalogue[i] for i in form.getlist("item") if i in catalogue]

@@ -65,6 +65,8 @@ uv run pytest --basetemp=work/pytest-run
 node --test tests/js/*.test.mjs
 ```
 
+The CLI also has `anamna set-password --email … [--admin]` (recovery when the only administrator is locked out), `anamna backup --to DIR [--no-sources]` (online backup of the database, `secret.key` and the originals) and `anamna export --email … --to FILE.zip` (one account's record).
+
 The Python suite runs in parallel by default (pytest-xdist, `-n auto` in the `pyproject.toml`
 addopts) and takes about a minute; pass `-n 0` to run it serially when debugging. Always override
 `--basetemp`, and give each concurrent run its own: the default `work/pytest` is usually locked on
@@ -191,6 +193,8 @@ cramped, overflowing, or visibly unconsidered at those sizes.
   reason about it from the CSS.
 - Zero horizontal page scroll at every width. Wide content (tables, charts, code) scrolls inside
   its own container.
+- A wrapper that scrolls a wide table sideways (`table-wrap`, `area-result-table-wrap`, `an-scroll-x`)
+  carries `tabindex="0" role="region"` and an `aria-label`, or a keyboard user cannot scroll it.
 - Interactive targets ≥44×44 CSS px with visible spacing between neighbours.
 - Existing breakpoints in `web/static/app.css` are 620, 720, 760, 900, 980, 1000, 1100, 1120,
   1280 and 1400 px.
@@ -332,7 +336,7 @@ across all three jurisdictions.
   favourite.
 - Ukrainian sources must be found in Ukrainian (MOZ orders, national protocols) and mapped, not
   back-translated from an American guideline.
-- Current coverage, as a baseline to improve rather than a target already met: 495 sources
+- Current coverage (`data/reference_library.json`, version 2026-08-07), as a baseline to improve rather than a target already met: 495 sources
   (UA 149, US 148, EU 113, INT 85) across 478 analytes. 396 analytes cite a UA source, 82 carry
   numeric bands, and 374 are `no_universal_target`. Every band's `source_id` appears in its
   analyte's `source_ids`, and every source carries an `identifier`
@@ -355,6 +359,13 @@ Each of these has already produced a confident, wrong, or silently missing clini
   with a source line that proves it, then rescan the affected documents — the fix does not backfill
   anything on its own. To find what is currently being swallowed, scan `sources/` for lines matching
   `<name> <number> <token>` where the token is not in the pattern.
+
+- **A results table outranks an incidental word.** `_is_results_table` in `ingest/classifier.py` makes a
+  page a laboratory report when it has a results header and at least `RESULT_TABLE_MIN_ROWS` (four)
+  result rows, unless more than half of those rows carry a length or volume unit
+  (`MEASUREMENT_UNITS`, an echo or ultrasound table). That holds when the text also mentions a
+  consultation, a biopsy or an MRI. Classified by that one word, the page was filed as a narrative.
+  Those kinds are never parsed for values, so the whole page vanished.
 
 - **A new unit must be folded as well as parsed.** `canonical_unit()` decides whether two readings
   are the same measurement, so an unfolded spelling gives the analyte a second unit: the trend
@@ -394,6 +405,7 @@ Each of these has already produced a confident, wrong, or silently missing clini
 - **No band contains the value means no curated verdict.** Only a band that states what is normal
   can say which side of normal a value is on. Judging against whichever band came first reported
   a ferritin of 50 as "High" under an "Iron deficiency" label for a person of unknown sex.
+- **A band's edge can belong to another body.** Ferritin's healthy band starts at 30 ng/mL, the NIH ODS figure, and ends at WHO's overload threshold. WHO puts deficiency at 15. A band names the publisher of its lower edge in `lower_source_id`, and a value below that edge cites that source as the target's. Without it the page and the assistant said "below the WHO threshold of 30", a number WHO never published.
 - **A censored result is a limit, not a value.** `<1.0` and `>60` are stored as the number plus a
   `comparator`. Pass it to `evaluate()`: a band judges it only when the band is open on the stated
   side, and the laboratory's range only when the side is certain. Dropping it files `>60` eGFR
@@ -426,6 +438,32 @@ Each of these has already produced a confident, wrong, or silently missing clini
 - **Throttle keys are namespaced.** `login:<email>`, `login-ip:<visitor>`, `register:`, `token:`,
   `webhook:`, `pwchange:`. One shared bucket let ten wrong passwords from anyone lock sign-in for
   everyone behind the tunnel, and let webhook noise do the same.
+- **A band can refuse a sample.** A band may list `excludes: ["not_fasting_sample"]` or `["pregnant"]`, and the random-sample glucose band lists `requires: ["not_fasting_sample"]`. `evaluate()` receives per-sample facts in `clinical_context` next to the person-level ones, and a band that excludes a fact the sample carries does not judge. Glucose is judged as a fasting sample unless the reading is marked otherwise, and the page says so. Fasting thresholds applied to a sample known to be non-fasting, or non-pregnant intervals applied during a recorded pregnancy, put a wrong label in front of a patient.
+- **Per-sample facts reach the engine through `_sample_facts`.** `_reading_verdict` and
+  `_document_observation_item` in `web/app.py` merge `_sample_facts(connection, row)` into
+  `clinical_context` beside the person-level `_clinical_context`. It yields `not_fasting_sample` when
+  `observations.sample_condition` is `not_fasting` (set by `POST /observations/{id}/sample-condition`),
+  and `pregnant` when the result's date falls in the 280 days before `patients.pregnancy_due_date`. A new
+  call to `evaluate()` for a stored result that leaves these out judges a non-fasting glucose against
+  fasting thresholds, and a pregnancy result against non-pregnant intervals.
+- **Deleting an account goes through `_delete_account`.** The administrator's delete
+  (`admin_change_user`) and `POST /profile/delete-account` both call it. It removes the original document
+  files that no other account's document uses (`_delete_orphaned_sources`), clears
+  `review_tasks.assigned_user_id` and `audit_events.actor_user_id`, the two foreign keys that do not
+  cascade, and then deletes the `users` row. Providers are disconnected first, best effort
+  (`_disconnect_providers`). Device-export files and the folders the application unpacked under `sources/uploads/` go too; a folder an operator placed in `sources/` by hand and imported from the command line stays. A bare
+  `DELETE FROM users` fails for anyone who acted on another person's record, because foreign keys are
+  enforced (`PRAGMA foreign_keys = ON` in `db.py`).
+
+- **A retest interval belongs to the result it was published for.** `retest_condition: {"applies_when": "borderline"}` limits a cadence to borderline results. The other `applies_when` values are `abnormal`, `not_abnormal`, `on_treatment` and `occupational`; `any` holds a list of conditions, and `age_min` and `age_max` limit by age. "Repeat in 12 months" beside a diabetes-range glucose told a person to wait a year for a result that needs confirming now.
+- **A share has a level.** `record_shares.access` is `read` or `full`. `viewing_row()` carries it as `share_access`, and `record_user()` exposes `viewing_full`. Reading is what every share gives. Anything that acts through the owner (the assistant sending the record to a provider, a laboratory order through the owner's account) must check for `full`. A new route that resolves the owner with `record_user()` and then does more than read is the mistake to look for.
+- **A known browser has its own sign-in meter.** A successful sign-in sets the `anamna_device` cookie, an HMAC over the email keyed by the server secret. A request carrying a valid one is counted on `login-dev:<email>:<nonce>` only. Without it, anyone who knew an address could lock its owner out for 15 minutes with 20 wrong passwords.
+- **A real-world order needs a browser session and a one-time token.** The Esculab order form carries a nonce, spent by inserting it into `lab_order_nonces` before the laboratory is asked. A repeated or missing nonce never reaches the laboratory, and a bearer token cannot order at all. A double click used to be two real orders.
+- **Scripts need the request's nonce once strict mode is on.** `_content_security_policy()` in `web/app.py` builds the policy. `CSP_STRICT_SCRIPTS` is on: scripts run only from the server or with `nonce="{{ csp_nonce }}"` (the value of `request.state.csp_nonce`, passed to every template). An inline `<script>` without it, or an `onclick=` or `onsubmit=` attribute, is blocked by the browser. While the switch is off, the policy allows `'unsafe-inline'` and a missing nonce blocks nothing. Keep every template free of inline handler attributes, which `profile.html` used to carry. Put behaviour in a script and attach it with `addEventListener`; a form that needs a confirmation carries `data-confirm`, which `static/busy.js` handles. `tests/python/test_audit_csp.py` fails on either.
+- **Nothing personal goes to the log.** No file name, document title or upstream reply body at `INFO` or above: file names carry surnames. Log an id, a count, a suffix or the exception class; put the rest at `DEBUG`. The uvicorn access log is off for the same reason: it printed guest-link secrets and search text.
+- **A thousands space is joined only on proof.** `_thousands_split` joins «250 000» when the row's own reference interval proves the magnitude, or when the group starts with a zero. Joining on shape alone turned «Інтерлейкін 6 150 пг/мл» into 6150.
+- **A re-read may pair rows only within one analyte.** A loose pair (a contained label, the same line, a lone number) may stand only when the rows share a concept. A checked row under a catalogue analyte is never relabelled as another analyte with the same value and line: without that, a verified «Білірубін» 5.1 became «Білірубін прямий» 5.1 and stayed verified.
+- **The lab's refusal of one order is not a rejected password.** A refused order (the lab answers 403 on its PDF) is recorded for that order, and the sync carries on. Two refusals in a row mean the credential itself is refused, and the run stops with an authentication error.
 
 ## Definition of done
 

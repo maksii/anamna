@@ -259,6 +259,16 @@ def expand_archive(
     return produced
 
 
+def _suffix(name: str) -> str:
+    """The extension of a file or member name, if intake reads that kind of file.
+
+    Only the extension goes into the log: the stem is a person's own name, and
+    an unknown extension may be one too (``Ivanov.Petro``), so it is not echoed.
+    """
+    suffix = PurePath(name).suffix.lower()
+    return suffix if suffix in INTAKE_SUFFIXES else "other"
+
+
 def _extract_entries(
     bundle: zipfile.ZipFile,
     entries: list[zipfile.ZipInfo],
@@ -270,7 +280,10 @@ def _extract_entries(
     total = len(entries)
     for index, info in enumerate(entries, 1):
         if _unsafe(info.filename):
-            logger.warning("intake: skipped unsafe archive entry %r", info.filename)
+            # The member name, not the filename: a person's own filenames carry
+            # their surnames, so only the kind of entry is logged.
+            kind = _suffix(info.filename)
+            logger.warning("intake: skipped unsafe archive entry (type %s)", kind)
             continue
         written = Path(bundle.extract(info, target))
         destination = written.resolve()
@@ -291,8 +304,10 @@ def _expand_nested(inner: Path, depth: int, budget: _ExpansionBudget) -> list[Pa
         return expand_archive(inner, inner.with_suffix(""), depth=depth + 1, _budget=budget)
     except _ArchiveCollisionError:
         raise
-    except (zipfile.BadZipFile, OSError, RuntimeError, NotImplementedError):
-        logger.warning("intake: nested archive %s could not be expanded", inner.name)
+    except (zipfile.BadZipFile, OSError, RuntimeError, NotImplementedError) as exc:
+        # The archive's name, not the filename, for the same reason as above.
+        kind = _suffix(inner.name)
+        logger.warning("intake: nested archive (type %s) could not be expanded (%s)", kind, type(exc).__name__)
         # Whatever it extracted before failing is not in the record and nothing
         # names it; leaving it behind is the same orphan the validator reports.
         shutil.rmtree(inner.with_suffix(""), ignore_errors=True)
@@ -517,8 +532,10 @@ def _discard_upload_copy(settings: Settings, path: Path) -> None:
         while folder.parent != uploads and not any(folder.iterdir()):
             folder.rmdir()
             folder = folder.parent
-    except OSError:
-        logger.warning("intake: could not remove the re-uploaded copy of %s", path.name)
+    except OSError as exc:
+        # The file name, not the filename: only its kind goes to the log.
+        kind = _suffix(path.name)
+        logger.warning("intake: could not remove the re-uploaded copy (type %s): %s", kind, type(exc).__name__)
 
 
 def discard_upload_tree(settings: Settings, path: Path) -> None:
@@ -544,8 +561,10 @@ def discard_upload_tree(settings: Settings, path: Path) -> None:
         while folder.parent != uploads and folder != uploads and not any(folder.iterdir()):
             folder.rmdir()
             folder = folder.parent
-    except OSError:
-        logger.warning("intake: could not remove the superseded expansion of %s", path.name)
+    except OSError as exc:
+        # A directory is named after the export it came from, so nothing of its
+        # name is logged, only the failure.
+        logger.warning("intake: could not remove a superseded expansion (%s)", type(exc).__name__)
 
 
 def _run_document(settings: Settings, job) -> None:
@@ -602,11 +621,13 @@ def _run_document(settings: Settings, job) -> None:
         # to an optional external archive is never worth that.
         try:
             paperless.push_document(settings, str(result["document_id"]))
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            # The traceback can carry the file's path, so it stays at DEBUG.
             logger.warning(
-                "paperless: mirroring document %s failed after a successful ingest",
-                result["document_id"], exc_info=True,
+                "paperless: mirroring document %s failed after a successful ingest (%s)",
+                result["document_id"], type(exc).__name__,
             )
+            logger.debug("paperless: mirroring document %s traceback", result["document_id"], exc_info=True)
 
 
 def _relate_upload_parts(settings: Settings, owner_user_id: str, document_id: str) -> None:
@@ -621,8 +642,10 @@ def _relate_upload_parts(settings: Settings, owner_user_id: str, document_id: st
             row = connection.execute("SELECT mime_type FROM documents WHERE id=?", (document_id,)).fetchone()
             if row and str(row["mime_type"] or "").startswith("image/"):
                 record_document_relations(connection, owner_user_id, document_id)
-    except Exception:  # noqa: BLE001
-        logger.warning("intake: relating upload %s to its batch failed", document_id, exc_info=True)
+    except Exception as exc:  # noqa: BLE001
+        # The traceback can carry the file's path, so it stays at DEBUG.
+        logger.warning("intake: relating upload %s to its batch failed (%s)", document_id, type(exc).__name__)
+        logger.debug("intake: relating upload %s traceback", document_id, exc_info=True)
 
 
 def _run_device_export(settings: Settings, job) -> None:
@@ -812,8 +835,11 @@ def run_job(settings: Settings, job) -> None:
         # the person is told why, and that nothing was changed.
         logger.warning("intake: %s job %s refused: %s", job["kind"], job["id"], refused)
         _finish(settings, job["id"], "failed", refused.detail_key)
-    except Exception:
-        logger.exception("intake: job %s failed", job["id"])
+    except Exception as exc:
+        # The traceback can carry the file's path, so it stays at DEBUG; the job
+        # id is the reference, as in the line above.
+        logger.error("intake: job %s failed (%s)", job["id"], type(exc).__name__)
+        logger.debug("intake: job %s traceback", job["id"], exc_info=True)
         _finish(settings, job["id"], "failed", "intake.failed_error")
 
 

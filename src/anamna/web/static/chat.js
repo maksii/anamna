@@ -74,6 +74,8 @@
     if (!body.textContent.trim()) body.remove();
     const note = document.createElement("p");
     note.className = "an-chat-msg__error";
+    // Announced when it appears: a screen-reader user is not watching the bubble.
+    note.setAttribute("role", "alert");
     note.textContent = message;
     item.classList.add("an-chat-msg--error");
     item.appendChild(note);
@@ -123,6 +125,7 @@
     resize();
     scrollToEnd(true);
     let finished = false;
+    let answered = false;
     try {
       const response = await fetch(composer.action, {
         method: "POST", body: data, headers: { Accept: "text/event-stream" }, credentials: "same-origin",
@@ -154,6 +157,7 @@
             addTools(answer, event.tools, event.tools_summary);
             showContext(event.context);
             finished = true;
+            answered = true;
           } else if (event.type === "error") {
             showError(answer, event.message, event.html);
             finished = true;
@@ -166,7 +170,9 @@
       if (!textarea.value) textarea.value = question;
       resize();
     } finally {
-      setBusy(false, "");
+      // The status line is the only thing a screen reader hears about the
+      // answer, so a finished answer is named there rather than cleared.
+      setBusy(false, answered ? say("chat.answer_ready") : "");
       scrollToEnd(true);
       textarea.focus();
     }

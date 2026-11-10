@@ -37,6 +37,8 @@ the `/data` volume, so a volume created by an earlier image keeps working. A rea
 [compose.yaml](compose.yaml) is in this repository: `docker compose up -d`, then
 `docker compose logs anamna` for the first-run setup code.
 
+The compose file runs the container with a read-only root filesystem and without Linux capabilities beyond the four the start-up needs. The server writes only to `/data` and to temporary memory-backed directories. The server prints no access log, because request lines would carry guest-link secrets and search text.
+
 ## Configure
 
 Settings come from environment variables. Most integrations are configured later in the
@@ -55,6 +57,10 @@ Administration pages, where a saved value wins over the environment.
 | `ANAMNA_BACKGROUND_WORKERS` | `0` disables all background workers (for an isolated test instance). |
 | `ANAMNA_OPENWEARABLES_WORKER` | `0` pauses only the OpenWearables worker. |
 | `PORT` | Port for `anamna-web`, default `8000`. |
+| `ANAMNA_ALLOW_ROOT` | `1` lets the container keep running as root when it cannot take ownership of the data volume (some network shares). Without it the container stops instead. |
+| `FORWARDED_ALLOW_IPS` | Address of your reverse proxy, so the server trusts its `X-Forwarded-*` headers (read by uvicorn). |
+
+A sign-in session lasts 14 days. `anamna-web` listens on 127.0.0.1 only; the container image listens on all interfaces of the container.
 
 Integration credentials (all optional): `ANAMNA_OURA_CLIENT_ID`, `ANAMNA_OURA_CLIENT_SECRET`,
 `ANAMNA_GARMIN_CLIENT_ID`, `ANAMNA_GARMIN_CLIENT_SECRET`, `ANAMNA_GARMIN_PERSONAL` (`1` offers
@@ -82,6 +88,38 @@ On the server itself, the CLI does the same without a code:
 ```bash
 uv run anamna init --email you@example.com --name "Your name"
 ```
+
+In a container the same command is `docker exec -it anamna /app/.venv/bin/anamna init --email you@example.com --name "Your name"`. It asks for the password, so it needs `-it`. With `docker compose` the container name comes from compose, so run `docker compose exec anamna /app/.venv/bin/anamna init --email you@example.com --name "Your name"` instead. `init` refuses an email that already has an account.
+
+## Lost access
+
+- **Lost the first-run setup code.** Restart the server while the database has no accounts: a new code is printed to the log on start (`docker logs anamna` in a container). Or set `ANAMNA_SETUP_CODE` before the first start. Or create the first account with `anamna init`, as above.
+- **A person forgot their password.** An administrator sets a new one on the Users page, `/admin/users`.
+- **The only administrator forgot theirs.** On the server, run `anamna set-password --email you@example.com --admin` (with uv: `uv run anamna set-password ...`). It asks for the new password twice and ends every session of that account. With `--admin` it also makes the account an administrator and re-enables it. In a container: `docker exec -it anamna /app/.venv/bin/anamna set-password --email you@example.com --admin`. Without a terminal, pass the password in the environment variable `ANAMNA_NEW_PASSWORD`: `docker exec -e ANAMNA_NEW_PASSWORD=... anamna /app/.venv/bin/anamna set-password --email you@example.com`.
+
+## Backup, restore and upgrade
+
+- **What to back up.** The database, the `sources/` directory with the original files, and `secret.key`. In the image all three are under `/data`: `/data/anamna.sqlite3`, `/data/sources` and `/data/secret.key`.
+- **Take the backup with `anamna backup`.** Do not copy the database file of a running server. It uses SQLite's WAL mode, and a plain copy can be torn. `anamna backup --to DIR` writes a consistent copy of the database as `anamna-YYYYMMDD-HHMMSS.sqlite3`, copies `secret.key`, and copies `sources/` unless `--no-sources` is given. In a container: `docker exec anamna /app/.venv/bin/anamna backup --to /data/backup --no-sources`, then copy `/data/backup` and `/data/sources` off the host with your usual file backup.
+- A backup holds health data and the stored credentials of connected services. Keep it encrypted; see [SECURITY.md](SECURITY.md).
+- **Restore.** Stop the server. Put the database copy back as the database file (`/data/anamna.sqlite3` in the image), put back `sources/` and `secret.key`, and start the server.
+- **Upgrade.** Take a backup, then pull the new image and start it: `docker compose pull`, then `docker compose up -d`. Database migrations run on start, each in one transaction. A database last opened by a newer version is refused with a message that says so. There is no downgrade: to go back, restore the backup and run the previous image tag. CI tags each image with its commit, as `ghcr.io/maksii/anamna:<sha>`.
+
+## Your data
+
+On the Profile page, under the security tab, a person can:
+
+- change the address they sign in with, using the current password;
+- download a ZIP of their own record: the original files they uploaded, device exports included, and CSV copies of their results, documents, vaccinations and device data, with a `manifest.json`;
+- delete their account. Deleting needs the password and the address typed in full. An administrator can delete their own account only while another enabled administrator exists. Before the account is removed, its Oura, Garmin and OpenWearables links are disconnected, best effort. The account's rows and the original document files that no other account uses are removed. Device exports uploaded through the application are removed with the account. A folder an operator placed in `sources/` by hand and imported from the command line stays there for the operator to remove.
+
+These panels are not offered to a guest link or while someone views a shared record. The download always covers the signed-in account, never the record being viewed.
+
+An operator exports one account's whole record with `anamna export --email you@example.com --to record.zip`. An existing file is not overwritten. The ZIP holds CSV files of the observations, documents, vaccinations and device data, a `manifest.json`, and the original uploaded files in its `files/` folder. To move a record to another installation, upload those original files there.
+
+## Sharing a record
+
+A record can be shared with another account on the same server, read only or with full access. Read only shows everything the owner sees. Full access also lets that person ask the AI assistant about the record and order laboratory tests through the owner's laboratory account. Nobody a record is shared with can change it. A read-only viewer can save a selection of tests as a suggestion for the owner, the same way a doctor with a one-time code can. Shares that existed before the read-only level was added keep full access. A new share is read only unless its owner chooses full access.
 
 ## Ways to get data in
 
@@ -116,6 +154,8 @@ Other integrations:
 Anamna can merge many overlapping sources, but imported data is still best checked by you: use
 your own agent or tools to fix, verify and map what was imported, and verify values against the
 source pages in the review queue.
+
+**Fasting and pregnancy.** A blood glucose result is judged against fasting ranges unless you mark its sample as not fasting. On a test's page that has fasting ranges, each result has a choice: Fasting, Not fasting or Not sure. A date in the Expected due date field of the Profile page makes Anamna treat results dated within the 280 days before it as taken during pregnancy. Ranges written for people who are not pregnant do not judge those results.
 
 Details: [device imports](docs/device-imports.md), [lab sync](docs/lab-sync.md),
 [Oura and Garmin](docs/provider-integrations.md), [OpenWearables](docs/openwearables-webhooks.md),

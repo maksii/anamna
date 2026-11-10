@@ -168,7 +168,7 @@
 {% for section in urinalysis.sections %}
 <section class="panel an-urinalysis-section">
   <div class="panel-head"><div><span class="eyebrow">{{ t('urinalysis.heading') }}</span><h2>{{ section.name }}</h2></div></div>
-  <div class="table-wrap table-wrap--stack">
+  <div class="table-wrap table-wrap--stack" tabindex="0" role="region" aria-label="{{ section.name }}">
     <table>
       <thead>
         <tr>

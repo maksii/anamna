@@ -219,6 +219,7 @@ _MMOL_L_TO_MG_DL = {
     "ldl-cholesterol": 38.67,
     "hdl-cholesterol": 38.67,
     "vldl-cholesterol": 38.67,
+    "non-hdl-cholesterol": 38.67,
     "triglycerides": 88.57,
 }
 
@@ -267,6 +268,31 @@ UNIT_CONVERSIONS[("free-triiodothyronine", "pmol/l", "pg/ml")] = 1.0 / 1.536
 # concept: elsewhere "U" is an enzyme unit, not an international unit.
 UNIT_CONVERSIONS[("total-immunoglobulin-e", "iu/ml", "ku/l")] = 1.0
 UNIT_CONVERSIONS[("total-immunoglobulin-e", "ku/l", "iu/ml")] = 1.0
+# Mass per volume to molar: factor = 10 mg/L over the molar mass in g/mol
+# (magnesium 24.305, creatinine 113.12, uric acid 168.11, bilirubin 584.66).
+_MG_DL_TO_MOLAR = {
+    ("magnesium", "mmol/l"): 0.4114,
+    ("creatinine", "umol/l"): 88.4,
+    ("uric-acid", "umol/l"): 59.48,
+    ("total-bilirubin", "umol/l"): 17.1,
+    ("direct-bilirubin", "umol/l"): 17.1,
+    ("indirect-bilirubin", "umol/l"): 17.1,
+}
+for (_concept, _target), _molar_factor in _MG_DL_TO_MOLAR.items():
+    UNIT_CONVERSIONS[(_concept, _MG_DL, _target)] = _molar_factor
+    UNIT_CONVERSIONS[(_concept, _target, _MG_DL)] = 1.0 / _molar_factor
+# Grams per decilitre to grams per litre: 1 g/dL = 10 g/L for these proteins.
+for _concept in ("hemoglobin", "albumin", "total-protein"):
+    UNIT_CONVERSIONS[(_concept, "g/dl", "g/l")] = 10.0
+    UNIT_CONVERSIONS[(_concept, "g/l", "g/dl")] = 0.1
+# 1 µg/L is exactly 1 ng/mL (both 10^-6 g/L): one quantity printed two ways,
+# registered per concept like the other same-number pairs in CONCEPT_UNIT_ALIASES.
+UNIT_CONVERSIONS[("ferritin", "ng/ml", "ug/l")] = 1.0
+UNIT_CONVERSIONS[("ferritin", "ug/l", "ng/ml")] = 1.0
+# Monovalent ions: 1 mEq/L is exactly 1 mmol/L, so both labels carry one number.
+for _concept in ("sodium", "potassium"):
+    UNIT_CONVERSIONS[(_concept, "meq/l", "mmol/l")] = 1.0
+    UNIT_CONVERSIONS[(_concept, "mmol/l", "meq/l")] = 1.0
 
 # Same number, different label: the per-concept table lives beside the unit
 # synonyms in health.py, which also folds the stored unit on the way in.
@@ -475,6 +501,8 @@ def _condition_met(
     when = condition.get("applies_when")
     if when == "abnormal" and interpretation not in _SEVERITY:
         return False, "abnormal_only"
+    if when == "borderline" and not str(interpretation or "").startswith("borderline"):
+        return False, "borderline_only"
     if when == "not_abnormal" and interpretation in _SEVERITY:
         return False, "follow_up_by_treatment"
     if when in {"on_treatment", "occupational"}:
@@ -947,12 +975,10 @@ def rule_requirement(rule) -> dict[str, object] | None:
 
 
 def rule_applies_to_context(rule, context: dict[str, object] | None) -> bool:
-    """Whether a gated band applies to this person's clinical context --
-    the same test _curated_verdict applies, for the rules list's chip."""
-    rule_context = _rule_context(rule["context_json"])
-    if not _is_gated(rule_context):
-        return True
-    return _gate(rule_context, context or {}) == "applies"
+    """Whether a published band applies to this person's clinical context --
+    the same gate _screen_rules judges with, for the rules list's chip."""
+    gate = _gate_rule(_rule_context(rule["context_json"]), context or {})
+    return gate is None or gate == _GATE_APPLIES
 
 
 def _gate(rule_context: dict[str, object], context: dict[str, object]) -> str:
@@ -986,7 +1012,9 @@ def evaluate(
 
     ``clinical_context`` carries inputs a band may require -- the
     cardiovascular risk category from :func:`clinical_context`.  Without it a
-    risk-stratified goal never judges.
+    risk-stratified goal never judges.  Per-sample facts such as
+    ``not_fasting_sample`` and ``pregnant`` arrive in the same dict, and a band
+    that ``excludes`` a fact present in it does not judge.
 
     ``comparator`` is the laboratory's printed comparator for a censored result
     (``"<"``, ``"<="``, ``">"``, ``">="``, as in ``<1.0`` or ``>60``).  The
@@ -1171,10 +1199,20 @@ def _rule_source(rule) -> dict[str, object]:
 _RULE_SKIP = "_skip"
 _RULE_OTHER_SEX = "_other_sex"
 _GATE_APPLIES = "_applies"
+# A rule written for a random (non-fasting) sample is simply not this sample's
+# rule; "needs clinical context" beside every fasting result would be noise.
+# A population indicator written for people planning a pregnancy (the WHO
+# red-cell folate level for preventing neural tube defects) is context, not a
+# missing piece of this person's record, so it is skipped without a notice.
+_SILENT_REQUIRES = frozenset({"not_fasting_sample", "planning_pregnancy"})
 
 
 def _gate_rule(context: dict[str, object], clinical_context: dict[str, object]) -> str | None:
     """``None`` for an ungated rule, ``_GATE_APPLIES``, ``_RULE_SKIP`` or a block reason."""
+    # A band that excludes a fact this sample carries says it must not judge here.
+    for fact in context.get("excludes") or ():
+        if clinical_context.get(fact):
+            return f"excluded_{fact}"
     if not _is_gated(context):
         return None
     # A treatment target that needs a clinical input this record does
@@ -1183,7 +1221,10 @@ def _gate_rule(context: dict[str, object], clinical_context: dict[str, object]) 
     # person's goal.
     gate = _gate(context, clinical_context)
     if gate.startswith("missing:"):
-        if gate.partition(":")[2] == "cv_risk_category":
+        missing = gate.partition(":")[2]
+        if missing in _SILENT_REQUIRES:
+            return _RULE_SKIP
+        if missing == "cv_risk_category":
             return "requires_cv_risk_category"
         return "requires_clinical_context"
     if gate == "other":
@@ -1408,22 +1449,32 @@ def _numeric_verdict(
         unit=rule["unit"],
         value=converted,
         note=rule["notes"],
-        **_target_fields(_target_band(match, numeric_rules)),
+        **_target_fields(_target_band(match, numeric_rules), numeric_rules),
         authority_positions=positions,
         risk_context=risk,
         **_rule_source(rule),
     )
 
 
-def _target_fields(target) -> dict[str, object]:
+def _target_fields(target, numeric_rules=()) -> dict[str, object]:
     """The ``_verdict`` keywords naming the band the bar shades; none without one."""
     if not target:
         return {}
+    rule, context, converted = target
+    source = _rule_source(rule)
+    # A healthy band can begin where another body's threshold ends.  Below that
+    # edge the number is cited to the body that published it: ferritin's 30 is
+    # NIH ODS's, and WHO, whose band this is, puts deficiency at 15.
+    edge_owner = context.get("lower_source_id")
+    if edge_owner and rule["lower_bound"] is not None and converted < rule["lower_bound"]:
+        owner = next((item[0] for item in numeric_rules if item[0]["reference_set_id"] == edge_owner), None)
+        if owner is not None:
+            source = _rule_source(owner)
     return {
-        "target_low": target[0]["lower_bound"],
-        "target_high": target[0]["upper_bound"],
-        "target_inclusive": (bool(target[0]["lower_inclusive"]), bool(target[0]["upper_inclusive"])),
-        "target_source": {**_rule_source(target[0]), "band_label": target[0]["label"]},
+        "target_low": rule["lower_bound"],
+        "target_high": rule["upper_bound"],
+        "target_inclusive": (bool(rule["lower_inclusive"]), bool(rule["upper_inclusive"])),
+        "target_source": {**source, "band_label": rule["label"]},
     }
 
 
@@ -1765,6 +1816,10 @@ def _band_context(analyte: dict, band: dict) -> dict[str, object]:
     }
     if band.get("requires"):
         context["requires"] = band["requires"]
+    if band.get("excludes"):
+        context["excludes"] = band["excludes"]
+    if band.get("lower_source_id"):
+        context["lower_source_id"] = band["lower_source_id"]
     if band.get("expected_text"):
         context["expected_text"] = list(band["expected_text"])
     return {k: v for k, v in context.items() if v is not None}

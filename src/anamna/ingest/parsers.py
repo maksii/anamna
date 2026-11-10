@@ -501,6 +501,10 @@ def reference_limits(reference: str | None) -> ReferenceLimits:
     if not reference:
         return ReferenceLimits()
     value = reference.replace(",", ".")
+    # «1 000 - 2 000» is a thousands-spaced interval: read as printed it gave 0 to 2.
+    spaced = _SPACED_THOUSANDS_INTERVAL.fullmatch(value)
+    if spaced:
+        value = f"{spaced.group(1).replace(' ', '')} {spaced.group(2)} {spaced.group(3).replace(' ', '')}"
     # A lone zero («0.0» beside NRBC or reactive lymphocytes) is the value the
     # laboratory expects: a count that cannot be negative has nothing to be
     # but at most zero.  Read as no reference, an NRBC of 0.2 % against it was
@@ -1310,6 +1314,29 @@ _UNIT_ROW = re.compile(
     rf"^(?P<name>.+?)\s+(?P<value>{NUMBER})\s+(?P<unit>{UNIT_PATTERN})(?:\s+(?P<ref>.*))?$",
     re.I,
 )
+# «BE -2,3 ммоль/л»: a sign glued to the digits, which `NUMBER` does not take.
+# Accepted only for the analytes in `_SIGNED_ANALYTE`, in `parse_unit_rows`.
+_GLUED_SIGN_ROW = re.compile(
+    rf"^(?P<name>.+?)\s+(?P<value>[-−]\d+(?:[.,]\d+)?)\s+(?P<unit>{UNIT_PATTERN})(?:\s+(?P<ref>.*))?$",
+    re.I,
+)
+#: Analytes that can be negative.  A dash before the value is a sign for these
+#: only: «BE - 2,3» is base excess -2.3, while «Глюкоза - 5,2» stays +5.2.
+_SIGNED_ANALYTE = re.compile(
+    r"(?<!\w)(?:BE|ABE|SBE|base excess|надлишок основ|надлишок лугів|дефіцит основ)(?!\w)",
+    re.I,
+)
+#: A reference interval printed before its unit: «Глюкоза 7,0 - 7,5 ммоль/л».
+_RANGE_BEFORE_UNIT = re.compile(r"\d\s*[-–—]\s*$")
+_RANGE_LABELS = frozenset(
+    {"норма", "норми", "референтні значення", "референтний інтервал", "reference", "reference range", "norm"}
+)
+#: The names a «R» or «AI» unit belongs to: mumps antibody indices.  On any
+#: other row they are a susceptibility verdict, «Амікацин 16 R» = resistant.
+_ANTIBODY_NAME_FRAGMENTS = ("парот", "mumps", "igg", "igm", "антитіл", "antibod")
+_SPACED_THOUSANDS_INTERVAL = re.compile(
+    r"\s*(\d{1,3}(?: \d{3})+)\s*([-–—])\s*(\d{1,3}(?: \d{3})*)\s*"
+)
 _SUSCEPTIBILITY_REFERENCE = re.compile(rf"^(?:{SUSCEPTIBILITY_VERDICT})\b", re.I)
 
 
@@ -1365,22 +1392,92 @@ def _unit_row_reference(match: re.Match, lines: list[str], index: int) -> str | 
     return f"{reference} {tail}" if tail else reference
 
 
+def _within_interval_magnitude(number: float, low: float | None, high: float | None) -> bool:
+    """Whether ``number`` is within a factor of ten of the printed interval."""
+    if low is not None and number < low / 10:
+        return False
+    return high is None or number <= high * 10
+
+
+def _thousands_split(name: str, digits: str, reference: str | None) -> tuple[str, str] | None:
+    """(name, number) for a thousands-spaced value the unit row split apart.
+
+    «Тромбоцити 250 000 кл/мкл 150000 - 400000» reaches the row as the name
+    «Тромбоцити 250» and the value «000».  A digit group is joined back only
+    when the row's own printed interval proves the magnitude: the joined
+    number fits the interval and the group on its own does not.  Without an
+    interval nothing is joined, so «Інтерлейкін 6 150» and «CA 125 350» keep
+    their numbers in the name, and «Вітамін B 12 350 пг/мл 191 - 663» is
+    B12 of 350.
+
+    A group that starts with 0 («000», «050») is never a value printed on its
+    own, so the one group before it is always its thousands: «Тромбоцити 250
+    000» is 250000 and «Лейкоцити 4 050» is 4050, interval or none.  Further
+    groups still need the interval.
+    """
+    if not re.fullmatch(r"\d{3}", digits):
+        return None
+    low, high = reference_bounds(reference)
+    has_interval = low is not None or high is not None
+    head_pattern = r"(?P<rest>.*\S)\s+(?P<lead>\d{1,3})$"
+    joined = digits
+    if digits.startswith("0"):
+        head = re.match(head_pattern, name)
+        if not head:
+            return None
+        name, joined = head.group("rest"), f"{head.group('lead')} {digits}"
+        if not has_interval:
+            return name, joined
+    else:
+        if not has_interval or _within_interval_magnitude(int(digits), low, high):
+            return None
+    while head := re.match(head_pattern, name):
+        candidate = f"{head.group('lead')} {joined}"
+        if not _within_interval_magnitude(int(candidate.replace(" ", "")), low, high):
+            break
+        name, joined = head.group("rest"), candidate
+    return (name, joined) if joined != digits else None
+
+
 def parse_unit_rows(text: str, page_number: int) -> list[ParsedObservation]:
     lines = [collapse_space(line) for line in text.splitlines() if collapse_space(line)]
     observations: list[ParsedObservation] = []
     for index, line in enumerate(lines):
-        match = _UNIT_ROW.match(line)
+        match = _UNIT_ROW.match(line) or _GLUED_SIGN_ROW.match(line)
         if not match:
             continue
-        name = _unit_row_name(match.group("name"), _lines_before_next_row(lines, index + 1, index + 4))
+        glued = match.re is _GLUED_SIGN_ROW
+        printed, value_text = match.group("name"), match.group("value")
+        # An unclosed "(" is a label wrapped inside its bracket, not a range:
+        # «Вітамін Д (25-гідроксивітамін D, 25- 31.0 нг/мл» ends in «25-».
+        wrapped = printed.count("(") != printed.count(")")
+        if (_RANGE_BEFORE_UNIT.search(printed) and not wrapped) or (
+            printed.strip().rstrip(":").strip().casefold() in _RANGE_LABELS
+        ):
+            continue
+        reference = _unit_row_reference(match, lines, index)
+        split = _thousands_split(printed, value_text, reference)
+        if split:
+            printed, value_text = split
+        name = _unit_row_name(printed, _lines_before_next_row(lines, index + 1, index + 4))
         if not valid_analyte_name(name):
             continue
+        unit = match.group("unit")
+        if unit in ("R", "AI") and not any(
+            fragment in name.casefold() for fragment in _ANTIBODY_NAME_FRAGMENTS
+        ):
+            continue
+        signed = _SIGNED_ANALYTE.search(name) is not None
+        if glued and not signed:
+            continue
         name = _electrolyte_name(name)
-        raw_value = match.group("value").replace(" ", "")
+        raw_value = value_text.replace(" ", "")
         numeric = parse_decimal(raw_value)
         if numeric is None:
             continue
-        reference = _unit_row_reference(match, lines, index)
+        # «BE - 2,3»: the dash is the sign of a negative analyte, not a separator.
+        if signed and not glued and re.search(r"\s[-–—]$", printed):
+            numeric = -numeric
         if reference and _SUSCEPTIBILITY_REFERENCE.match(reference):
             continue
         low, high = reference_bounds(reference)
@@ -1391,7 +1488,7 @@ def parse_unit_rows(text: str, page_number: int) -> list[ParsedObservation]:
                 value_numeric=numeric,
                 value_text=None,
                 comparator=comparator_match.group(0) if comparator_match else None,
-                unit_raw=match.group("unit"),
+                unit_raw=unit,
                 reference_text=reference,
                 reference_low=low,
                 reference_high=high,

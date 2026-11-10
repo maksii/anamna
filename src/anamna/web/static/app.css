@@ -1052,6 +1052,7 @@ input:focus, select:focus { border-color: var(--teal); box-shadow: 0 0 0 3px rgb
 .inline-form { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin-top: 14px; }
 
 .table-wrap { overflow-x: auto; margin: 0 -24px -24px; }
+.table-wrap:focus-visible, .area-result-table-wrap:focus-visible, .an-scroll-x:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
 
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 
@@ -1195,7 +1196,7 @@ td.result { font-weight: 750; white-space: nowrap; }
 
 .viewer-btn:hover { background: var(--mint); color: var(--teal-dark); }
 
-.viewer-btn:disabled { opacity: .45; cursor: not-allowed; }
+.viewer-btn:disabled, .viewer-btn[aria-disabled="true"] { opacity: .45; cursor: not-allowed; }
 
 .viewer-stage { min-height: 520px; height: min(72vh, 900px); background: var(--surface-sunken-2); }
 
@@ -1533,10 +1534,12 @@ img.viewer-media { object-fit: contain; padding: 16px; background: var(--surface
   .nav-links { left: 12px; right: 12px; }
 
   /* The toggle keeps its icon; the word beside it and the account name are
-     the first things to go when the row gets tight. */
+     the first things to go when the row gets tight. The word is visually
+     hidden rather than removed, so the toggle keeps its accessible name. */
   .nav-toggle { padding: 9px 11px; }
 
-  .nav-toggle__text, .account-toggle__name { display: none; }
+  .nav-toggle__text { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+  .account-toggle__name { display: none; }
 
   .account-toggle { padding: 4px; }
 
@@ -2302,7 +2305,7 @@ img.viewer-media { object-fit: contain; padding: 16px; background: var(--surface
    the header strip they were 10px glyphs on a 5px target. */
 .account-panel .lang-switch button { min-height: 32px; padding: 6px 11px; font-size: var(--text-xs); }
 
-.lang-switch button { display: inline-flex; align-items: center; justify-content: center; min-height: 32px; border: 0; background: transparent; color: var(--muted); font-size: 10px; font-weight: 800; letter-spacing: .04em; padding: 5px 8px; border-radius: 999px; }
+.lang-switch button { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; min-width: 44px; border: 0; background: transparent; color: var(--muted); font-size: 10px; font-weight: 800; letter-spacing: .04em; padding: 5px 8px; border-radius: 999px; }
 
 .lang-switch button.active { background: var(--mint); color: var(--teal-dark); }
 
@@ -4168,7 +4171,7 @@ body { overflow-x: clip; }
 .an-source-card dt { color: var(--muted); }
 .an-source-card dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
 .an-source-controls { display: flex; gap: var(--space-1); overflow-x: auto; padding-block: var(--space-2); scrollbar-width: thin; }
-.an-source-controls button { flex: 0 0 auto; min-height: 38px; padding: var(--space-2) var(--space-3); border: 1px solid var(--line); border-radius: var(--radius-pill); background: var(--surface); color: var(--muted); font-size: var(--text-2xs); font-weight: 700; }
+.an-source-controls button { flex: 0 0 auto; min-height: 44px; padding: var(--space-2) var(--space-3); border: 1px solid var(--line); border-radius: var(--radius-pill); background: var(--surface); color: var(--muted); font-size: var(--text-2xs); font-weight: 700; }
 .an-source-controls button.active { border-color: var(--teal); background: var(--teal-soft); color: var(--teal-dark); }
 .an-selected-source-row { background: var(--surface-raised); }
 .an-selected-source-row .metric-state { margin-left: var(--space-1); }
@@ -4772,7 +4775,7 @@ body { overflow-x: clip; }
 .an-corr-legend li[data-slot="0"] { stroke: var(--blue);  color: var(--blue); }
 
 .an-corr-chart [data-series="corr-scaled"][data-slot="1"],
-.an-corr-legend li[data-slot="1"] { stroke: var(--amber); color: var(--amber); }
+.an-corr-legend li[data-slot="1"] { stroke: var(--amber); color: var(--ink); }
 
 .an-corr-chart [data-series="corr-scaled"][data-slot="2"],
 .an-corr-legend li[data-slot="2"] { stroke: var(--red);   color: var(--red); }
@@ -4786,7 +4789,7 @@ body { overflow-x: clip; }
 .an-corr-chart .dynamic-trend-line[data-slot="3"] { stroke-dasharray: 10 3 2 3; }
 
 .an-corr-legend li[data-slot="0"]::before { border-top-style: dashed; }
-.an-corr-legend li[data-slot="1"]::before { border-top-style: dotted; border-top-width: 4px; }
+.an-corr-legend li[data-slot="1"]::before { border-top-style: dotted; border-top-width: 4px; border-top-color: var(--amber); }
 .an-corr-legend li[data-slot="2"]::before { border-top-style: dashed; width: 24px; }
 .an-corr-legend li[data-slot="3"]::before { border-top-style: double; border-top-width: 5px; }
 
@@ -4903,7 +4906,7 @@ body { overflow-x: clip; }
 
 .an-home-search { display: grid; gap: var(--space-2); min-width: 0; }
 .an-home-search label { color: var(--ink); font-size: var(--text-sm); font-weight: 750; }
-.an-home-search > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-1); padding: var(--space-1); border: 1px solid var(--line-strong); border-radius: var(--radius-md); background: var(--surface); }
+.an-home-search > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-1); padding: var(--space-1); border: 1px solid var(--edge-strong); border-radius: var(--radius-md); background: var(--surface); }
 .an-home-search input { min-width: 0; min-height: 44px; padding: 0 var(--space-3); border: 0; background: transparent; color: var(--ink); font: inherit; outline: 0; }
 .an-home-search input:focus { box-shadow: none; }
 .an-home-search > div:focus-within { border-color: var(--teal); box-shadow: 0 0 0 3px color-mix(in srgb, var(--teal) 18%, transparent); }
@@ -4952,7 +4955,7 @@ body { overflow-x: clip; }
 .an-index-disclosure__title strong, .an-insight-section summary strong, .an-page-disclosure summary strong { color: var(--ink); font-size: var(--text-md); }
 .an-index-disclosure__title small, .an-insight-section summary small, .an-page-disclosure summary small { color: var(--muted); font-size: var(--text-xs); line-height: 1.45; }
 .an-index-disclosure__status { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-1); color: var(--muted); font-size: var(--text-2xs); }
-.an-index-disclosure__status span { padding: 4px 7px; border-radius: var(--radius-pill); background: var(--surface-sunken-2); }
+.an-index-disclosure__status span { padding: 4px 7px; border-radius: var(--radius-pill); background: var(--surface-sunken-2); color: var(--ink); }
 .an-index-disclosure__body, .an-insight-section__body, .an-page-disclosure__body { padding: var(--space-4); border-top: 1px solid var(--line); }
 .an-index-disclosure__area { display: inline-flex; align-items: center; min-height: 44px; margin-bottom: var(--space-3); font-size: var(--text-sm); font-weight: 650; }
 .an-insight-section { scroll-margin-top: 84px; }
@@ -6020,7 +6023,7 @@ details.panel.an-page-disclosure { padding: 0; }
 }
 .ai-round-bar p { margin: 2px 0 0; font-size: var(--text-xs); overflow-wrap: anywhere; }
 .ai-round-bar__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); }
-.ai-round-bar__actions .button, .ai-round-bar__actions button { min-height: 40px; padding: 8px 12px; }
+.ai-round-bar__actions .button, .ai-round-bar__actions button { min-height: 44px; padding: 8px 12px; }
 .ai-round-bar__actions .pill { margin-left: 4px; }
 .ai-selectable-field {
   display: grid; gap: var(--space-2); padding: var(--space-3);
@@ -6334,7 +6337,7 @@ details.panel.an-page-disclosure { padding: 0; }
 .an-report-modal textarea {
   width: 100%; min-height: 88px; resize: vertical; padding: 11px 12px;
   border: 1px solid var(--edge-strong); border-radius: 10px;
-  background: var(--surface); color: var(--ink); font: inherit; outline: 0;
+  background: var(--surface); color: var(--ink); font: inherit;
 }
 .an-report-modal__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); }
 
@@ -7126,7 +7129,7 @@ svg.an-trend { display: block; width: 100%; max-width: 24rem; height: auto; over
 .an-plan-tools > :is(button, a, label) { min-height: 44px; padding-inline: 12px; font-size: var(--text-sm); }
 /* "Skip recent" is a switch dressed as the buttons beside it: a track that slides on. */
 .an-plan-switch { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
-.an-plan-switch input { appearance: none; flex: none; position: relative; width: 34px; height: 20px; margin: 0; border-radius: 999px; background: var(--line-strong); cursor: pointer; transition: background-color .15s ease; }
+.an-plan-switch input { appearance: none; flex: none; position: relative; width: 34px; height: 20px; margin: 0; border-radius: 999px; background: var(--edge-strong); cursor: pointer; transition: background-color .15s ease; }
 .an-plan-switch input::before { content: ""; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: var(--surface); transition: transform .15s ease; }
 .an-plan-switch input:checked { background: var(--teal-dark); }
 .an-plan-switch input:checked::before { transform: translateX(14px); }

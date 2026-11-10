@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    - cron: "0 5 * * 1"
 
 permissions:
   contents: read
@@ -15,9 +17,12 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v5
-      - uses: astral-sh/setup-uv@v9.0.0
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           python-version: "3.12"
           version: "0.10.2"
@@ -36,9 +41,12 @@ jobs:
 
   js:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
       - run: node --test tests/js/*.test.mjs
@@ -46,20 +54,23 @@ jobs:
   image:
     needs: [test, js]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
       # GHCR image names must be lowercase; github.repository may not be.
       - run: echo "IMAGE=$(echo 'ghcr.io/${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
-      - uses: docker/login-action@v4.6.0
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         if: github.event_name == 'push'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v7.3.0
+      - uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
           load: true
@@ -91,6 +102,29 @@ jobs:
           # The image's own healthcheck command succeeds.
           docker exec smoke /app/.venv/bin/python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=8).status == 200 else 1)"
           docker rm -f smoke
+      - name: Smoke-test the hardened configuration from compose.yaml
+        run: |
+          set -euo pipefail
+          docker run -d --name hardened --read-only --cap-drop ALL \
+            --cap-add CHOWN --cap-add SETUID --cap-add SETGID --cap-add DAC_OVERRIDE \
+            --security-opt no-new-privileges:true --pids-limit 512 \
+            --tmpfs /tmp --tmpfs /app/tmp:uid=10001,gid=10001 \
+            -p 127.0.0.1:8001:8000 "$IMAGE:${{ github.sha }}"
+          ready=0
+          for attempt in $(seq 1 45); do
+            if curl -fsS -o /dev/null http://127.0.0.1:8001/healthz; then ready=1; break; fi
+            sleep 2
+          done
+          if [ "$ready" != "1" ]; then docker logs hardened; exit 1; fi
+          test "$(docker exec hardened stat -c %u /proc/1)" = "10001"
+          # The OCR scratch directory is writable by the server's own account, nothing else is.
+          docker exec -u 10001 hardened sh -c 'touch /app/tmp/probe && rm /app/tmp/probe'
+          if docker exec -u 10001 hardened sh -c 'touch /app/probe' 2>/dev/null; then echo "root filesystem is writable"; exit 1; fi
+          # No request line reaches the log: the access log would carry guest-link secrets.
+          curl -fsS -o /dev/null "http://127.0.0.1:8001/login?probe=secret-marker"
+          logs="$(docker logs hardened 2>&1)"
+          if grep -q "secret-marker" <<<"$logs"; then echo "access log is on"; exit 1; fi
+          docker rm -f hardened
       - name: Publish
         if: github.event_name == 'push'
         run: |

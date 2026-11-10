@@ -5,7 +5,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_NO_CACHE=1 PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 
 COPY pyproject.toml uv.lock README.md ./
 RUN uv sync --locked --no-install-project --no-dev
@@ -44,4 +44,5 @@ HEALTHCHECK --interval=60s --timeout=10s --start-period=60s --retries=3 \
 # drops to `anamna`. The venv's uvicorn is run directly: `uv run` would want a
 # writable cache directory the unprivileged account does not have.
 ENTRYPOINT ["docker-entrypoint.sh"]
-CMD ["/app/.venv/bin/uvicorn", "anamna.web.app:app", "--host", "0.0.0.0", "--port", "8000"]
+# The access log would print guest-link secrets (/t/<secret>) and search text into the container log.
+CMD ["/app/.venv/bin/uvicorn", "anamna.web.app:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]

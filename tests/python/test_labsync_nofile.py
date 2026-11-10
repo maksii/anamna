@@ -33,7 +33,7 @@ def routes(analysis: dict, indicators=INDICATORS) -> dict:
         **NO_DOCUMENTS,
         ("GET", "/api/v1/medical/analyses"): {"items": [analysis], "total": 1, "has_more": False},
         ("GET", f"/api/v1/medical/analyses/{analysis['id']}"): {**analysis, "indicators": indicators},
-        ("GET", f"/api/v1/medical/analyses/{analysis['id']}/file"): b"%PDF-1.4 synthetic",
+        ("GET", f"/api/v1/medical/analyses/{analysis['id']}/file"): b"%PDF-1.4 synthetic\n%%EOF",
     }
 
 

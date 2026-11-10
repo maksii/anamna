@@ -374,6 +374,7 @@ class _Matcher:
             for key in have:
                 self._heads.setdefault(key[:MIN_LETTERS], set()).add(have)
         self._found: dict[tuple[str, str], dict[Word, int]] = {}
+        self._phrases: dict[Phrase, list[dict[Word, int]]] = {}
 
     def tiers(self, word: str, mode: str) -> dict[Word, int]:
         found = self._found.get((word, mode))
@@ -381,6 +382,14 @@ class _Matcher:
             found = self._found[word, mode] = {
                 have: tier for have in self._candidates(word) if (tier := _word_tier(word, have, mode)) is not None
             }
+        return found
+
+    def phrase_tiers(self, phrase: Phrase) -> list[dict[Word, int]]:
+        """Each word of the phrase with the printed words that answer it, worked out once per query."""
+        found = self._phrases.get(phrase)
+        if found is None:
+            spelled, mode, _ = phrase
+            found = self._phrases[phrase] = [self.tiers(word, mode) for word in spelled]
         return found
 
     def _candidates(self, word: str) -> set[Word]:
@@ -393,8 +402,8 @@ class _Matcher:
 
 def _term_tier(matcher: _Matcher, phrase: Phrase, term: Term) -> int | None:
     """The weakest word tier of `phrase` against `term`; None when any word misses."""
-    spelled, mode, floor = phrase
-    found = [matcher.tiers(word, mode) for word in spelled]
+    spelled, _, floor = phrase
+    found = matcher.phrase_tiers(phrase)
     if any(tiers.keys().isdisjoint(term) for tiers in found):
         return None
     if len(spelled) == len(term) and all(word in have for word, have in zip(spelled, term)):
@@ -405,12 +414,17 @@ def _term_tier(matcher: _Matcher, phrase: Phrase, term: Term) -> int | None:
 def score(query: Query, searchable: Terms, matcher: _Matcher | None = None) -> int | None:
     """How well `searchable` answers `query`; None when it does not at all."""
     matcher = matcher or _Matcher([searchable])
-    found = [
-        tier + weight
-        for term, weight in searchable
-        for phrase in query.phrases
-        if (tier := _term_tier(matcher, phrase, term)) is not None
-    ]
+    found: list[int] = []
+    for phrase in query.phrases:
+        words_found = matcher.phrase_tiers(phrase)
+        # The first word must answer the term at all; most terms fail here,
+        # so the common miss never calls _term_tier.
+        first = words_found[0].keys() if words_found else None
+        for term, weight in searchable:
+            if first is not None and first.isdisjoint(term):
+                continue
+            if (tier := _term_tier(matcher, phrase, term)) is not None:
+                found.append(tier + weight)
     return min(found, default=None)
 
 

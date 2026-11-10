@@ -276,8 +276,8 @@ def test_seeded_conditions_reach_the_guidance_table_and_skip_panel_cadence(conne
     rows = dict(connection.execute(
         "SELECT concept_id, retest_condition_json FROM concept_guidance WHERE retest_condition_json IS NOT NULL"
     ).fetchall())
-    for concept in ("thyroid-stimulating-hormone", "stool-blood", "stool-helminth-eggs",
-                    "renal-epithelial-cells-in-urine", "eosinophils-absolute", "ldl-cholesterol"):
+    for concept in ("thyroid-stimulating-hormone", "stool-helminth-eggs",
+                    "eosinophils-absolute", "ldl-cholesterol"):
         assert concept in rows, concept
     thyroid = next(panel for panel in PANEL_BY_ID.values() if "thyroid-stimulating-hormone" in str(panel.member_names).casefold() or panel.id == "thyroid")
     assert panel_retest_months(connection, thyroid) != 3

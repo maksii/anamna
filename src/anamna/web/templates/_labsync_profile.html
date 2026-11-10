@@ -69,7 +69,7 @@
   <form action="/profile/lab/{{ card.key }}/credentials" method="post" class="stack-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <label>{{ t('labsync.password_phone_label', name=card.name|phrase) }}
-      <input name="phone" type="tel" inputmode="tel" autocomplete="tel" required placeholder="+380 XX XXX XX XX"
+      <input name="phone" type="tel" inputmode="tel" autocomplete="tel" required placeholder="{{ t('labsync.phone_placeholder') }}"
              aria-describedby="lab-phone-hint-{{ card.key }}">
     </label>
     <p class="tiny muted" id="lab-phone-hint-{{ card.key }}">{{ t('labsync.password_phone_hint') }}</p>
@@ -96,7 +96,7 @@
     <li>{{ t('labsync.synevo_step3') }}
       <pre class="an-lab-snippet" role="figure" aria-label="{{ t('labsync.cookie_name_label') }}"><code>next-auth.session-token</code></pre>
       <button type="button" class="secondary an-lab-copy" data-copied="{{ t('labsync.copied') }}" data-failed="{{ t('labsync.copy_failed') }}"
-        onclick="var b=this,s=b.previousElementSibling,f=function(){var r=document.createRange();r.selectNodeContents(s);var g=getSelection();g.removeAllRanges();g.addRange(r);b.textContent=b.dataset.failed;};try{navigator.clipboard.writeText(s.textContent.trim()).then(function(){b.textContent=b.dataset.copied;},f);}catch(e){f();}">{{ t('labsync.copy') }}</button>
+        data-action="copy-snippet">{{ t('labsync.copy') }}</button>
 </li>
     <li>{{ t('labsync.synevo_step4') }}</li>
   </ol>
@@ -179,7 +179,7 @@
               again either way). -#}
           {% set chosen_ok = person.options|selectattr('id', 'equalto', person.selected)|map(attribute='match')|map(attribute='ok')|first %}
           <select name="target" aria-describedby="lab-link-hint-{{ card.key }}"
-                  onchange="var o=this.selectedOptions[0];this.form.querySelector('.an-lab-confirm').hidden=!this.value||o.dataset.ok==='1'">
+                  data-action="labsync-target">
             <option value="" {{ 'selected' if not person.selected else '' }}>{{ t('labsync.link_target_none') }}</option>
             {% for option in person.options %}
             <option value="{{ option.id }}" data-ok="{{ '1' if option.match.ok else '0' }}" {{ 'selected' if person.selected == option.id else '' }} {{ 'disabled' if not option.has_profile else '' }}>
@@ -245,7 +245,7 @@
   </div>
   {% if card.sync_state == 'running' %}
   <p class="alert warning" role="alert" id="lab-poll-error-{{ card.key }}" hidden>{{ t('labsync.status_unreachable') }}</p>
-  <script>
+  <script nonce="{{ csp_nonce }}">
   (function () {
     var card = document.getElementById('lab-{{ card.key }}');
     var lost = document.getElementById('lab-poll-error-{{ card.key }}');
@@ -292,7 +292,7 @@
     {% endfor %}
   </ul>
   {% else %}
-  <div class="table-wrap table-wrap--stack">
+  <div class="table-wrap table-wrap--stack" tabindex="0" role="region" aria-label="{{ t('labsync.orders_heading') }}">
     <table class="an-lab-orders">
       <thead><tr>
         <th scope="col">{{ t('labsync.th_order') }}</th>
@@ -351,3 +351,34 @@
   {% endif %}
   {% endif %}
 </section>
+
+<script nonce="{{ csp_nonce }}">
+(() => {
+  if (document.documentElement.dataset.labsyncWired) return;
+  document.documentElement.dataset.labsyncWired = "1";
+  document.addEventListener("click", (event) => {
+    const button = event.target.closest && event.target.closest('[data-action="copy-snippet"]');
+    if (!button) return;
+    const snippet = button.previousElementSibling;
+    const select = () => {
+      const range = document.createRange();
+      range.selectNodeContents(snippet);
+      const selection = getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      button.textContent = button.dataset.failed;
+    };
+    try {
+      navigator.clipboard.writeText(snippet.textContent.trim()).then(() => { button.textContent = button.dataset.copied; }, select);
+    } catch (error) {
+      select();
+    }
+  });
+  document.addEventListener("change", (event) => {
+    const target = event.target;
+    if (!target.matches || !target.matches('[data-action="labsync-target"]')) return;
+    const option = target.selectedOptions[0];
+    target.form.querySelector(".an-lab-confirm").hidden = !target.value || option.dataset.ok === "1";
+  });
+})();
+</script>

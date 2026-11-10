@@ -218,7 +218,7 @@
       {% if negative_allergens %}
       <details class="an-allergy-negatives" data-lazy-rows="{{ negative_allergens|map(attribute='id')|join(',') }}">
         <summary>{{ t_plural('doc.allergy_negatives', negative_allergens|length) }}</summary>
-        <div class="an-scroll-x">
+        <div class="an-scroll-x" tabindex="0" role="region" aria-label="{{ t('doc.extracted') }}">
           <table class="an-allergy-negatives__table">
             <thead><tr><th scope="col">{{ t('doc.allergen') }}</th><th scope="col">{{ t('doc.allergen_printed') }}</th><th scope="col">{{ t('doc.allergen_value') }}</th></tr></thead>
             <tbody>
@@ -247,7 +247,7 @@
           one JSON text node and turned into options on first use, instead of
           646 elements on every document page. -#}
       <datalist id="an-concept-list"></datalist>
-      <script type="application/json" id="an-concept-names">{{ concepts|tojson }}</script>
+      <script type="application/json" nonce="{{ csp_nonce }}" id="an-concept-names">{{ concepts|tojson }}</script>
       {% if immunizations and not viewing %}{{ vaccine_datalist(vaccine_options) }}{% endif %}
     </section>
 
@@ -332,7 +332,6 @@
         <h3>{{ t('doc.delete_heading') }}</h3>
         <p>{{ t('doc.delete_hint') }}</p>
         <form action="/documents/{{ document.id }}/delete" method="post"
-              onsubmit="return confirm(this.dataset.confirm)"
               data-confirm="{{ t('doc.delete_confirm', name=display_title) }}">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <input type="hidden" name="next" value="/documents">
@@ -577,7 +576,7 @@
 {{ report_issue_modal(document.id, observations, csrf_token, return_url) }}
 {% endif %}
 <script src="{{ asset('source-viewer.js') }}" defer></script>
-<script>
+<script nonce="{{ csp_nonce }}">
 (() => {
   const root = document.querySelector(".review-bench-side");
   if (!root) return;

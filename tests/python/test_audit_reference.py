@@ -305,3 +305,12 @@ def test_every_analyte_with_numeric_bands_cites_its_sources():
 def test_every_source_has_an_identifier():
     for source in LIBRARY["sources"]:
         assert source.get("identifier"), source["id"]
+
+
+def test_a_band_naming_another_bodys_lower_edge_cites_a_source_it_lists():
+    for concept_id, entry in ANALYTES.items():
+        for band in entry.get("bands") or []:
+            if band.get("lower_source_id"):
+                assert band["lower"] is not None, (concept_id, band["label"])
+                assert band["lower_source_id"] in (entry.get("source_ids") or []), (concept_id, band["lower_source_id"])
+                assert band["lower_source_id"] != band.get("source_id"), (concept_id, band["label"])
