@@ -21,10 +21,30 @@
     </p>
     {% if item.reason %}<p class="an-med-card__reason">{{ item.reason }}</p>{% endif %}
     {% if item.effects %}
-    <ul class="an-med-effects" aria-label="{{ t('med.detail.effects_heading') }}">
-      {% for effect in item.effects[:4] %}<li>{{ effect_chip(effect) }}</li>{% endfor %}
-      {% if item.effects|length > 4 %}<li class="an-med-effects__more">{{ t('med.effects_more', count=item.effects|length - 4) }}</li>{% endif %}
-    </ul>
+    <details class="an-med-fx">
+      <summary>
+        <span class="an-med-effects">
+          {% for effect in item.effects[:4] %}{{ effect_chip(effect) }}{% endfor %}
+          {% if item.effects|length > 4 %}<span class="an-med-effects__more">{{ t('med.effects_more', count=item.effects|length - 4) }}</span>{% endif %}
+        </span>
+        <span class="an-med-fx__toggle">{{ plural_t('med.card.effects_all', item.effects|length) }}</span>
+      </summary>
+      <ul class="an-med-fx__list" aria-label="{{ t('med.detail.effects_heading') }}">
+        {% for effect in item.effects %}
+        <li>{{ effect_chip(effect, link=true) }}{% if effect.origin == 'ai' %} <span class="an-ai-tag" title="{{ t('med.ai_tag_help') }}">{{ t('med.ai_tag') }}</span>{% endif %}{% if effect.note %}<span class="an-med-fx__note">{{ effect.note }}</span>{% endif %}</li>
+        {% endfor %}
+      </ul>
+    </details>
+    {% endif %}
+    {% if can_edit %}
+    <div class="an-med-card__actions">
+      <a class="secondary" href="{{ item.url }}/edit" aria-label="{{ t('med.card.edit_aria', name=item.name) }}">{{ t('med.card.edit') }}</a>
+      <form action="{{ item.url }}" method="post" data-confirm="{{ t('med.remove_confirm') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="action" value="remove">
+        <button class="secondary" type="submit" aria-label="{{ t('med.card.remove_aria', name=item.name) }}">{{ t('med.card.remove') }}</button>
+      </form>
+    </div>
     {% endif %}
   </div>
   {% if item.bar %}
@@ -47,11 +67,17 @@
     <h1 id="med-heading">{{ t('med.heading') }}</h1>
     <p class="an-med-lead">{{ t('med.lead') }}</p>
   </div>
-  {% if can_edit and groups %}<a class="primary an-med-add" href="/medicines/new">{{ t('med.add') }}</a>{% endif %}
+  {% if can_edit %}
+  <div class="an-med-head__actions">
+    {% if can_find %}<a class="secondary an-med-add" href="/medicines/found">{{ t('med.found.open') }}</a>{% endif %}
+    {% if groups %}<a class="primary an-med-add" href="/medicines/new">{{ t('med.add') }}</a>{% endif %}
+  </div>
+  {% endif %}
 </section>
 
 {% if error %}<div class="alert error" role="alert">{{ error }}</div>{% endif %}
 {% if saved %}<div class="alert" role="status">{{ saved }}</div>{% endif %}
+{% if can_edit and found_count %}<p class="alert neutral an-med-found-note"><a class="an-med-link" href="/medicines/found">{{ plural_t('med.found.waiting', found_count) }}</a></p>{% endif %}
 
 {% if groups %}
 {#- A filter is worth its row only when there is more than one kind to choose. -#}

@@ -190,6 +190,119 @@
     form.addEventListener('change', event => { if (event.target.name === 'kind' && !isDrug()) { unlink(); close(); } });
   }
 
+  /* ---- Document box ----------------------------------------------------- */
+
+  /* A search over the person's own documents in place of the long plain list.
+     It asks the server for documents that mention the name typed above, or
+     that match what is typed here.  The plain list stays in the page: it is
+     what the form posts, and what works when this script does not run. */
+  const docField = form.querySelector('[data-med-doc]');
+  if (docField) {
+    const select = docField.querySelector('[data-med-doc-select]');
+    const box = docField.querySelector('[data-med-doc-box]');
+    const search = box.querySelector('input');
+    const results = box.querySelector('[role="listbox"]');
+    const docStatus = docField.querySelector('#med-doc-status');
+    const chosenTile = docField.querySelector('[data-med-doc-chosen]');
+    const filled = docField.querySelector('[data-med-doc-filled]');
+    const words = docField.dataset;
+    let found = [], at = -1, pause = 0, turn = 0;
+
+    const meta = item => [
+      item.date_text ? (item.dated ? item.date_text : words.undated.replace('{date}', item.date_text)) : '',
+      item.type_label, item.clinic, item.doctor,
+    // A title built from the type and the date already says both.
+    ].filter(part => part && !item.title.includes(part)).join(' · ');
+    const shut = () => {
+      results.hidden = true; results.replaceChildren(); found = []; at = -1;
+      search.setAttribute('aria-expanded', 'false'); search.removeAttribute('aria-activedescendant');
+    };
+    const showChosen = item => {
+      chosenTile.querySelector('[data-slot="title"]').textContent = item.title;
+      chosenTile.querySelector('[data-slot="meta"]').textContent = meta(item);
+      const quote = chosenTile.querySelector('[data-slot="snippet"]');
+      quote.hidden = !item.snippet; quote.querySelector('q').textContent = item.snippet || '';
+      chosenTile.querySelector('[data-slot="open"]').href = `/documents/${encodeURIComponent(item.id)}`;
+      chosenTile.hidden = false; box.hidden = true; docStatus.textContent = '';
+    };
+    const pick = item => {
+      // The plain list holds only the newest documents: add this one if it is older.
+      if (![...select.options].some(option => option.value === item.id)) select.add(new Option(item.title, item.id));
+      select.value = item.id;
+      showChosen(item); shut();
+      // What the document already says goes into the fields the person left empty.
+      const took = [];
+      if (item.dated && item.date && !field('started_on').value) { field('started_on').value = item.date; took.push(words.filledDate); }
+      const who = [item.doctor, item.clinic].filter(Boolean).join(', ');
+      if (who && !field('prescriber').value) { field('prescriber').value = who; took.push(words.filledPrescriber); }
+      if (item.diagnosis && !field('reason').value) { field('reason').value = item.diagnosis; took.push(words.filledReason); }
+      filled.textContent = took.length ? words.filled.replace('{what}', took.join(', ')) : '';
+      filled.hidden = !took.length;
+      chosenTile.querySelector('[data-med-doc-unlink]').focus();
+    };
+    const point = index => {
+      at = index;
+      [...results.children].forEach((node, order) => node.setAttribute('aria-selected', String(order === index)));
+      if (index < 0) { search.removeAttribute('aria-activedescendant'); return; }
+      search.setAttribute('aria-activedescendant', results.children[index].id);
+      results.children[index].scrollIntoView({block: 'nearest'});
+    };
+    const list = items => {
+      found = items;
+      results.replaceChildren(...items.map((item, index) => {
+        const node = document.createElement('li');
+        node.id = `med-doc-${index}`; node.setAttribute('role', 'option'); node.setAttribute('aria-selected', 'false');
+        const title = document.createElement('strong'); title.textContent = item.title;
+        const line = document.createElement('span'); line.textContent = meta(item);
+        node.append(title, line);
+        if (item.mentions) {
+          const mark = document.createElement('span'); mark.className = 'an-med-doc__mark'; mark.textContent = words.mentions;
+          title.after(mark);
+        }
+        if (item.snippet) {
+          const quote = document.createElement('span'); quote.className = 'an-med-doc__snip'; quote.textContent = `«${item.snippet}»`;
+          node.append(quote);
+        }
+        node.addEventListener('mousedown', event => { event.preventDefault(); pick(item); });
+        return node;
+      }));
+      results.hidden = !items.length; at = -1;
+      search.setAttribute('aria-expanded', String(Boolean(items.length)));
+      docStatus.textContent = items.length ? '' : words.none;
+    };
+    const look = async () => {
+      const mine = ++turn;
+      const query = new URLSearchParams({q: search.value.trim(), name: field('name').value.trim(), substance: field('substance').value.trim()});
+      try {
+        const reply = await fetch(`/medicines/documents?${query}`, {headers: {Accept: 'application/json'}});
+        const data = reply.ok ? await reply.json() : {items: []};
+        if (mine === turn && document.activeElement === search) list(data.items || []);
+      } catch {
+        if (mine === turn) shut();
+      }
+    };
+    search.addEventListener('focus', look);
+    search.addEventListener('input', () => { clearTimeout(pause); pause = setTimeout(look, 250); });
+    search.addEventListener('keydown', event => {
+      if (results.hidden) return;
+      if (event.key === 'ArrowDown') { event.preventDefault(); point((at + 1) % found.length); }
+      else if (event.key === 'ArrowUp') { event.preventDefault(); point((at - 1 + found.length) % found.length); }
+      else if (event.key === 'Enter' && at >= 0) { event.preventDefault(); pick(found[at]); }
+      else if (event.key === 'Enter') event.preventDefault();   // Enter in the search must not save the form
+      else if (event.key === 'Escape') shut();
+    });
+    search.addEventListener('blur', () => setTimeout(shut, 150));
+    chosenTile.querySelector('[data-med-doc-unlink]').addEventListener('click', () => {
+      select.value = ''; chosenTile.hidden = true; filled.hidden = true; box.hidden = false; search.value = ''; search.focus();
+    });
+
+    // Take over from the plain list.
+    select.hidden = true;
+    docField.querySelector('[data-med-doc-label]').htmlFor = 'med-document-search';
+    const linkedData = document.querySelector('#med-doc-linked');
+    if (select.value && linkedData) showChosen(JSON.parse(linkedData.textContent)); else { select.value = ''; box.hidden = false; }
+  }
+
   /* ---- AI panel --------------------------------------------------------- */
 
   const panel = form.querySelector('[data-med-ai]');

@@ -36,11 +36,13 @@
     </p>
     <h1>{{ factor.name }}{% if factor.strength %} <small>{{ factor.strength }}</small>{% endif %}</h1>
     {% if factor.substance %}<p class="an-med-hero__substance">{{ factor.substance }}{% if factor.atc_code %} · <abbr title="{{ t('med.field.atc_help') }}">{{ t('med.field.atc') }}</abbr> {{ factor.atc_code }}{% endif %}</p>{% endif %}
+    {% if factor.reference_url %}<p class="an-med-hero__site"><a class="an-med-link" href="{{ factor.reference_url }}" target="_blank" rel="noreferrer noopener">{{ t('med.reference.open_site') }} <span aria-hidden="true">↗</span></a></p>{% endif %}
   </div>
   {% if can_edit %}
   <div class="an-med-hero__actions">
     <a class="primary" href="{{ factor.url }}/edit">{{ t('med.edit') }}</a>
     {% if factor.status == 'current' and not factor.is_point %}{{ act('stop', t('med.stop'), confirm=t('med.stop_confirm')) }}{% endif %}
+    {{ act('remove', t('med.card.remove'), confirm=t('med.remove_confirm')) }}
   </div>
   {% endif %}
 </header>

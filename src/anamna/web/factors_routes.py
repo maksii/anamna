@@ -22,10 +22,19 @@ from fastapi import HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from starlette.concurrency import run_in_threadpool
 
-from .. import ai, drugref, factor_jobs, factor_research, factors
+from .. import (
+    ai,
+    drugref,
+    factor_candidates,
+    factor_documents,
+    factor_jobs,
+    factor_research,
+    factor_scan,
+    factors,
+)
 from ..db import connect
 from ..health import concept_display_name
-from ..i18n import activate_locale, get_locale, reset_locale, t
+from ..i18n import activate_locale, format_date_localized, get_locale, reset_locale, t
 from ..locales.concepts_en import CONCEPT_NAMES_EN
 from ..locales.concepts_uk import CONCEPT_NAMES_UK
 from ..locales.messages_factors import MESSAGES_FACTORS
@@ -103,11 +112,11 @@ def _concept_for_label(connection, label: str) -> str | None:
     return None
 
 
-def _documents(connection, owner_id: str, document_row, document_id: str | None = None) -> list[dict]:
-    """The owner's documents newest first as {id, label}; one of them when ``document_id`` is given."""
+def _document_rows(connection, owner_id: str, document_id: str | None = None) -> list:
+    """The owner's document rows newest first; one of them when ``document_id`` is given."""
     where = "AND d.id = ?" if document_id else ""
     params: tuple = (owner_id, document_id) if document_id else (owner_id,)
-    rows = connection.execute(
+    return connection.execute(
         f"""SELECT d.id, d.title, d.clinical_type, d.report_date, d.imported_at,
                    d.original_filename, v.canonical_name vendor
             FROM documents d LEFT JOIN vendors v ON v.id = d.vendor_id
@@ -116,12 +125,41 @@ def _documents(connection, owner_id: str, document_row, document_id: str | None 
             LIMIT {_DOCUMENT_LIMIT}""",
         params,
     ).fetchall()
+
+
+def _documents(connection, owner_id: str, document_row, document_id: str | None = None) -> list[dict]:
+    """The owner's documents newest first as {id, label}; one of them when ``document_id`` is given."""
     out = []
-    for row in rows:
+    for row in _document_rows(connection, owner_id, document_id):
         item = document_row(row)
         label = " · ".join(part for part in (item["date_text"], item["title_text"]) if part)
         out.append({"id": row["id"], "label": label})
     return out
+
+
+def _document_view(connection, owner_id: str, document_row, found: dict) -> dict | None:
+    """What the form's search box shows for one ``factor_documents`` result, or None when the row is not the owner's."""
+    rows = _document_rows(connection, owner_id, found["id"])
+    if not rows:
+        return None
+    rendered = document_row(rows[0])
+    if found["dated"]:
+        date_text = rendered["date_text"]
+    else:
+        date_text = format_date_localized(found["date"]) if found["date"] else ""
+    return {
+        "id": found["id"],
+        "title": rendered["title_text"] or found["title"],
+        "date": found["date"],
+        "dated": found["dated"],
+        "date_text": date_text,
+        "type_label": rendered["type_label"],
+        "clinic": rendered.get("vendor") or found["clinic"],
+        "doctor": found["doctor"],
+        "diagnosis": found["diagnosis"],
+        "mentions": found["mentions"],
+        "snippet": found["snippet"],
+    }
 
 
 def _fact_notes(row: dict) -> list[str]:
@@ -205,9 +243,17 @@ def register_routes(app, settings, *, templates, template_context, require_user,
     def form_response(request: Request, connection, owner_id: str, *, is_new: bool, factor: dict,
                       action: str, back_url: str, back_label: str, autostart: bool = False,
                       error: str | None = None, status_code: int = 200):
+        linked_document = None
+        if factor.get("document_id"):
+            found = factor_documents.one(
+                connection, owner_id, factor["document_id"],
+                name=factor.get("name") or "", substance=factor.get("substance") or "",
+            )
+            linked_document = _document_view(connection, owner_id, document_row, found) if found else None
         return templates.TemplateResponse(request, "medicine_form.html", template_context(
             request, active="medicines", is_new=is_new, factor=factor, kinds=_kinds(),
             statuses=factors.STATUSES, documents=_documents(connection, owner_id, document_row),
+            linked_document=linked_document,
             lookup_on=drugref.enabled(connection), ai_ready=ai.ai_active(settings, factor_research.FEATURE),
             action=action, back_url=back_url, back_label=back_label,
             dose_units=factors.DOSE_UNITS, repeats=factors.REPEATS, day_parts=factors.DAY_PARTS,
@@ -227,10 +273,13 @@ def register_routes(app, settings, *, templates, template_context, require_user,
         owner = record_user(request, user)
         today = date.today()
         locale = get_locale()
+        writable = _writable(user, owner)
         with connect(settings) as connection:
             rows = factors.listing(connection, owner["id"], today=today)
             metric_ids = _metric_ids(connection, owner["id"])
             names = _concept_names(connection)
+            found_count = factor_candidates.count(connection, owner["id"]) if writable else 0
+            can_find = writable and factor_scan.counts(connection, owner["id"])["documents"] > 0
         axis = factors_view.scale(rows, today, locale)
         counts = Counter(row["kind"] for row in rows)
         # A filter that matches nothing is ignored rather than showing an empty page.
@@ -255,7 +304,7 @@ def register_routes(app, settings, *, templates, template_context, require_user,
                 })
         return templates.TemplateResponse(request, "medicines.html", template_context(
             request, active="medicines", groups=groups, filters=filters, scale=axis, kinds=_kinds(),
-            saved=_saved(saved), error=_error(error),
+            saved=_saved(saved), error=_error(error), found_count=found_count, can_find=can_find,
         ))
 
     @app.get("/medicines/new", response_class=HTMLResponse)
@@ -384,6 +433,19 @@ def register_routes(app, settings, *, templates, template_context, require_user,
         if job["state"] == "failed":
             return JSONResponse({"state": "failed", "error": job["error"] or "provider_error"})
         return JSONResponse({"state": "running"})
+
+    @app.get("/medicines/documents")
+    def document_search(request: Request, q: str = "", name: str = "", substance: str = ""):
+        user = require_user(request)
+        owner = record_user(request, user)
+        if not _writable(user, owner):
+            raise HTTPException(403)
+        with connect(settings) as connection:
+            found = factor_documents.search(
+                connection, user["id"], name=name[:200], substance=substance[:200], text=q[:200],
+            )
+            views = [_document_view(connection, user["id"], document_row, item) for item in found]
+        return JSONResponse({"items": [view for view in views if view is not None]})
 
     @app.get("/medicines/{factor_id}", response_class=HTMLResponse)
     def detail_page(request: Request, factor_id: str, saved: str = "", error: str = ""):

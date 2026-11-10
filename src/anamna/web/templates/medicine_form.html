@@ -179,6 +179,39 @@
 
   <section class="an-med-section" aria-labelledby="med-when">
     <h2 id="med-when">{{ t('med.form.section_when') }}</h2>
+    {% if documents %}
+    {#- The plain list is what saves and what works without the script. The
+        script hides it and puts a search over the same documents in its place:
+        the box looks inside the documents for the name typed above. -#}
+    <div class="an-med-field an-med-doc" data-med-doc
+         data-none="{{ t('med.doc.none') }}" data-mentions="{{ t('med.doc.mentions') }}" data-undated="{{ t('med.doc.undated') }}"
+         data-filled="{{ t('med.doc.filled') }}" data-filled-date="{{ t('med.doc.filled_date') }}"
+         data-filled-prescriber="{{ t('med.doc.filled_prescriber') }}" data-filled-reason="{{ t('med.doc.filled_reason') }}">
+      <label for="med-document_id" data-med-doc-label>{{ t('med.doc.label') }}</label>
+      <div class="an-med-doc__box" data-med-doc-box hidden>
+        <input id="med-document-search" type="search" placeholder="{{ t('med.doc.placeholder') }}" autocomplete="off"
+               role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="med-doc-list" aria-describedby="med-doc-help">
+        <ul id="med-doc-list" class="an-med-lookup__list" role="listbox" aria-label="{{ t('med.doc.list_aria') }}" hidden></ul>
+      </div>
+      <p id="med-doc-status" class="an-field-help" role="status" aria-live="polite"></p>
+      <div class="an-med-doc__chosen" data-med-doc-chosen hidden>
+        <strong data-slot="title"></strong>
+        <span data-slot="meta"></span>
+        <blockquote class="an-med-quote" data-slot="snippet" hidden><span>{{ t('med.doc.says') }}</span> <q></q></blockquote>
+        <span class="an-med-actions">
+          <a class="secondary" data-slot="open" target="_blank" rel="noopener">{{ t('med.doc.open') }}</a>
+          <button type="button" class="secondary" data-med-doc-unlink>{{ t('med.doc.unlink') }}</button>
+        </span>
+      </div>
+      <select id="med-document_id" name="document_id" data-med-doc-select>
+        <option value="">{{ t('med.field.document_none') }}</option>
+        {% for document in documents %}<option value="{{ document.id }}"{% if factor.document_id == document.id %} selected{% endif %}>{{ document.label }}</option>{% endfor %}
+      </select>
+      <p id="med-doc-help" class="an-field-help">{{ t('med.doc.help') }}</p>
+      <p class="an-med-total" data-med-doc-filled role="status" aria-live="polite" hidden></p>
+      {% if linked_document %}<script type="application/json" id="med-doc-linked" nonce="{{ csp_nonce }}">{{ linked_document|tojson }}</script>{% endif %}
+    </div>
+    {% endif %}
     <div class="an-med-field not-point">
       <label for="med-status">{{ t('med.field.status') }}</label>
       <select id="med-status" name="status">
@@ -202,15 +235,6 @@
     </label>
     {{ text_field('reason', t('med.field.reason'), factor.reason, t('med.field.reason_help')) }}
     {{ text_field('prescriber', t('med.field.prescriber'), factor.prescriber, '', 'not-illness') }}
-    {% if documents %}
-    <div class="an-med-field">
-      <label for="med-document_id">{{ t('med.field.document') }}</label>
-      <select id="med-document_id" name="document_id">
-        <option value="">{{ t('med.field.document_none') }}</option>
-        {% for document in documents %}<option value="{{ document.id }}"{% if factor.document_id == document.id %} selected{% endif %}>{{ document.label }}</option>{% endfor %}
-      </select>
-    </div>
-    {% endif %}
     <div class="an-med-field">
       <label for="med-notes">{{ t('med.field.notes') }}</label>
       <textarea id="med-notes" name="notes" rows="3" maxlength="4000" aria-describedby="med-notes-help">{{ factor.notes or '' }}</textarea>

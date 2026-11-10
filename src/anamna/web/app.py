@@ -71,6 +71,7 @@ from .changes import register_changes_routes, verdict_state
 from .labsync_routes import register_routes as register_labsync_routes
 from .testplan_routes import register_routes as register_testplan_routes
 from .factors_routes import register_routes as register_factors_routes
+from .found_routes import register_routes as register_found_routes
 from .allergy_routes import register_routes as register_allergy_routes
 from .genetics_routes import register_routes as register_genetics_routes
 from .chat_routes import register_routes as register_chat_routes
@@ -15401,6 +15402,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     register_testplan_routes(
         app, settings, templates=templates, template_context=template_context, require_user=require_user,
         record_user=record_user, require_csrf=require_csrf, audit=partial(_audit, settings),
+    )
+    register_found_routes(
+        app, settings, templates=templates, template_context=template_context, require_user=require_user,
+        record_user=record_user, require_csrf=require_csrf, audit=partial(_audit, settings),
+        document_row=_document_row,
     )
     register_factors_routes(
         app, settings, templates=templates, template_context=template_context, require_user=require_user,

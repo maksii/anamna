@@ -18,11 +18,12 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from anamna import ai, drugref, factor_jobs, factor_research, security
+from anamna import ai, drugref, factor_candidates, factor_jobs, factor_research, security
 from anamna.db import connect, migrate, utc_now
 from anamna.i18n import MESSAGES
 from anamna.ingest.concepts import stable_concept_id
-from anamna.ingest.pipeline import seed_concepts
+from anamna.ingest.pipeline import ensure_vendor, seed_concepts
+from anamna.ingest.text import search_key
 from anamna.security import create_access_token, create_user
 from anamna.web import factors_view
 from anamna.web.app import create_app
@@ -699,3 +700,144 @@ def test_form_template_keeps_block_elements_out_of_paragraphs():
     text = (pathlib.Path(__file__).parents[2] / "src/anamna/web/templates/medicine_form.html").read_text(encoding="utf-8")
     for paragraph in re.findall(r"<p\b[^>]*>(.*?)</p>", text, re.S):
         assert "<blockquote" not in paragraph and "<div" not in paragraph
+
+
+def add_document(world: World, owner_id: str, doc_id: str, *, title: str, pages: list[str],
+                 clinical_type: str = "consultation", report_date: str | None = "2025-02-13") -> str:
+    """One document of ``owner_id`` with its pages and search row, stored the way the pipeline stores them."""
+    with connect(world.settings) as connection:
+        patient = connection.execute(
+            "SELECT id FROM patients WHERE owner_user_id = ? ORDER BY created_at LIMIT 1", (owner_id,),
+        ).fetchone()[0]
+        vendor_id = ensure_vendor(connection, "Test Clinic", None)
+        connection.execute(
+            """INSERT INTO documents(
+                   id, owner_user_id, patient_id, vendor_id, original_filename, source_path,
+                   mime_type, byte_size, sha256, page_count, title, clinical_type,
+                   extraction_strategy, classification_confidence, imported_at, status, report_date
+               ) VALUES (?, ?, ?, ?, ?, ?, 'text/plain', 1, ?, ?, ?, ?, 'native_text', 1, ?, 'final', ?)""",
+            (
+                doc_id, owner_id, patient, vendor_id, f"{doc_id}.txt", f"{doc_id}.txt", f"sha-{doc_id}",
+                len(pages), title, clinical_type, utc_now(), report_date,
+            ),
+        )
+        for number, text in enumerate(pages, start=1):
+            connection.execute(
+                """INSERT INTO document_pages(document_id, page_number, native_text, extraction_method, native_char_count)
+                   VALUES (?, ?, ?, 'native_pdf_text', ?)""",
+                (doc_id, number, text, len(text)),
+            )
+        content = "\n".join(pages)
+        connection.execute(
+            "INSERT INTO search_index(document_id, owner_user_id, content, content_folded) VALUES (?, ?, ?, ?)",
+            (doc_id, owner_id, content, search_key(content)),
+        )
+        connection.commit()
+    return doc_id
+
+
+def test_document_search_returns_the_mention_with_its_snippet_and_labels(world, clients):
+    owner = clients("alpha@example.test")
+    add_document(world, world.alpha, "doc-diokor", title="Консультація кардіолога",
+                 pages=["Призначено Діокор соло 160 мг один раз на добу."])
+    response = owner.get("/medicines/documents", params={"name": "Діокор"})
+    assert response.status_code == 200
+    items = response.json()["items"]
+    item = next(entry for entry in items if entry["id"] == "doc-diokor")
+    assert item["mentions"] is True
+    assert "Діокор" in item["snippet"]
+    assert "Consultation" in item["title"]
+    assert item["dated"] is True and "2025" in item["date_text"]
+    assert item["type_label"]
+    assert item["clinic"]
+
+
+def test_document_search_by_a_title_word_never_returns_another_users_document(world, clients):
+    add_document(world, world.alpha, "doc-cardio-alpha", title="Консультація кардіолога", pages=["Огляд."])
+    add_document(world, world.bravo, "doc-cardio-bravo", title="Консультація кардіолога", pages=["Огляд."])
+    alpha = clients("alpha@example.test")
+    alpha_ids = [item["id"] for item in alpha.get("/medicines/documents", params={"q": "кардіолога"}).json()["items"]]
+    assert "doc-cardio-alpha" in alpha_ids and "doc-cardio-bravo" not in alpha_ids
+
+    bravo = clients("bravo@example.test")
+    bravo_ids = [item["id"] for item in bravo.get("/medicines/documents", params={"q": "кардіолога"}).json()["items"]]
+    assert "doc-cardio-bravo" in bravo_ids and "doc-cardio-alpha" not in bravo_ids
+
+
+def test_guest_and_share_viewer_cannot_search_documents(world, clients):
+    alpha = clients("alpha@example.test")
+    add_document(world, world.alpha, "doc-share", title="Консультація", pages=["Діокор"])
+    alpha.post("/profile/shares", data={"email": "bravo@example.test", "csrf_token": csrf(world, alpha)})
+    bravo = clients("bravo@example.test")
+    bravo.post("/profile/view", data={"owner_user_id": world.alpha, "csrf_token": csrf(world, bravo)})
+    assert bravo.get("/medicines/documents", params={"name": "Діокор"}).status_code == 403
+
+    expires = (datetime.now(UTC) + timedelta(days=14)).replace(microsecond=0).isoformat()
+    _, secret = create_access_token(world.settings, world.alpha, kind="guest", label="doctor", expires_at=expires)
+    with TestClient(create_app(world.settings)) as guest:
+        assert guest.get(f"/t/{secret}", follow_redirects=False).status_code in (302, 303)
+        assert guest.get("/medicines/documents", params={"name": "Діокор"}).status_code == 403
+
+
+def test_new_form_offers_documents_and_the_edit_form_shows_the_linked_one(world, clients):
+    owner = clients("alpha@example.test")
+    new_page = owner.get("/medicines/new").text
+    assert "data-med-doc" in new_page
+    assert "med-doc-linked" not in new_page
+
+    factor_id = factor_id_of(create_entry(world, owner, document_id=world.document))
+    edit = owner.get(f"/medicines/{factor_id}/edit").text
+    assert 'id="med-doc-linked"' in edit
+    linked = re.search(r'id="med-doc-linked"[^>]*>(.*?)</script>', edit, re.S).group(1)
+    assert json.loads(linked)["id"] == world.document
+
+
+def test_list_deletes_an_entry_from_its_card_and_returns_to_the_list(world, clients):
+    owner = clients("alpha@example.test")
+    first = factor_id_of(create_entry(world, owner, name="Диокор"))
+    second = factor_id_of(create_entry(world, owner, name="Аспірин", atc_code="", reference_name="",
+                                       reference_code=""))
+    listing = owner.get("/medicines").text
+    assert listing.count('name="action" value="remove"') == 2
+    for factor_id in (first, second):
+        assert f'action="/medicines/{factor_id}" method="post" data-confirm="' in listing
+
+    removed = act(world, owner, first, action="remove")
+    assert removed.status_code == 303
+    assert removed.headers["location"] == "/medicines?saved=removed"
+    assert row_of(world, first) is None
+    assert row_of(world, second) is not None
+
+
+def test_list_links_to_the_finder_only_when_a_consultation_exists(world, clients):
+    owner = clients("alpha@example.test")
+    create_entry(world, owner)
+    assert "/medicines/found" not in owner.get("/medicines").text
+
+    add_document(world, world.alpha, "doc-visit", title="Консультація", pages=["Огляд."])
+    assert 'href="/medicines/found"' in owner.get("/medicines").text
+
+
+def test_list_notes_the_candidates_waiting_for_review_only_when_there_are_some(world, clients, monkeypatch):
+    owner = clients("alpha@example.test")
+    create_entry(world, owner)
+    monkeypatch.setattr(factor_candidates, "count", lambda connection, owner_id: 3)
+    assert "an-med-found-note" in owner.get("/medicines").text
+
+    monkeypatch.setattr(factor_candidates, "count", lambda connection, owner_id: 0)
+    assert "an-med-found-note" not in owner.get("/medicines").text
+
+
+def test_an_entry_with_six_effects_lists_all_of_them_under_the_disclosure(world, clients):
+    owner = clients("alpha@example.test")
+    factor_id = factor_id_of(create_entry(world, owner))
+    labels = ["Нудота", "Сухий кашель", "Запаморочення", "Висип", "Сонливість", "Головний біль"]
+    for label in labels:
+        act(world, owner, factor_id, action="effect_add", label=label, direction="raises", note="")
+
+    listing = owner.get("/medicines").text
+    assert '<details class="an-med-fx">' in listing
+    block = re.search(r'<ul class="an-med-fx__list".*?</ul>', listing, re.S)
+    assert block is not None
+    for label in labels:
+        assert label in block.group(0), label
