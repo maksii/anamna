@@ -148,6 +148,23 @@ def test_an_ai_suggested_missed_value_is_stored_unchecked(tmp_path: Path):
     )
 
 
+def test_an_ai_suggested_value_on_a_checked_document_reopens_its_review(tmp_path: Path):
+    settings, user_id, client = build(tmp_path)
+    with connect(settings) as db:
+        db.execute("UPDATE review_tasks SET state='resolved' WHERE entity_type='document' AND entity_id='doc-1'")
+        db.execute("UPDATE observations SET verification_status='verified' WHERE document_id='doc-1'")
+    client.post("/documents/doc-1/observations", data={
+        "raw_name": "Gardnerella vaginalis", "value_numeric": "100000", "unit_raw": "КУО/мл",
+        "ai_suggested": "1", "csrf_token": csrf_for(settings, user_id),
+    }, follow_redirects=False)
+    with connect(settings) as db:
+        task = db.execute(
+            "SELECT reason_key, reason_params_json FROM review_tasks WHERE entity_type='document' AND entity_id='doc-1' AND state='open'"
+        ).fetchone()
+    assert task is not None and task["reason_key"] == "review.verify_n"
+    assert '"count": 1' in task["reason_params_json"]
+
+
 def test_an_ai_suggested_dose_is_stored_unchecked(tmp_path: Path):
     settings, user_id, client = build(tmp_path)
     base = {

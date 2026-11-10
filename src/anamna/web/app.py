@@ -201,7 +201,10 @@ from ..ingest.pipeline import (
     _record_person_relation,
     keep_both_documents,
     mark_document_duplicate,
+    open_review_task,
+    reason_part,
     recount_review_tasks,
+    REVIEW_VERIFY_N,
     repair_text_duplicates,
     unmark_document_duplicate,
     reread_proposals,
@@ -1267,6 +1270,9 @@ _TITLE_TESTS_SQL = """(SELECT GROUP_CONCAT(tc.id || char(9) || COALESCE(tc.categ
      WHERE tf.document_id=d.id AND tf.verification_status <> 'rejected') title_areas"""
 
 
+_UNTITLED_CATEGORIES = frozenset({"radiation_exposure"})
+
+
 def _title_subjects(tests: str | None, areas: str | None, clinical_type: str = "") -> list[str]:
     """What a document is about, named for its title.
 
@@ -1275,7 +1281,12 @@ def _title_subjects(tests: str | None, areas: str | None, clinical_type: str = "
     worse name for a blood count than "Complete blood count".  A narrative
     report with no values is named by the body area its conclusion is about.
     """
-    rows = [line.split("\t", 2) for line in (tests or "").split("\n") if line.count("\t") == 2]
+    # The dose an X-ray prints under its conclusion is bookkeeping about the
+    # exam, not what it examined: "X-ray report - Effective radiation dose".
+    rows = [
+        row for row in (line.split("\t", 2) for line in (tests or "").split("\n") if line.count("\t") == 2)
+        if row[1] not in _UNTITLED_CATEGORIES
+    ]
     names: list[str] = []
     for concept_id, category, canonical in rows:
         panel = panel_for_concept(concept_id, category) if len(rows) > 2 else None
@@ -13435,8 +13446,17 @@ def add_observation(
                 utc_now(),
             ),
         )
-        # An unchecked suggestion is one more value the open review task asks for.
-        recount_review_tasks(connection, user["id"], document_id, user["id"])
+        # An unchecked suggestion is one more value the open review task asks for,
+        # and on a document already checked it reopens the question.
+        if not recount_review_tasks(connection, user["id"], document_id, user["id"]) and from_ai and not connection.execute(
+            "SELECT 1 FROM review_tasks WHERE entity_type='document' AND entity_id=? AND state='open'", (document_id,)
+        ).fetchone():
+            pending = connection.execute(
+                """SELECT COUNT(*) FROM observations WHERE document_id=? AND verification_status='extracted'
+                     AND substr(extraction_method, 1, 8) <> 'derived_'""",
+                (document_id,),
+            ).fetchone()[0]
+            open_review_task(connection, user["id"], document_id, [reason_part(REVIEW_VERIFY_N, count=pending)])
     invalidate_catalog(user["id"])
     return RedirectResponse(
         _safe_next(next, f"/documents/{document_id}") + f"#observation-{observation_id}",
