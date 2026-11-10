@@ -691,6 +691,14 @@ form[data-submitting] :is(button, .button, input, select, textarea, label) { poi
    the link row never wraps while there is a name left to shorten. */
 .nav-menu { flex: 1 0 auto; min-width: 0; }
 
+/* With the AI button in the header the account name is already hidden, so
+   nothing is left to shorten: the link row wraps instead of pushing the page
+   wider than the window.  Wide layout only; from 1280px down the links live in
+   the menu. */
+@media (min-width: 1281px) {
+  .topbar:has(.ai-header) .nav-menu { flex-shrink: 1; }
+}
+
 .nav-menu > summary { display: none; }
 
 .nav-menu::details-content { content-visibility: visible; block-size: auto; }
