@@ -638,8 +638,7 @@ def _stored_details(raw) -> dict:
     return parsed if isinstance(parsed, dict) else {}
 
 
-def _medicine_card_lines(details: dict) -> str:
-    """The product card's facts and who-may-take-it summary, as lines for the assistant; "" when there are none."""
+def _card_fact_texts(details: dict) -> list[str]:
     facts = []
     for item in details.get("facts") if isinstance(details.get("facts"), list) else []:
         if (isinstance(item, list) and len(item) == 2 and isinstance(item[0], str)
@@ -647,6 +646,10 @@ def _medicine_card_lines(details: dict) -> str:
             values = [value.strip() for value in item[1] if isinstance(value, str) and value.strip()]
             if values:
                 facts.append(f"{_PRODUCT_FACT_LABELS[item[0]]}: {', '.join(values)}")
+    return facts
+
+
+def _card_warning_texts(details: dict) -> list[str]:
     warnings = []
     for item in details.get("warnings") if isinstance(details.get("warnings"), list) else []:
         if not (isinstance(item, list) and len(item) == 3 and all(isinstance(part, str) for part in item)):
@@ -659,6 +662,13 @@ def _medicine_card_lines(details: dict) -> str:
         if beyond:
             text += f" ({beyond})"
         warnings.append(text)
+    return warnings
+
+
+def _medicine_card_lines(details: dict) -> str:
+    """The product card's facts and who-may-take-it summary, as lines for the assistant; "" when there are none."""
+    facts = _card_fact_texts(details)
+    warnings = _card_warning_texts(details)
     lines = []
     if facts:
         lines.append("product facts (tabletki.ua product card): " + "; ".join(facts))

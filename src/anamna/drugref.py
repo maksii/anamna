@@ -138,26 +138,30 @@ class _RedirectWithinSite(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
+def _setting(connection: sqlite3.Connection, key: str) -> str | None:
+    """The stored value of one application setting, or None when it was never saved."""
+    row = connection.execute("SELECT value FROM app_settings WHERE key = ?", (key,)).fetchone()
+    return row[0] if row else None
+
+
 def enabled(connection: sqlite3.Connection) -> bool:
-    row = connection.execute("SELECT value FROM app_settings WHERE key = ?", (SETTING,)).fetchone()
-    return row is None or row[0] != "0"
+    return _setting(connection, SETTING) != "0"
 
 
 def mode(connection: sqlite3.Connection) -> str:
-    row = connection.execute("SELECT value FROM app_settings WHERE key = ?", (MODE_SETTING,)).fetchone()
-    return row[0] if row and row[0] in (MODE_PAGE, MODE_API) else MODE_PAGE
+    value = _setting(connection, MODE_SETTING)
+    return value if value in (MODE_PAGE, MODE_API) else MODE_PAGE
 
 
 def token(connection: sqlite3.Connection) -> str:
     """The API token: the one saved on the admin page, else the one in the server's environment."""
-    row = connection.execute("SELECT value FROM app_settings WHERE key = ?", (TOKEN_SETTING,)).fetchone()
-    return (row[0] if row and row[0] else "") or os.environ.get(TOKEN_ENV, "").strip()
+    stored = _setting(connection, TOKEN_SETTING)
+    return (stored if stored else "") or os.environ.get(TOKEN_ENV, "").strip()
 
 
 def token_source(connection: sqlite3.Connection) -> str:
     """Where the token comes from: "settings", "environment" or ""."""
-    row = connection.execute("SELECT value FROM app_settings WHERE key = ?", (TOKEN_SETTING,)).fetchone()
-    if row and row[0]:
+    if _setting(connection, TOKEN_SETTING):
         return "settings"
     return "environment" if os.environ.get(TOKEN_ENV, "").strip() else ""
 
@@ -577,7 +581,7 @@ def _parse_instruction_parts(parts) -> list[list[str]]:
     return sections
 
 
-def _parse_atc_from_card(payload: dict) -> list[str]:
+def _atc_from_dfp(payload: dict) -> list[str]:
     atc: list[str] = []
     # dfp.ATCFull is the cleanest source: ["M01AE01"]
     dfp = payload.get("dfp")
@@ -587,20 +591,24 @@ def _parse_atc_from_card(payload: dict) -> list[str]:
             for item in raw:
                 if isinstance(item, str) and _ATC_BARE.fullmatch(item) and item not in atc:
                     atc.append(item)
-    if atc:
-        return atc
+    return atc
+
+
+def _atc_from_characteristics(payload: dict) -> list[str]:
+    atc: list[str] = []
     # Fallback: characteristics where name contains "АТХ"
     for char in payload.get("characteristics") or []:
-        if not isinstance(char, dict):
-            continue
-        if "АТХ" not in (char.get("name") or ""):
+        if not isinstance(char, dict) or "АТХ" not in (char.get("name") or ""):
             continue
         for val in char.get("values") or []:
-            if isinstance(val, dict):
-                code_str = val.get("code")
-                if isinstance(code_str, str) and _ATC_BARE.fullmatch(code_str) and code_str not in atc:
-                    atc.append(code_str)
+            if (isinstance(val, dict) and isinstance(val.get("code"), str)
+                    and _ATC_BARE.fullmatch(val["code"]) and val["code"] not in atc):
+                atc.append(val["code"])
     return atc
+
+
+def _parse_atc_from_card(payload: dict) -> list[str]:
+    return _atc_from_dfp(payload) or _atc_from_characteristics(payload)
 
 
 def instruction(reference_name: str, code: str = "", *, api_token: str = "", use_api: bool = False) -> dict:
@@ -651,6 +659,38 @@ def stored_instruction(connection: sqlite3.Connection, reference_name: str, code
         return None
 
 
+def _stored_copy_is_current(row: tuple | None, card_wanted: bool) -> bool:
+    """Whether a stored copy can be used without a request: fresh, and not a page copy while the card is wanted."""
+    return row is not None and _fresh(row[3]) and not (card_wanted and not row[4])
+
+
+def _fetch_copy(reference_name: str, code: str, use_api: bool, api_token: str) -> dict | None:
+    """The instruction fetched now, or None when the site cannot give one."""
+    try:
+        return instruction(reference_name, code, use_api=use_api, api_token=api_token)
+    except DrugRefError:
+        return None
+
+
+def _store_copy(connection: sqlite3.Connection, fetched: dict) -> dict:
+    stored_at = utc_now()
+    connection.execute(
+        "INSERT OR REPLACE INTO drug_references "
+        "(source, url, shown_for, atc_codes, sections_json, fetched_at, details_json) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (
+            SOURCE,
+            fetched["url"],
+            fetched["shown_for"],
+            ",".join(fetched["atc"]),
+            json.dumps(fetched["sections"], ensure_ascii=False),
+            stored_at,
+            json.dumps(fetched["details"], ensure_ascii=False) if fetched["details"] else "",
+        ),
+    )
+    return {**fetched, "fetched_at": stored_at}
+
+
 def cached_instruction(
     connection: sqlite3.Connection, reference_name: str, code: str = "",
     *, use_api: bool = False, api_token: str = "",
@@ -670,29 +710,11 @@ def cached_instruction(
         ).fetchone()
         # A copy read from the page before the card was switched on is read once more through the card.
         card_wanted = bool(use_api and api_token and _DIGITS.fullmatch(code))
-        if row is not None and _fresh(row[3]) and not (card_wanted and not row[4]):
+        if _stored_copy_is_current(row, card_wanted):
             return _from_cache(url, row)
-        try:
-            fetched = instruction(reference_name, code, use_api=use_api, api_token=api_token)
-        except DrugRefError:
-            fetched = None
+        fetched = _fetch_copy(reference_name, code, use_api, api_token)
         if fetched is None or not fetched["sections"]:
             return _from_cache(url, row) if row is not None else None
-        stored_at = utc_now()
-        connection.execute(
-            "INSERT OR REPLACE INTO drug_references "
-            "(source, url, shown_for, atc_codes, sections_json, fetched_at, details_json) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (
-                SOURCE,
-                fetched["url"],
-                fetched["shown_for"],
-                ",".join(fetched["atc"]),
-                json.dumps(fetched["sections"], ensure_ascii=False),
-                stored_at,
-                json.dumps(fetched["details"], ensure_ascii=False) if fetched["details"] else "",
-            ),
-        )
-        return {**fetched, "fetched_at": stored_at}
+        return _store_copy(connection, fetched)
     except (DrugRefError, sqlite3.Error, ValueError):
         return None
