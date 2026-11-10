@@ -27,7 +27,9 @@ from __future__ import annotations
 import math
 import re
 from collections.abc import Callable, Collection, Sequence
+from datetime import date
 
+from .. import factors
 from ..devices.catalog import CORE_METRIC_KEYS
 from ..i18n import get_locale, t, t_plural
 from ..panels import SAME_DEVICE_KEYS
@@ -494,6 +496,11 @@ def _about_lines(
         out.append(t("ai.about_sex", sex=t(f"sex.{str(patient['sex_at_birth'] or 'unknown').casefold()}")))
         if patient["blood_type"]:
             out.append(t("ai.about_blood_type", value=patient["blood_type"]))
+        # Dosing is calculated from these (a weight-based dose, an eGFR-adjusted one), so they travel.
+        if patient["weight_kg"] is not None:
+            out.append("- " + t("ai.profile_weight", value=_num(patient["weight_kg"])))
+        if patient["height_cm"] is not None:
+            out.append("- " + t("ai.profile_height", value=_num(patient["height_cm"])))
     if "identity" not in include:
         out.append(t("ai.identity_withheld"))
     lab_cards = [card for card in catalog if not card.get("is_device")]
@@ -629,6 +636,49 @@ def _add_findings(out, omissions, findings) -> None:
         omissions.append(t("ai.omitted_findings", count=over))
 
 
+def _lower_first(text: str) -> str:
+    return text[:1].lower() + text[1:]
+
+
+def _factor_line(factor: dict[str, object]) -> str:
+    """``- Warfarin 5 mg [Medicine, Current]: anticoagulant; 5 mg, daily; from 2026-01-05; atrial fibrillation``
+
+    Empty parts and their separators are left out.  The kind and status are
+    always printed: they say whether a medicine is being taken, not just
+    prescribed, which decides whether a result can be explained by it.
+    """
+    head = f"- {factor['name']}"
+    if factor["strength"]:
+        head += f" {factor['strength']}"
+    head += f" [{t('med.kind.' + str(factor['kind']))}, {t('med.status.' + str(factor['effective_status']))}]"
+    dosing = ", ".join(str(part) for part in (factor["dose"], factor["schedule"]) if part)
+    started, ended = factor["started_on"], factor["ended_on"]
+    when = ""
+    if started and ended:
+        when = t("ai.factors_range", start=started, end=ended)
+    elif started:
+        when = t("ai.factors_from", date=started)
+    elif ended:
+        when = t("ai.factors_range", start="-", end=ended)
+    if when and factor["dates_approximate"]:
+        when += f" ({_lower_first(t('med.approx'))})"
+    parts = [str(part) for part in (factor["substance"], dosing, when, factor["reason"]) if part]
+    return head + (": " + "; ".join(parts) if parts else "")
+
+
+def _add_factors(out, connection, owner_user_id: str) -> None:
+    """Medicines, supplements and other entries, with the results each can change."""
+    entries = factors.listing(connection, owner_user_id, today=date.today())
+    out += [f"## {t('ai.factors_heading')}", ""]
+    if not entries:
+        out += [t("ai.factors_none"), ""]
+        return
+    for entry in entries:
+        out.append(_factor_line(entry))
+        out += [f"  - {t('med.dir.' + str(effect['direction']))} {effect['label']}" for effect in entry["effects"]]
+    out.append("")
+
+
 def _add_guidance(out, omissions, catalog, guidance) -> None:
     """Guidance and citations."""
     out += [f"## {t('ai.guidance_heading')}", "", t("ai.guidance_body"), ""]
@@ -708,6 +758,7 @@ def build_prompt(
         _add_guidance(out, omissions, catalog, guidance)
     if "documents" in include:
         _add_documents(out, omissions, documents)
+    _add_factors(out, connection, owner_user_id)
 
     # --- what is not here ---------------------------------------------------
     out += [f"## {t('ai.gaps_heading')}", "", t("ai.gaps_body"), ""]
@@ -890,7 +941,7 @@ def _add_elsewhere(out, omissions, subject, related, attention, sources) -> None
 
 def build_subject_prompt(
     connection,
-    _owner_user_id: str,
+    owner_user_id: str,
     *,
     subject: dict[str, object],
     include: Collection[str],
@@ -930,6 +981,8 @@ def build_subject_prompt(
     related = list(subject.get("related_cards") or ())
     _add_related(out, omissions, subject, related, sources, label)
     _add_elsewhere(out, omissions, subject, related, attention, sources)
+
+    _add_factors(out, connection, owner_user_id)
 
     # --- what an excerpt is not --------------------------------------------
     lab_cards = [card for card in catalog if not card.get("is_device")]

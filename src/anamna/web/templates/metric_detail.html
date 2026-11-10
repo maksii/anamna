@@ -3,6 +3,7 @@
         verdict_details, trend_chip, micro_mark, empty_state, plural_t with context %}
 {% from "_correlation.html" import correlation_block with context %}
 {% from "_experience.html" import period_stats, metric_about with context %}
+{% from "_factors.html" import factor_key with context %}
 {% block title %}{{ concept_name if concept_name else concept.canonical_name|conceptfmt }} · {{ t('brand.name') }}{% endblock %}
 {% block content %}
 <link rel="stylesheet" href="{{ asset('patient-experience.css') }}">
@@ -94,6 +95,7 @@
   </ul>
   {% endif %}
   {{ period_stats() }}
+  {{ factor_key(factor_periods, 'metric') }}
   {% elif chart_points %}
   {#- One numeric result: a value, not yet a trend. Saying "no numeric trend"
       over a number reads as though the number were missing. -#}
@@ -342,6 +344,9 @@
   const i18n = globalThis.__HL_I18N__ || {};
   let range = 'all';
   let placed = [];
+  // Medicines and other entries of the person, drawn under the time axis.
+  const F = C.factorSource('metric');
+  const stamp = point => C.asDate(point.date).getTime();
   // Documents and device days on one axis: a clinic reading is drawn as a
   // square and never averaged away; device days thin per line, as before.
   const mixed = allPoints.some(point => point.source === 'device');
@@ -475,6 +480,11 @@
     });
   };
 
+  const factorsNow = () => {
+    const source = filterPoints();
+    return source.length ? C.factorsIn(F.list(), stamp(source[0]), stamp(source.at(-1))) : [];
+  };
+
   const draw = (W, H) => {
     const source = filterPoints();
     // The period's figures describe this measurement, never a reading taken
@@ -485,7 +495,8 @@
     const integral = source.every(point => Number.isInteger(Number(point.value)));
     const bound = side => (band?.[side] ?? null) === null ? null : Number(band[side]);
     const bandLow = bound('low'), bandHigh = bound('high');
-    const left0 = 12, right = 16, top = 26, bottom = 30;
+    const factors = factorsNow(), room = C.factorRoom(factors.length);
+    const left0 = 12, right = 16, top = 26, bottom = 30 + room;
     const plot0 = Math.max(40, W - left0 - right);
     const points = thinPoints(source, C.capacity(plot0));
     const averaged = points.length < source.length;
@@ -513,6 +524,14 @@
     const unit = C.el('text', {x: 4, y: 12, class: 'chart-axis-label chart-axis-unit', 'text-anchor': 'start'});
     unit.textContent = points[0].unit || ''; svg.append(unit);
 
+    if (room) {
+      const overflow = C.factorLanes(svg, factors, {
+        xOf: C.timeX(points.map(stamp), points.map((_, index) => xAt(index))),
+        from: stamp(source[0]), to: stamp(source.at(-1)), left, right: W - right,
+        plotTop: top, plotBottom: H - bottom, lanes: H - room + 2, more: F.more,
+      });
+      if (overflow) notes.push(overflow);
+    }
     drawTrend({points, T, xAt, yAt, H, bottom});
     if (T.breaks.length) notes.push(C.text('chart.axis_compressed'));
 
@@ -544,7 +563,7 @@
     C.xLabels(points, stops, format).forEach((text, order) => {
       if (!text) return;
       const label = C.el('text', {
-        x: xAt(stops[order]), y: H - 9, class: 'chart-date-label',
+        x: xAt(stops[order]), y: H - 9 - room, class: 'chart-date-label',
         'text-anchor': anchorFor(order, stops.length - 1),
       });
       label.textContent = text; svg.append(label);
@@ -575,7 +594,8 @@
   const size = width => width < 560
     ? Math.max(220, Math.round(globalThis.innerWidth * 0.6))
     : Math.min(Math.round(width * 0.8), Math.max(320, Math.round(globalThis.innerHeight * 0.5)));
-  const repaint = C.responsive(svg, host, draw, size);
+  const repaint = C.responsive(svg, host, draw, size, () => C.factorRoom(factorsNow().length));
+  F.onToggle(repaint);
   document.querySelectorAll('[data-range]').forEach(button => button.addEventListener('click', () => {
     document.querySelectorAll('[data-range]').forEach(item => item.classList.remove('active'));
     button.classList.add('active'); range = button.dataset.range; tooltip.hidden = true; repaint();

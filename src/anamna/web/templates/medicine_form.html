@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% block title %}{{ t('med.new_title') if is_new else t('med.edit_title', name=factor.name) }}{% endblock %}
+
+{#- One field: the label wraps the control, as everywhere else in the app.
+    `only` is a visibility class; the stylesheet shows or hides it from the
+    checked kind with :has(), so the form needs no script to fit the kind. -#}
+{% macro text_field(name, label, value, help='', only='', maxlength=200) -%}
+<label class="an-med-field {{ only }}" for="med-{{ name }}">{{ label }}
+  <input id="med-{{ name }}" name="{{ name }}" value="{{ value or '' }}" maxlength="{{ maxlength }}"{% if help %} aria-describedby="med-{{ name }}-help"{% endif %}>
+  {% if help %}<span id="med-{{ name }}-help" class="an-field-help">{{ help }}</span>{% endif %}
+</label>
+{%- endmacro %}
+
+{% macro long_field(name, label, value, help='', only='') -%}
+<label class="an-med-field {{ only }}" for="med-{{ name }}">{{ label }}
+  <textarea id="med-{{ name }}" name="{{ name }}" rows="3" maxlength="4000"{% if help %} aria-describedby="med-{{ name }}-help"{% endif %}>{{ value or '' }}</textarea>
+  {% if help %}<span id="med-{{ name }}-help" class="an-field-help">{{ help }}</span>{% endif %}
+</label>
+{%- endmacro %}
+
+{% block content %}
+<nav class="an-med-crumb" aria-label="{{ t('med.title') }}"><a href="{{ back_url }}"><span aria-hidden="true">←</span> {{ back_label }}</a></nav>
+<h1 class="an-med-title">{{ t('med.new_title') if is_new else t('med.edit_title', name=factor.name) }}</h1>
+
+{% if error %}<div class="alert error" role="alert">{{ error }}</div>{% endif %}
+
+<form class="an-med-form" action="{{ action }}" method="post" autocomplete="off">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  {% if not is_new %}<input type="hidden" name="action" value="save">{% endif %}
+
+  <fieldset class="an-med-kindpick">
+    <legend>{{ t('med.field.kind') }}</legend>
+    {% for key, label in kinds %}
+    <label class="an-med-kindpick__item">
+      <input type="radio" name="kind" value="{{ key }}"{% if factor.kind == key %} checked{% endif %} required>
+      <span><strong>{{ label }}</strong><small>{{ t('med.kind_help.' ~ key) }}</small></span>
+    </label>
+    {% endfor %}
+  </fieldset>
+
+  <section class="an-med-section">
+    <div class="an-med-field an-med-lookup">
+      <label for="med-name">{{ t('med.field.name') }}</label>
+      <input id="med-name" name="name" value="{{ factor.name or '' }}" required maxlength="200" aria-describedby="med-name-help"
+             {%- if lookup_on %} data-med-lookup role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="med-lookup-list"{% endif %}>
+      {% if lookup_on %}
+      <ul id="med-lookup-list" class="an-med-lookup__list" role="listbox" aria-label="{{ t('med.lookup.list_aria') }}" hidden></ul>
+      <p id="med-lookup-status" class="an-field-help" role="status" aria-live="polite"></p>
+      {% endif %}
+      <p class="an-med-linked only-drug" id="med-linked"{% if not factor.reference_name %} hidden{% endif %}>
+        <span data-med-linked-text>{{ t('med.lookup.linked_plain') }}</span>
+        <button type="button" class="secondary" data-med-unlink>{{ t('med.lookup.unlink') }}</button>
+      </p>
+      <p id="med-name-help" class="an-field-help">
+        {% if lookup_on %}<span class="only-drug">{{ t('med.field.name_help_lookup') }} {{ t('med.lookup.note') }}</span><span class="not-drug">{{ t('med.field.name_help') }}</span>
+        {% else %}{{ t('med.field.name_help') }}{% endif %}
+      </p>
+      <input type="hidden" name="reference_name" value="{{ factor.reference_name or '' }}">
+      <input type="hidden" name="reference_code" value="{{ factor.reference_code or '' }}">
+    </div>
+    {{ text_field('strength', t('med.field.strength'), factor.strength, t('med.field.strength_help'), 'only-drug') }}
+  </section>
+
+  <section class="an-med-section not-point not-illness" aria-labelledby="med-how">
+    <h2 id="med-how">{{ t('med.form.section_how') }}</h2>
+    {{ text_field('dose', t('med.field.dose'), factor.dose, t('med.field.dose_help'), 'only-drug') }}
+    {{ text_field('schedule', t('med.field.schedule'), factor.schedule, t('med.field.schedule_help')) }}
+  </section>
+
+  <section class="an-med-section" aria-labelledby="med-when">
+    <h2 id="med-when">{{ t('med.form.section_when') }}</h2>
+    <label class="an-med-field not-point" for="med-status">{{ t('med.field.status') }}
+      <select id="med-status" name="status">
+        {% for key in statuses %}<option value="{{ key }}"{% if factor.status == key %} selected{% endif %}>{{ t('med.status_option.' ~ key) }}</option>{% endfor %}
+      </select>
+    </label>
+    <div class="an-med-dates">
+      <label class="an-med-field" for="med-started_on"><span class="not-point">{{ t('med.field.started_on') }}</span><span class="only-point">{{ t('med.field.started_on_point') }}</span>
+        <input id="med-started_on" type="date" name="started_on" value="{{ factor.started_on or '' }}">
+      </label>
+      <label class="an-med-field not-point" for="med-ended_on">{{ t('med.field.ended_on') }}
+        <input id="med-ended_on" type="date" name="ended_on" value="{{ factor.ended_on or '' }}" aria-describedby="med-ended_on-help">
+        <span id="med-ended_on-help" class="an-field-help">{{ t('med.field.ended_on_help') }}</span>
+      </label>
+    </div>
+    <label class="an-med-check" for="med-approximate">
+      <input id="med-approximate" type="checkbox" name="dates_approximate" value="1"{% if factor.dates_approximate %} checked{% endif %} aria-describedby="med-approximate-help">
+      <span>{{ t('med.field.approximate') }}<span id="med-approximate-help" class="an-field-help">{{ t('med.field.approximate_help') }}</span></span>
+    </label>
+    {{ text_field('reason', t('med.field.reason'), factor.reason, t('med.field.reason_help')) }}
+    {{ text_field('prescriber', t('med.field.prescriber'), factor.prescriber, '', 'not-illness') }}
+    {% if documents %}
+    <label class="an-med-field" for="med-document_id">{{ t('med.field.document') }}
+      <select id="med-document_id" name="document_id">
+        <option value="">{{ t('med.field.document_none') }}</option>
+        {% for document in documents %}<option value="{{ document.id }}"{% if factor.document_id == document.id %} selected{% endif %}>{{ document.label }}</option>{% endfor %}
+      </select>
+    </label>
+    {% endif %}
+    {{ long_field('notes', t('med.field.notes'), factor.notes, t('med.field.notes_help')) }}
+  </section>
+
+  <section class="an-med-section" aria-labelledby="med-reference">
+    <h2 id="med-reference">{{ t('med.form.section_reference') }}</h2>
+    <p class="an-med-section__lead">{{ t('med.form.reference_lead') }}</p>
+    {% if is_new %}
+    {% if ai_ready %}
+    <label class="an-med-check" for="med-research">
+      <input id="med-research" type="checkbox" name="research" value="1" checked aria-describedby="med-research-help">
+      <span>{{ t('med.form.research') }}<span id="med-research-help" class="an-field-help">{{ t('med.form.research_help') }}</span></span>
+    </label>
+    {% else %}
+    <p class="an-field-help">{{ t('med.form.research_off') }}</p>
+    {% endif %}
+    {% endif %}
+    {{ text_field('substance', t('med.field.substance'), factor.substance, t('med.field.substance_help'), 'only-drug') }}
+    {{ text_field('atc_code', t('med.field.atc'), factor.atc_code, t('med.field.atc_help'), 'only-medicine', 8) }}
+    {{ long_field('purpose', t('med.field.purpose'), factor.purpose) }}
+    {{ long_field('usual_dose', t('med.field.usual_dose'), factor.usual_dose, t('med.field.usual_dose_help'), 'only-drug') }}
+    {{ long_field('interactions', t('med.field.interactions'), factor.interactions) }}
+    {{ long_field('monitoring', t('med.field.monitoring'), factor.monitoring) }}
+    {{ long_field('cautions', t('med.field.cautions'), factor.cautions) }}
+  </section>
+
+  <div class="an-med-actions">
+    <button class="primary" type="submit" data-busy="{{ t('med.saving') }}">{{ t('med.save') }}</button>
+    <a class="secondary" href="{{ back_url }}">{{ t('med.cancel') }}</a>
+  </div>
+</form>
+
+{% if not is_new %}
+<form class="an-med-delete" action="{{ action }}" method="post" data-confirm="{{ t('med.remove_confirm') }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="action" value="remove">
+  <button class="secondary" type="submit">{{ t('med.remove') }}</button>
+</form>
+{% endif %}
+
+{% if lookup_on %}<script src="{{ asset('medicines.js') }}" defer></script>{% endif %}
+{% endblock %}

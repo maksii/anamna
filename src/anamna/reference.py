@@ -142,12 +142,16 @@ def clinical_context(connection: sqlite3.Connection, owner_user_id: str | None) 
     if not owner_user_id:
         return {}
     row = connection.execute(
-        "SELECT cv_risk_category FROM patients WHERE owner_user_id=? ORDER BY created_at LIMIT 1",
+        "SELECT cv_risk_category, planning_pregnancy FROM patients WHERE owner_user_id=? "
+        "ORDER BY created_at LIMIT 1",
         (owner_user_id,),
     ).fetchone()
     chosen = str(row[0] or "") if row else ""
+    # A person planning a pregnancy: the population bands written for that
+    # (folate for the neural tube) judge; see _SILENT_REQUIRES.
+    planning = {"planning_pregnancy": True} if row and len(row) > 1 and row[1] else {}
     if chosen in CV_RISK_CATEGORIES:
-        return {"cv_risk_category": chosen, "cv_risk_basis": "profile"}
+        return {**planning, "cv_risk_category": chosen, "cv_risk_basis": "profile"}
     evidence = None
     for concept_id, threshold, inclusive in _CV_RISK_MARKERS:
         found = _latest_reading_over(connection, owner_user_id, concept_id, threshold, inclusive)
@@ -163,8 +167,9 @@ def clinical_context(connection: sqlite3.Connection, owner_user_id: str | None) 
                 "date": observed_at[:10] or None,
             }
     if evidence is None:
-        return {}
+        return planning
     return {
+        **planning,
         "cv_risk_category": "high",
         "cv_risk_basis": "derived",
         "cv_risk_at_least": True,

@@ -137,7 +137,7 @@ def test_guest_link_is_read_only_and_expires(tmp_path: Path):
             knocking.get("/t/anamna_guest_wrong", follow_redirects=False)
         assert knocking.get("/t/anamna_guest_wrong", follow_redirects=False).headers[
             "location"
-        ] == "/login?error=throttled"
+        ] == "/login?error=throttled_token&wait=15"
     clear_attempts("token:testclient")
 
     # An expired invitation stops working without anyone revoking it.

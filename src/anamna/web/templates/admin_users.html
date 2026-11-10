@@ -163,6 +163,48 @@
 
 <section class="panel">
   <div class="panel-head">
+    <div><h2>{{ t('admin.paused_heading') }}</h2></div>
+  </div>
+  <p class="muted">{{ t('admin.paused_intro') }}</p>
+  {% if paused %}
+  <div class="table-wrap table-wrap--stack" tabindex="0" role="region" aria-label="{{ t('admin.paused_heading') }}">
+    <table>
+      <thead><tr>
+        <th scope="col">{{ t('admin.paused_col_what') }}</th>
+        <th scope="col">{{ t('admin.paused_col_wait') }}</th>
+        <th scope="col"><span class="visually-hidden">{{ t('admin.paused_release') }}</span></th>
+      </tr></thead>
+      <tbody>
+        {% for row in paused %}
+        <tr>
+          <td data-label="{{ t('admin.paused_col_what') }}">{{ row.label }}</td>
+          <td data-label="{{ t('admin.paused_col_wait') }}">{{ row.minutes_text }}</td>
+          <td>
+            <form action="/admin/throttles/release" method="post">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input type="hidden" name="key" value="{{ row.key }}">
+              <button class="secondary" type="submit">{{ t('admin.paused_release') }}</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if paused|length >= 2 %}
+  <form action="/admin/throttles/release" method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="key" value="*">
+    <button class="secondary" type="submit">{{ t('admin.paused_release_all') }}</button>
+  </form>
+  {% endif %}
+  {% else %}
+  <p class="muted">{{ t('admin.paused_none') }}</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <div class="panel-head">
     <div><span class="eyebrow">{{ t('admin.add_eyebrow') }}</span><h2>{{ t('admin.add_heading') }}</h2></div>
   </div>
   <form action="/admin/users" method="post" class="stack-form">

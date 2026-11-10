@@ -129,9 +129,11 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
     "login.error": {"en": "Invalid email or password", "uk": "Неправильна адреса пошти або пароль"},
     "login.error_throttled": {
-        "en": "Too many failed sign-in attempts from this address. Wait 15 minutes and try again. A browser that has signed in to this account before is not affected.",
-        "uk": "Забагато невдалих спроб входу з цієї адреси. Зачекайте 15 хвилин і спробуйте ще раз. Браузера, з якого вже входили в цей обліковий запис, обмеження не стосується.",
+        "en": "Too many failed sign-in attempts from this network. Try again in {minutes}. An administrator can release this sooner on the Users page.",
+        "uk": "Забагато невдалих спроб входу з цієї мережі. Спробуйте знову через {minutes}. Адміністратор може зняти паузу раніше на сторінці «Користувачі».",
     },
+    "login.error_throttled_account": {"en": "Too many failed attempts for this account. Try again in {minutes}, or sign in from a browser you have already used for this account, which is not affected. An administrator can release this sooner.", "uk": "Забагато невдалих спроб для цього облікового запису. Спробуйте знову через {minutes} або увійдіть із браузера, яким ви вже користувалися для цього запису, його пауза не стосується. Адміністратор може зняти паузу раніше."},
+    "login.error_throttled_device": {"en": "Too many wrong passwords from this browser. Try again in {minutes}. If the password is forgotten, an administrator can set a new one.", "uk": "Забагато неправильних паролів із цього браузера. Спробуйте знову через {minutes}. Якщо пароль забуто, адміністратор може встановити новий."},
     "auth.error_cross_site": {
         "en": "This form can only be submitted from this site.",
         "uk": "Цю форму можна надіслати лише з цього сайту.",
@@ -154,9 +156,11 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
     "error.other": {"en": "The request could not be completed (error {status}).", "uk": "Запит не вдалося виконати (помилка {status})."},
     "error.home": {"en": "Back to the overview", "uk": "Повернутися до огляду"},
+    "token.error_throttled": {"en": "Too many links that did not work were opened from this network. Try again in {minutes}, or ask for a fresh link.", "uk": "З цієї мережі відкрито забагато посилань, які не спрацювали. Спробуйте знову через {minutes} або попросіть нове посилання."},
+    "register.error_throttled": {"en": "Too many sign-ups from this network. Try again in {minutes}.", "uk": "Забагато реєстрацій із цієї мережі. Спробуйте знову через {minutes}."},
     "profile.error_password_throttled": {
-        "en": "Too many wrong attempts. Wait 15 minutes and try again.",
-        "uk": "Забагато невдалих спроб. Зачекайте 15 хвилин і спробуйте ще раз.",
+        "en": "Too many wrong passwords. Try again in {minutes}. An administrator can release this sooner.",
+        "uk": "Забагато неправильних паролів. Спробуйте знову через {minutes}. Адміністратор може зняти паузу раніше.",
     },
     "login.register_prompt": {"en": "New here?", "uk": "Вперше тут?"},
     "login.register_link": {"en": "Create an account", "uk": "Створити обліковий запис"},
@@ -248,8 +252,8 @@ MESSAGES: dict[str, dict[str, str]] = {
         "uk": "Код налаштування не збігається. Скопіюйте його ще раз і повторіть спробу.",
     },
     "setup.error_throttled": {
-        "en": "Too many wrong setup codes. Wait {minutes}, then try again.",
-        "uk": "Забагато неправильних кодів налаштування. Зачекайте {minutes} і спробуйте ще раз.",
+        "en": "Too many wrong setup codes. Try again in {minutes}. Restarting the server also clears the pause.",
+        "uk": "Забагато неправильних кодів налаштування. Спробуйте знову через {minutes}. Перезапуск сервера також знімає паузу.",
     },
     "setup.error_taken": {
         "en": "This server was set up a moment ago from another browser. Sign in with that account, or ask its administrator for one.",
@@ -431,6 +435,25 @@ MESSAGES: dict[str, dict[str, str]] = {
               "have nobody able to manage accounts.",
         "uk": "Це єдиний адміністратор. Спершу призначте адміністратором когось іншого, інакше на сервері не залишиться нікого, хто може керувати обліковими записами.",
     },
+    "admin.done_released": {"en": "The pause is released.", "uk": "Паузу знято."},
+    "admin.paused_heading": {"en": "Paused sign-ins and codes", "uk": "Призупинені входи та коди"},
+    "admin.paused_intro": {"en": "After too many wrong attempts the application pauses that sign-in, code or link for up to 15 minutes. A pause ends on its own. Release it here when the person should not have to wait. Restarting the server clears every pause.", "uk": "Після надто багатьох невдалих спроб застосунок призупиняє цей вхід, код або посилання щонайбільше на 15 хвилин. Пауза закінчується сама. Зніміть її тут, якщо людині не варто чекати. Перезапуск сервера знімає всі паузи."},
+    "admin.paused_none": {"en": "Nothing is paused right now.", "uk": "Зараз нічого не призупинено."},
+    "admin.paused_col_what": {"en": "What is paused", "uk": "Що призупинено"},
+    "admin.paused_col_wait": {"en": "Ends on its own in", "uk": "Закінчиться сама через"},
+    "admin.paused_release": {"en": "Release", "uk": "Зняти паузу"},
+    "admin.paused_release_all": {"en": "Release all", "uk": "Зняти всі паузи"},
+    "admin.paused_login": {"en": "Sign-in to the account {subject}", "uk": "Вхід до облікового запису {subject}"},
+    "admin.paused_login_ip": {"en": "Sign-in from the address {subject}", "uk": "Вхід з адреси {subject}"},
+    "admin.paused_login_dev": {"en": "Sign-in to {subject} from one of its own browsers", "uk": "Вхід до {subject} з одного з його браузерів"},
+    "admin.paused_token": {"en": "Guest links opened from the address {subject}", "uk": "Гостьові посилання, відкриті з адреси {subject}"},
+    "admin.paused_doctor": {"en": "Doctor codes entered from the address {subject}", "uk": "Коди для лікаря, введені з адреси {subject}"},
+    "admin.paused_doctor_all": {"en": "Doctor codes, for everyone", "uk": "Коди для лікаря, для всіх"},
+    "admin.paused_setup": {"en": "Setup codes from the address {subject}", "uk": "Коди налаштування з адреси {subject}"},
+    "admin.paused_register": {"en": "Sign-ups from the address {subject}", "uk": "Реєстрації з адреси {subject}"},
+    "admin.paused_pwchange": {"en": "Password check on the profile of {subject}", "uk": "Перевірка пароля у профілі {subject}"},
+    "admin.paused_webhook": {"en": "Device webhooks: {subject}", "uk": "Вебхуки пристроїв: {subject}"},
+    "admin.paused_other": {"en": "Other: {subject}", "uk": "Інше: {subject}"},
     "admin.done_added": {"en": "Account created", "uk": "Обліковий запис створено"},
     "admin.done_blocked": {"en": "Account blocked", "uk": "Обліковий запис заблоковано"},
     "admin.done_unblocked": {"en": "Account unblocked", "uk": "Обліковий запис розблоковано"},
@@ -910,8 +933,8 @@ MESSAGES: dict[str, dict[str, str]] = {
         "uk": "Код не підійшов. Перевірте з пацієнтом усі 6 цифр. Код діє лише один раз і лише {minutes}; якщо час минув, попросіть пацієнта створити новий.",
     },
     "doctor.error_throttled": {
-        "en": "Too many incorrect codes were entered, so codes are paused for safety. Wait {minutes}, then try again with a fresh code from the patient.",
-        "uk": "Забагато неправильних спроб, тому з міркувань безпеки введення кодів тимчасово призупинено. Зачекайте {minutes} і спробуйте ще раз із новим кодом від пацієнта.",
+        "en": "Too many wrong codes, so code entry is paused. Try again in {minutes} with a fresh code from the patient. If you cannot wait, ask the patient to share a link instead of a code.",
+        "uk": "Забагато неправильних кодів, тому введення кодів призупинено. Спробуйте знову через {minutes} зі свіжим кодом від пацієнта. Якщо чекати не можна, попросіть пацієнта поділитися посиланням замість коду.",
     },
     "doctor.patient_hint": {
         "en": "Are you the patient? Sign in and open Profile, then Sharing, to create a code.",
@@ -4212,12 +4235,15 @@ MESSAGES: dict[str, dict[str, str]] = {
             "- For everything outside its interval, give the likely explanations, most likely first: the conditions and the everyday causes that fit. For each, say which of my results support it and which argue against it.\n"
             "- Explain how the results depend on one another and what the combination points to that no single value does.\n"
             "- Say what would tell the explanations apart: further tests, questions about my symptoms, medicines and history, an examination, and which kind of doctor deals with it.\n"
-            "- Say what is usually done about each likely explanation: what I can change myself and which treatments doctors usually consider, as options for me to discuss, without personal doses.\n"
-            "- You cannot examine me, so give diagnoses as possibilities with their grounds, not as established fact. Tell me what to bring to a doctor, and how soon.\n"
+            "- Say what is done about each likely explanation, specifically: what I can change myself, and which treatment is used. Name the medicine or class, the form, the dose and schedule, how long, and what has to be monitored. Work the figures out for me from my age, sex, weight, kidney and liver results and the medicines listed below, show how you got them and say which guideline or instruction they rest on. If you need something that is missing, such as my weight, ask for it.\n"
+            "- Check my results against the medicines, supplements and other entries listed below: say when one of them explains or contributes to a result, check each dose against my results, and point out interactions and monitoring that is due.\n"
+            "- If the record shows what a doctor concluded or prescribed, say whether it addresses what the results show and what is left unexplained or untreated.\n"
+            "- Say which diagnosis is most likely, how sure you are and what would confirm or exclude it. You cannot examine me, so ask about the symptoms and history that would change your reading.\n"
+            "- End with what to take to a doctor: the questions to ask, the tests and treatments to request by name, the figures you worked out, and how soon. If something looks dangerous, say so first and say what kind of care it needs and how fast.\n"
             "- Answer in {language}."
         ),
         "uk": (
-            "Я не медик. Хочу розібратися у своїх результатах і вирішити, що обговорити з лікарем.\n\n- Перш ніж відповідати, прочитайте всю картку нижче.\n- Почніть із того, що виглядає терміновим. Якщо таке є, скажіть про це першим же реченням.\n- Далі розберіть, що виходить за межі свого інтервалу, потім що стабільне, а наостанок чого бракує або що давно пора повторити.\n- Читайте пов’язані результати разом (ниркові показники, обмін заліза, ліпіди, щитоподібна залоза), а не кожен рядок окремо. Закономірність у кількох результатах зазвичай каже більше, ніж будь-яке окреме значення.\n- Якщо щось у нормі, так і скажіть. Не вигадуйте приводів для тривоги, але й не применшуйте справжніх.\n- Коли вперше згадуєте абревіатуру, одиницю чи інтервал, поясніть їх простою мовою.\n- Біля кожного значення, на яке посилаєтеся, вказуйте дату. Деякі з них виміряно з різницею в роки.\n- Не вигадуйте референтних інтервалів і не беріть їх із пам’яті: користуйтеся тими, що наведено тут. Якщо наведено позиції двох організацій і вони розходяться, назвіть обидві й поясніть, чому це важливо.\n- Відокремлюйте те, що має змінити мої дії, від того, за чим варто просто стежити.\n- Якщо чогось бракує, запитайте мене, а не здогадуйтеся. Чого саме немає в картці, описано в останньому розділі.\n- Для всього, що виходить за межі інтервалу, назвіть імовірні пояснення, починаючи з найімовірнішого: стани й буденні причини, які сюди пасують. Для кожного скажіть, які мої результати його підтверджують, а які свідчать проти.\n- Поясніть, як результати залежать один від одного і на що вказує їхнє поєднання, чого не видно з окремого значення.\n- Скажіть, що допоможе розрізнити ці пояснення: додаткові аналізи, запитання про симптоми, ліки й анамнез, огляд і лікар якого фаху цим займається.\n- Скажіть, що зазвичай роблять за кожного ймовірного пояснення: що можна змінити самостійно і яке лікування зазвичай розглядають лікарі, як варіанти для обговорення, без персональних доз.\n- Ви не можете мене оглянути, тому називайте діагнози як імовірні, з обґрунтуванням, а не як встановлений факт. Підкажіть, із чим звернутися до лікаря і наскільки терміново.\n- Відповідайте {language}."
+            "Я не медик. Хочу розібратися у своїх результатах і вирішити, що обговорити з лікарем.\n\n- Перш ніж відповідати, прочитайте всю картку нижче.\n- Почніть із того, що виглядає терміновим. Якщо таке є, скажіть про це першим же реченням.\n- Далі розберіть, що виходить за межі свого інтервалу, потім що стабільне, а наостанок чого бракує або що давно пора повторити.\n- Читайте пов’язані результати разом (ниркові показники, обмін заліза, ліпіди, щитоподібна залоза), а не кожен рядок окремо. Закономірність у кількох результатах зазвичай каже більше, ніж будь-яке окреме значення.\n- Якщо щось у нормі, так і скажіть. Не вигадуйте приводів для тривоги, але й не применшуйте справжніх.\n- Коли вперше згадуєте абревіатуру, одиницю чи інтервал, поясніть їх простою мовою.\n- Біля кожного значення, на яке посилаєтеся, вказуйте дату. Деякі з них виміряно з різницею в роки.\n- Не вигадуйте референтних інтервалів і не беріть їх із пам’яті: користуйтеся тими, що наведено тут. Якщо наведено позиції двох організацій і вони розходяться, назвіть обидві й поясніть, чому це важливо.\n- Відокремлюйте те, що має змінити мої дії, від того, за чим варто просто стежити.\n- Якщо чогось бракує, запитайте мене, а не здогадуйтеся. Чого саме немає в картці, описано в останньому розділі.\n- Для всього, що виходить за межі інтервалу, назвіть імовірні пояснення, починаючи з найімовірнішого: стани й буденні причини, які сюди пасують. Для кожного скажіть, які мої результати його підтверджують, а які свідчать проти.\n- Поясніть, як результати залежать один від одного і на що вказує їхнє поєднання, чого не видно з окремого значення.\n- Скажіть, що допоможе розрізнити ці пояснення: додаткові аналізи, запитання про симптоми, ліки й анамнез, огляд і лікар якого фаху цим займається.\n- Скажіть конкретно, що роблять за кожного ймовірного пояснення: що я можу змінити самостійно і яке лікування застосовують. Назвіть препарат або клас, форму, дозу і схему прийому, тривалість і що потрібно контролювати. Розрахуйте цифри саме для мене за моїм віком, статтю, вагою, показниками нирок і печінки та ліками з переліку нижче, покажіть розрахунок і назвіть настанову чи інструкцію, на яку він спирається. Якщо бракує потрібного, наприклад ваги, запитайте.\n- Звірте мої результати з ліками, добавками та іншими записами з переліку нижче: скажіть, коли котрийсь із них пояснює результат або впливає на нього, перевірте кожну дозу за моїми показниками, вкажіть взаємодії та контроль, який уже час зробити.\n- Якщо в картці є висновок або призначення лікаря, скажіть, чи відповідає воно тому, що показують результати, і що лишається без пояснення або без лікування.\n- Скажіть, який діагноз найімовірніший, наскільки ви впевнені і що його підтвердить або виключить. Ви не можете мене оглянути, тому запитайте про симптоми й анамнез, які змінили б ваше прочитання.\n- Завершіть тим, із чим іти до лікаря: які запитання поставити, які аналізи й лікування попросити за назвою, розраховані вами цифри і наскільки це терміново. Якщо щось виглядає небезпечним, скажіть про це на початку і вкажіть, яка допомога потрібна і як швидко.\n- Відповідайте {language}."
         ),
     },
     "ai.legend_heading": {"en": "How to read this record", "uk": "Як читати цю картку"},
@@ -4250,13 +4276,16 @@ MESSAGES: dict[str, dict[str, str]] = {
             "- For everything outside its interval, give the likely explanations, most likely first: the conditions and the everyday causes that fit. For each, say which of my results support it and which argue against it.\n"
             "- Explain how the results depend on one another and what the combination points to that no single value does.\n"
             "- Say what would tell the explanations apart: further tests, questions about my symptoms, medicines and history, an examination, and which kind of doctor deals with it.\n"
-            "- Say what is usually done about each likely explanation: what I can change myself and which treatments doctors usually consider, as options for me to discuss, without personal doses.\n"
-            "- You cannot examine me, so give diagnoses as possibilities with their grounds, not as established fact. Tell me what to bring to a doctor, and how soon.\n"
+            "- Say what is done about each likely explanation, specifically: what I can change myself, and which treatment is used. Name the medicine or class, the form, the dose and schedule, how long, and what has to be monitored. Work the figures out for me from my age, sex, weight, kidney and liver results and the medicines listed below, show how you got them and say which guideline or instruction they rest on. If you need something that is missing, such as my weight, ask for it.\n"
+            "- Check my results against the medicines, supplements and other entries listed below: say when one of them explains or contributes to a result, check each dose against my results, and point out interactions and monitoring that is due.\n"
+            "- If the record shows what a doctor concluded or prescribed, say whether it addresses what the results show and what is left unexplained or untreated.\n"
+            "- Say which diagnosis is most likely, how sure you are and what would confirm or exclude it. You cannot examine me, so ask about the symptoms and history that would change your reading.\n"
+            "- End with what to take to a doctor: the questions to ask, the tests and treatments to request by name, the figures you worked out, and how soon. If something looks dangerous, say so first and say what kind of care it needs and how fast.\n"
             "- End with the questions worth asking a doctor about {subject}, and what other measurements would sharpen the answer.\n"
             "- Answer in {language}."
         ),
         "uk": (
-            "Я не медик. Хочу розібратися у своїх результатах на тему **{subject}** і вирішити, що обговорити з лікарем.\n\n- Це навмисно обмежений витяг, а не вся картка: усі мої результати на тему «{subject}», пов’язані результати, без яких їх не прочитати, і по одному рядку про все, що позначено в інших розділах. Якщо потрібна вся картка, попросіть її в мене.\n- Почніть із того, що виглядає терміновим. Якщо таке є, скажіть про це першим же реченням.\n- Дивіться на динаміку, а не лише на останнє значення, і біля кожного значення, на яке посилаєтеся, вказуйте дату.\n- Якщо щось у нормі, так і скажіть. Не вигадуйте приводів для тривоги, але й не применшуйте справжніх.\n- Коли вперше згадуєте абревіатуру, одиницю чи інтервал, поясніть їх простою мовою.\n- Не вигадуйте референтних інтервалів і не беріть їх із пам’яті: користуйтеся тими, що наведено тут. Якщо наведено позиції двох організацій і вони розходяться, назвіть обидві й поясніть, чому це важливо.\n- Відокремлюйте те, що має змінити мої дії, від того, за чим варто просто стежити.\n- Якщо чогось бракує, запитайте мене, а не здогадуйтеся. Чого саме немає в цьому витягу, описано в останньому розділі.\n- Для всього, що виходить за межі інтервалу, назвіть імовірні пояснення, починаючи з найімовірнішого: стани й буденні причини, які сюди пасують. Для кожного скажіть, які мої результати його підтверджують, а які свідчать проти.\n- Поясніть, як результати залежать один від одного і на що вказує їхнє поєднання, чого не видно з окремого значення.\n- Скажіть, що допоможе розрізнити ці пояснення: додаткові аналізи, запитання про симптоми, ліки й анамнез, огляд і лікар якого фаху цим займається.\n- Скажіть, що зазвичай роблять за кожного ймовірного пояснення: що можна змінити самостійно і яке лікування зазвичай розглядають лікарі, як варіанти для обговорення, без персональних доз.\n- Ви не можете мене оглянути, тому називайте діагнози як імовірні, з обґрунтуванням, а не як встановлений факт. Підкажіть, із чим звернутися до лікаря і наскільки терміново.\n- Наприкінці наведіть питання на тему «{subject}», які варто поставити лікарю, і які ще вимірювання допомогли б уточнити відповідь.\n- Відповідайте {language}."
+            "Я не медик. Хочу розібратися у своїх результатах на тему **{subject}** і вирішити, що обговорити з лікарем.\n\n- Це навмисно обмежений витяг, а не вся картка: усі мої результати на тему «{subject}», пов’язані результати, без яких їх не прочитати, і по одному рядку про все, що позначено в інших розділах. Якщо потрібна вся картка, попросіть її в мене.\n- Почніть із того, що виглядає терміновим. Якщо таке є, скажіть про це першим же реченням.\n- Дивіться на динаміку, а не лише на останнє значення, і біля кожного значення, на яке посилаєтеся, вказуйте дату.\n- Якщо щось у нормі, так і скажіть. Не вигадуйте приводів для тривоги, але й не применшуйте справжніх.\n- Коли вперше згадуєте абревіатуру, одиницю чи інтервал, поясніть їх простою мовою.\n- Не вигадуйте референтних інтервалів і не беріть їх із пам’яті: користуйтеся тими, що наведено тут. Якщо наведено позиції двох організацій і вони розходяться, назвіть обидві й поясніть, чому це важливо.\n- Відокремлюйте те, що має змінити мої дії, від того, за чим варто просто стежити.\n- Якщо чогось бракує, запитайте мене, а не здогадуйтеся. Чого саме немає в цьому витягу, описано в останньому розділі.\n- Для всього, що виходить за межі інтервалу, назвіть імовірні пояснення, починаючи з найімовірнішого: стани й буденні причини, які сюди пасують. Для кожного скажіть, які мої результати його підтверджують, а які свідчать проти.\n- Поясніть, як результати залежать один від одного і на що вказує їхнє поєднання, чого не видно з окремого значення.\n- Скажіть, що допоможе розрізнити ці пояснення: додаткові аналізи, запитання про симптоми, ліки й анамнез, огляд і лікар якого фаху цим займається.\n- Скажіть конкретно, що роблять за кожного ймовірного пояснення: що я можу змінити самостійно і яке лікування застосовують. Назвіть препарат або клас, форму, дозу і схему прийому, тривалість і що потрібно контролювати. Розрахуйте цифри саме для мене за моїм віком, статтю, вагою, показниками нирок і печінки та ліками з переліку нижче, покажіть розрахунок і назвіть настанову чи інструкцію, на яку він спирається. Якщо бракує потрібного, наприклад ваги, запитайте.\n- Звірте мої результати з ліками, добавками та іншими записами з переліку нижче: скажіть, коли котрийсь із них пояснює результат або впливає на нього, перевірте кожну дозу за моїми показниками, вкажіть взаємодії та контроль, який уже час зробити.\n- Якщо в картці є висновок або призначення лікаря, скажіть, чи відповідає воно тому, що показують результати, і що лишається без пояснення або без лікування.\n- Скажіть, який діагноз найімовірніший, наскільки ви впевнені і що його підтвердить або виключить. Ви не можете мене оглянути, тому запитайте про симптоми й анамнез, які змінили б ваше прочитання.\n- Завершіть тим, із чим іти до лікаря: які запитання поставити, які аналізи й лікування попросити за назвою, розраховані вами цифри і наскільки це терміново. Якщо щось виглядає небезпечним, скажіть про це на початку і вкажіть, яка допомога потрібна і як швидко.\n- Наприкінці наведіть питання на тему «{subject}», які варто поставити лікарю, і які ще вимірювання допомогли б уточнити відповідь.\n- Відповідайте {language}."
         ),
     },
     "ai.subject_heading": {
@@ -4352,6 +4381,8 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ai.about_age": {"en": "- Age: {age}", "uk": "- Вік: {age}"},
     "ai.about_sex": {"en": "- Sex at birth: {sex}", "uk": "- Стать при народженні: {sex}"},
     "ai.about_blood_type": {"en": "- Blood type: {value}", "uk": "- Група крові: {value}"},
+    "ai.profile_weight": {"en": "Weight: {value} kg", "uk": "Вага: {value} кг"},
+    "ai.profile_height": {"en": "Height: {value} cm", "uk": "Зріст: {value} см"},
     "ai.identity_withheld": {
         "en": "- My name and date of birth are deliberately left out. Age and sex are here because they change how a result is judged.",
         "uk": "- Ім’я та дату народження навмисно не вказано. Вік і стать вказано, бо від них залежить оцінка результату.",
@@ -4457,24 +4488,26 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ai.gaps_heading": {"en": "What this record does NOT contain", "uk": "Чого в цій картці НЕМАЄ"},
     "ai.gaps_body": {
         "en": (
-            "Ask me about these rather than assuming them. They are not stored anywhere in this application:\n"
+            "Ask me about these rather than assuming them. They are not stored in this application:\n"
             "\n"
-            "- Medication I take, doses, or when I started them\n"
-            "- Supplements, and how much of each\n"
             "- Symptoms, or how I actually feel\n"
-            "- Diagnoses I already have, and treatments already tried\n"
+            "- Diagnoses I already have, unless a document above states them\n"
             "- Family history\n"
-            "- Diet, alcohol, smoking, occupation, stress, pregnancy\n"
-            "- Surgeries, procedures and hospital stays\n"
+            "- Occupation and stress\n"
+            "- Any medicine, supplement, operation, illness, diet or training that is not in the list of my entries above\n"
             "- Anything measured but never uploaded here\n"
             "\n"
             "Also deliberately left out of this message:"
         ),
         "uk": (
-            "Про це запитайте мене, а не здогадуйтеся. У застосунку цих даних немає взагалі:\n\n- Ліки, які я приймаю, їхні дози і з якого часу\n- Добавки та їхні дози\n- Симптоми і моє реальне самопочуття\n- Діагнози, які вже встановлено, і лікування, яке вже пробували\n- Сімейний анамнез\n- Харчування, алкоголь, куріння, робота, стрес, вагітність\n- Операції, процедури та госпіталізації\n- Усе, що вимірювали, але не завантажили сюди\n\nКрім того, у це повідомлення навмисно не ввійшло:"
+            "Про це запитайте мене, а не здогадуйтеся. У застосунку цих даних немає:\n\n- Симптоми і моє реальне самопочуття\n- Діагнози, які вже встановлено, якщо їх не названо в документах вище\n- Сімейний анамнез\n- Робота і стрес\n- Будь-які ліки, добавки, операції, хвороби, харчування чи тренування, яких немає в переліку моїх записів вище\n- Усе, що вимірювали, але не завантажили сюди\n\nКрім того, у це повідомлення навмисно не ввійшло:"
         ),
     },
     "ai.gaps_excluded": {"en": "not included", "uk": "не включено"},
+    "ai.factors_heading": {"en": "Medicines and other entries I recorded", "uk": "Мої записи про ліки та інше"},
+    "ai.factors_none": {"en": "None recorded. Ask me what I take.", "uk": "Нічого не записано. Запитайте, що я приймаю."},
+    "ai.factors_from": {"en": "from {date}", "uk": "з {date}"},
+    "ai.factors_range": {"en": "{start} to {end}", "uk": "{start} – {end}"},
     "ai.section_history": {"en": "Trends over time", "uk": "Динаміка показників"},
     "ai.section_devices": {"en": "Watch and device measurements", "uk": "Вимірювання з годинника та пристроїв"},
     "ai.section_findings": {"en": "Conclusions written in my reports", "uk": "Письмові висновки з моїх документів"},

@@ -188,7 +188,7 @@ def _device_detail(summary: dict) -> str:
 def build_tools(connection, owner_id: str) -> dict[str, chat.Tool]:
     """The read-only tools, every one bound to ``owner_id``."""
     from . import app as web
-    from .. import allergy, genetics, testplan
+    from .. import allergy, factors, genetics, testplan
     from .. import immunizations as vaccines
     from ..health import HEALTH_AREAS
     from ..i18n import translate_phrase
@@ -502,6 +502,40 @@ def build_tools(connection, owner_id: str) -> dict[str, chat.Tool]:
             out.append(f"{row(card)} [{', '.join(why)}{'' if need['preselected'] else ', optional'}]")
         return "\n".join(out)
 
+    def get_medicines(args: dict) -> str:
+        today = date.today()
+        wanted = _text(args, "medicine_id", 60)
+        if wanted.startswith("m:"):
+            wanted = wanted[2:].strip()
+        if not wanted:
+            return factors.chat_detail(connection, owner_id, today=today)
+        entry = factors.get(connection, owner_id, wanted, today=today)
+        if entry is None:
+            return "No such medicine or factor."
+        reference = None
+        if entry["reference_url"]:
+            reference = connection.execute(
+                "SELECT sections_json FROM drug_references WHERE source = 'tabletki' AND url = ?",
+                (entry["reference_url"],),
+            ).fetchone()
+        if reference is None:
+            sections = []
+        else:
+            sections = json.loads(reference[0])
+        section = _text(args, "section", 80).casefold()
+        if section:
+            if reference is None:
+                return "No instruction is stored for this entry."
+            for title, body in sections:
+                if section in str(title).casefold():
+                    return f"{title}:\n{body}"[:8000]
+            return "No such section. Sections: " + "; ".join(str(title) for title, _body in sections)
+        out = factors.chat_detail(connection, owner_id, today=today, factor_id=wanted)
+        if sections:
+            out += ("\ninstruction sections (official instruction for medical use, tabletki.ua): "
+                    + "; ".join(str(title) for title, _body in sections))
+        return out
+
     def schema(**properties: tuple[str, str]) -> dict:
         return {
             "type": "object",
@@ -534,6 +568,11 @@ def build_tools(connection, owner_id: str) -> dict[str, chat.Tool]:
         ("get_genetics", "Genetic, PCR infection and antibody tests.", NO_ARGUMENTS, get_genetics, lambda a: ""),
         ("get_test_plan", "What the test planner suggests measuring again, and why.", NO_ARGUMENTS,
          get_test_plan, lambda a: ""),
+        ("get_medicines", "Medicines, supplements, operations, illnesses, diet and training the person recorded: "
+         "doses, dates, reasons, effects on results, interactions, monitoring. With medicine_id: one entry and "
+         "the section titles of its official instruction. With medicine_id and section: that section's text.",
+         schema(medicine_id=("string", "m:id"), section=("string", "words from a section title")),
+         get_medicines, lambda a: ""),
     ]
 
     def wrapped(run: Callable[[dict], str]) -> Callable[[dict], str]:
@@ -550,8 +589,50 @@ def profile_summary(connection, owner_id: str) -> str:
     return _english(_profile_summary, connection, owner_id)
 
 
+def _body_line(connection, owner_id: str, patient, *, today: date) -> str:
+    """The body and lifestyle facts a dose or a risk depends on, as one line.
+
+    Weight and height follow the profile page: a device value displaces the
+    typed one (``app._measured_body``), so the assistant quotes the figure the
+    page shows, dated when a device supplied it.
+    """
+    from . import app as web
+
+    measured = web._measured_body(connection, owner_id)
+    values: dict[str, float] = {}
+    measures: list[str] = []
+    for field, label, unit in (("weight_kg", "weight", "kg"), ("height_cm", "height", "cm")):
+        if field in measured:
+            value = float(measured[field]["value"])
+            when = f" ({str(measured[field]['day'])[:10]})"
+        elif patient is not None and patient[field]:
+            value, when = float(patient[field]), ""
+        else:
+            continue
+        values[field] = value
+        measures.append(f"{label} {fx._num(value)} {unit}{when}")
+    if "weight_kg" in values and "height_cm" in values:
+        measures.append(f"BMI {values['weight_kg'] / (values['height_cm'] / 100) ** 2:.1f}")
+    parts = [", ".join(measures) or "weight and height not recorded (ask when a dose or a risk depends on them)"]
+    if patient is not None:
+        for column, label in (("activity_level", "activity"), ("smoking_status", "smoking"),
+                              ("alcohol_use", "alcohol"), ("cv_risk_category", "cardiovascular risk")):
+            if patient[column]:
+                parts.append(f"{label} {patient[column]}")
+        try:
+            due = date.fromisoformat(str(patient["pregnancy_due_date"])[:10])
+        except ValueError:
+            due = None
+        if due is not None and 0 <= (due - today).days <= 280:
+            parts.append(f"pregnant, due {due.isoformat()}")
+        if "planning_pregnancy" in patient.keys() and patient["planning_pregnancy"] == 1:
+            parts.append("planning a pregnancy")
+    return "body: " + "; ".join(parts)
+
+
 def _profile_summary(connection, owner_id: str) -> str:
     from . import app as web
+    from .. import factors
     from ..health import HEALTH_AREAS, age_on
     from ..i18n import translate_phrase
 
@@ -574,8 +655,10 @@ def _profile_summary(connection, owner_id: str) -> str:
         f"documents, latest {str(counts.get('latest_result') or '-')[:10]}; {findings} written conclusions; "
         f"{vaccinations} vaccination doses; {len(catalog) - len(labs)} device metrics, latest day "
         f"{counts.get('latest_device') or '-'}",
-        "not in this record unless a document states it: medications, symptoms, diagnoses, family history",
+        _body_line(connection, owner_id, patient, today=date.today()),
     ]
+    out += factors.chat_lines(connection, owner_id, today=date.today())
+    out.append("not in this record unless a document or the person states it: symptoms, diagnoses, family history")
     # The verdict and the interval it was judged against, nothing more: the
     # history, the guidance and the other readings are one get_metric away.
     attention = web._attention_cards(catalog)

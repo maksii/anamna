@@ -95,6 +95,7 @@ In a container the same command is `docker exec -it anamna /app/.venv/bin/anamna
 
 - **Lost the first-run setup code.** Restart the server while the database has no accounts: a new code is printed to the log on start (`docker logs anamna` in a container). Or set `ANAMNA_SETUP_CODE` before the first start. Or create the first account with `anamna init`, as above.
 - **A person forgot their password.** An administrator sets a new one on the Users page, `/admin/users`.
+- **Too many wrong attempts.** After a run of wrong passwords, doctor codes or links, the application pauses that sign-in, code or link for up to 15 minutes and says how many minutes are left. A pause ends on its own. An administrator sees every pause on the Users page under "Paused sign-ins and codes" and can release it there. Setting a new password for a person releases that person's pauses. Restarting the server clears all of them.
 - **The only administrator forgot theirs.** On the server, run `anamna set-password --email you@example.com --admin` (with uv: `uv run anamna set-password ...`). It asks for the new password twice and ends every session of that account. With `--admin` it also makes the account an administrator and re-enables it. In a container: `docker exec -it anamna /app/.venv/bin/anamna set-password --email you@example.com --admin`. Without a terminal, pass the password in the environment variable `ANAMNA_NEW_PASSWORD`: `docker exec -e ANAMNA_NEW_PASSWORD=... anamna /app/.venv/bin/anamna set-password --email you@example.com`.
 
 ## Backup, restore and upgrade
@@ -115,11 +116,23 @@ On the Profile page, under the security tab, a person can:
 
 These panels are not offered to a guest link or while someone views a shared record. The download always covers the signed-in account, never the record being viewed.
 
-An operator exports one account's whole record with `anamna export --email you@example.com --to record.zip`. An existing file is not overwritten. The ZIP holds CSV files of the observations, documents, vaccinations and device data, a `manifest.json`, and the original uploaded files in its `files/` folder. To move a record to another installation, upload those original files there.
+An operator exports one account's whole record with `anamna export --email you@example.com --to record.zip`. An existing file is not overwritten. The ZIP holds CSV files of the observations, documents, vaccinations, medicines and device data, a `manifest.json`, and the original uploaded files in its `files/` folder. To move a record to another installation, upload those original files there.
 
 ## Sharing a record
 
 A record can be shared with another account on the same server, read only or with full access. Read only shows everything the owner sees. Full access also lets that person ask the AI assistant about the record and order laboratory tests through the owner's laboratory account. Nobody a record is shared with can change it. A read-only viewer can save a selection of tests as a suggestion for the owner, the same way a doctor with a one-time code can. Shares that existed before the read-only level was added keep full access. A new share is read only unless its owner chooses full access.
+
+## Medicines and what else affects results
+
+The Medicines page holds what a person takes and what happens to them: medicines, supplements, operations and procedures, illnesses, diet, sport, anything else. Each entry has its dates, how it is taken, why, who prescribed it and an optional link to a document in the record.
+
+- **Reference card.** Each entry can say what it is for, the usual dosing, what it interacts with, what to check while it lasts and when to be careful, plus the results it raises, lowers or changes.
+- **AI suggestions.** With the AI assistant set up, a person can ask it to fill the reference card. For a medicine found on tabletki.ua the model works from the official instruction for medical use, and every suggestion shows the passage it was taken from. The application checks that passage is really in the instruction and says so when it is not. A suggestion enters the record only when the person accepts it, and it never overwrites what they wrote unless they choose to replace it. Text taken from a suggestion stays marked "AI" until the person rewrites it.
+- **On the charts.** A result's chart, the device charts and the blood pressure chart draw each entry as a line under the time axis for the time it lasted. An entry that lists an effect on that result also tints its period in the plot. The list under the chart says the same in words.
+- **In the verdicts.** A vitamin K antagonist (for example warfarin), a urate-lowering medicine (for example allopurinol) and an illness change how INR, uric acid and ferritin results taken in that period are judged. The entry needs its dates for this to apply.
+- **In the assistant.** The assistant reads the entries, checks results and doses against them and says when one of them explains a change.
+
+What leaves the server: the text typed into the name field goes to tabletki.ua to find the medicine, and the instruction page is fetched from there. Nothing about the person is sent. An administrator can switch this off on the AI page, `/admin/ai`, and medicines are then entered by hand. An AI suggestion sends the entry's name, dose and reason, the instruction text and the names of the person's other current entries to the configured AI provider.
 
 ## Ways to get data in
 

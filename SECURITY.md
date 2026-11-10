@@ -49,6 +49,8 @@ Anamna stores personal health information. Treat every installation as sensitive
   per-account limit is what bounds password guessing.
 - A record can be shared only with an account that already exists on the server. Sign-up does not
   verify email addresses, so keep sign-up closed unless you trust everyone who can reach the form.
+- The Medicines page looks medicine names up on tabletki.ua and fetches the instruction page from there. Only the text typed into the name field is sent. The server makes the request, so the site does not see the person's browser. An administrator can switch the lookup off on `/admin/ai`.
+- After too many wrong passwords, codes or links the application pauses that sign-in, code or link for up to 15 minutes, tells the person how long, and lets an administrator release it on `/admin/users`. The counters live in memory, so a restart clears them.
 - AI requests sent through OpenRouter are routed only to providers that do not store or train on
   prompts. An administrator can lift that on the AI page; decide deliberately, because the text
   sent is medical.

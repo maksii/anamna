@@ -291,7 +291,7 @@ def test_the_system_prompt_carries_the_rules_and_a_compact_english_profile(tmp_p
         reset_locale(token)
     prompt = chat.system_prompt(locale="uk", today="2026-11-09", profile=profile, viewer_is_owner=True)
     for rule in ("Cite what you used", "say so plainly", "Never call a value verified",
-                 "Do not add emergency warnings", "call 112", "Answer in Ukrainian", "Today is 2026-11-09"):
+                 "say so first and plainly", "Answer in Ukrainian", "Today is 2026-11-09"):
         assert rule in prompt, rule
     # Age and sex travel; the name and date of birth do not.
     assert "Test Patient" not in prompt and "1990-03-14" not in prompt

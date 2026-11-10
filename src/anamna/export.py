@@ -30,6 +30,8 @@ _OWNED_TABLES = {
     "vaccinations.csv": "immunizations",
     "device_metric_days.csv": "device_metric_days",
     "device_workouts.csv": "device_workouts",
+    "medicines.csv": "factors",
+    "medicine_effects.csv": "factor_effects",
 }
 
 
@@ -160,6 +162,8 @@ def write_record_archive(settings: Settings, user_id: str, target: BinaryIO) -> 
         "device_imports": len(device_rows),
         "device_metric_days": len(owned["device_metric_days.csv"][1]),
         "device_workouts": len(workout_rows),
+        "medicines": len(owned["medicines.csv"][1]),
+        "medicine_effects": len(owned["medicine_effects.csv"][1]),
         "device_files": device_files,
         "files": len(files),
         "missing_files": missing,

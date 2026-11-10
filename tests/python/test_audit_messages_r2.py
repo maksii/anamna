@@ -102,6 +102,15 @@ def test_assistant_prompts_carry_the_differential_and_the_doctor_bullet():
         assert "найімовірнішого" in MESSAGES[key]["uk"], key
 
 
+def test_assistant_prompts_ask_for_worked_figures_and_drop_the_no_doses_rule():
+    for key in ("ai.task_body", "ai.task_body_scoped"):
+        english, ukrainian = MESSAGES[key]["en"], MESSAGES[key]["uk"]
+        assert "without personal doses" not in english, key
+        assert "без персональних доз" not in ukrainian, key
+        assert "Work the figures out for me" in english, key
+        assert "Розрахуйте цифри саме для мене" in ukrainian, key
+
+
 def test_guideline_label_names_the_2025_guideline():
     assert not any("ACC/AHA 2017" in text for text in _message_texts())
 

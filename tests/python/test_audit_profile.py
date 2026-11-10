@@ -292,7 +292,7 @@ def test_the_change_password_form_stops_checking_guesses_at_the_limit(tmp_path: 
             data={**form, "current_password": PASSWORD},
             follow_redirects=False,
         )
-        assert blocked.headers["location"] == "/profile?error=profile.error_password_throttled"
+        assert blocked.headers["location"] == "/profile?error=profile.error_password_throttled&wait=15"
 
 
 def test_the_admin_ai_page_stores_the_data_policy_and_an_unchecked_box_means_deny(tmp_path: Path, monkeypatch):

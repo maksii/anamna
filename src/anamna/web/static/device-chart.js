@@ -132,6 +132,14 @@
     label.textContent = band.label; svg.append(label);
   };
 
+  // Medicines and other entries of the person, drawn under the time axis.
+  const F = C.factorSource('device');
+  const stamp = point => C.asDate(point.date).getTime();
+  const factorsNow = () => {
+    const source = pending ? [] : selected();
+    return source.length ? C.factorsIn(F.list(), stamp(source[0]), stamp(source.at(-1))) : [];
+  };
+
   const draw = (W, H) => {
     inspectPlot = null;
     pointNodes = [];
@@ -149,7 +157,8 @@
     // negative (audit C4) and never fractional.
     const A = C.axis(lo, hi, {integral, zeroFloor: lo >= 0});
     const L = C.textWidth(svg, A.ticks.map(A.format), 'chart-axis-label') + 12;
-    const R = 14, T = 14, B = 30, plot = Math.max(40, W - L - R);
+    const factors = factorsNow(), room = C.factorRoom(factors.length);
+    const R = 14, T = 14, B = 30 + room, plot = Math.max(40, W - L - R);
     const points = globalThis.AnamnaExperience.thinDaily(source, C.capacity(plot));
     const notes = points.length < source.length
       ? [C.text('chart.averaged', {total: source.length, shown: points.length})] : [];
@@ -161,6 +170,14 @@
     svg.append(C.el('rect', {x: L, y: T, width: plot, height: H - T - B, fill: 'transparent', 'pointer-events': 'all', 'aria-hidden': 'true'}));
 
     if (bandLow !== null || bandHigh !== null) drawBand({L, T, plot, A, y, bandLow, bandHigh}, notes);
+    if (room) {
+      const overflow = C.factorLanes(svg, factors, {
+        xOf: C.timeX(points.map(stamp), points.map((_, index) => x(index))),
+        from: stamp(source[0]), to: stamp(source.at(-1)), left: L, right: W - R,
+        plotTop: T, plotBottom: H - B, lanes: H - room + 2, more: F.more,
+      });
+      if (overflow) notes.push(overflow);
+    }
     A.ticks.forEach(value => {
       const yy = y(value);
       svg.append(C.el('line', {x1: L, x2: W - R, y1: yy, y2: yy, class: 'chart-gridline'}));
@@ -215,7 +232,7 @@
     C.xLabels(points, stops, format).forEach((text, order) => {
       if (!text) return;
       const label = C.el('text', {
-        x: x(stops[order]), y: H - 9, class: 'chart-date-label',
+        x: x(stops[order]), y: H - 9 - room, class: 'chart-date-label',
         'text-anchor': anchorFor(order, stops.length - 1),
       });
       label.textContent = text; svg.append(label);
@@ -223,7 +240,8 @@
     C.note(host, notes.join(' '));
   };
 
-  const repaint = C.responsive(svg, host, draw);
+  const repaint = C.responsive(svg, host, draw, undefined, () => C.factorRoom(factorsNow().length));
+  F.onToggle(repaint);
   // A switch that needs the server marks its button busy until the data arrives.
   const track = (button, work) => globalThis.anamnaBusy ? globalThis.anamnaBusy.track(button, work) : work;
   document.querySelectorAll('[data-days]').forEach(button => button.addEventListener('click', () => {

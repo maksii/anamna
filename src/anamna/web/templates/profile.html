@@ -94,6 +94,12 @@
         <label>{{ t('profile.pregnancy_due_date') }}<input name="pregnancy_due_date" type="date" value="{{ (patient.pregnancy_due_date or '') if patient else '' }}" aria-describedby="hint-pregnancy-due-date"></label>
         <p class="tiny muted" id="hint-pregnancy-due-date">{{ t('profile.pregnancy_due_date_hint') }}</p>
       </div>
+      <div class="an-profile-field">
+        <label class="an-med-check" for="planning-pregnancy">
+          <input id="planning-pregnancy" type="checkbox" name="planning_pregnancy" value="1" aria-describedby="hint-planning-pregnancy" {{ 'checked' if patient and patient.planning_pregnancy else '' }}>
+          <span>{{ t('profile.planning_pregnancy') }}<span class="an-field-help" id="hint-planning-pregnancy">{{ t('profile.planning_pregnancy_help') }}</span></span>
+        </label>
+      </div>
       {% endif %}
       <div class="an-profile-field">
         <label>{{ t('profile.timezone') }}

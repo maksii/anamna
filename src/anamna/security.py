@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import math
 import re
 import secrets
 import uuid
@@ -26,7 +27,7 @@ LOGIN_ATTEMPT_LIMIT = 10
 LOGIN_ACCOUNT_LIMIT = 20
 LOGIN_ATTEMPT_WINDOW = timedelta(minutes=15)
 #: Wrong current passwords tolerated on the change-password form per window: whoever holds an unattended session must not be able to guess the password it belongs to.
-PASSWORD_CHANGE_LIMIT = 5
+PASSWORD_CHANGE_LIMIT = 10
 
 
 def password_digest(password: str, salt: bytes) -> bytes:
@@ -447,10 +448,11 @@ DOCTOR_PIN_REDEEM_WINDOW = timedelta(minutes=15)
 DOCTOR_PIN_ACCESS = timedelta(hours=24)
 #: Failed codes tolerated per client and across the whole server inside
 #: LOGIN_ATTEMPT_WINDOW.  The global cap is the real bound: it limits every
-#: code's whole 15-minute life to 30 guesses out of 10^6, wherever they come
-#: from.  The per-client one keeps a single fat-fingered clinic from spending it.
-DOCTOR_PIN_CLIENT_LIMIT = 5
-DOCTOR_PIN_GLOBAL_LIMIT = 30
+#: code's whole 15-minute life to 60 guesses out of 10^6, wherever they come
+#: from.  The per-client one keeps a single fat-fingered clinic from spending it,
+#: and is high enough that nine mistyped codes still leave the tenth one to try.
+DOCTOR_PIN_CLIENT_LIMIT = 10
+DOCTOR_PIN_GLOBAL_LIMIT = 60
 DOCTOR_PIN_GLOBAL_KEY = "doctor-pin:*"
 #: Stored label of a PIN-opened guest row; the page shows ``doctor.token_name``.
 DOCTOR_PIN_LABEL = "Doctor PIN"
@@ -596,6 +598,22 @@ def set_open_registration(settings: Settings, enabled: bool) -> None:
 # ponytail: in-process counter, so it resets on restart and is per-worker.
 # Move the table into SQLite if this ever runs behind more than one worker.
 _attempts: dict[str, list[datetime]] = {}
+#: The limit each key was last checked against, so `retry_minutes` and
+#: `blocked` know when a key stops being blocked.
+_limits: dict[str, int] = {}
+#: Keys without a live stamp are dropped from `_limits` once it grows past this.
+_LIMITS_FLOOR = 4096
+
+
+def _live_stamps(client: str) -> list[datetime]:
+    """The stamps of this key still inside the window, oldest first; prunes the rest."""
+    cutoff = datetime.now(UTC) - LOGIN_ATTEMPT_WINDOW
+    recent = sorted(stamp for stamp in _attempts.get(client, ()) if stamp > cutoff)
+    if recent:
+        _attempts[client] = recent
+    else:
+        _attempts.pop(client, None)
+    return recent
 
 
 def throttled(client: str, limit: int = LOGIN_ATTEMPT_LIMIT) -> bool:
@@ -607,22 +625,45 @@ def throttled(client: str, limit: int = LOGIN_ATTEMPT_LIMIT) -> bool:
     credential-stuffing target and a way to saturate the box from a handful of
     connections.
     """
-    cutoff = datetime.now(UTC) - LOGIN_ATTEMPT_WINDOW
-    recent = [stamp for stamp in _attempts.get(client, ()) if stamp > cutoff]
-    if recent:
-        _attempts[client] = recent
-    else:
-        _attempts.pop(client, None)
-    return len(recent) >= limit
+    _limits[client] = limit
+    if len(_limits) > _LIMITS_FLOOR:
+        for key in [key for key in _limits if key != client and key not in _attempts]:
+            del _limits[key]
+    return len(_live_stamps(client)) >= limit
+
+
+def retry_minutes(client: str) -> int:
+    """Whole minutes until this key stops being blocked, rounded up; 0 when it is free.
+
+    A key is blocked while it holds at least `limit` stamps inside the window,
+    so it frees itself when the stamp `limit` places from the newest one leaves.
+    """
+    recent = _live_stamps(client)
+    limit = _limits.get(client, LOGIN_ATTEMPT_LIMIT)
+    if len(recent) < limit:
+        return 0
+    free_at = recent[len(recent) - limit] + LOGIN_ATTEMPT_WINDOW
+    seconds = (free_at - datetime.now(UTC)).total_seconds()
+    return max(1, math.ceil(seconds / 60))
+
+
+def blocked() -> list[dict]:
+    """Every key that is paused right now, with the minutes until it frees itself."""
+    paused = []
+    for key in sorted(_attempts):
+        minutes = retry_minutes(key)
+        if minutes:
+            paused.append({"key": key, "minutes": minutes})
+    return paused
 
 
 def record_attempt(client: str) -> None:
     """Count one attempt against this address.
 
     Sign-in records only failures — a person with the right password should
-    never be locked out of their own record.  Sign-up records every attempt,
-    successful or not, because an address creating ten accounts in the window
-    is the abuse case rather than the honest one.
+    never be locked out of their own record.  Sign-up records every submission
+    that passes form validation, successful or not, because an address creating
+    ten accounts in the window is the abuse case rather than the honest one.
     """
     _attempts.setdefault(client, []).append(datetime.now(UTC))
     if len(_attempts) > 4096:  # a floor under memory growth from spoofed addresses
@@ -630,10 +671,21 @@ def record_attempt(client: str) -> None:
         for key, stamps in _attempts.copy().items():
             if not any(stamp > cutoff for stamp in stamps):
                 del _attempts[key]
+                _limits.pop(key, None)
 
 
 def clear_attempts(client: str) -> None:
     _attempts.pop(client, None)
+    _limits.pop(client, None)
+
+
+def clear_attempts_matching(prefix: str) -> int:
+    """Clear every key that starts with ``prefix``; returns how many were cleared."""
+    keys = {key for key in (*_attempts, *_limits) if key.startswith(prefix)}
+    for key in keys:
+        _attempts.pop(key, None)
+        _limits.pop(key, None)
+    return len(keys)
 
 
 #: Set on every successful sign-in.  It proves that this browser has signed in

@@ -1,0 +1,200 @@
+{% extends "base.html" %}
+{% from "_components.html" import plural_t with context %}
+{% from "_factors.html" import effect_chip with context %}
+{% block title %}{{ factor.name }}{% endblock %}
+
+{% set can_edit = csrf_token and not guest and not viewing %}
+
+{#- One line of the reference card. A text taken from an AI suggestion keeps
+    saying so until the person rewrites it. -#}
+{% macro reference_row(name, label) -%}
+{% if factor[name] %}
+<div>
+  <dt>{{ label }}{% if name in factor.ai_fields %} <span class="an-ai-tag" title="{{ t('med.ai_tag_help') }}">{{ t('med.ai_tag') }}</span><span class="visually-hidden">{{ t('med.ai_tag_help') }}</span>{% endif %}</dt>
+  <dd>{{ factor[name] }}</dd>
+</div>
+{% endif %}
+{%- endmacro %}
+
+{#- A button that posts one action for this entry. -#}
+{% macro act(action, label, css='secondary', what='', busy='', confirm='') -%}
+<form action="{{ factor.url }}" method="post"{% if confirm %} data-confirm="{{ confirm }}"{% endif %}>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="action" value="{{ action }}">
+  {% if what != '' %}<input type="hidden" name="what" value="{{ what }}">{% endif %}
+  <button class="{{ css }}" type="submit"{% if busy %} data-busy="{{ busy }}"{% endif %}>{{ label }}</button>
+</form>
+{%- endmacro %}
+
+{% block content %}
+<nav class="an-med-crumb" aria-label="{{ t('med.title') }}"><a href="/medicines"><span aria-hidden="true">←</span> {{ t('med.back') }}</a></nav>
+
+<header class="an-med-hero">
+  <div>
+    <p class="an-med-hero__tags">
+      <span class="pill">{{ factor.kind_label }}</span>
+      <span class="pill" data-med-status="{{ factor.status }}">{{ factor.status_label }}</span>
+    </p>
+    <h1>{{ factor.name }}{% if factor.strength %} <small>{{ factor.strength }}</small>{% endif %}</h1>
+    {% if factor.substance %}<p class="an-med-hero__substance">{{ factor.substance }}{% if factor.atc_code %} · <abbr title="{{ t('med.field.atc_help') }}">{{ t('med.field.atc') }}</abbr> {{ factor.atc_code }}{% endif %}</p>{% endif %}
+  </div>
+  {% if can_edit %}
+  <div class="an-med-hero__actions">
+    <a class="primary" href="{{ factor.url }}/edit">{{ t('med.edit') }}</a>
+    {% if factor.status == 'current' and not factor.is_point %}{{ act('stop', t('med.stop'), confirm=t('med.stop_confirm')) }}{% endif %}
+  </div>
+  {% endif %}
+</header>
+
+{% if error %}<div class="alert error" role="alert">{{ error }}</div>{% endif %}
+{% if saved %}<div class="alert" role="status">{{ saved }}</div>{% endif %}
+
+<section class="panel an-med-panel" aria-labelledby="med-about">
+  <h2 id="med-about">{{ t('med.detail.about') }}</h2>
+  <dl class="an-med-facts">
+    <div><dt>{{ t('med.label.period') }}</dt><dd>{% if factor.approximate %}<abbr title="{{ t('med.approx') }}">≈</abbr> {% endif %}{{ factor.period_text }}{% if factor.duration_text %} · {{ factor.duration_text }}{% endif %}</dd></div>
+    {% if factor.dose %}<div><dt>{{ t('med.label.dose') }}</dt><dd>{{ factor.dose }}</dd></div>{% endif %}
+    {% if factor.schedule %}<div><dt>{{ t('med.label.schedule') }}</dt><dd>{{ factor.schedule }}</dd></div>{% endif %}
+    {% if factor.reason %}<div><dt>{{ t('med.label.reason') }}</dt><dd>{{ factor.reason }}</dd></div>{% endif %}
+    {% if factor.prescriber %}<div><dt>{{ t('med.label.prescriber') }}</dt><dd>{{ factor.prescriber }}</dd></div>{% endif %}
+    {% if factor.document %}<div><dt>{{ t('med.label.document') }}</dt><dd><a class="an-med-link" href="/documents/{{ factor.document.id }}">{{ factor.document.label }}</a></dd></div>{% endif %}
+    {% if factor.notes %}<div class="an-med-facts__wide"><dt>{{ t('med.label.notes') }}</dt><dd>{{ factor.notes }}</dd></div>{% endif %}
+  </dl>
+  {% for note in factor.fact_notes %}
+  <p class="alert neutral">{{ note }}</p>
+  {% endfor %}
+</section>
+
+{% if can_edit and pending and not pending.empty %}
+<section class="panel an-med-panel an-med-suggestions" id="suggestions" aria-labelledby="med-sug">
+  <h2 id="med-sug">{{ t('med.sug.heading') }}</h2>
+  <p class="an-med-section__lead">
+    {% if pending.source %}
+    {{ t('med.sug.source', name=pending.source.shown_for) if pending.source.shown_for else t('med.sug.source_plain') }}
+    <a class="an-med-link" href="{{ pending.source.url }}" target="_blank" rel="noreferrer noopener">{{ t('med.sug.open_source') }}</a>
+    {% else %}{{ t('med.sug.no_source') }}{% endif %}
+    {% if pending.created_text %}<span class="an-field-help">{{ t('med.sug.when', date=pending.created_text) }}</span>{% endif %}
+  </p>
+  <div class="an-med-sug-all">
+    {{ act('apply', t('med.sug.apply_all'), 'primary', 'all') }}
+    {{ act('apply', t('med.sug.dismiss'), 'secondary', 'dismiss') }}
+  </div>
+
+  {% for item in pending.fields %}
+  <article class="an-med-sug">
+    <h3>{{ item.label }}</h3>
+    <p class="an-med-sug__text">{{ item.text }}</p>
+    {% if item.quote %}
+    <blockquote class="an-med-quote"><span>{{ t('med.sug.quote') }}</span> «{{ item.quote }}»</blockquote>
+    {% else %}
+    <p class="an-med-unquoted">{{ t('med.sug.unquoted') }}</p>
+    {% endif %}
+    {% if item.current %}
+    <p class="an-med-sug__yours"><span>{{ t('med.sug.yours') }}</span> {{ item.current }}</p>
+    {{ act('apply', t('med.sug.replace'), 'secondary', item.name) }}
+    {% else %}
+    {{ act('apply', t('med.sug.use'), 'secondary', item.name) }}
+    {% endif %}
+  </article>
+  {% endfor %}
+
+  {% if pending.effects %}
+  <h3 class="an-med-sug-effects">{{ t('med.sug.effects_heading') }}</h3>
+  <ul class="an-med-sug-list">
+    {% for item in pending.effects %}
+    <li>
+      <div>
+        <p>{{ effect_chip(item) }}</p>
+        {% if item.note %}<p class="an-med-sug__text">{{ item.note }}</p>{% endif %}
+        {% if item.quote %}
+        <blockquote class="an-med-quote"><span>{{ t('med.sug.quote') }}</span> «{{ item.quote }}»</blockquote>
+        {% else %}
+        <p class="an-med-unquoted">{{ t('med.sug.unquoted') }}</p>
+        {% endif %}
+      </div>
+      {{ act('apply', t('med.effect.submit'), 'secondary', 'effect:' ~ item.index) }}
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>
+{% endif %}
+
+<section class="panel an-med-panel" aria-labelledby="med-effects">
+  <h2 id="med-effects">{{ t('med.detail.effects_heading') }}</h2>
+  {% if factor.effects %}
+  <p class="an-med-section__lead">{{ t('med.detail.effects_lead') }}</p>
+  <ul class="an-med-effect-rows">
+    {% for effect in factor.effects %}
+    <li>
+      <div>
+        <p class="an-med-effect-rows__head">{{ effect_chip(effect, link=true) }}{% if effect.origin == 'ai' %} <span class="an-ai-tag" title="{{ t('med.ai_tag_help') }}">{{ t('med.ai_tag') }}</span><span class="visually-hidden">{{ t('med.effect.origin_ai') }}</span>{% endif %}</p>
+        {% if effect.note %}<p class="an-med-sug__text">{{ effect.note }}</p>{% endif %}
+        {% if effect.evidence %}<blockquote class="an-med-quote"><span>{{ t('med.effect.evidence') }}</span> «{{ effect.evidence }}»</blockquote>{% endif %}
+      </div>
+      {% if can_edit %}
+      <form action="{{ factor.url }}" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="action" value="effect_remove">
+        <input type="hidden" name="effect_id" value="{{ effect.id }}">
+        <button class="secondary" type="submit" aria-label="{{ t('med.effect.remove_aria', name=effect.label) }}">{{ t('med.effect.remove') }}</button>
+      </form>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted">{{ t('med.detail.effects_none') }}</p>
+  {% endif %}
+  {% if can_edit %}
+  <details class="an-med-add-effect">
+    <summary>{{ t('med.effect.add') }}</summary>
+    <form class="an-med-form" action="{{ factor.url }}" method="post" autocomplete="off">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="action" value="effect_add">
+      <label class="an-med-field" for="med-effect-label">{{ t('med.effect.result') }}
+        <input id="med-effect-label" name="label" list="med-effect-options" required maxlength="200" aria-describedby="med-effect-label-help">
+        <span id="med-effect-label-help" class="an-field-help">{{ t('med.effect.result_help') }}</span>
+      </label>
+      <datalist id="med-effect-options">{% for name in effect_options %}<option value="{{ name }}">{% endfor %}</datalist>
+      <label class="an-med-field" for="med-effect-direction">{{ t('med.effect.direction') }}
+        <select id="med-effect-direction" name="direction">
+          {% for key in ('raises', 'lowers', 'changes') %}<option value="{{ key }}">{{ t('med.dir.' ~ key) }}</option>{% endfor %}
+        </select>
+      </label>
+      <label class="an-med-field" for="med-effect-note">{{ t('med.effect.note') }}
+        <input id="med-effect-note" name="note" maxlength="500">
+      </label>
+      <div class="an-med-actions"><button class="primary" type="submit">{{ t('med.effect.submit') }}</button></div>
+    </form>
+  </details>
+  {% endif %}
+</section>
+
+<section class="panel an-med-panel" aria-labelledby="med-reference">
+  <h2 id="med-reference">{{ t('med.form.section_reference') }}</h2>
+  {% if factor.has_reference_text %}
+  <dl class="an-med-reference">
+    {{ reference_row('purpose', t('med.field.purpose')) }}
+    {{ reference_row('usual_dose', t('med.field.usual_dose')) }}
+    {{ reference_row('interactions', t('med.field.interactions')) }}
+    {{ reference_row('monitoring', t('med.field.monitoring')) }}
+    {{ reference_row('cautions', t('med.field.cautions')) }}
+  </dl>
+  {% else %}
+  <p class="muted">{{ t('med.detail.reference_empty') }}</p>
+  {% endif %}
+  {% if factor.reference_url %}
+  <p><a class="an-med-link" href="{{ factor.reference_url }}" target="_blank" rel="noreferrer noopener">{{ t('med.reference.link') }}</a></p>
+  {% endif %}
+  {% if can_edit %}
+  <div class="an-med-actions">
+    {% if ai_ready %}
+    {{ act('research', t('med.detail.ask_ai_again') if (factor.has_reference_text or pending_at) else t('med.detail.ask_ai'), 'secondary', busy=t('med.detail.asking')) }}
+    {% endif %}
+    {% if not factor.has_reference_text %}<a class="secondary" href="{{ factor.url }}/edit#med-reference">{{ t('med.detail.fill_yourself') }}</a>{% endif %}
+  </div>
+  {% if ai_ready %}<p class="an-field-help">{{ t('med.form.research_help') }}</p>{% else %}<p class="an-field-help">{{ t('med.form.research_off') }}</p>{% endif %}
+  {% endif %}
+</section>
+{% endblock %}

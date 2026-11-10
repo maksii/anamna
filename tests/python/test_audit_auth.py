@@ -19,7 +19,8 @@ from anamna.web.app import create_app
 from test_web_security import PASSWORD, settings_for
 
 
-_THROTTLED = "/login?error=throttled"
+_THROTTLED = "/login?error=throttled&wait=15"
+_THROTTLED_ACCOUNT = "/login?error=throttled_account&wait=15"
 
 
 @pytest.fixture(autouse=True)
@@ -60,7 +61,7 @@ def test_account_meter_holds_when_guesses_come_from_many_addresses(tmp_path: Pat
             client, "victim@example.test", PASSWORD, **{"cf-connecting-ip": "203.0.113.9"},
         )
         assert response.status_code == 303
-        assert response.headers["location"] == _THROTTLED
+        assert response.headers["location"] == _THROTTLED_ACCOUNT
 
 
 def test_successful_sign_in_to_another_account_does_not_reset_the_address_meter(tmp_path: Path):

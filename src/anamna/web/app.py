@@ -70,6 +70,7 @@ from .telegram_routes import register_telegram_routes
 from .changes import register_changes_routes, verdict_state
 from .labsync_routes import register_routes as register_labsync_routes
 from .testplan_routes import register_routes as register_testplan_routes
+from .factors_routes import register_routes as register_factors_routes
 from .allergy_routes import register_routes as register_allergy_routes
 from .genetics_routes import register_routes as register_genetics_routes
 from .chat_routes import register_routes as register_chat_routes
@@ -99,6 +100,8 @@ from ..devices.timezone import timezone_choices, user_timezone, valid_timezone
 from .experience import build_overview, build_area_experience
 from . import search as record_search
 from .. import immunizations as immunization_records
+from .. import factors, drugref
+from . import factors_view
 from ..devices import queries as device_queries
 from ..locales.concepts_en import CONCEPT_NAMES_EN
 from ..locales.concepts_uk import CONCEPT_NAMES_UK
@@ -260,6 +263,7 @@ from ..security import (
     DOCTOR_PIN_GLOBAL_LIMIT,
     DOCTOR_PIN_REDEEM_WINDOW,
     LOGIN_ACCOUNT_LIMIT,
+    LOGIN_ATTEMPT_LIMIT,
     LOGIN_ATTEMPT_WINDOW,
     MINIMUM_PASSWORD_LENGTH,
     PASSWORD_CHANGE_LIMIT,
@@ -270,7 +274,9 @@ from ..security import (
     access_token_row,
     access_token_user,
     authenticate,
+    blocked as blocked_meters,
     clear_attempts,
+    clear_attempts_matching,
     create_access_token,
     create_doctor_pin,
     create_session,
@@ -288,6 +294,7 @@ from ..security import (
     list_sessions,
     record_attempt,
     redeem_doctor_pin,
+    retry_minutes,
     revoke_access_token,
     revoke_session,
     revoke_other_sessions,
@@ -306,7 +313,6 @@ _DOCUMENTS_URL = "/documents"
 _LOGIN_URL = "/login"
 _SETUP_URL = "/setup"
 _setup_log = logging.getLogger("anamna.setup")
-_LOGIN_THROTTLED_URL = "/login?error=throttled"
 _DOCTOR_URL = "/doctor"
 _PROFILE_URL = "/profile"
 _VACCINATIONS_URL = "/vaccinations"
@@ -418,6 +424,9 @@ GUEST_ALLOWED_PREFIXES = (
     # (POST /plan-tests/suggest below); ordering stays the patient's.  The
     # planner links the allergy and DNA pages, and the menu vaccinations.
     "/plan-tests", "/allergy", "/genetics", _VACCINATIONS_URL,
+    # The medicines page is the record a doctor reads next to the results; its
+    # writes stay refused to a guest by the routes themselves.
+    "/medicines",
 )
 #: The POSTs a guest may still make.  None of them touch the record: they end
 #: the visit, change how it is displayed, or sign the visitor in as themselves,
@@ -1750,14 +1759,24 @@ def _field(row, name: str):
         return None
 
 
-def _sample_facts(connection, row) -> dict[str, object]:
+def _factor_periods(connection, owner_user_id: str) -> list[tuple[str, str, str | None]]:
+    """(fact, start, end) for every medicine or illness the record holds; once per request."""
+    return _cached(
+        ("factor_periods", owner_user_id),
+        lambda: factors.fact_periods(connection, owner_user_id),
+    )
+
+
+def _sample_facts(connection, row, owner_user_id: str | None = None) -> dict[str, object]:
     """Facts about one stored result that a published band may refuse:
-    a sample the person marked as not fasting, and a result dated within a
-    pregnancy recorded in the profile."""
+    a sample the person marked as not fasting, a result dated within a
+    pregnancy recorded in the profile, and the medicines and illnesses the
+    person had going on the day the sample was taken."""
     facts: dict[str, object] = {}
     if _field(row, "sample_condition") == "not_fasting":
         facts["not_fasting_sample"] = True
-    due = _pregnancy_due_date(connection, _field(row, "owner_user_id"))
+    owner_user_id = owner_user_id or _field(row, "owner_user_id")
+    due = _pregnancy_due_date(connection, owner_user_id)
     observed = str(_field(row, "observed_at") or "")[:10]
     if due is not None and observed:
         try:
@@ -1766,6 +1785,9 @@ def _sample_facts(connection, row) -> dict[str, object]:
             taken = None
         if taken is not None and due - timedelta(days=PREGNANCY_DAYS) <= taken <= due:
             facts["pregnant"] = True
+    if owner_user_id and observed:
+        for fact in factors.facts_on(_factor_periods(connection, owner_user_id), observed):
+            facts[fact] = True
     return facts
 
 
@@ -2120,7 +2142,7 @@ def _reading_verdict(
         vendor_interpretation=vendor_interpretation,
         clinical_context={
             **_clinical_context(connection, row.get("owner_user_id")),
-            **_sample_facts(connection, row),
+            **_sample_facts(connection, row, row.get("owner_user_id")),
         },
     )
     return unit_source, verdict
@@ -3318,6 +3340,10 @@ def _bp_block(connection, owner_user_id: str, rows: list[dict[str, object]]) -> 
             "diastolic": _bp_series(connection, owner_user_id, diastolic),
         },
         "weekly": weekly,
+        "factor_periods": factors_view.chart_periods(
+            connection, owner_user_id, ("systolic-blood-pressure", "diastolic-blood-pressure"),
+            locale=get_locale(), today=date.today(),
+        ),
     }
 
 
@@ -4435,7 +4461,7 @@ def _document_observation_item(
         vendor_interpretation=vendor_reading,
         clinical_context={
             **_clinical_context(connection, owner_user_id),
-            **_sample_facts(connection, row),
+            **_sample_facts(connection, row, owner_user_id),
         },
     )
     row["url"] = f"/metrics/{row['concept_id']}"
@@ -5947,7 +5973,12 @@ async def http_error_page(request: Request, exc: StarletteHTTPException):
     )
 
 @router.get(_LOGIN_URL, response_class=HTMLResponse)
-def login_page(request: Request, error: str | None = None, notice: str | None = None):
+def login_page(
+    request: Request,
+    error: str | None = None,
+    notice: str | None = None,
+    wait: str | None = None,
+):
     # A guest is signed in to somebody else's record, not to an account of
     # their own, so bouncing them back to it is the one thing they did not
     # ask for.  They get the form; signing in replaces the guest session.
@@ -5959,8 +5990,8 @@ def login_page(request: Request, error: str | None = None, notice: str | None = 
         return RedirectResponse("/", status_code=303)
     if error in {"invalid", "Invalid email or password"}:
         error = t("login.error")
-    elif error == "throttled":
-        error = t("login.error_throttled")
+    elif error in _THROTTLE_MESSAGES:
+        error = t(_THROTTLE_MESSAGES[error], minutes=_minutes_text(_wait_minutes(wait)))
     elif error == "closed":
         error = t("register.closed")
     elif error == "token":
@@ -6028,6 +6059,38 @@ def _visitor_key(request: Request) -> str:
     forwarded = (request.headers.get("cf-connecting-ip") or "").strip()[:64]
     return forwarded or _client_key(request)
 
+#: Throttle redirects carry ``?error=<key>&wait=<minutes>``; the page turns the key
+#: into the sentence that names the meter which refused, and says how long it lasts.
+_THROTTLE_MESSAGES = {
+    "throttled": "login.error_throttled",
+    "throttled_account": "login.error_throttled_account",
+    "throttled_device": "login.error_throttled_device",
+    "throttled_token": "token.error_throttled",
+}
+_WAIT_MINUTES_MAX = int(LOGIN_ATTEMPT_WINDOW.total_seconds() // 60)
+
+def _minutes_text(count: int) -> str:
+    return t_plural(_DOCTOR_MINUTES_KEY, count)
+
+def _wait_minutes(raw: str | None) -> int:
+    """The ``wait`` query value, clamped to 1..15 minutes; 15 when it is not a number."""
+    try:
+        minutes = int(raw or "")
+    except ValueError:
+        return _WAIT_MINUTES_MAX
+    return min(max(minutes, 1), _WAIT_MINUTES_MAX)
+
+def _throttle_redirect(path: str, error: str, client: str) -> RedirectResponse:
+    """Send a refused request back to its form, naming the meter and the wait."""
+    return RedirectResponse(f"{path}?error={error}&wait={retry_minutes(client)}", status_code=303)
+
+def _first_blocked(*meters: tuple[str, int]) -> str | None:
+    """The first ``(key, limit)`` meter that refuses now, checked in the order given."""
+    for key, limit in meters:
+        if throttled(key, limit):
+            return key
+    return None
+
 @router.post(_LOGIN_URL)
 def login(
     request: Request,
@@ -6048,7 +6111,7 @@ def login(
     if nonce is not None:
         device = f"login-dev:{account_key}:{nonce}"
         if throttled(device, LOGIN_ACCOUNT_LIMIT):
-            return RedirectResponse(_LOGIN_THROTTLED_URL, status_code=303)
+            return _throttle_redirect(_LOGIN_URL, "throttled_device", device)
         user = authenticate(settings, email, password)
         if user is None:
             record_attempt(device)
@@ -6059,8 +6122,10 @@ def login(
     else:
         visitor = "login-ip:" + _visitor_key(request)
         account = "login:" + account_key
-        if throttled(visitor) or throttled(account, LOGIN_ACCOUNT_LIMIT):
-            return RedirectResponse(_LOGIN_THROTTLED_URL, status_code=303)
+        if throttled(visitor):
+            return _throttle_redirect(_LOGIN_URL, "throttled", visitor)
+        if throttled(account, LOGIN_ACCOUNT_LIMIT):
+            return _throttle_redirect(_LOGIN_URL, "throttled_account", account)
         user = authenticate(settings, email, password)
         if user is None:
             record_attempt(visitor)
@@ -6100,7 +6165,7 @@ def token_sign_in(request: Request, token: str):
     settings = request.app.state.settings
     client = "token:" + _visitor_key(request)
     if throttled(client):
-        return RedirectResponse(_LOGIN_THROTTLED_URL, status_code=303)
+        return _throttle_redirect(_LOGIN_URL, "throttled_token", client)
     row = access_token_user(settings, token)
     if row is None or row["token_kind"] == "api":
         record_attempt(client)
@@ -6192,8 +6257,12 @@ def doctor_redeem(request: Request, pin: Annotated[str, Form()] = ""):
     # of the forger's own record in the victim's browser.
     settings = request.app.state.settings
     client = _doctor_client_key(request)
-    if throttled(client, DOCTOR_PIN_CLIENT_LIMIT) or throttled(DOCTOR_PIN_GLOBAL_KEY, DOCTOR_PIN_GLOBAL_LIMIT):
-        return _doctor_page(request, t("doctor.error_throttled", minutes=t_plural(_DOCTOR_MINUTES_KEY, int(LOGIN_ATTEMPT_WINDOW.total_seconds() // 60))), status_code=429)
+    blocker = _first_blocked(
+        (client, DOCTOR_PIN_CLIENT_LIMIT), (DOCTOR_PIN_GLOBAL_KEY, DOCTOR_PIN_GLOBAL_LIMIT)
+    )
+    if blocker:
+        minutes = _minutes_text(retry_minutes(blocker))
+        return _doctor_page(request, t("doctor.error_throttled", minutes=minutes), status_code=429)
     row = redeem_doctor_pin(settings, pin)
     if row is None:
         # Wrong, expired, already used, malformed: one answer for all of
@@ -6201,6 +6270,9 @@ def doctor_redeem(request: Request, pin: Annotated[str, Form()] = ""):
         record_attempt(client)
         record_attempt(DOCTOR_PIN_GLOBAL_KEY)
         return _doctor_page(request, t("doctor.error_invalid", minutes=t_plural(_DOCTOR_MINUTES_KEY, int(DOCTOR_PIN_REDEEM_WINDOW.total_seconds() // 60))), status_code=400)
+    # A correct code forgives this browser's earlier mistakes: the visitor
+    # meter starts again, while the server-wide cap keeps counting.
+    clear_attempts(client)
     _audit(settings, row["id"], None, "doctor_pin_redeemed", "access_token", row["token_id"], {})
     return _guest_session(request, row)
 
@@ -6286,8 +6358,9 @@ def setup(
     values = {"display_name": display_name.strip(), "email": email.strip(),
               "date_of_birth": date_of_birth.strip(), "sex_at_birth": sex_at_birth.strip()}
     client = "setup-code:" + _visitor_key(request)
-    if throttled(client) or throttled(SETUP_CODE_GLOBAL_KEY, SETUP_CODE_GLOBAL_LIMIT):
-        minutes = t_plural(_DOCTOR_MINUTES_KEY, int(LOGIN_ATTEMPT_WINDOW.total_seconds() // 60))
+    blocker = _first_blocked((client, LOGIN_ATTEMPT_LIMIT), (SETUP_CODE_GLOBAL_KEY, SETUP_CODE_GLOBAL_LIMIT))
+    if blocker:
+        minutes = _minutes_text(retry_minutes(blocker))
         return _setup_page(request, t("setup.error_throttled", minutes=minutes), values, 429)
     if not setup_code_matches(request.app.state.setup_code, setup_code):
         record_attempt(client)
@@ -6321,7 +6394,11 @@ def setup(
     return _signed_in(request, "/", user_id)
 
 @router.get("/register", response_class=HTMLResponse)
-def register_page(request: Request, error: str | None = None):
+def register_page(
+    request: Request,
+    error: str | None = None,
+    wait: str | None = None,
+):
     settings = request.app.state.settings
     if not has_users(settings):
         return RedirectResponse(_SETUP_URL, status_code=303)
@@ -6329,7 +6406,10 @@ def register_page(request: Request, error: str | None = None):
         return RedirectResponse("/", status_code=303)
     if not open_registration(settings):
         return RedirectResponse("/login?error=closed", status_code=303)
-    message = t(error) if error in REGISTER_ERRORS else None
+    if error == "throttled":
+        message = t("register.error_throttled", minutes=_minutes_text(_wait_minutes(wait)))
+    else:
+        message = t(error) if error in REGISTER_ERRORS else None
     return templates.TemplateResponse(
         request,
         "register.html",
@@ -6355,14 +6435,16 @@ def register(
         return RedirectResponse("/login?error=closed", status_code=303)
     client = "register:" + _visitor_key(request)
     if throttled(client):
-        return RedirectResponse(_LOGIN_THROTTLED_URL, status_code=303)
-    # Every attempt counts, not only the failed ones: an open sign-up form
-    # on a public server is abused by succeeding, not by failing.
-    record_attempt(client)
+        return _throttle_redirect("/register", "throttled", client)
     if not email.strip() or not display_name.strip():
         return failed(_REGISTER_ERROR_INVALID)
     if len(password) < MINIMUM_PASSWORD_LENGTH:
         return failed(_REGISTER_ERROR_PASSWORD)
+    # Counted once the form is valid: a mistyped form must not pause sign-up.
+    # Every submission that gets this far counts, whether it creates the
+    # account or is refused because the address is taken, since an open
+    # sign-up form on a public server is abused by succeeding, not by failing.
+    record_attempt(client)
     try:
         user_id = _new_account(settings, email, display_name, password)
     except sqlite3.IntegrityError:
@@ -6417,7 +6499,7 @@ ADMIN_ERRORS = frozenset(
 ADMIN_DONE = frozenset(
     {
         "added", "blocked", "unblocked", "promoted", "demoted", "deleted", "password_set",
-        "registration_open", "registration_closed",
+        "registration_open", "registration_closed", "released",
     }
 )
 
@@ -6462,12 +6544,47 @@ def _user_stats(connection) -> list[dict[str, object]]:
         for row in rows
     ]
 
+def _paused_label(key: str, emails: dict[str, str]) -> str:
+    """What a paused meter guards, in words a person can act on."""
+    if key.startswith("login-dev:"):
+        # The device nonce after the address is not for the screen.
+        subject = key[len("login-dev:"):].rsplit(":", 1)[0]
+        return t("admin.paused_login_dev", subject=subject)
+    if key.startswith("login-ip:"):
+        return t("admin.paused_login_ip", subject=key[len("login-ip:"):])
+    if key.startswith("login:"):
+        return t("admin.paused_login", subject=key[len("login:"):])
+    if key.startswith("token:"):
+        return t("admin.paused_token", subject=key[len("token:"):])
+    if key.startswith("doctor-pin:"):
+        subject = key[len("doctor-pin:"):]
+        return t("admin.paused_doctor_all") if subject == "*" else t("admin.paused_doctor", subject=subject)
+    if key.startswith("setup-code:"):
+        return t("admin.paused_setup", subject=key[len("setup-code:"):])
+    if key.startswith("register:"):
+        return t("admin.paused_register", subject=key[len("register:"):])
+    if key.startswith("pwchange:"):
+        user_id = key[len("pwchange:"):]
+        return t("admin.paused_pwchange", subject=emails.get(user_id, user_id))
+    if key.startswith("webhook:"):
+        return t("admin.paused_webhook", subject=key[len("webhook:"):])
+    return t("admin.paused_other", subject=key)
+
 @router.get("/admin/users", response_class=HTMLResponse, responses=_RESPONSES_401_403)
 def admin_users(request: Request, error: str | None = None, done: str | None = None):
     settings = request.app.state.settings
     admin = require_admin(request)
     with connect(settings) as connection:
         people = _user_stats(connection)
+        emails = {row["id"]: row["email"] for row in connection.execute("SELECT id, email FROM users")}
+    paused = [
+        {
+            "key": entry["key"],
+            "minutes_text": _minutes_text(entry["minutes"]),
+            "label": _paused_label(entry["key"], emails),
+        }
+        for entry in blocked_meters()
+    ]
     return templates.TemplateResponse(
         request,
         "admin_users.html",
@@ -6478,6 +6595,7 @@ def admin_users(request: Request, error: str | None = None, done: str | None = N
             admin_id=admin["id"],
             minimum_password=MINIMUM_PASSWORD_LENGTH,
             registration_open=open_registration(settings),
+            paused=paused,
             # Formatted here, not in the template: the same totals rendered
             # raw sat beside per-person counts that had been through
             # `format_count`, so one Ukrainian page showed both "1309" and
@@ -6733,8 +6851,38 @@ def admin_set_user_password(
     if target is None:
         return _admin_redirect(error=_ADMIN_ERROR_UNKNOWN)
     set_password(settings, user_id, new_password, keep_token=None)
+    # The person forgot the old password, so the failures that were counting
+    # against it no longer hold them out: release their meters.  The keys use
+    # the same normalisation as sign-in (`login` above).
+    account_key = target["email"].strip().casefold()[:254]
+    clear_attempts("login:" + account_key)
+    clear_attempts_matching("login-dev:" + account_key + ":")
+    clear_attempts("pwchange:" + user_id)
     _audit(settings, admin["id"], admin["id"], "user_password_set_by_admin", "user", user_id, {"email": target["email"]})
     return _admin_redirect(done="password_set")
+
+@router.post("/admin/throttles/release", responses=_RESPONSES_401_403)
+def admin_release_throttle(
+    request: Request,
+    key: Annotated[str, Form()] = "",
+    csrf_token: Annotated[str, Form()] = "",
+):
+    """Lift one pause, or every pause with ``key=*``, before its wait runs out.
+
+    Only keys the meters list as paused are touched; anything else posted here
+    is ignored.  The audit line counts what was released and never names the
+    address, the email or the key itself.
+    """
+    settings = request.app.state.settings
+    admin = require_admin(request)
+    require_csrf(admin, csrf_token)
+    paused = [entry["key"] for entry in blocked_meters()]
+    targets = paused if key == "*" else [entry for entry in paused if entry == key]
+    for target in targets:
+        clear_attempts(target)
+    _audit(settings, admin["id"], admin["id"], "throttle.release", "throttle",
+           "all" if key == "*" else "one", {"released": len(targets)})
+    return _admin_redirect(done="released")
 
 @router.post("/admin/registration", responses=_RESPONSES_401_403)
 def admin_set_registration(
@@ -6797,6 +6945,13 @@ PROFILE_ERRORS = frozenset(
         "profile.error_session",
     }
 )
+
+def _profile_error_text(error: str | None, wait: str | None) -> str | None:
+    if error not in PROFILE_ERRORS:
+        return None
+    if error == "profile.error_password_throttled":
+        return t(error, minutes=_minutes_text(_wait_minutes(wait)))
+    return t(error)
 
 #: Confirmation per `saved` value on the Security tab's session list.
 SESSION_SAVED = {"session": "profile.session_saved_one", "sessions": "profile.session_saved_others"}
@@ -7042,7 +7197,7 @@ def _garmin_personal_available(settings, user_id: str) -> bool:
         and integrations.connection_row(settings, user_id, "garmin") is None
     )
 
-def _profile_response(request: Request, user, error=None, saved=None, new_token=None, tab="", new_pin=None):
+def _profile_response(request: Request, user, error=None, saved=None, new_token=None, tab="", new_pin=None, wait=None):
     """Render the profile.
 
     A separate function because minting a credential has to answer with the
@@ -7104,7 +7259,7 @@ def _profile_response(request: Request, user, error=None, saved=None, new_token=
             token_kinds=TOKEN_KINDS,
             new_token=new_token,
             token_base=_public_base(request),
-            error=t(error) if error in PROFILE_ERRORS else None,
+            error=_profile_error_text(error, wait),
             saved=_profile_saved_flag(saved),
             password_saved=saved == "password",
             session_saved=t(SESSION_SAVED[saved]) if saved in SESSION_SAVED else None,
@@ -7129,8 +7284,11 @@ def profile_page(
     error: str | None = None,
     saved: str | None = None,
     tab: str = "",
+    wait: str | None = None,
 ):
-    return _profile_response(request, require_user(request), error=error, saved=saved, tab=tab)
+    return _profile_response(
+        request, require_user(request), error=error, saved=saved, tab=tab, wait=wait
+    )
 
 # --- access tokens ------------------------------------------------------
 
@@ -7345,7 +7503,7 @@ def doctor_pin_revoke(request: Request, token_id: str, csrf_token: Annotated[str
     _audit(settings, user["id"], user["id"], "doctor_pin_revoked", "access_token", token_id, {})
     return RedirectResponse("/profile?saved=doctor_revoked", status_code=303)
 
-def _admin_tokens_response(request: Request, user, error=None, saved=None, new_token=None):
+def _admin_tokens_response(request: Request, user, error=None, saved=None, new_token=None, wait=None):
     settings = request.app.state.settings
     with connect(settings) as connection:
         people = connection.execute(
@@ -7363,14 +7521,14 @@ def _admin_tokens_response(request: Request, user, error=None, saved=None, new_t
             new_token=new_token,
             token_base=_public_base(request),
             admin_id=user["id"],
-            error=t(error) if error in PROFILE_ERRORS else None,
+            error=_profile_error_text(error, wait),
             saved=t(f"token.saved_{saved}") if saved in ("revoked", "token") else None,
         ),
     )
 
 @router.get("/admin/tokens", response_class=HTMLResponse, responses=_RESPONSES_401_403)
-def admin_tokens(request: Request, error: str | None = None, saved: str | None = None):
-    return _admin_tokens_response(request, require_admin(request), error=error, saved=saved)
+def admin_tokens(request: Request, error: str | None = None, saved: str | None = None, wait: str | None = None):
+    return _admin_tokens_response(request, require_admin(request), error=error, saved=saved, wait=wait)
 
 AI_ADMIN_ERRORS = frozenset({
     "aiassist.error_provider", "aiassist.error_test", "aiassist.error_cap",
@@ -7412,6 +7570,8 @@ def admin_ai(
     settings = request.app.state.settings
     require_admin(request)
     config = ai_settings(settings)
+    with connect(settings) as connection:
+        drug_lookup = drugref.enabled(connection)
     tested_task = task if task in AI_TASKS else ""
     usage = usage_summary(settings)
     for item in usage["recent"]:
@@ -7424,6 +7584,7 @@ def admin_ai(
             active="admin_ai",
             ai=config,
             ai_on=ai_active(settings),
+            drug_lookup=drug_lookup,
             # Enough of each key to recognise it, never enough to use it.
             key_tails={
                 name: value[-6:] if value else "" for name, value in config["keys"].items()
@@ -7460,6 +7621,16 @@ async def admin_ai_save(request: Request):
     admin = require_admin(request)
     form = await request.form()
     require_csrf(admin, str(form.get("csrf_token") or ""))
+    # The medicine-reference switch is its own setting, so it is saved even
+    # when the AI part of the form is refused. An unticked box is absent from
+    # the form, which switches it off.
+    drug_lookup = "drug_lookup" in form
+
+    def save_drug_lookup() -> None:
+        with connect(settings) as connection:
+            drugref.set_enabled(connection, drug_lookup)
+
+    await run_in_threadpool(save_drug_lookup)
     parsed = parse_ai_admin_form(form)
     if isinstance(parsed, str):
         return RedirectResponse(f"/admin/ai?error={parsed}", status_code=303)
@@ -7471,7 +7642,7 @@ async def admin_ai_save(request: Request):
     # The keys themselves must never reach the audit log; only which changed.
     await run_in_threadpool(
         _audit, settings, admin["id"], admin["id"], "admin_ai_changed", "app_settings", "ai",
-        {**audit, "data_collection": data_collection},
+        {**audit, "data_collection": data_collection, "drug_lookup": drug_lookup},
     )
     return RedirectResponse("/admin/ai?done=saved", status_code=303)
 
@@ -7766,7 +7937,7 @@ def change_password(
     # like sign-in failures, so the form cannot be used to search for it.
     key = "pwchange:" + str(user["id"])
     if throttled(key, PASSWORD_CHANGE_LIMIT):
-        return RedirectResponse("/profile?error=profile.error_password_throttled", status_code=303)
+        return _throttle_redirect(_PROFILE_URL, "profile.error_password_throttled", key)
     if authenticate(settings, user["email"], current_password) is None:
         record_attempt(key)
         return RedirectResponse("/profile?error=profile.error_password_current", status_code=303)
@@ -7814,7 +7985,7 @@ def delete_account(
     require_csrf(user, csrf_token)
     key = "pwchange:" + str(user["id"])
     if throttled(key, PASSWORD_CHANGE_LIMIT):
-        return RedirectResponse("/profile?error=profile.error_password_throttled", status_code=303)
+        return _throttle_redirect(_PROFILE_URL, "profile.error_password_throttled", key)
     if authenticate(settings, user["email"], password) is None:
         record_attempt(key)
         return RedirectResponse("/profile?error=profile.error_delete_password", status_code=303)
@@ -7859,7 +8030,7 @@ def change_email(
         return RedirectResponse("/profile?error=profile.error_email_invalid", status_code=303)
     key = "pwchange:" + str(user["id"])
     if throttled(key, PASSWORD_CHANGE_LIMIT):
-        return RedirectResponse("/profile?error=profile.error_password_throttled", status_code=303)
+        return _throttle_redirect(_PROFILE_URL, "profile.error_password_throttled", key)
     if authenticate(settings, user["email"], password) is None:
         record_attempt(key)
         return RedirectResponse("/profile?error=profile.error_email_password", status_code=303)
@@ -8279,7 +8450,7 @@ def _oversized(request: Request, limit: int) -> bool:
 def oura_webhook_verify(request: Request, verification_token: str = "", challenge: str = ""):
     """Oura's one-time subscription handshake: echo the challenge back."""
     settings = request.app.state.settings
-    client = "webhook:" + _client_key(request)
+    client = "webhook:oura:" + _visitor_key(request)
     if throttled(client):
         raise HTTPException(429)
     expected = integrations.oura_verification_token(settings)
@@ -8293,7 +8464,7 @@ def oura_webhook_verify(request: Request, verification_token: str = "", challeng
 @router.post("/integrations/oura/webhook", responses=_RESPONSES_413_429)
 async def oura_webhook(request: Request):
     settings = request.app.state.settings
-    client = "webhook:" + _client_key(request)
+    client = "webhook:oura:" + _visitor_key(request)
     if throttled(client):
         raise HTTPException(429)
     if _oversized(request, OURA_EVENT_BYTES):
@@ -8325,7 +8496,7 @@ async def garmin_webhook(request: Request):
     # user ids are matched to stored connections at processing time, never
     # trusted here.
     settings = request.app.state.settings
-    client = "webhook:" + _client_key(request)
+    client = "webhook:garmin:" + _visitor_key(request)
     if throttled(client):
         raise HTTPException(429)
     client_id, _ = await run_in_threadpool(
@@ -8502,6 +8673,9 @@ async def update_profile(request: Request):
     # field or an earlier female profile left behind.
     if sex == "male":
         due_set, due = True, None
+    # The box is shown beside the due date, so an unticked box posts nothing;
+    # a male profile never plans a pregnancy.
+    planning = 0 if sex == "male" else int(field("planning_pregnancy") == "1")
 
     def store() -> None:
         with connect(settings) as connection:
@@ -8514,6 +8688,12 @@ async def update_profile(request: Request):
                                      ORDER BY created_at LIMIT 1)""",
                     (due, user["id"]),
                 )
+            connection.execute(
+                """UPDATE patients SET planning_pregnancy=?
+                       WHERE id=(SELECT id FROM patients WHERE owner_user_id=?
+                                 ORDER BY created_at LIMIT 1)""",
+                (planning, user["id"]),
+            )
         # Sex, age and the cardiovascular risk category all change verdicts;
         # the memoised catalogue must not keep judging by the old profile.
         invalidate_catalog(user["id"])
@@ -8773,6 +8953,25 @@ def _tiles(attention_count: int, due_count: int, panels, counts) -> list[dict[st
         },
     ]
 
+def _medicine_tile(connection, owner_user_id: str, *, owner: bool) -> dict[str, object] | None:
+    """The dashboard tile for medicines now.  A guest or a sharing viewer sees
+    it only when there is something to show; the owner always sees it, with
+    an invitation to add an entry when the list is empty."""
+    current = [
+        factor for factor in factors.listing(connection, owner_user_id, today=date.today())
+        if factor["effective_status"] == "current"
+    ]
+    if not current and not owner:
+        return None
+    return {
+        "key": "medicines",
+        "label": t("med.tile.label"),
+        "value": format_count(len(current)),
+        "note": ", ".join(factor["name"] for factor in current[:3]) if current else t("med.tile.note_empty"),
+        "href": "/medicines",
+        "tone": "neutral",
+    }
+
 def _oldest_panels(panels) -> list[dict[str, object]]:
     """Panels with no published retest cadence, longest unrepeated first.
 
@@ -8825,6 +9024,10 @@ def dashboard(request: Request):
         experience = build_overview(
             _areas(catalog, findings, panels), catalog, counts, attention=attention,
         )
+        medicine_tile = _medicine_tile(
+            connection, user["id"],
+            owner=viewing_row(request) is None and current_user(request).get("token_kind") != "guest",
+        )
     # What needs attention, first: the abnormal results and report
     # conclusions themselves, not a count of them.
     priorities = [
@@ -8845,7 +9048,10 @@ def dashboard(request: Request):
             ),
             priorities=priorities,
             attention_total=len(attention) + len(attention_findings),
-            tiles=_tiles(len(attention) + len(attention_findings), len(_due_panels(panels)), panels, counts),
+            tiles=[
+                *_tiles(len(attention) + len(attention_findings), len(_due_panels(panels)), panels, counts),
+                *([medicine_tile] if medicine_tile else []),
+            ],
             recent_documents=recent_documents,
             active="dashboard",
         ),
@@ -13287,6 +13493,7 @@ _GROUP_HEADINGS = {
     "metrics": "metrics.group_analytes",
     "device_metrics": "metrics.group_devices",
     "vaccinations": "metrics.group_vaccinations",
+    "medicines": "metrics.group_medicines",
     "findings": "metrics.group_findings",
     "documents": "metrics.group_documents",
     "panels": "metrics.group_panels",
@@ -13294,7 +13501,7 @@ _GROUP_HEADINGS = {
 }
 _GROUP_KINDS = {
     "metrics": "metric", "device_metrics": "metric", "panels": "panel",
-    "vaccinations": "row", "findings": "row", "documents": "row", "areas": "row",
+    "vaccinations": "row", "medicines": "row", "findings": "row", "documents": "row", "areas": "row",
 }
 
 def _group(key: str, rows: list, *, kind: str | None = None, page=None, fold: bool = False) -> dict[str, object]:
@@ -13412,6 +13619,23 @@ def _document_entries(
     ).fetchall()
     return [_document_entry(row, reported, analyte_terms) for row in rows]
 
+def _medicine_search_entries(connection, owner_user_id: str) -> list[tuple[record_search.Terms, dict[str, object]]]:
+    """One search result per medicine or other entry, titled by its name and
+    showing its kind, its status now and its active substance."""
+    locale = get_locale()
+    entries = []
+    for row in factors.listing(connection, owner_user_id, today=date.today()):
+        subtitle = " · ".join(part for part in (
+            factors_view.kind_label(row["kind"], locale),
+            factors_view.status_label(row["effective_status"], locale),
+            row["substance"],
+        ) if part)
+        entries.append((
+            record_search.terms([row["name"], row["substance"], row["reason"]]),
+            {"kind": "medicine", "title": row["name"], "subtitle": subtitle, "url": f"/medicines/{row['id']}"},
+        ))
+    return entries
+
 def _record_search(connection, owner_user_id: str, q: str, offset: int) -> list[dict[str, object]]:
     """Every kind of thing the record holds, matched by word starts and
     case endings in both languages (`web/search.py` has the rules)."""
@@ -13445,6 +13669,7 @@ def _record_search(connection, owner_user_id: str, q: str, offset: int) -> list[
             (record_search.terms([entry["title"], *entry.get("terms", [])], [entry.get("subtitle"), "vaccination"]), entry)
             for entry in vaccinations
         ],
+        "medicines": _medicine_search_entries(connection, owner_user_id),
         "findings": [
             (
                 record_search.terms(
@@ -13983,6 +14208,9 @@ def metric_detail(request: Request, concept_id: str, offset: int = 0):
         date_of_birth = patient["date_of_birth"] if patient else None
         twin_links = _twin_links(connection, user["id"], concept_id)
         method_series = _method_series(connection, user["id"], concept, date_of_birth, age, sex)
+        factor_periods = factors_view.chart_periods(
+            connection, user["id"], [concept_id], locale=get_locale(), today=date.today(),
+        )
     for row in values:
         _metric_history_row(connection, concept_id, row, date_of_birth, sex)
     # Only an analyte whose published bands are written for fasting samples
@@ -14020,6 +14248,7 @@ def metric_detail(request: Request, concept_id: str, offset: int = 0):
         "metric_detail.html",
         template_context(
             request, concept=concept, values=values, aliases=aliases, rules=parsed_rules,
+            factor_periods=factor_periods,
             history=history,
             page=history_page,
             # A legend only where the chart mixes paths; a lab-only chart has one.
@@ -14309,6 +14538,11 @@ def _exclusion_context(connection, owner_user_id: str, metric_key: str, comparis
     }
 
 
+def _device_twin_concepts(metric_key: str) -> list[str]:
+    """The lab concepts a device metric is the same measurement as (may be none)."""
+    return [concept for concept, twins in MEASUREMENT_TWINS.items()
+            if any(key == metric_key for key, _relation in twins)]
+
 @router.get("/devices/metrics/{metric_key}", response_class=HTMLResponse, responses=_RESPONSES_401_404)
 def device_metric_detail(request: Request, metric_key: str, offset: int = 0):
     settings = request.app.state.settings
@@ -14334,6 +14568,9 @@ def device_metric_detail(request: Request, metric_key: str, offset: int = 0):
         )
         can_manage = viewing_row(request) is None and current_user(request).get("token_kind") != "guest"
         exclusion = _exclusion_context(connection, user["id"], metric_key, comparison, unit, can_manage)
+        factor_periods = factors_view.chart_periods(
+            connection, user["id"], _device_twin_concepts(metric_key), locale=get_locale(), today=date.today(),
+        )
     freshness = _device_staleness(
         latest["day"], entry, interpretation=str(verdict["interpretation"]), age_years=age,
         daily=_arrives_daily([day["day"] for day in comparison["days"][:90]]),
@@ -14368,6 +14605,7 @@ def device_metric_detail(request: Request, metric_key: str, offset: int = 0):
             values=values,
             comparison=comparison,
             can_manage_sources=can_manage,
+            factor_periods=factor_periods,
             exclusion=exclusion,
             day_groups=day_groups,
             latest=latest,
@@ -15162,6 +15400,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     register_testplan_routes(
         app, settings, templates=templates, template_context=template_context, require_user=require_user,
         record_user=record_user, require_csrf=require_csrf, audit=partial(_audit, settings),
+    )
+    register_factors_routes(
+        app, settings, templates=templates, template_context=template_context, require_user=require_user,
+        record_user=record_user, require_csrf=require_csrf, audit=partial(_audit, settings),
+        document_row=_document_row,
     )
     register_chat_routes(
         app, settings, templates=templates, template_context=template_context, require_user=require_user,

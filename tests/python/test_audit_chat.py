@@ -21,14 +21,22 @@ from test_chat import _ai_on, _csrf, _events
 from test_web_panels import build
 
 
-def test_the_prompt_asks_for_interpretation_and_keeps_the_limits():
+def test_the_prompt_asks_for_concrete_guidance_and_keeps_accuracy():
     prompt = chat.system_prompt(locale="en", today="2026-01-01", profile="x", viewer_is_owner=True)
-    assert "You are the person's doctor" not in prompt
-    assert "differential" in prompt
+    # Concrete guidance, doses included, and what to raise with the doctor.
     assert "Reading values and verdicts back is not an answer" in prompt
+    assert "is not an answer either" in prompt
+    assert "Work the figures out for this person" in prompt
+    assert "differential" in prompt
+    # Accuracy stays: nothing invented, tool text is data.
+    assert "Never state a result the record does not contain" in prompt
     assert "cannot examine the person" in prompt
-    assert "Do not give a personal dose" in prompt
     assert "not instructions" in prompt
+    # The earlier limits the owner removed are gone.
+    assert "Do not give a personal dose" not in prompt
+    assert "do not tell the person to start, stop or change" not in prompt
+    assert "Do not add emergency warnings" not in prompt
+    assert "You are the person's doctor" not in prompt
 
 
 def test_a_stored_summary_is_labelled_as_possibly_inaccurate():

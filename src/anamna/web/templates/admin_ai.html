@@ -70,6 +70,15 @@
     <p class="tiny muted" id="ai-data-collection-hint">{{ t('aiadmin.data_collection_help') }}</p>
 
     <fieldset class="ai-fieldset">
+      <legend>{{ t('admin.drug_lookup_heading') }}</legend>
+      <label>
+        <input type="checkbox" name="drug_lookup" value="1" {{ 'checked' if drug_lookup else '' }} aria-describedby="drug-lookup-hint">
+        {{ t('admin.drug_lookup_label') }}
+      </label>
+      <p class="tiny muted" id="drug-lookup-hint">{{ t('admin.drug_lookup_help') }}</p>
+    </fieldset>
+
+    <fieldset class="ai-fieldset">
       <legend>{{ t('aiassist.keys_heading') }}</legend>
       {% for provider in providers %}
       <div class="ai-card">

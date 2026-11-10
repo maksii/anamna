@@ -1,0 +1,48 @@
+{#- Shared pieces of the Medicines feature: the effect chip, and the list a
+    chart prints under itself to say which medicines and other entries were
+    going on. Import `with context`. -#}
+{% from "_components.html" import plural_t with context %}
+
+{#- Direction is carried by the arrow AND the word, never by colour alone. -#}
+{% macro effect_chip(effect, link=false) -%}
+<span class="an-effect" data-direction="{{ effect.direction }}"><span class="an-effect__arrow" aria-hidden="true">{{ {'raises': '↑', 'lowers': '↓'}.get(effect.direction, '↕') }}</span>{{ effect.direction_label }} {% if link and effect.url %}<a href="{{ effect.url }}">{{ effect.label }}</a>{% else %}{{ effect.label }}{% endif %}</span>
+{%- endmacro %}
+
+{% macro _period_row(item) -%}
+<li>
+  <a class="an-factor-key__name" href="{{ item.url }}">{{ item.name }}</a>
+  {% if item.direction %}<span class="an-effect" data-direction="{{ item.direction }}"><span class="an-effect__arrow" aria-hidden="true">{{ {'raises': '↑', 'lowers': '↓'}.get(item.direction, '↕') }}</span>{{ item.direction_label }}</span>{% endif %}
+  <span class="an-factor-key__when">{% if item.approximate %}<abbr title="{{ t('med.approx') }}">≈</abbr> {% endif %}{{ item.period_text }}</span>
+  {% if item.note %}<span class="an-factor-key__note">{{ item.note }}{% if item.origin == 'ai' %} <span class="an-ai-tag" title="{{ t('med.ai_tag_help') }}">{{ t('med.ai_tag') }}</span>{% endif %}</span>{% endif %}
+</li>
+{%- endmacro %}
+
+{#- `periods` is {"related": [...], "others": [...], "json": [...]} or none.
+    `key` names the chart, so a page with two charts keeps two lists apart.
+    The chart script reads the JSON and draws one line per entry under the
+    time axis; opening the "others" fold draws those too. -#}
+{% macro factor_key(periods, key='metric') -%}
+{% if periods and (periods.related or periods.others) %}
+<div class="an-factor-key" data-factor-key="{{ key }}">
+  <h3>{{ t('med.chart.heading') }}</h3>
+  {% if periods.related %}
+  <p class="an-field-help">{{ t('med.chart.lead') }}</p>
+  <ul class="an-factor-key__list">
+    {% for item in periods.related %}{{ _period_row(item) }}{% endfor %}
+  </ul>
+  {% else %}
+  <p class="an-field-help">{{ t('med.chart.none_related') }}</p>
+  {% endif %}
+  {% if periods.others %}
+  <details class="an-factor-key__more" data-factor-others="{{ key }}">
+    <summary>{{ plural_t('med.chart.others', periods.others|length) }}</summary>
+    <p class="an-field-help">{{ t('med.chart.others_note') }}</p>
+    <ul class="an-factor-key__list">
+      {% for item in periods.others %}{{ _period_row(item) }}{% endfor %}
+    </ul>
+  </details>
+  {% endif %}
+</div>
+<script type="application/json" nonce="{{ csp_nonce }}" id="factor-periods-{{ key }}" data-more="{{ t('med.chart.more') }}">{{ periods.json|tojson }}</script>
+{% endif %}
+{%- endmacro %}

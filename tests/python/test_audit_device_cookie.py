@@ -23,7 +23,8 @@ from anamna.web.app import create_app
 from test_web_security import PASSWORD, settings_for
 
 
-_THROTTLED = "/login?error=throttled"
+_THROTTLED_ACCOUNT = "/login?error=throttled_account&wait=15"
+_THROTTLED_DEVICE = "/login?error=throttled_device&wait=15"
 _INVALID = "/login?error=invalid"
 _EMAIL = "owner@example.test"
 
@@ -104,7 +105,7 @@ def test_cookie_less_guessing_locks_the_account_but_not_the_owners_browser(tmp_p
     response = _login(
         _fresh_client(settings), _EMAIL, PASSWORD, **{"cf-connecting-ip": "203.0.113.9"},
     )
-    assert response.headers["location"] == _THROTTLED
+    assert response.headers["location"] == _THROTTLED_ACCOUNT
 
     # The owner's browser, holding the cookie from the earlier sign-in, is not.
     assert _login(owner_browser, _EMAIL, PASSWORD).headers["location"] == "/"
@@ -119,7 +120,7 @@ def test_guesses_sent_with_a_device_cookie_count_only_on_that_device(tmp_path: P
     guesser.cookies.set(DEVICE_COOKIE, owner_browser.cookies.get(DEVICE_COOKIE))
     for number in range(LOGIN_ACCOUNT_LIMIT):
         assert _login(guesser, _EMAIL, f"wrong-guess-{number}").headers["location"] == _INVALID
-    assert _login(guesser, _EMAIL, PASSWORD).headers["location"] == _THROTTLED
+    assert _login(guesser, _EMAIL, PASSWORD).headers["location"] == _THROTTLED_DEVICE
 
     # Those failures never reached the shared account meter, so a cookie-less
     # browser is still free to try, and to sign in with the right password.
@@ -144,4 +145,4 @@ def test_forged_device_cookie_is_treated_as_no_cookie(tmp_path: Path):
     response = _login(
         _fresh_client(settings), _EMAIL, PASSWORD, **{"cf-connecting-ip": "203.0.113.9"},
     )
-    assert response.headers["location"] == _THROTTLED
+    assert response.headers["location"] == _THROTTLED_ACCOUNT

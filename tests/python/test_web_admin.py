@@ -420,8 +420,8 @@ def test_repeated_failed_sign_ins_are_throttled(tmp_path: Path):
             )
             # The correct password is refused too: the limit is on the address,
             # so guessing cannot be resumed by getting one right.
-            assert throttled.headers["location"] == "/login?error=throttled"
-            assert "Too many failed sign-in attempts" in client.get("/login?error=throttled").text
+            assert throttled.headers["location"] == "/login?error=throttled&wait=15"
+            assert "Too many failed sign-in attempts" in client.get("/login?error=throttled&wait=15").text
     finally:
         clear_attempts("testclient")
 
@@ -532,7 +532,7 @@ def test_an_opened_sign_up_form_is_throttled_on_successes_too(tmp_path: Path):
                       "password": PASSWORD},
                 follow_redirects=False,
             )
-            assert refused.headers["location"] == "/login?error=throttled"
+            assert refused.headers["location"] == "/register?error=throttled&wait=15"
     finally:
         clear_attempts("testclient")
 
