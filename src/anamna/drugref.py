@@ -530,6 +530,16 @@ def instruction_api(reference_name: str, code: str = "", *, api_token: str = "")
     }
 
 
+def _fact_values(item: dict) -> list[str]:
+    """The distinct texts of one characteristic's values, in the order the card gives them."""
+    values: list[str] = []
+    for value in item.get("values") or []:
+        text = _text(str(value.get("name") or ""))[:300] if isinstance(value, dict) else ""
+        if text and text not in values:
+            values.append(text)
+    return values
+
+
 def _card_facts(payload: dict) -> list[list]:
     facts: list[list] = []
     seen: set[str] = set()
@@ -537,11 +547,7 @@ def _card_facts(payload: dict) -> list[list]:
         key = _FACT_KEYS.get(str(item.get("name") or "").strip()) if isinstance(item, dict) else None
         if key is None or key in seen:
             continue
-        values = []
-        for value in item.get("values") or []:
-            text = _text(str(value.get("name") or ""))[:300] if isinstance(value, dict) else ""
-            if text and text not in values:
-                values.append(text)
+        values = _fact_values(item)
         if values:
             seen.add(key)
             facts.append([key, values[:10]])
