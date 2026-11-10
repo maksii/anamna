@@ -720,7 +720,7 @@ def _with_wrapped_tail(heading: str, following_lines: list[str]) -> str:
 #: the result starts.
 ESCULAB_TEST_RE = re.compile(r"^\d+\.\s+(?![A-Z]\d{4}\s)(\S.*)$")
 ESCULAB_RESULT_START_RE = re.compile(
-    r"(?<!\s)\s++(?:(?:[<>≤≥]\s?)?\d|не виявлено|виявлено|від`ємна|негативний|позитивний)", re.I
+    r"(?<!\s)\s\s*+(?:(?:[<>≤≥]\s?)?\d|не виявлено|виявлено|від`ємна|негативний|позитивний)", re.I
 )
 #: The next line may finish the name: «(СА-125)», «(АМГ, AMH Advanced) сироватка
 #: крові …», «трансглютамінази (t-TG), ELiA …» -- a bracket, after at most one
@@ -982,7 +982,7 @@ def _synevo_companion_title(text: str) -> str | None:
 
 #: A POLYCHECK chip prints its panel beside the patient's surname: «<surname>
 #: Харчова 20-I».  The labels are images; the panel name is the last two words.
-POLYCHECK_PANEL_RE = re.compile(r"(?<!\S)(\S++\s++\d++-[IVX]++)$")
+POLYCHECK_PANEL_RE = re.compile(r"(?<!\S)(\S\S*+\s++\d++-[IVX]++)$")
 #: Latin letters POLYCHECK's software writes inside Cyrillic words («Харчовa»).
 LATIN_HOMOGLYPHS = str.maketrans("aceiopxyABCEHIKMOPTX", "асеіорхуАВСЕНІКМОРТХ")
 

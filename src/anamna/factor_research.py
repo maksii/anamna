@@ -66,7 +66,7 @@ DROPPED_SECTIONS = (
 _QUOTE_EDGE = " \t\n\"«»“”„'…"
 _WHITESPACE = re.compile(r"\s+")
 # A substance is a name, so a sentence's closing full stop is not part of it.
-_SUBSTANCE_TAIL = re.compile(r"(?<![\s.])[\s.]++\Z")
+_SUBSTANCE_TAIL = re.compile(r"(?<![\s.])[\s.][\s.]*+\Z")
 
 _TEXT_OBJECT = {
     "type": "object",

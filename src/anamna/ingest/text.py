@@ -16,7 +16,7 @@ def collapse_space(value: str) -> str:
 #: A Roman numeral typed partly or wholly in Cyrillic («ІІ», «ІV», «ХІІ»):
 #: the lab's record writes «тип ІІ» where the OCR of its print reads «тип II».
 #: Two letters at least, so the conjunction «і» stays a word.
-_CYRILLIC_ROMAN_RE = re.compile(r"(?<!\w)(?=[ivx]*+[іх])[ivxіх]{2,}+(?!\w)")
+_CYRILLIC_ROMAN_RE = re.compile(r"(?<!\w)(?=[ivx]*+[іх])[ivxіх]{2}[ivxіх]*+(?!\w)")
 _ROMAN_TO_LATIN = str.maketrans("іх", "ix")
 
 

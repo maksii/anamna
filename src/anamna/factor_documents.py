@@ -62,7 +62,7 @@ def _doctor_name(rest: str) -> str:
     rest = re.split(r" {2,}|\t|[(,\d]", rest, maxsplit=1)[0]
     rest = rest.strip(" _\t").rstrip(" _;:,-")
     # An initial keeps its dot ("О.П."); a surname with a dot after it does not.
-    if re.search(r"(?<![^\W\d_])[^\W\d_]{3,}+\.$", rest):
+    if re.search(r"(?<![^\W\d_])[^\W\d_]{3}[^\W\d_]*+\.$", rest):
         rest = rest[:-1]
     return rest.strip()
 
