@@ -118,11 +118,11 @@
         </select>
       </div>
       <p class="an-med-total" data-med-total data-each="{{ t('med.form.total_each') }}" data-day="{{ t('med.form.total_day') }}" role="status" aria-live="polite" hidden></p>
-      <p class="an-med-offer" data-med-ai-regimen hidden>
+      <div class="an-med-offer" data-med-ai-regimen hidden>
         <span><span class="an-ai-tag" title="{{ t('med.ai_tag_help') }}">{{ t('med.ai_tag') }}</span> {{ t('med.ai.regimen') }} <strong data-slot="text"></strong></span>
         <button type="button" class="secondary" data-act="use">{{ t('med.ai.regimen_use') }}</button>
         <blockquote class="an-med-quote"><span>{{ t('med.ai.quote') }}</span> <q></q></blockquote>
-      </p>
+      </div>
     </div>
     {% if factor.dose %}
     <div class="an-med-field only-drug">

@@ -688,3 +688,14 @@ def test_a_tick_equal_to_the_one_before_it_is_dropped_but_today_stays():
     # Sixty days: the middle moment is 30 days in, still January, so it repeats the start.
     axis = factors_view.scale([{"started_on": "2026-01-01"}], date(2026, 3, 2), "en")
     assert axis["ticks"] == ["Jan 2026", "today"]
+
+
+def test_form_template_keeps_block_elements_out_of_paragraphs():
+    """A browser closes a <p> at a <blockquote> or <div>, so whatever followed
+    lands outside the box the script looks in: the AI answer then fails."""
+    import pathlib
+    import re
+
+    text = (pathlib.Path(__file__).parents[2] / "src/anamna/web/templates/medicine_form.html").read_text(encoding="utf-8")
+    for paragraph in re.findall(r"<p\b[^>]*>(.*?)</p>", text, re.S):
+        assert "<blockquote" not in paragraph and "<div" not in paragraph
