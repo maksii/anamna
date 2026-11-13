@@ -18,19 +18,19 @@ classifiers = [
   "Topic :: Scientific/Engineering :: Medical Science Apps.",
 ]
 dependencies = [
-  "fastapi>=0.115",
-  "jinja2>=3.1",
-  "numpy>=2",
-  "pdfplumber>=0.11",
+  "fastapi>=0.162.7",
+  "jinja2>=3.1.6",
+  "numpy>=2.5.4",
+  "pdfplumber>=0.11.10",
   "pillow>=13.0.0",
-  "pypdf>=7.0.1",
-  "pypdfium2>=4.30",
-  "reportlab>=4.4",
-  "python-multipart>=0.0.20",
-  "uvicorn>=0.34",
-  "anthropic>=2.5.0",
-  "openai>=3.46.0",
-  "tzdata>=2024.1",
+  "pypdf>=7.1.0",
+  "pypdfium2>=5.15.2",
+  "reportlab>=5.1.0",
+  "python-multipart>=0.0.33",
+  "uvicorn>=0.54.0",
+  "anthropic>=2.8.0",
+  "openai>=3.50.0",
+  "tzdata>=2026.6",
   # 1.16.0 reports kOptimal for a plan with 3 duplicate results where one with 1
   # exists at the same price and value (checked by brute force; it happens only
   # with a MIP start under full presolve). test_every_mode_equals_brute_force
@@ -42,11 +42,11 @@ dependencies = [
 dev = [
   # The editor's Python extension normally injects its own copy, but pinning it
   # here means .vscode/launch.json works from a clean clone either way.
-  "debugpy>=1.8",
-  "hatchling>=1.27",
-  "httpx>=0.28",
-  "pytest>=8.3",
-  "pytest-xdist>=3.6",
+  "debugpy>=1.8.22",
+  "hatchling>=1.33.0",
+  "httpx>=0.28.1",
+  "pytest>=9.2.0",
+  "pytest-xdist>=3.8.0",
 ]
 
 [project.urls]
