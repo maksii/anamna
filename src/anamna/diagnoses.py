@@ -192,21 +192,21 @@ def display_name(row: Mapping[str, Any], locale: str) -> str:
     return title or str(row["name"] or "").strip() or code
 
 
-def written_detail(row: Mapping[str, Any]) -> str:
-    """What the person or the document wrote beyond the catalogue title; '' when the name only
-    repeats the title."""
+def written_detail(row: Mapping[str, Any], locale: str = "uk") -> str:
+    """What the person or the document wrote beyond the title the reader sees; '' when the name
+    only repeats a catalogue title.
+
+    Only the reader's own title is cut off: under an English title, «еутиреоз» left over from
+    «Нетоксичний одновузловий зоб, еутиреоз» read as though the document said just that."""
     name = str(row["name"] or "").strip()
     code = str(row["code"] or "")
     if not name or not code or icd10.entry(code) is None:
         return ""
-    for locale in ("uk", "en"):
-        title = icd10.name(code, locale)
-        if not title:
-            continue
-        if name.casefold() == title.casefold():
-            return ""
-        if name.casefold().startswith(title.casefold()):
-            return name[len(title):].lstrip(_DETAIL_SEPARATORS)
+    if any(title and name.casefold() == title.casefold() for title in (icd10.name(code, "uk"), icd10.name(code, "en"))):
+        return ""
+    title = icd10.name(code, locale)
+    if title and name.casefold().startswith(title.casefold()):
+        return name[len(title):].lstrip(_DETAIL_SEPARATORS)
     return name
 
 

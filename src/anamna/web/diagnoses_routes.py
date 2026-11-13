@@ -202,7 +202,7 @@ def _diagnosis_view(page: _Page, row) -> dict:
     # ponytail: one factors.listing per diagnosis card; hoist to one listing per request if a record grows to hundreds of diagnoses.
     medicines = diagnosis_treatment.medicines(page.connection, page.owner_id, row, today=date.today())
     name = diagnoses.display_name(row, page.locale)
-    written = diagnoses.written_detail(row)
+    written = diagnoses.written_detail(row, page.locale)
     chapter_text = _chapter_text(code, page.locale)
     return {
         "id": row["id"],
@@ -292,7 +292,7 @@ def _found_view(page: _Page, group: dict) -> dict:
         "key": group["key"],
         "code": code,
         "name": title if titled else group["name"],
-        "written": diagnoses.written_detail({"code": code, "name": written_raw}) if titled else "",
+        "written": diagnoses.written_detail({"code": code, "name": written_raw}, page.locale) if titled else "",
         "certainty": group["certainty"],
         "certainty_label": t(f"dx.certainty.{group['certainty']}"),
         "mentions_text": t_plural("dx.found.mentions", group["mentions"]),
