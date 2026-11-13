@@ -332,6 +332,12 @@ def test_written_detail_is_what_the_document_adds_after_the_ukrainian_title():
     assert diagnoses.written_detail(row) == "Гіпертонічна хвороба Іст, 1ст"
 
 
+def test_written_detail_keeps_the_whole_writing_under_a_title_in_another_language():
+    row = {"code": "E04.1", "name": icd10.name("E04.1", "uk") + ", еутиреоз"}
+    assert diagnoses.written_detail(row, "uk") == "еутиреоз"
+    assert diagnoses.written_detail(row, "en") == row["name"]
+
+
 def test_written_detail_drops_a_separator_between_the_title_and_the_addition():
     title = icd10.name("E78.2", "uk")
     assert diagnoses.written_detail({"code": "E78.2", "name": title + ", як записано"}) == "як записано"
