@@ -1,4 +1,4 @@
-"""Record-wide search, the /metrics status filters and the home priorities.
+"""Record-wide search, the /results filters and the home priorities.
 
 Built on the miniature record in `test_web_panels.build`: one abnormal LDL, a
 normal HDL and creatinine, a hemoglobin, one document from "Test Lab".  Every
@@ -10,6 +10,8 @@ from __future__ import annotations
 import re
 from datetime import date, timedelta
 from pathlib import Path
+
+import pytest
 
 from anamna import immunizations
 from anamna.db import connect, utc_now
@@ -269,48 +271,50 @@ def test_search_renders_the_vaccination_group(tmp_path: Path, monkeypatch):
         assert 'href="/vaccinations#dose-1"' in payload["html"], query
 
 
-# --- /insights retired into status filters ----------------------------------------
+# --- /insights retired into the /results filters ----------------------------------
 
 
-def test_status_filters_replace_the_insights_page(tmp_path: Path):
+def test_filters_replace_the_insights_page(tmp_path: Path):
     settings, user_id, client = build(tmp_path)
     _seed_finding(settings, user_id)
-    attention = _api(client, status="attention")
-    assert "/metrics/ldl-cholesterol" in attention["html"]
-    assert "/metrics/hdl-cholesterol" not in attention["html"]
-    assert "зубчастої аденоми" in attention["html"], "an attention finding is a priority (CLIN-27)"
-    unverified = _api(client, status="unverified")
-    assert "/documents?review_state=open" in unverified["html"]
-    page = client.get("/metrics").text
+    attention = client.get("/results?show=attention").text
+    assert "/metrics/ldl-cholesterol" in attention
+    assert "/metrics/hdl-cholesterol" not in attention
+    assert "зубчастої аденоми" in attention, "an attention finding is a priority (CLIN-27)"
+    unverified = client.get("/results?show=unverified").text
+    assert 'data-chip="unverified" data-tone="due" aria-current="page"' in unverified
+    assert "an-change__unverified" in unverified, "every row names that it still awaits checking"
+    page = client.get("/results").text
     assert "autofocus" not in page, "UX-25"
     assert "/insights" not in client.get("/").text
 
 
 def test_landing_groups_the_record_by_body_system_with_one_honest_count(tmp_path: Path):
-    """The no-query /metrics was a 7,400 px flat list: 40 paged lab rows, then
+    """The no-query /results was a 7,400 px flat list: 40 paged lab rows, then
     every device row saying "No comparison available", under "113 shown"
     beside a group headed "595"."""
     settings, user_id, client = build(tmp_path)
     _seed_steps(settings, user_id, {"2026-01-01": 7000, "2026-01-02": 8000})
-    payload = _api(client)
-    html = payload["html"]
+    html = client.get("/results").text
     web.invalidate_catalog()
     with connect(settings) as connection:
         cards = web._metric_catalog(connection, user_id)
     lab = sum(1 for card in cards if not card["is_device"])
-    assert payload["count_text"] == f"{lab} laboratory results · 1 device measurement"
-    # Section counts add up to the count line: each card sits in one section.
+    # The "All results" chip counts laboratory results; device measurements sit apart.
+    assert re.search(rf'data-chip="all"[^>]*>All results <span>{lab}</span>', html), lab
+    # Section counts add up to the card count: each card sits in one section.
     sections = re.findall(r'data-section="([^"]+)"', html)
     totals = [int(n) for n in re.findall(r'<small>(\d+) results?', html)]
     assert len(sections) == len(totals) and sum(totals) == len(cards)
     # The section with the abnormal LDL opens, attention first; devices stay closed.
-    heart = html.split('data-section="lab-heart"')[1].split("</details>")[0]
+    heart = html.split('data-section="area-heart"')[1].split("</details>")[0]
     assert heart.startswith(" open") and heart.index("ldl-cholesterol") < heart.index("hdl-cholesterol")
-    assert re.search(r'data-section="device-[a-z]+">', html), "device sections are closed"
+    device = re.search(r'<details[^>]*data-section="devices"[^>]*>', html).group(0)
+    assert " open" not in device, "device measurements are one closed disclosure"
     # No verdict text where there is nothing to compare; the bar is named in words.
     assert "No comparison available" not in html
-    assert "What the marks mean" in html and "Sources disagree" in html
-    assert 'class="metric-chip-row metric-chip-row--areas"' not in client.get("/metrics").text
+    assert "What the marks and labels mean" in html and "Sources disagree" in html
+    assert 'class="metric-chip-row metric-chip-row--areas"' not in html
 
 
 # A stale PDF reading of a measurement the cuff has since re-measured is no
@@ -347,7 +351,7 @@ def test_home_leads_with_priorities_and_points_tiles_at_filters(tmp_path: Path):
     assert page.index("home-priorities-heading") < page.index("home-status-heading")
     assert "/metrics/ldl-cholesterol" in page.split("home-status-heading")[0]
     assert "зубчастої аденоми" in page, "the attention finding is on the home page"
-    assert 'href="/metrics?status=attention"' in page and 'href="/metrics?status=due"' in page
+    assert 'href="/results?show=attention"' in page and 'href="/results?show=due&amp;group=panel"' in page
     assert "home-destinations-heading" not in page, "the nav-copy tiles are gone (UX-02)"
     # The unverified tile counts results (eight extracted rows), not review tasks (one).
     tile = page.split('href="/documents?review_state=open" data-tone="due"')[1].split("</a>")[0]
@@ -363,17 +367,48 @@ def test_area_with_only_a_conclusion_counts_its_document(tmp_path: Path):
     assert "1 document" in digestive
 
 
-# --- /panels --------------------------------------------------------------------
+# --- test groups ----------------------------------------------------------------
 
 
-def test_panels_count_panels_and_sort_attention_first(tmp_path: Path):
+def test_test_groups_list_the_attention_sections_first(tmp_path: Path):
+    """Grouped by test group, a group holding an attention result opens and
+    leads; the groups with nothing to attend to follow it."""
     _, _, client = build(tmp_path)
     web.invalidate_catalog()
-    page = client.get("/panels").text
-    assert "Panels needing attention" in page
-    ranked = client.get("/panels?sort=attention").text
-    flat = ranked.split("data-ranked")[1].split("an-index-disclosures")[0]
-    assert flat.index('href="/panels/lipids"') < flat.index('href="/panels/thyroid"'), "attention leads"
+    page = client.get("/results?group=panel").text
+    assert 'data-section="panel-lipids" open' in page, "the abnormal LDL opens its group"
+    attention = [page.index(f'data-section="panel-{key}"') for key in ("vitamins", "lipids")]
+    quiet = [page.index(f'data-section="panel-{key}"') for key in ("kidney", "cbc")]
+    assert max(attention) < min(quiet), "attention leads"
+
+
+REDIRECTS = [
+    ("/metrics", "/results"),
+    ("/metrics?q=alt", "/results?q=alt"),
+    ("/metrics?status=attention", "/results?show=attention"),
+    ("/metrics?status=unverified", "/results?show=unverified"),
+    ("/metrics?status=due", "/results?show=due&group=panel"),
+    ("/metrics?status=oldest", "/results?group=panel&sort=date&reverse=1"),
+    ("/metrics?area=heart", "/results?area=heart"),
+    ("/panels", "/results?group=panel"),
+    ("/changes", "/results?episode=latest"),
+    ("/insights", "/results?show=attention"),
+]
+
+
+@pytest.mark.parametrize(("path", "location"), REDIRECTS)
+def test_retired_list_pages_answer_301_to_results(tmp_path: Path, path: str, location: str):
+    _, _, client = build(tmp_path)
+    moved = client.get(path, follow_redirects=False)
+    assert moved.status_code == 301
+    assert moved.headers["location"] == location
+
+
+def test_a_search_lists_a_laboratory_result_as_a_result_row(tmp_path: Path):
+    _, _, client = build(tmp_path)
+    page = client.get("/results", params={"q": "LDL cholesterol"}).text
+    assert '<li class="an-res" data-bucket="new" data-attention="true">' in page
+    assert '<a class="an-res__name" href="/metrics/ldl-cholesterol">LDL cholesterol</a>' in page
 
 
 def test_a_document_is_found_by_the_results_it_reports(tmp_path: Path):

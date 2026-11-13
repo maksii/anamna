@@ -67,7 +67,7 @@ def load_integration_environment(path: Path | None = None) -> None:
 
 def resource_path(name: str) -> Path:
     if _IS_CHECKOUT:
-        return ROOT / ("data/reference_library.json" if name == "reference_library.json" else name)
+        return ROOT / (f"data/{name}" if name in ("reference_library.json", "icd10.json") else name)
     return PACKAGE_DIR / "resources" / name
 
 #: How this application identifies itself on every outbound request.

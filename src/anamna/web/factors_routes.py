@@ -252,6 +252,7 @@ class _Wiring(NamedTuple):
     require_csrf: Callable[..., Any]
     audit: Callable[..., Any]
     document_row: Callable[..., Any]
+    invalidate: Callable[..., Any]
 
 
 def _owned_factor(connection, user_id: str, factor_id: str, today: date) -> dict:
@@ -343,7 +344,7 @@ def _new_page(request: Request, w: _Wiring, kind: str):
                               action=_MEDICINES, back_url=_MEDICINES, back_label=t("med.title"))
 
 
-def _keep_reference(settings, owner_id: str, factor_id: str) -> None:
+def _keep_reference(settings, owner_id: str, factor_id: str, invalidate: Callable[..., Any]) -> None:
     """Read and store the instruction of a linked entry in the background, and fill what the entry lacks from it.
 
     A save never waits for the reference site: this runs as a job nobody polls.
@@ -359,6 +360,8 @@ def _keep_reference(settings, owner_id: str, factor_id: str) -> None:
             if reference is not None:
                 factors.fill_from_reference(connection, owner_id, factor_id, reference)
             connection.commit()
+            # A medicine is a clinical fact a verdict reads (warfarin and the INR band), and verdicts are memoised per person.
+            invalidate(owner_id)
         return {}
 
     factor_jobs.start(owner_id, work, kind="reference", key=factor_id)
@@ -384,8 +387,9 @@ def _create(request: Request, w: _Wiring, user, form):
         w.audit(user["id"], user["id"], "factor.create", "factor", factor_id, {"kind": values["kind"]},
                 connection=connection)
         connection.commit()
+        w.invalidate(user["id"])
     if values["reference_name"]:
-        _keep_reference(w.settings, user["id"], factor_id)
+        _keep_reference(w.settings, user["id"], factor_id, w.invalidate)
     return _redirect(f"/medicines/{factor_id}?saved=created")
 
 
@@ -646,23 +650,29 @@ def _act(request: Request, w: _Wiring, user, factor_id: str, form) -> RedirectRe
             w.audit(user["id"], user["id"], "factor.update", "factor", factor_id, {"kind": values["kind"]},
                     connection=connection)
             connection.commit()
+            w.invalidate(user["id"])
             if values["reference_name"]:
-                _keep_reference(w.settings, user["id"], factor_id)
+                _keep_reference(w.settings, user["id"], factor_id, w.invalidate)
             return _redirect(f"{base}?saved=saved")
         if action == "stop":
             factors.stop(connection, user["id"], factor_id, today)
             connection.commit()
+            w.invalidate(user["id"])
             return _redirect(f"{base}?saved=stopped")
         if action == "remove":
             factors.delete(connection, user["id"], factor_id)
             w.audit(user["id"], user["id"], "factor.delete", "factor", factor_id, {}, connection=connection)
             connection.commit()
+            w.invalidate(user["id"])
             return _redirect("/medicines?saved=removed")
         if action == "effect_add":
-            return _add_effect(connection, user["id"], factor_id, form)
+            response = _add_effect(connection, user["id"], factor_id, form)
+            w.invalidate(user["id"])
+            return response
         if action == "effect_remove":
             factors.remove_effect(connection, user["id"], str(form.get("effect_id") or ""))
             connection.commit()
+            w.invalidate(user["id"])
             return _redirect(f"{base}?saved=effect_removed")
     raise HTTPException(400)
 
@@ -678,9 +688,10 @@ async def _factor_action(request: Request, w: _Wiring, factor_id: str):
 
 
 def register_routes(app, settings, *, templates, template_context, require_user, record_user, require_csrf,
-                    audit, document_row) -> None:
+                    audit, document_row, invalidate) -> None:
     """``audit`` is ``partial(_audit, settings)``; ``document_row`` renders a documents row as the record search does."""
-    w = _Wiring(settings, templates, template_context, require_user, record_user, require_csrf, audit, document_row)
+    w = _Wiring(settings, templates, template_context, require_user, record_user, require_csrf, audit, document_row,
+                invalidate)
 
     @app.get(_MEDICINES, response_class=HTMLResponse)
     def medicines_page(request: Request, kind: str = "", saved: str = "", error: str = ""):

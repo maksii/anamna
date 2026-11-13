@@ -275,6 +275,21 @@ def _pareto(plans):
                   if not any(c2 <= c and v2 >= v and (c2, v2) != (c, v) for c2, v2 in best))
 
 
+def test_most_complete_ranks_by_value_net_of_duplicates():
+    # Items 1+2 cost 130 and report 8 results, two of them twice; items 0+2
+    # cost 290 and report 7, none twice.  Net of copies the dearer plan is
+    # worth more (7 against 6), so it is the most complete plan.  Ranked by
+    # results alone, the cheapest one hid it.
+    items = [item(0, ["k0", "e4"], 90, fees=(("draw", 80.0), ("urine", 30.0))),
+             item(1, ["k0", "e1", "e3", "e4", "e0"], 40, fees=()),
+             item(2, ["k1", "k2", "e0", "e5", "e1"], 90, fees=())]
+    required, tracked = {"k0", "k1"}, {"e0", "e5", "k0"}
+    best = tv.most_complete(items, required, tracked=tracked)
+    assert ids(best) == ["0", "2"] and _copies(best) == 0
+    options = tv.complete_options(items, required, tracked=tracked)
+    assert [ids(plan) for plan in options] == [["0", "2"], ["1", "2"]]
+
+
 def test_every_mode_equals_brute_force():
     rng = random.Random(11)
     for _ in range(150):
@@ -298,13 +313,18 @@ def test_every_mode_equals_brute_force():
         got = [(p["cost"], p["value"], _copies(p)) for p in options]
         assert all(plan["exact"] for plan in options) and got[-1][0] == base["cost"]
         assert len(options) == 1 or net((*got[0], None)) == net(top)
-        assert all(dear[0] > cheap[0] and dear[1] > cheap[1] for dear, cheap in zip(got, got[1:]))
+        assert all(dear[0] > cheap[0] and dear[1] - dear[2] > cheap[1] - cheap[2] for dear, cheap in zip(got, got[1:]))
+        # Each option is the best plan at its price: no plan costing no more is
+        # worth more, or as much for less, or as much for as much with fewer copies.
+        assert all(net(plan) == net(max((q for q in everything if q[0] <= plan[0] + 0.005), key=net))
+                   for plan in got)
 
         for limit_budget in (None, budget):
             got = tv.most_complete(items, required, forced=forced, tracked=tracked, budget=limit_budget)
             pool = plans if limit_budget else everything
             want = max(pool, key=net)
-            if want[1] <= max(pool, key=lambda p: (-p[0], p[1]))[1]:
+            cheap = min(pool, key=lambda p: (p[0], p[2] - p[1], p[2]))
+            if want[1] - want[2] <= cheap[1] - cheap[2]:
                 continue  # nothing worth more than the cheapest: the cheapest stands
             assert net((got["cost"], got["value"], _copies(got))) == net(want)
 

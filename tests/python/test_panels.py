@@ -295,3 +295,26 @@ def test_ecg_heart_rate_is_filed_in_one_panel():
     homes = {panel.id for panel in PANELS if "ecg_heart_rate" in panel.device_members}
     homes.add(web._DEVICE_PANEL_BY_METRIC["ecg_heart_rate"])
     assert homes == {panel_for_concept("ecg-heart-rate").id} == {"blood_pressure"}
+
+
+def test_request_cache_gives_the_uncached_panel_answers(tmp_path: Path):
+    from anamna.reference import RULE_CACHE
+
+    swept = next(panel for panel in PANELS if panel.member_categories)
+    with _seeded(tmp_path) as connection:
+        uncached = {
+            panel.id: (panel_members(connection, panel), panel_retest_months(connection, panel))
+            for panel in PANELS
+        }
+        token = RULE_CACHE.set({})
+        try:
+            for _ in range(2):
+                for panel in PANELS:
+                    cached = (panel_members(connection, panel), panel_retest_months(connection, panel))
+                    assert cached == uncached[panel.id], panel.id
+            first = panel_members(connection, swept)
+            second = panel_members(connection, swept)
+            # Callers may change the list they get back, so it is never the cached one.
+            assert first is not second
+        finally:
+            RULE_CACHE.reset(token)

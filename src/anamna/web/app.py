@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import math
@@ -68,9 +69,12 @@ from .. import openwearables_webhooks as ow_hooks
 from ..telegram import TelegramService
 from .telegram_routes import register_telegram_routes
 from .changes import register_changes_routes, verdict_state
+from .results import register_results_routes
 from .labsync_routes import register_routes as register_labsync_routes
 from .testplan_routes import register_routes as register_testplan_routes
 from .factors_routes import register_routes as register_factors_routes
+from .diagnoses_routes import register_routes as register_diagnoses_routes
+from . import diagnoses_job
 from .found_routes import register_routes as register_found_routes
 from .allergy_routes import register_routes as register_allergy_routes
 from .genetics_routes import register_routes as register_genetics_routes
@@ -101,7 +105,7 @@ from ..devices.timezone import timezone_choices, user_timezone, valid_timezone
 from .experience import build_overview, build_area_experience
 from . import search as record_search
 from .. import immunizations as immunization_records
-from .. import factors, drugref
+from .. import diagnoses, diagnosis_matrix, factors, drugref, icd10
 from . import factors_view
 from ..devices import queries as device_queries
 from ..locales.concepts_en import CONCEPT_NAMES_EN
@@ -116,6 +120,7 @@ from ..devices.queries import (
     device_metric_values,
     device_overview,
     is_partial_day,
+    source_preferences,
 )
 from ..health import (
     AREA_BY_ID,
@@ -142,6 +147,7 @@ from ..health import (
 )
 from ..i18n import (
     LOCALE_COOKIE,
+    SUPPORTED_LOCALES,
     VISITOR_LOCALE,
     activate_locale,
     format_date_localized,
@@ -324,6 +330,8 @@ _VACCINATIONS_URL = "/vaccinations"
 _UPLOAD_URL = "/upload"
 _DEVICES_URL = "/devices"
 _STATIC_PREFIX = "/static/"
+#: The strings a script reads, one cacheable file per locale (see `_i18n_script`).
+_I18N_PREFIX = "/i18n/"
 _INTEGRATION_SYNC_SAVED_URL = "/profile?saved=integration_sync"
 _PAPERLESS_URL_ERROR_URL = "/admin/paperless?error=paperless.error_url"
 _RESCAN_QUEUED_QUERY = "?rescan=queued"
@@ -383,7 +391,7 @@ SHARE_SAVED = {"share_level": "profile.share_level_saved"}
 EMAIL_SAVED = {"email": "profile.email_saved"}
 #: Pages that show results, and so carry the "Ask an AI" button.
 AI_EXPORT_PAGES = frozenset(
-    {"dashboard", "panels", "metrics", "devices", "documents"}
+    {"dashboard", "panels", "metrics", "results", "devices", "documents"}
 )
 REVIEW_STATES = ("open", "resolved", "needs_correction")
 #: Refusals of /documents/{id}/duplicate, each `dup.error_<code>` in the catalogue.
@@ -425,9 +433,11 @@ PROFILE_CHOICES = {
 #: rather than a list of pages to forbid: a route added next month is refused
 #: by default, which is the direction an access check should fail in.
 GUEST_ALLOWED_PREFIXES = (
-    "/insights", "/changes", "/panels", "/metrics", _DEVICES_URL, _DOCUMENTS_URL,
+    "/results", "/insights", "/changes", "/panels", "/metrics", _DEVICES_URL, _DOCUMENTS_URL,
     "/privacy", "/terms",
     "/api/panels", "/api/metrics", "/api/documents", "/api/ai-export", "/static",
+    # Every page loads its strings from here.
+    _I18N_PREFIX,
     # The correlation explorer is rendered on the metric pages a guest already
     # reads; without its data endpoint every control on it answers 403.
     "/api/correlation",
@@ -448,6 +458,9 @@ GUEST_ALLOWED_PREFIXES = (
     # The medicines page is the record a doctor reads next to the results; its
     # writes stay refused to a guest by the routes themselves.
     "/medicines",
+    # The diagnoses page is read-only to a guest: its routes refuse writes to a
+    # viewer who is not the owner, and the guest POST rule below refuses the rest.
+    "/diagnoses",
 )
 #: The POSTs a guest may still make.  None of them touch the record: they end
 #: the visit, change how it is displayed, or sign the visitor in as themselves,
@@ -671,10 +684,13 @@ def invalidate_catalog(owner_user_id: str | None = None) -> None:
 
     Checking one value changes one person's record; emptying every account's
     memo for it made the next dashboard anyone opened a two-second rebuild.
+    The device scan (`_DEVICE_ONLY`) is forgotten only with everything: its
+    stamp already holds all it reads.
     """
     with _MEMO_LOCK:
         if owner_user_id is None:
             _MEMO.clear()
+            _DEVICE_ONLY.clear()
             _CORRELATION_MEMO.clear()
             return
         for memo in (_MEMO, _CORRELATION_MEMO):
@@ -728,6 +744,46 @@ def _memoised[T](connection, owner_user_id: str, name: str, build: Callable[[], 
         return value
 
     return _cached((name, owner_user_id), resolve)
+
+
+#: Reads that touch only the device tables, the person's time zone and their
+#: source preferences.  All of that is in the stamp, so `invalidate_catalog(owner)`
+#: leaves them alone: checking a laboratory value rebuilds the cards (their
+#: verdicts read the whole record) and not these scans of every stored day,
+#: which were most of the rebuild.
+_DEVICE_ONLY: "OrderedDict[tuple[str, str, str], tuple[tuple, object]]" = OrderedDict()
+
+
+def _device_only[T](connection, owner_user_id: str, name: str, build: Callable[[], T]) -> T:
+    def resolve() -> T:
+        key = (owner_user_id, get_locale(), name)
+        zone = connection.execute("SELECT timezone FROM users WHERE id=?", (owner_user_id,)).fetchone()
+        stamp = (
+            date.today().isoformat(),
+            _fingerprint(connection, owner_user_id, "device"),
+            # Not in the device fingerprint: removing a preference leaves
+            # MAX(updated_at) where it was.
+            zone[0] if zone else None,
+            tuple(sorted(source_preferences(connection, owner_user_id).items())),
+        )
+        with _MEMO_LOCK:
+            entry = _DEVICE_ONLY.get(key)
+            if entry is not None and entry[0] == stamp:
+                _DEVICE_ONLY.move_to_end(key)
+                return entry[1]
+        value = build()
+        with _MEMO_LOCK:
+            _DEVICE_ONLY[key] = (stamp, value)
+            _DEVICE_ONLY.move_to_end(key)
+            while len(_DEVICE_ONLY) > _MEMO_SIZE:
+                _DEVICE_ONLY.popitem(last=False)
+        return value
+
+    return _cached(("device_only", name, owner_user_id), resolve)
+
+
+def _device_rows(connection, owner_user_id: str) -> list[dict[str, object]]:
+    return _device_only(connection, owner_user_id, "rows", lambda: device_metric_catalog(connection, owner_user_id))
 
 
 # --- formatting -------------------------------------------------------------
@@ -1388,11 +1444,13 @@ def _deduped_observation_rows(
     params: list[object] = [owner_user_id]
     if concept_id:
         params.append(concept_id)
-    rows = connection.execute(
-        f"""WITH evidence AS (
+    def read():
+        return connection.execute(
+            f"""WITH evidence AS (
                  SELECT o.*, c.canonical_name, c.category, c.preferred_unit,
                         d.title document_title, d.original_filename, d.duplicate_of_document_id,
                         d.order_identifier document_order, d.clinical_type document_clinical_type,
+                        d.historical_at document_historical_at,
                         COALESCE(rv.canonical_name, dv.canonical_name, 'Unknown provider') vendor,
                         COALESCE(r.vendor_id, d.vendor_id) resolved_vendor_id,
                         r.title report_title,
@@ -1423,8 +1481,16 @@ def _deduped_observation_rows(
              )
              SELECT * FROM evidence WHERE evidence_rank=1
              ORDER BY COALESCE(observed_at, created_at) DESC, canonical_name""",
-        params,
-    ).fetchall()
+            params,
+        ).fetchall()
+
+    # One page reads the whole record several times.  Only on a request that
+    # cannot write (GET), so a route that changes a value and reads again sees
+    # it.  The rows are shared; every caller gets dicts of its own.
+    if concept_id is None and _request_memo.get() is not None:
+        rows = _cached(("deduped_observation_rows", owner_user_id), read)
+    else:
+        rows = read()
     return [_in_preferred_unit(dict(row)) for row in rows]
 
 
@@ -1433,7 +1499,7 @@ SAME_TWIN_CONCEPTS = tuple(concept_id for concept_id in MEASUREMENT_TWINS if dev
 #: Fields `_deduped_observation_rows` joins in beside the observation's own.
 _JOINED_ROW_FIELDS = (
     "canonical_name", "category", "preferred_unit", "document_title", "original_filename",
-    "duplicate_of_document_id", "document_order", "document_clinical_type", "vendor",
+    "duplicate_of_document_id", "document_order", "document_clinical_type", "document_historical_at", "vendor",
     "resolved_vendor_id", "report_title", "evidence_rank", "evidence_count",
 )
 
@@ -1658,7 +1724,12 @@ def _attention_rank(card: dict[str, object]) -> int:
     0 critical · 1 outside the governing interval · 2 the two cited authorities
     disagree · 3 borderline · 4 nothing to say.  Nothing here is a hand-picked
     concept id: the ranking is whatever the evaluation engine returned.
+    A result whose latest reading comes from a historical document says nothing.
     """
+    # Kept, not raised: the latest reading comes from a document the person
+    # marked historical.  The verdict itself is untouched.
+    if card.get("historical"):
+        return 4
     verdict = card.get("verdict") or {}
     reading = str(verdict.get("interpretation") or "unjudged")
     if reading in {"critical_low", "critical_high"}:
@@ -2132,12 +2203,12 @@ def _comparator_of(row) -> str | None:
         return None
 
 
-def _reading_verdict(
+def _judge_reading(
     connection, concept_id: str, row: dict[str, object], age: int | None, sex: str | None
 ) -> tuple[str | None, dict[str, object]]:
-    """One reading's unit and verdict -- the single path every lab page judges by.
+    """One reading's unit and verdict, worked out now.
 
-    `_lab_card` judges the latest day through here and /changes judges every
+    `_lab_card` judges the latest day through here and /results judges every
     day it compares, so the two can never disagree about the same number.
     """
     unit_source = (
@@ -2175,6 +2246,39 @@ def _reading_verdict(
         },
     )
     return unit_source, verdict
+
+
+def _reading_verdict(
+    connection, concept_id: str, row: dict[str, object], age: int | None, sex: str | None
+) -> tuple[str | None, dict[str, object]]:
+    """One reading's unit and verdict -- the single path every lab page judges by.
+
+    A stored reading is judged once per person and day and remembered beside
+    the catalog (`_memoised`), so whatever forgets the catalog forgets this
+    too: an edit, a medicine, the profile.  Only on a request that cannot
+    write (GET) and has its request cache; everything else judges afresh.
+    """
+    owner_user_id, row_id = row.get("owner_user_id"), row.get("id")
+    # No memo without a request cache either: `_matrix_cards` switches it off,
+    # and looking the memo up would then cost a record fingerprint per reading.
+    if not owner_user_id or not row_id or _request_memo.get() is None or _request_cache.get() is None:
+        return _judge_reading(connection, concept_id, row, age, sex)
+    verdicts = _memoised(connection, str(owner_user_id), "reading_verdicts", dict)
+    # Everything the verdict reads from the row is in the key: one reading
+    # reaches here as stored and converted to its preferred unit.
+    key = (
+        str(row_id), concept_id, row["value_numeric"], row["value_text"],
+        row.get("preferred_unit"), row.get("unit_raw"), row.get("observed_at"), age, sex,
+        # What else the verdict reads from the stored row.
+        row.get("comparator"), row.get("vendor_reference_text"), row.get("vendor_reference_low"),
+        row.get("vendor_reference_high"), row.get("vendor_interpretation"), row.get("sample_condition"),
+    )
+    found = verdicts.get(key)
+    if found is None:
+        found = verdicts[key] = _judge_reading(connection, concept_id, row, age, sex)
+    unit_source, verdict = found
+    # A copy: the remembered verdict is shared by every later page.
+    return unit_source, dict(verdict)
 
 
 def _lab_card(
@@ -2260,6 +2364,8 @@ def _lab_card(
         "count": len(daily),
         "evidence_count": sum(int(item["evidence_count"]) for item in values),
         "is_device": False,
+        # The latest reading comes from a document the person marked historical.
+        "historical": bool(latest.get("document_historical_at")),
         "is_unmapped": category == "unmapped",
         "verdict": verdict,
         "trend": trend,
@@ -2508,7 +2614,7 @@ def _build_device_catalog(connection, owner_user_id: str) -> list[dict[str, obje
     guidance_index = _guidance_index(connection)
     return [
         _device_card(connection, raw, age, sex, guidance_index)
-        for raw in device_metric_catalog(connection, owner_user_id)
+        for raw in _device_rows(connection, owner_user_id)
         # Read on its concept's card; listing it here would show it twice.
         if str(raw["id"]).removeprefix(_DEVICE_METRIC_PREFIX) not in SAME_DEVICE_KEYS
     ]
@@ -2533,9 +2639,11 @@ def _catalog(connection, owner_user_id: str) -> list[dict[str, object]]:
 
 
 def _device_overview(connection, owner_user_id: str) -> dict[str, object]:
-    """The devices summary, memoised: it rescans all 58k daily rows to build it."""
+    """The devices summary, memoised: it rescans all 58k daily rows to build it.
+    The scan of every stored day comes from `_device_rows`, which a laboratory edit keeps."""
     return _memoised(
-        connection, owner_user_id, "devices", lambda: device_overview(connection, owner_user_id)
+        connection, owner_user_id, "devices",
+        lambda: device_overview(connection, owner_user_id, _device_rows(connection, owner_user_id)),
     )
 
 
@@ -2666,7 +2774,10 @@ def _finding_result(row: dict[str, object]) -> dict[str, object]:
             str(part) for part in (row.get("title"), row.get("date_text"), row.get("vendor")) if part
         ),
         "url": f"/documents/{row['document_id']}",
-        "badge": t("panels.status_attention") if row.get("status") == "attention" else "",
+        "badge": (
+            t("panels.status_attention") if row.get("status") == "attention"
+            else (t("doc.historical_pill") if row.get("historical") else "")
+        ),
         "note": t("metrics.finding_attention_note") if row.get("status") == "attention" else "",
     }
 
@@ -2854,11 +2965,20 @@ def _panel_card(
         "conflict_count": conflicted,
         "staleness": freshness,
         "members": members,
+        # Every member that has a result, not only the few the card previews.
+        "present_ids": [key for key in keys if key in by_id],
         "missing_members": missing,
         # Device metrics are not analytes; the card wording switches on this.
         "has_device_members": bool(panel.device_members),
         "renderer": panel.renderer,
     }
+
+
+def _card_influences(card: dict[str, object], by_concept: dict[str, list[dict]]) -> list[dict]:
+    """The Medicines-page entries that bear on this result's latest reading."""
+    series = card.get("series") or []
+    previous = series[-2]["date"] if len(series) > 1 else None
+    return factors.influencing(by_concept.get(str(card["id"]), []), str(card.get("latest_date") or ""), previous)
 
 
 def _panel_cards(
@@ -3173,7 +3293,7 @@ def _area_table(connection, area_id: str, metrics: list[dict[str, object]]) -> d
 
 
 def _attends(card: dict[str, object]) -> bool:
-    return str((card["verdict"] or {}).get("interpretation")) in ATTENTION_INTERPRETATIONS
+    return not card.get("historical") and str((card["verdict"] or {}).get("interpretation")) in ATTENTION_INTERPRETATIONS
 
 
 def _highest_text(cards: list[dict[str, object]]) -> str:
@@ -3509,6 +3629,7 @@ def _finding_catalog(connection, owner_user_id: str) -> list[dict[str, object]]:
             # document's date; «Date unknown» beside a dated report was wrong.
             """SELECT f.*, COALESCE(f.finding_date, d.report_date) shown_date,
                              d.title document_title, d.original_filename,
+                             d.historical_at document_historical_at,
                              COALESCE(v.canonical_name, 'Unknown provider') vendor
                FROM clinical_findings f
                JOIN documents d ON d.id=f.document_id
@@ -3523,6 +3644,12 @@ def _finding_catalog(connection, owner_user_id: str) -> list[dict[str, object]]:
         for raw in rows:
             row = dict(raw)
             row["finding_date"] = row.pop("shown_date")
+            # A conclusion from a document the person marked historical is
+            # kept, not raised: every reader of this catalogue (the home page,
+            # Find results, the areas, the assistant) sees it as information.
+            row["historical"] = bool(row.pop("document_historical_at"))
+            if row["historical"] and row["status"] == "attention":
+                row["status"] = "information"
             key = (row["document_id"], row["page_number"], row["health_area"], row["title"], row["summary_en"], row["finding_date"])
             if key in seen:
                 continue
@@ -3657,7 +3784,7 @@ def _chart_payload(
     """One point per day, each coloured by its own verdict.
 
     With a ``connection`` every point is judged by `_reading_verdict` at the
-    age the sample was taken -- the same path as the hero and /changes -- so a
+    age the sample was taken -- the same path as the hero and /results -- so a
     critically high 8.1 is never drawn grey because its report printed no
     flag (the old colour was the laboratory's flag alone).
     """
@@ -3855,6 +3982,19 @@ def _correlation_lab_series(connection, owner_user_id: str) -> dict[str, dict[st
     return labs
 
 
+def _correlation_device_half(connection, owner_user_id: str) -> dict[str, object]:
+    """What device metrics exist and the suggestion candidates' series.  Both
+    read only device data, so a laboratory edit keeps them (`_device_only`)."""
+    def build() -> dict[str, object]:
+        device_options = _correlation_device_options(connection, owner_user_id)
+        return {
+            "device_options": device_options,
+            "candidates": _correlation_candidates(connection, owner_user_id, device_options),
+        }
+
+    return _device_only(connection, owner_user_id, "correlation", build)
+
+
 def _correlation_index(connection, owner_user_id: str) -> dict[str, object]:
     """Everything the section needs except the primary series, in one memo slot.
 
@@ -3866,10 +4006,8 @@ def _correlation_index(connection, owner_user_id: str) -> dict[str, object]:
     """
 
     def build() -> dict[str, object]:
-        device_options = _correlation_device_options(connection, owner_user_id)
-        candidates = _correlation_candidates(connection, owner_user_id, device_options)
         labs = _correlation_lab_series(connection, owner_user_id)
-        return {"device_options": device_options, "candidates": candidates, "labs": labs}
+        return {**_correlation_device_half(connection, owner_user_id), "labs": labs}
 
     return _memoised(connection, owner_user_id, "correlation", build)
 
@@ -5734,7 +5872,8 @@ async def security_headers(request: Request, call_next):
     # /cdn-cgi/l/email-protection links, even inside <option>/<template>.
     if request.url.path.startswith(_STATIC_PREFIX):
         response.headers["Cache-Control"] = _static_cache_control(request)
-    else:
+    # The strings script sets its own (it is public and named by its content).
+    elif not request.url.path.startswith(_I18N_PREFIX):
         response.headers["Cache-Control"] = "private, no-store, no-transform"
     if _secure_cookie(request):
         # Only over TLS: sent on a plain-http reply it is ignored by every
@@ -5761,7 +5900,7 @@ async def locale_middleware(request: Request, call_next):
         # Never on a static file: Cloudflare refuses to cache any response
         # that sets a cookie, so every first visit's CSS and scripts went
         # BYPASS to the origin. Assets do not depend on the locale anyway.
-        if request.url.path.startswith(_STATIC_PREFIX):
+        if request.url.path.startswith((_STATIC_PREFIX, _I18N_PREFIX)):
             return response
         # Only a choice is remembered; the default is not, so it can change.
         if request.query_params.get("lang"):
@@ -5872,6 +6011,28 @@ def record_user(request: Request, user):
     """
     return viewing_row(request) or user
 
+@lru_cache(maxsize=len(SUPPORTED_LOCALES))
+def _i18n_script(locale: str) -> tuple[str, str]:
+    """The strings scripts read (`JS_KEYS`) as one script for a locale, and its
+    version.  They were 15 KB inline in every page; as a file named by its own
+    content the browser fetches them once."""
+    token = activate_locale(locale)
+    try:
+        strings = json.dumps(js_strings(), ensure_ascii=False, separators=(",", ":"))
+    finally:
+        reset_locale(token)
+    # JSON allows these two characters, but a script before ES2019 ends its
+    # line at them, so the literal would break.
+    strings = strings.replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
+    tag = "uk-UA" if locale == "uk" else "en-GB"
+    body = f'window.__HL_I18N__={strings};window.__HL_LOCALE__="{tag}";'
+    return body, hashlib.sha256(body.encode()).hexdigest()[:16]
+
+
+def _i18n_src(locale: str) -> str:
+    locale = "uk" if locale == "uk" else "en"
+    return f"{_I18N_PREFIX}{locale}.js?v={_i18n_script(locale)[1]}"
+
 def template_context(request: Request, **values):
     user = current_user(request)
     locale = get_locale()
@@ -5896,8 +6057,7 @@ def template_context(request: Request, **values):
         "html_lang": "uk" if locale == "uk" else "en",
         # "system" follows the operating system; the explicit values pin it.
         "theme": _theme_choice(request),
-        "js_i18n": js_strings(),
-        "js_locale": "uk-UA" if locale == "uk" else "en-GB",
+        "i18n_src": _i18n_src(locale),
         # The hand-off offers the whole record, so it belongs on the pages
         # that show results and nowhere else: on /upload or /profile the
         # button would advertise data the reader is not looking at.
@@ -5951,6 +6111,18 @@ def switch_theme(
             secure=_secure_cookie(request),
         )
     return response
+
+@router.get(_I18N_PREFIX + "{name}")
+def i18n_script(name: str, v: str = ""):
+    """Public: these are the interface's own words, the same for everyone."""
+    locale = name.removesuffix(".js")
+    if not name.endswith(".js") or locale not in SUPPORTED_LOCALES:
+        raise HTTPException(404)
+    body, version = _i18n_script(locale)
+    # The same rule as a static file: only the current version is kept for long.
+    cache = "public, max-age=31536000, immutable, no-transform" if v == version else "public, max-age=300, no-transform"
+    return Response(body, media_type="text/javascript", headers={"Cache-Control": cache})
+
 
 @router.post("/locale")
 def switch_locale(
@@ -9024,21 +9196,21 @@ def _tiles(attention_count: int, due_count: int, panels, counts) -> list[dict[st
             "key": "attention",
             "label": t("tile.attention") if attention_count else t("tile.attention_zero"),
             "value": format_count(attention_count),
-            "href": "/metrics?status=attention",
+            "href": "/results?show=attention",
             "tone": "attention" if attention_count else "good",
         },
         {
             "key": "due",
             "label": t("tile.due") if due_count else t("tile.due_zero"),
             "value": format_count(due_count),
-            "href": "/metrics?status=due",
+            "href": "/results?show=due&group=panel",
             "tone": "due" if due_count else "good",
         },
         {
             "key": "panels",
             "label": t("tile.panels_covered"),
             "value": f"{format_count(with_data)}/{format_count(len(panels))}",
-            "href": "/panels",
+            "href": "/results?group=panel",
             "tone": "neutral",
         },
         {
@@ -9074,6 +9246,49 @@ def _medicine_tile(connection, owner_user_id: str, *, owner: bool) -> dict[str, 
         "note": ", ".join(factor["name"] for factor in current[:3]) if current else t("med.tile.note_empty"),
         "href": "/medicines",
         "tone": "neutral",
+    }
+
+def _matrix_cards(connection, owner_user_id: str) -> list[dict[str, object]]:
+    """Every metric card in English, built outside the request cache.
+
+    The possible-diagnosis matrix matches English metric names and band labels,
+    cards are localized, and the request cache is not keyed by locale.
+    """
+    locale_token = activate_locale("en")
+    cache_token = _request_cache.set(None)
+    try:
+        return _metric_catalog(connection, owner_user_id, include_suppressed=True)
+    finally:
+        _request_cache.reset(cache_token)
+        reset_locale(locale_token)
+
+
+def _display_cards(connection, owner_user_id: str) -> list[dict[str, object]]:
+    """Every metric card in the request's locale."""
+    return _metric_catalog(connection, owner_user_id, include_suppressed=True)
+
+
+def _diagnosis_tile(connection, owner_user_id: str, *, owner: bool) -> dict[str, object] | None:
+    """The dashboard tile for diagnoses: how many are current and how many wait for a doctor."""
+    rows = diagnoses.listing(connection, owner_user_id)
+    current = [row for row in rows if row["status"] == "active" and row["certainty"] == "confirmed"]
+    provisional = [row for row in rows if row["status"] == "active" and row["certainty"] == "provisional"]
+    possible = len(diagnosis_matrix.listing(connection, owner_user_id)) + len(provisional)
+    if not current and not possible and not owner:
+        return None
+    if possible:
+        note = t_plural("dx.tile.note_possible", possible)
+    elif current:
+        note = ", ".join(diagnoses.display_name(row, get_locale()) for row in current[:3])
+    else:
+        note = t("dx.tile.note_empty")
+    return {
+        "key": "diagnoses",
+        "label": t("dx.tile.label"),
+        "value": format_count(len(current)),
+        "note": note,
+        "href": "/diagnoses",
+        "tone": "due" if possible else "neutral",
     }
 
 def _oldest_panels(panels) -> list[dict[str, object]]:
@@ -9132,6 +9347,10 @@ def dashboard(request: Request):
             connection, user["id"],
             owner=viewing_row(request) is None and current_user(request).get("token_kind") != "guest",
         )
+        diagnosis_tile = _diagnosis_tile(
+            connection, user["id"],
+            owner=viewing_row(request) is None and current_user(request).get("token_kind") != "guest",
+        )
     # What needs attention, first: the abnormal results and report
     # conclusions themselves, not a count of them.
     priorities = [
@@ -9155,6 +9374,7 @@ def dashboard(request: Request):
             tiles=[
                 *_tiles(len(attention) + len(attention_findings), len(_due_panels(panels)), panels, counts),
                 *([medicine_tile] if medicine_tile else []),
+                *([diagnosis_tile] if diagnosis_tile else []),
             ],
             recent_documents=recent_documents,
             active="dashboard",
@@ -9393,51 +9613,10 @@ def ai_export_prompt(
 
 # --- panels -------------------------------------------------------------
 
-@router.get("/panels", response_class=HTMLResponse, responses=_RESPONSES_401)
-def panels_page(request: Request, sort: str = ""):
-    settings = request.app.state.settings
-    user = require_user(request)
-    user = record_user(request, user)
-    with connect(settings) as connection:
-        panels = _panel_cards(connection, user["id"], member_limit=6)
-    # One order for both views: the attention view is this list, flat; the
-    # area view stamps each card with its place in it, so the in-page
-    # toggle reorders without asking the server again.
-    ranked = sorted(panels, key=_panel_sort_key)
-    attention_order = {panel["id"]: index for index, panel in enumerate(ranked)}
-    groups = []
-    for definition in HEALTH_AREAS:
-        area_id = str(definition["id"])
-        area_panels = sorted(
-            [panel for panel in panels if panel["area_id"] == area_id], key=_panel_sort_key
-        )
-        if area_panels:
-            groups.append(
-                {
-                    "area_id": area_id,
-                    "area_name": translate_phrase(str(definition["name"])),
-                    "panels": area_panels,
-                    "flagged": sum(1 for panel in area_panels if panel["status"] == "attention"),
-                    "overdue": sum(
-                        1 for panel in area_panels if panel["staleness"]["state"] == "overdue"
-                    ),
-                }
-            )
-    totals = {
-        "panels": len(panels),
-        "with_data": sum(1 for panel in panels if panel["present_count"]),
-        "flagged": sum(1 for panel in panels if panel["status"] == "attention"),
-        "overdue": sum(1 for panel in panels if panel["staleness"]["state"] == "overdue"),
-    }
-    return templates.TemplateResponse(
-        request,
-        "panels.html",
-        template_context(
-            request, groups=groups, totals=totals, active="panels",
-            sort="attention" if sort == "attention" else "area",
-            ranked=ranked, attention_order=attention_order,
-        ),
-    )
+@router.get("/panels")
+def panels_page():
+    """Retired: the test groups are one way to group the list on /results."""
+    return RedirectResponse("/results?group=panel", status_code=301)
 
 # ------------------------------------------------------------ vaccinations
 
@@ -10102,6 +10281,15 @@ def _panel_context(connection, owner_user_id: str, panel_id: str) -> dict[str, o
     )
     card = _panel_card(connection, panel, by_id, names)
     rows = list(card["members"])
+    by_concept = factors.influences(connection, owner_user_id, today=date.today())
+    locale = get_locale()
+    # Per result: the entries that bear on its latest reading.  Kept beside
+    # the rows, never on them: the cards are shared between requests.
+    influences = {
+        str(row["id"]): chips
+        for row in rows
+        if (chips := factors_view.influence_chips(_card_influences(row, by_concept), locale=locale))
+    }
     dates = [
         _date_key(point["date"]) for row in rows for point in (row.get("series") or [])
     ]
@@ -10135,6 +10323,8 @@ def _panel_context(connection, owner_user_id: str, panel_id: str) -> dict[str, o
     return {
         "panel": card,
         "rows": rows,
+        "influences": influences,
+        "medicines": factors_view.panel_entries(rows, by_concept, locale=locale),
         "sparklines": sparklines,
         "documents": documents,
         "sources": sources_for(
@@ -10362,11 +10552,11 @@ def panel_json(request: Request, panel_id: str):
 
 @router.get("/insights")
 def insights():
-    """Retired: every section it had is a status filter on /metrics now.
+    """Retired: every section it had is a filter on /results now.
 
     301 so bookmarks and a guest's old link land on the same list.
     """
-    return RedirectResponse("/metrics?status=attention", status_code=301)
+    return RedirectResponse("/results?show=attention", status_code=301)
 
 # --- areas --------------------------------------------------------------
 
@@ -11047,6 +11237,16 @@ def _document_ai_error(request: Request) -> str | None:
     )
 
 
+@router.get("/concepts/names")
+def concept_names(request: Request):
+    """The names a correction can map a value to, for the document page's
+    picker.  Fetched when a correction field is first focused: on the page
+    itself they were 88 KB that most visits never used."""
+    require_user(request)
+    with connect(request.app.state.settings) as connection:
+        return JSONResponse(sorted(_concept_picker(connection)))
+
+
 @router.get("/documents/{document_id}", response_class=HTMLResponse, responses=_RESPONSES_401_404)
 def document_detail(
     request: Request,
@@ -11090,7 +11290,6 @@ def document_detail(
         part_candidates = [] if document.get("duplicate_of_document_id") else _part_candidates(
             connection, user["id"], document
         )
-        concepts = sorted(_concept_picker(connection))
         document["is_stale"] = document_id in set(_stale_document_ids(connection, user["id"]))
         known_vendors = _known_vendors(connection)
         issue_reports = _document_issue_reports(connection, user["id"], document_id)
@@ -11127,7 +11326,7 @@ def document_detail(
             request, document=document, reports=reports, observations=observations, given_here=given_here,
             listed_observations=listed, bp_readings=bp_readings,
             negative_allergens=negative_allergens, findings=findings, narrative=narrative,
-            pages=pages, tags=tags, relations=relations, concepts=concepts, part_candidates=part_candidates,
+            pages=pages, tags=tags, relations=relations, part_candidates=part_candidates,
             dup_error=f"dup.error_{dup_error}" if dup_error in DUPLICATE_ERRORS else None,
             finding_error=f"doc.finding_error_{finding_error}" if finding_error in FINDING_ERRORS else None,
             # A written conclusion is never about what only a wearable measures.
@@ -11780,6 +11979,41 @@ def correct_document_finding(
     if _wants_json(request):
         return JSONResponse({"ok": True, "action": action, "finding_ids": [str(row["id"]) for row in rows]})
     return RedirectResponse(destination + "#side-panel-conclusion", status_code=303)
+
+
+@router.post("/documents/{document_id}/historical", responses=_RESPONSES_401_403_404)
+def set_document_historical(
+    request: Request,
+    document_id: str,
+    historical: Annotated[str, Form()] = "",
+    csrf_token: Annotated[str, Form()] = "",
+):
+    """Mark a document historical (its problem is over) or current again.
+
+    Nothing is removed: the flag only stops the document's conclusions and the
+    results whose latest reading comes from it from raising attention."""
+    settings = request.app.state.settings
+    user = require_user(request)
+    require_csrf(user, csrf_token)
+    marked = historical == "1"
+    with connect(settings) as connection:
+        owned = connection.execute(_OWNED_DOCUMENT_SQL, (document_id, user["id"])).fetchone()
+        if not owned:
+            raise HTTPException(404)
+        connection.execute(
+            "UPDATE documents SET historical_at=? WHERE id=? AND owner_user_id=?",
+            (utc_now() if marked else None, document_id, user["id"]),
+        )
+        _audit(
+            settings, user["id"], user["id"],
+            "document_marked_historical" if marked else "document_marked_current",
+            "document", document_id, {}, connection,
+        )
+    invalidate_catalog(user["id"])
+    return RedirectResponse(
+        f"/documents/{document_id}?historical={'saved' if marked else 'cleared'}#document-historical",
+        status_code=303,
+    )
 
 
 @router.post("/documents/{document_id}/tags", responses=_RESPONSES_401_403_404)
@@ -13616,27 +13850,16 @@ def set_issue_state(
 
 # --- search -------------------------------------------------------------
 #
-# /metrics answers three questions on one page, through one renderer
-# (`_search_results.html`) shared by the page load and the live search:
-# "where is X?" (q), "what needs me?" (status) and "what is in this area?"
-# (area).  With none of them it lists every result compactly -- the panel
-# cards that used to follow the search box (56 000 px on a phone) are
-# /panels' job.
+# /results answers "where is X?" (q) through one renderer
+# (`_search_results.html`) shared by the page load and the live search.
+# Without a search the list itself is the page (`web/results.py`).
 
-METRIC_STATUSES = ("attention", "due", "oldest", "unverified")
-#: How each status chip is coloured; anything else is neutral.
-_STATUS_TONES = {"attention": "attention", "due": "due", "unverified": "due"}
-_STATUS_TEXT = {
-    "attention": ("insights.attention_heading", "insights.attention_lead"),
-    "due": ("insights.due_heading", "insights.due_lead"),
-    "oldest": ("insights.oldest_heading", "insights.oldest_lead"),
-    "unverified": ("metrics.status_unverified", "insights.unverified_lead"),
-}
 _GROUP_HEADINGS = {
     "metrics": "metrics.group_analytes",
     "device_metrics": "metrics.group_devices",
     "vaccinations": "metrics.group_vaccinations",
     "medicines": "metrics.group_medicines",
+    "diagnoses": "dx.search.group",
     "findings": "metrics.group_findings",
     "documents": "metrics.group_documents",
     "panels": "metrics.group_panels",
@@ -13644,7 +13867,7 @@ _GROUP_HEADINGS = {
 }
 _GROUP_KINDS = {
     "metrics": "metric", "device_metrics": "metric", "panels": "panel",
-    "vaccinations": "row", "medicines": "row", "findings": "row", "documents": "row", "areas": "row",
+    "vaccinations": "row", "medicines": "row", "diagnoses": "row", "findings": "row", "documents": "row", "areas": "row",
 }
 
 def _group(key: str, rows: list, *, kind: str | None = None, page=None, fold: bool = False) -> dict[str, object]:
@@ -13779,6 +14002,23 @@ def _medicine_search_entries(connection, owner_user_id: str) -> list[tuple[recor
         ))
     return entries
 
+def _diagnosis_search_entries(connection, owner_user_id: str) -> list[tuple[record_search.Terms, dict[str, object]]]:
+    """One search result per diagnosis, found by its code, its written name and
+    the catalogue title in both languages; the status shows as its subtitle."""
+    entries = []
+    for row in diagnoses.listing(connection, owner_user_id):
+        code = row["code"] or ""
+        entries.append((
+            record_search.terms([
+                code, row["name"], icd10.name(code, "uk") if code else "", icd10.name(code, "en") if code else "",
+            ], [t(f"dx.status.{row['status']}")]),
+            {
+                "kind": "diagnosis", "title": diagnoses.display_name(row, get_locale()),
+                "subtitle": t(f"dx.status.{row['status']}"), "url": f"/diagnoses/{row['id']}",
+            },
+        ))
+    return entries
+
 def _record_search(connection, owner_user_id: str, q: str, offset: int) -> list[dict[str, object]]:
     """Every kind of thing the record holds, matched by word starts and
     case endings in both languages (`web/search.py` has the rules)."""
@@ -13813,6 +14053,7 @@ def _record_search(connection, owner_user_id: str, q: str, offset: int) -> list[
             for entry in vaccinations
         ],
         "medicines": _medicine_search_entries(connection, owner_user_id),
+        "diagnoses": _diagnosis_search_entries(connection, owner_user_id),
         "findings": [
             (
                 record_search.terms(
@@ -13842,7 +14083,7 @@ def _record_search(connection, owner_user_id: str, q: str, offset: int) -> list[
     for key in (key for key in candidates if ranked[key]):
         rows = [item for _, item in ranked[key]]
         if key == "metrics":
-            page = _pagination(len(rows), offset, PAGE_SIZE, f"/metrics?q={quote(q)}")
+            page = _pagination(len(rows), offset, PAGE_SIZE, f"/results?q={quote(q)}")
             groups.append(_group(key, rows, page=page))
         else:
             groups.append(_group(key, rows, fold=True))
@@ -13859,38 +14100,6 @@ def _search_texts(q: str, found: bool) -> tuple[str, dict[str, str] | None, tupl
     link = {"url": f"/documents?q={quote(q)}", "label": t("metrics.search_document_text")}
     return "", link, (t("metrics.empty_title"), t("metrics.empty_body"))
 
-def _status_groups(connection, owner_user_id: str, status: str, offset: int = 0) -> tuple[list[dict[str, object]], dict[str, object] | None]:
-    """One /insights section, as a filter: (groups, an optional note link)."""
-    if status == "attention":
-        catalog = _complete_days(connection, owner_user_id, _metric_catalog(connection, owner_user_id))
-        # Copies: the cards are the memoised catalog (see panel_json).
-        cards = [{**card, "outside_by_text": _outside_by_text(card)} for card in _attention_cards(catalog)]
-        findings = [_finding_result(row) for row in _attention_findings(_finding_catalog(connection, owner_user_id))]
-        return [
-            group for group in (
-                _group("metrics", [card for card in cards if not card["is_device"]], kind="attention"),
-                _group("findings", findings),
-                _group("device_metrics", [card for card in cards if card["is_device"]], kind="attention"),
-            ) if group["rows"]
-        ], None
-    if status in {"due", "oldest"}:
-        panels = _panel_cards(connection, owner_user_id, member_limit=6)
-        rows = _due_panels(panels) if status == "due" else _oldest_panels(panels)
-        link = {"url": _UPLOAD_URL, "label": t("insights.upload_cta")} if status == "due" else None
-        return ([_group("panels", rows)] if rows else []), link
-    cards = [
-        card for card in _metric_catalog(connection, owner_user_id)
-        if card["verification_status"] == "extracted"
-    ]
-    lab = [card for card in cards if not card["is_device"]]
-    groups = [
-        group for group in (
-            _group("metrics", lab, page=_pagination(len(lab), offset, PAGE_SIZE, "/metrics?status=unverified")),
-            _group("device_metrics", [card for card in cards if card["is_device"]]),
-        ) if group["rows"]
-    ]
-    return groups, {"url": "/documents?review_state=open", "label": t("insights.open_review")}
-
 def _status_counts(connection, owner_user_id: str) -> dict[str, int]:
     catalog = _complete_days(connection, owner_user_id, _metric_catalog(connection, owner_user_id))
     panels = _panel_cards(connection, owner_user_id, member_limit=6)
@@ -13904,148 +14113,54 @@ def _status_counts(connection, owner_user_id: str) -> dict[str, int]:
         ),
     }
 
-def _metrics_view(connection, owner_user_id: str, q: str = "", status: str = "", area: str = "", offset: int = 0) -> dict[str, object]:
-    """What /metrics shows for one combination of its three filters."""
+def _metrics_view(connection, owner_user_id: str, q: str = "", offset: int = 0) -> dict[str, object]:
+    """What /results shows for a search: every group of matches to `q`; nothing when `q` is empty."""
     q = q.strip()
     offset = max(0, offset)
-    note, link = "", None
+    groups: list[dict[str, object]] = []
+    title, note, link = "", "", None
     empty = (t("metrics.empty_title"), t("metrics.empty_body"))
     if q:
         groups = _record_search(connection, owner_user_id, q, offset)
         title = t("metrics.matches_for", query=q)
-        status = area = ""
         note, link, empty = _search_texts(q, bool(groups))
-    elif status in METRIC_STATUSES:
-        groups, link = _status_groups(connection, owner_user_id, status, offset)
-        heading, lead = _STATUS_TEXT[status]
-        title, note = t(heading), t(lead)
-        if status == "unverified":
-            counts = _counts(connection, owner_user_id)
-            if int(counts["unverified"]):
-                note = " ".join((
-                    t_plural("metrics.unverified_results", int(counts["unverified"])),
-                    t_plural("metrics.unverified_in_documents", int(counts["unverified_documents"])),
-                    note,
-                ))
-        empty = (t(f"insights.{status}_empty_title"), t(f"insights.{status}_empty_body"))
-        area = ""
-    elif area in AREA_BY_ID:
-        cards = [card for card in _metric_catalog(connection, owner_user_id) if area in card["area_ids"]]
-        lab = [card for card in cards if not card["is_device"]]
-        groups = [
-            group for group in (
-                _group("metrics", lab, page=_pagination(len(lab), offset, PAGE_SIZE, f"/metrics?area={area}")),
-                _group("device_metrics", [card for card in cards if card["is_device"]]),
-            ) if group["rows"]
-        ]
-        title = translate_phrase(str(AREA_BY_ID[area]["name"]))
-        link = {"url": f"/areas/{area}", "label": t("metrics.open_area", area=title)}
-        status = ""
-    else:
-        status = area = ""
-        cards = _metric_catalog(connection, owner_user_id)
-        lab = sum(1 for card in cards if not card["is_device"])
-        return {
-            "q": "", "status": "", "area": "",
-            "title": t("metrics.overview_title"), "note": "", "link": None,
-            "groups": [],
-            "sections": _landing_sections(cards),
-            # One count, the whole record: the old landing printed "113
-            # shown" beside a group headed "595".
-            "count_text": " · ".join(
-                text for text in (
-                    t_plural("metrics.count_lab", lab) if lab else "",
-                    t_plural("metrics.count_device", len(cards) - lab) if len(cards) > lab else "",
-                ) if text
-            ),
-            "empty_title": empty[0], "empty_body": empty[1],
-        }
     return {
-        "q": q, "status": status, "area": area,
+        "q": q, "status": "", "area": "",
         "title": title, "note": note, "link": link,
         "groups": groups,
         "sections": [],
         # Every match, not the slice on screen; the pager says which slice.
-        "count_text": t_plural("metrics.result_count", sum(int(group["total"]) for group in groups)),
+        "count_text": t_plural("metrics.result_count", sum(int(group["total"]) for group in groups)) if q else "",
         "empty_title": empty[0], "empty_body": empty[1],
     }
 
-def _landing_section(
-    device: bool, area_id: str, name: str, rows: list[dict[str, object]], known: set[str]
-) -> dict[str, object]:
-    return {
-        "key": f"{'device' if device else 'lab'}-{area_id}",
-        "area_id": area_id if area_id in known else "",
-        "title": name,
-        "device": device,
-        "rows": rows,
-        "total": len(rows),
-        "flagged": sum(1 for card in rows if _attention_rank(card) <= 3),
-    }
 
-def _landing_sections(cards: list[dict[str, object]]) -> list[dict[str, object]]:
-    """/metrics with nothing typed: every result, grouped by body system.
+#: What each retired /metrics?status= filter is on /results.
+_RETIRED_STATUS = {
+    "attention": [("show", "attention")],
+    "unverified": [("show", "unverified")],
+    "due": [("show", "due"), ("group", "panel")],
+    "oldest": [("group", "panel"), ("sort", "date"), ("reverse", "1")],
+}
 
-    Laboratory sections first, open; device measurements after, in their
-    own sections, closed.  Each keeps the catalog order -- what needs
-    attention, then what is recent -- so its first rows are the ones worth
-    reading.  A card sits in its primary area only, so the section counts
-    add up to the count line.
-    """
-    by_area: dict[tuple[bool, str], list[dict[str, object]]] = {}
-    for card in cards:
-        by_area.setdefault((bool(card["is_device"]), str(card["primary_area_id"])), []).append(card)
-    areas = localized_health_areas()
-    known = {str(area["id"]) for area in areas}
-    sections = []
-    for device in (False, True):
-        listed = [(str(area["id"]), str(area["name"])) for area in areas]
-        stray = sorted({key for is_device, key in by_area.keys() if is_device == device and key not in known})
-        listed += [(key, t("metrics.section_other")) for key in stray]
-        for area_id, name in listed:
-            rows = by_area.get((device, area_id))
-            if not rows:
-                continue
-            sections.append(_landing_section(device, area_id, name, rows, known))
-    return sections
 
-@router.get("/metrics", response_class=HTMLResponse, responses=_RESPONSES_401)
-def metrics(request: Request, q: str = "", status: str = "", area: str = "", offset: int = 0):
-    settings = request.app.state.settings
-    user = require_user(request)
-    user = record_user(request, user)
-    with connect(settings) as connection:
-        view = _metrics_view(connection, user["id"], q, status, area, offset)
-        everything = _metric_catalog(connection, user["id"])
-        status_counts = _status_counts(connection, user["id"])
-    statuses = [
-        {
-            "key": key,
-            "label": t(_STATUS_TEXT[key][0]),
-            "count": status_counts[key],
-            "tone": _STATUS_TONES.get(key, "neutral"),
-        }
-        for key in METRIC_STATUSES
-        # A chip that would open an empty list is noise; the active one
-        # stays so the reader can see what they are looking at.
-        if status_counts[key] or view["status"] == key
-    ]
-    return templates.TemplateResponse(
-        request,
-        "metrics.html",
-        template_context(
-            request,
-            view=view,
-            q=view["q"],
-            statuses=statuses,
-            total_metrics=len(everything),
-            active="metrics",
-        ),
-    )
+@router.get("/metrics")
+def metrics(q: str = "", status: str = "", area: str = "", offset: int = 0):
+    """Retired: the search, the filters and the lists this page had are on /results."""
+    pairs: list[tuple[str, str]] = []
+    if q.strip():
+        pairs.append(("q", q.strip()))
+    elif status in _RETIRED_STATUS:
+        pairs.extend(_RETIRED_STATUS[status])
+    elif area in AREA_BY_ID:
+        pairs.append(("area", area))
+    if offset > 0:
+        pairs.append(("offset", str(offset)))
+    return RedirectResponse("/results" + (f"?{urlencode(pairs)}" if pairs else ""), status_code=301)
 
 @router.get("/api/metrics/search", responses=_RESPONSES_401)
-def metric_search(request: Request, q: str = "", status: str = "", area: str = "", offset: int = 0):
-    """The /metrics result region, rendered by the template the page uses.
+def metric_search(request: Request, q: str = "", offset: int = 0):
+    """The /results search region, rendered by the template the page uses.
 
     One renderer, one truth: the type-ahead used to rebuild cards from JSON
     and left slots showing a blank seed card's text, so an out-of-range
@@ -14055,8 +14170,10 @@ def metric_search(request: Request, q: str = "", status: str = "", area: str = "
     settings = request.app.state.settings
     user = require_user(request)
     user = record_user(request, user)
+    from .results import search_view
+
     with connect(settings) as connection:
-        view = _metrics_view(connection, user["id"], q, status, area, offset)
+        view = search_view(connection, user["id"], q, offset)
     html = templates.get_template("_search_results.html").render(
         {**template_context(request), "view": view}
     )
@@ -14371,11 +14488,13 @@ def metric_detail(request: Request, concept_id: str, offset: int = 0):
         factor_periods = factors_view.chart_periods(
             connection, user["id"], [concept_id], locale=get_locale(), today=date.today(),
         )
-    for row in values:
-        _metric_history_row(connection, concept_id, row, date_of_birth, sex)
-    # Only an analyte whose published bands are written for fasting samples
-    # asks the question; everywhere else the column and its sentence are absent.
-    fasting_applies = _fasting_applies(connection, concept_id)
+        for row in values:
+            _metric_history_row(connection, concept_id, row, date_of_birth, sex)
+        # Only an analyte whose published bands are written for fasting samples
+        # asks the question; everywhere else the column and its sentence are absent.
+        fasting_applies = _fasting_applies(connection, concept_id)
+        chart_points = _metric_chart(connection, values, concept["preferred_unit"], date_of_birth, sex)
+        latest, previous_numeric, verdict = _metric_latest(connection, concept_id, values, card)
     if fasting_applies:
         for row in values:
             row["fasting_state"] = _fasting_state(row)
@@ -14387,11 +14506,9 @@ def metric_detail(request: Request, concept_id: str, offset: int = 0):
     )
     sample_saved = request.query_params.get("saved") == "sample_condition"
     parsed_rules = [_metric_rule(raw_rule, age, sex, page_context) for raw_rule in rules]
-    chart_points = _metric_chart(connection, values, concept["preferred_unit"], date_of_birth, sex)
     _extend_chart_with_methods(chart_points, method_series)
     chart_points.sort(key=lambda point: str(point["date"]))
     chart_sources = _chart_sources(chart_points)
-    latest, previous_numeric, verdict = _metric_latest(connection, concept_id, values, card)
     chart_band = _chart_band(verdict)
     history_page = _pagination(len(values), max(0, offset), METRIC_HISTORY_PAGE_SIZE, f"/metrics/{concept_id}")
     history = values[history_page["offset"]: history_page["offset"] + METRIC_HISTORY_PAGE_SIZE]
@@ -14645,17 +14762,21 @@ def _device_twin_link(connection, owner_user_id: str, metric_key: str) -> dict[s
     }
 
 
-def _excludable_sources(connection, owner_user_id: str) -> set[str]:
+def _excludable_sources(connection, owner_user_id: str) -> frozenset[str]:
     """Stored source names a "not my reading" rule can reach: OpenWearables
-    sources that name their app, and file exports."""
-    names = set()
-    for name, adapter in connection.execute(
-        """SELECT DISTINCT d.source_name, i.adapter_key FROM device_metric_days d
-           JOIN device_imports i ON i.id=d.import_id WHERE d.owner_user_id=?""", (owner_user_id,)):
-        if adapter in device_exclusions.ADAPTERS or (
-                adapter == openwearables.ADAPTER_KEY and device_exclusions.origin_from_label(name)):
-            names.add(name)
-    return names
+    sources that name their app, and file exports.
+    Kept across a laboratory edit: the query walks every stored day and reads only device tables."""
+    def read() -> frozenset[str]:
+        names = set()
+        for name, adapter in connection.execute(
+            """SELECT DISTINCT d.source_name, i.adapter_key FROM device_metric_days d
+               JOIN device_imports i ON i.id=d.import_id WHERE d.owner_user_id=?""", (owner_user_id,)):
+            if adapter in device_exclusions.ADAPTERS or (
+                    adapter == openwearables.ADAPTER_KEY and device_exclusions.origin_from_label(name)):
+                names.add(name)
+        return frozenset(names)
+
+    return _device_only(connection, owner_user_id, "excludable", read)
 
 
 def _review_url(metric_key: str, day: str, source_name: str) -> str:
@@ -15437,6 +15558,8 @@ async def _lifespan(app: FastAPI):
     oura_stop, oura_thread = oura.start_scheduler(settings) if workers_enabled else (None, None)
     # Paperless: an upload stores only a task id; this links the finished ones.
     paperless_stop = paperless.start_scheduler(settings) if workers_enabled else None
+    # Possible diagnoses are re-checked when a record changes, whatever imported the change.
+    diagnoses_stop = diagnoses_job.start_scheduler(settings, _matrix_cards) if workers_enabled else None
     if workers_enabled:
         telegram_service.start()
     try:
@@ -15446,6 +15569,8 @@ async def _lifespan(app: FastAPI):
             garmin_stop.set()
         if paperless_stop:
             paperless_stop.set()
+        if diagnoses_stop:
+            diagnoses_stop.set()
         if oura_stop:
             oura_stop.set()
             await run_in_threadpool(oura_thread.join, 10)
@@ -15465,7 +15590,9 @@ class _Compression:
 
     def __init__(self, app, minimum_size: int = 1024) -> None:
         self._app = app
-        self._gzip = GZipMiddleware(self._inner, minimum_size=minimum_size)
+        # Level 6, not Starlette's 9: on a 380 KB page the output is the same
+        # size within 1% and takes 4 ms instead of 10.
+        self._gzip = GZipMiddleware(self._inner, minimum_size=minimum_size, compresslevel=6)
 
     async def __call__(self, scope, receive, send) -> None:
         if scope["type"] != "http":
@@ -15545,6 +15672,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         require_user=require_user, require_csrf=require_csrf,
         record_user=record_user, viewing_row=viewing_row,
     )
+    register_results_routes(
+        app, settings, templates=templates, template_context=template_context,
+        require_user=require_user, record_user=record_user, viewing_row=viewing_row,
+    )
     register_labsync_routes(
         app, settings, templates=templates, template_context=template_context, require_user=require_user,
         require_admin=require_admin, require_csrf=require_csrf, audit=partial(_audit, settings), invalidate=invalidate_catalog,
@@ -15556,12 +15687,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     register_found_routes(
         app, settings, templates=templates, template_context=template_context, require_user=require_user,
         record_user=record_user, require_csrf=require_csrf, audit=partial(_audit, settings),
-        document_row=_document_row,
+        document_row=_document_row, invalidate=invalidate_catalog,
     )
     register_factors_routes(
         app, settings, templates=templates, template_context=template_context, require_user=require_user,
         record_user=record_user, require_csrf=require_csrf, audit=partial(_audit, settings),
-        document_row=_document_row,
+        document_row=_document_row, invalidate=invalidate_catalog,
+    )
+    register_diagnoses_routes(
+        app, settings, templates=templates, template_context=template_context, require_user=require_user,
+        record_user=record_user, require_csrf=require_csrf, audit=partial(_audit, settings),
+        document_row=_document_row, catalog=_display_cards, matrix_cards=_matrix_cards,
     )
     register_chat_routes(
         app, settings, templates=templates, template_context=template_context, require_user=require_user,

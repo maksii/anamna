@@ -457,10 +457,10 @@
      'open': lab_waiting > 0 or lab_focus == 'inbox'}) %}
 {% endif %}
 {% for card in lab_cards %}
-{% set trouble = card.connected and (card.expired or card.sync_state == 'failed' or card.attention) %}
+{% set trouble = card.connected and (card.reauth or card.sync_state == 'failed' or card.attention) %}
 {% set _ = conns.append({'id': 'lab-' ~ card.key, 'name': card.name|phrase, 'desc': t('conn.desc_clinic' if card.messages == 'doctoreleks' else 'conn.desc_lab'),
      'state': 'attention' if trouble else ('ok' if card.connected else 'idle'),
-     'label': (t('labsync.expired_pill') if card.expired else t('conn.state_failed')) if trouble
+     'label': (t('labsync.expired_pill') if card.reauth == 'expired' else (t('labsync.rejected_pill') if card.reauth == 'rejected' else t('conn.state_failed'))) if trouble
               else (t('conn.state_running') if card.sync_state == 'running' else (t('conn.state_connected') if card.connected else t('conn.state_idle'))),
      'open': lab_focus == card.key or trouble or card.sync_state == 'running'}) %}
 {% endfor %}
@@ -517,6 +517,20 @@
   </details>
 </section>
 
+{#- Everything that stopped because its sign-in ran out, in one place, each a
+    link to the section that fixes it (the link opens the folded section). -#}
+{% set renew = [] %}
+{% for card in lab_cards if card.reauth %}{% set _ = renew.append({'href': '#conn-lab-' ~ card.key, 'name': card.name|phrase}) %}{% endfor %}
+{% for provider in integrations_providers if provider.needs_reauthorize %}{% set _ = renew.append({'href': '#conn-wearables', 'name': provider.name}) %}{% endfor %}
+{% if garmin_personal_available and garmin_personal_card and garmin_personal_card.needs_new_key %}{% set _ = renew.append({'href': '#conn-garmin-personal', 'name': t('integrations.garmin_personal_heading')}) %}{% endif %}
+{% if renew %}
+<section class="alert warning an-conn-renew" role="status" aria-labelledby="conn-renew-heading">
+  <h2 id="conn-renew-heading">{{ t('conn.reauth_heading') }}</h2>
+  <p>{{ t('conn.reauth_lead') }}</p>
+  <ul>{% for item in renew %}<li><a href="{{ item.href }}">{{ item.name }}</a></li>{% endfor %}</ul>
+</section>
+{% endif %}
+
 {% if telegram.available %}
 <details class="panel an-conn" id="conn-telegram" {{ 'open' if by_id['telegram'].open else '' }}>
 {{ summary(by_id['telegram']) }}
@@ -555,8 +569,8 @@
     <div class="panel-head">
       <div><h3>{{ provider.name }}</h3></div>
       {#- The state as words, never colour alone. -#}
-      <span class="pill {{ 'an-pill--ok' if provider.connected else 'an-pill--warn' }}">
-        {{ t('conn.state_connected') if provider.connected else t('conn.state_idle') }}
+      <span class="pill {{ 'an-pill--ok' if provider.connected and not provider.needs_reauthorize else 'an-pill--warn' }}">
+        {{ t('conn.state_reconnect') if provider.needs_reauthorize else (t('conn.state_connected') if provider.connected else t('conn.state_idle')) }}
       </span>
     </div>
     {% if provider.connected %}
@@ -566,7 +580,8 @@
     <div class="alert error" role="alert">{{ t('integrations.reauthorize', provider=provider.name) }}</div>
     {#- A link, not a form: the provider's sign-in bounces across its own SSO
         hosts, which Chrome's form-action would block on a form POST. -#}
-    <a class="primary" href="/integrations/oura/connect">{{ t('integrations.connect', provider=provider.name) }}</a>
+    <a class="primary" href="/integrations/oura/connect">{{ t('integrations.reconnect', provider=provider.name) }}</a>
+    <p class="tiny muted">{{ t('integrations.reconnect_hint', provider=provider.name) }}</p>
     {% endif %}
     <dl class="facts ai-facts">
       <div><dt>{{ t('integrations.data_label') }}</dt>

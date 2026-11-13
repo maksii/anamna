@@ -130,7 +130,7 @@ TASKS = ("document_review", "summary", "chat", "default")
 # models with the old 3000/5000 caps; 16k leaves room for both.
 # 32k for a review: adaptive thinking spends output tokens too, and Haiku
 # auditing a 6-page Synevo report used 15k of a 16k limit (twice it ran out).
-# The /changes explanation (one finding per abnormal result, reasons, next
+# The /results explanation (one finding per abnormal result, reasons, next
 # steps, questions) ran past 4000 tokens in Ukrainian on 2026-11-05; Haiku is
 # cheap enough that 32k everywhere costs only what is actually written.
 TASK_DEFAULT_MAX_TOKENS = {"document_review": 32000, "summary": 32000, "chat": 16000, "default": 32000}

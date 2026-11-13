@@ -10,6 +10,8 @@ import json
 import re
 from pathlib import Path
 
+from fastapi.testclient import TestClient
+
 from anamna import ai
 from anamna.db import connect, utc_now
 from anamna.i18n import activate_locale, reset_locale
@@ -325,8 +327,17 @@ def test_checking_a_value_answers_with_the_row_and_keeps_other_memos(tmp_path: P
 def test_the_concept_picker_is_not_rendered_as_elements(tmp_path: Path):
     settings, user_id, client = build(tmp_path)
     page = client.get("/documents/doc-1").text
-    assert '<datalist id="an-concept-list"></datalist>' in page
-    assert 'id="an-concept-names"' in page
+    assert '<datalist id="an-concept-list" data-src="/concepts/names"></datalist>' in page
+    assert 'id="an-concept-names"' not in page
+    names = client.get("/concepts/names")
+    assert names.status_code == 200
+    listed = names.json()
+    assert listed and all(isinstance(name, str) for name in listed)
+    assert listed == sorted(listed)
+    # A visitor with no session gets no names.
+    anonymous = TestClient(web.create_app(settings))
+    refused = anonymous.get("/concepts/names", follow_redirects=False)
+    assert refused.status_code in (302, 303, 401)
 
 
 # --- UX-24 / OPS-29 / PERF-14 ----------------------------------------------------

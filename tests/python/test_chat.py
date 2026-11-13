@@ -171,7 +171,7 @@ def test_a_guest_link_and_an_api_credential_reach_no_chat(tmp_path: Path, monkey
             assert anonymous.get("/chat", headers=headers).status_code == 403
             assert anonymous.post("/chat/send", data={"message": "hi"}, headers=headers).status_code == 403
         # The guest's own navigation does not offer it either.
-        assert 'href="/chat"' not in anonymous.get("/metrics", headers={"Authorization": f"Bearer {guest}"}).text
+        assert 'href="/chat"' not in anonymous.get("/results", headers={"Authorization": f"Bearer {guest}"}).text
         assert anonymous.get("/chat", headers={"Authorization": f"Bearer {agent}"}).status_code == 200
         assert anonymous.get("/chat", follow_redirects=False).headers["location"].startswith("/login")
     with connect(settings) as db:

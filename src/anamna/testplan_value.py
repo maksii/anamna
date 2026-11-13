@@ -504,6 +504,10 @@ class _Model:
         with ThreadPoolExecutor(len(caps)) as pool:
             return list(pool.map(lambda cap: self.best("value", cap, start=start), caps))
 
+    def worth(self, found: tuple) -> int:
+        """The value :meth:`best` maximises: net of duplicates when ``net``."""
+        return found[1] - found[2] if self.net else found[1]
+
     def plan(self, found: tuple, cheapest: dict | None = None) -> dict:
         """``found`` in :func:`_shape`'s plan shape, annotated."""
         plan = _shape(self.forced, [self.items[i] for i in found[3]], self.required, self.covered, self.missing,
@@ -536,27 +540,30 @@ def _frontier(model: _Model, low: tuple, found: list, count: int) -> list[tuple]
     nothing is worth more than ``low``.  Below ``count`` plans in between,
     the most valuable plan just cheaper than each known one is added, until
     no gap holds another.  Each is the cheapest plan of its value, so on the
-    frontier."""
-    found = [plan for plan in found if plan is not None and plan[1] > low[1]]
+    frontier.  Value is what the model maximises: net of duplicates when
+    ``model.net``, so a plan with more results but more copies never
+    outranks the most complete one."""
+    worth = model.worth
+    found = [plan for plan in found if plan is not None and worth(plan) > worth(low)]
     if not found:
         return []
-    top = max(found, key=lambda plan: (plan[1], -plan[0]))
-    line = {top[1]: top}
+    top = max(found, key=lambda plan: (worth(plan), -plan[0]))
+    line = {worth(top): top}
     probed = set()  # plans whose next cheaper frontier plan is known
     while True:
         for plan in found:
-            if plan is not None and low[1] < plan[1] < top[1]:
-                line.setdefault(plan[1], plan)
-        todo = sorted(plan for plan in line.values() if plan[1] not in probed)[:max(count + 1 - len(line), 0)]
+            if plan is not None and worth(low) < worth(plan) < worth(top):
+                line.setdefault(worth(plan), plan)
+        todo = sorted(plan for plan in line.values() if worth(plan) not in probed)[:max(count + 1 - len(line), 0)]
         if not todo:
             break
-        probed.update(plan[1] for plan in todo)
+        probed.update(worth(plan) for plan in todo)
         found = model.richest([plan[0] - 0.01 for plan in todo], low)
-    out, best = [], low[1]
+    out, best = [], worth(low)
     for plan in sorted(line.values()):  # strictly more value for more money
-        if plan[1] > best:
+        if worth(plan) > best:
             out.append(plan)
-            best = plan[1]
+            best = worth(plan)
     return [*out[:-1][:count], out[-1]]
 
 
@@ -594,7 +601,7 @@ def most_complete(items: list[dict], required: set[str], *, budget: float | None
     if budget is not None and cheapest["cost"] > float(budget) + _EPS:
         return None
     top = low and model.best("value", math.inf if budget is None else float(budget), start=low)
-    if not top or top[1] <= low[1]:
+    if not top or model.worth(top) <= model.worth(low):
         return cheapest
     return model.plan(top, cheapest)
 
@@ -614,7 +621,7 @@ def complete_options(items: list[dict], required: set[str], *, forced: list[dict
         return [cheapest]
     now = time.monotonic()
     top = model.best("value", start=low, deadline=now + (model.deadline - now) * 2 / 3)
-    if top is None or top[1] <= low[1]:
+    if top is None or model.worth(top) <= model.worth(low):
         return [cheapest]
     found = model.richest([low[0] + (top[0] - low[0]) * step / (limit + 1) for step in range(1, limit + 1)], low)
     line = _frontier(model, low, [top, *found], limit)

@@ -1,6 +1,6 @@
 {#
   One document card, rendered by the page load and by live search from the same
-  macro.  `/metrics` learned this the hard way: its search once rebuilt cards
+  macro.  `/results` learned this the hard way: its search once rebuilt cards
   from JSON in the browser, filled the slots somebody had remembered, and left
   the rest showing the seed card's text -- so a result flagged "Above range"
   carried the sentence "Your result is inside this range" underneath it.  One
@@ -20,6 +20,7 @@
       {% if document.extraction_strategy == 'lab_api' %}<span class="pill">{{ t('labsync.record_badge') }}</span>{% endif %}
       {% if document.is_stale %}<span class="pill" title="{{ t('rescan.stale_hint') }}">{{ t('rescan.stale_badge') }}</span>{% endif %}
       {% if document.review_state %}<span class="status {{ document.review_state }}">{{ t('documents.review_' ~ document.review_state) }}</span>{% endif %}
+      {% if document.historical_at %}<span class="pill an-historical-pill">{{ t('doc.historical_pill') }}</span>{% endif %}
     </div>
     <h2>{{ document.title_text }}</h2>
     {% if document.review_need %}<p class="doc-need">{{ document.review_need }}</p>{% endif %}

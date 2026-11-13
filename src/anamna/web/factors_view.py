@@ -273,3 +273,54 @@ def chart_periods(connection, owner_id: str, concept_ids, *, locale: str, today:
         "others": others,
         "json": [{key: item[key] for key in keys} for item in related + others],
     }
+
+
+def influence_chips(items: Iterable[Mapping[str, Any]], *, locale: str) -> list[dict]:
+    """``factors.influencing`` rows as the marks a result prints under itself."""
+    with _in(locale):
+        return [
+            {
+                "id": row["id"],
+                "name": row["name"],
+                "url": f"/medicines/{row['id']}",
+                "kind_label": t(f"med.kind.{row['kind']}"),
+                "direction": row["direction"],
+                "direction_label": t(f"med.dir_this.{row['direction']}"),
+                "when": row["when"],
+                "when_label": t(f"med.influence.{row['when']}"),
+                "period_text": _period(row["start"], row["end"], bool(row["point"]), ongoing=not row["point"]),
+                "approximate": row["approximate"],
+                "origin": row["origin"],
+            }
+            for row in items
+        ]
+
+
+def panel_entries(rows: Iterable[Mapping[str, Any]], by_concept: Mapping[str, list[dict]], *, locale: str) -> list[dict]:
+    """The entries that list an effect on any result of one test group, once
+    each, with the results they move.  ``rows`` are the group's result cards
+    (``id``, ``name``, ``url``); ``by_concept`` is ``factors.influences()``."""
+    found: dict[str, dict] = {}
+    with _in(locale):
+        for row in rows:
+            for item in by_concept.get(str(row["id"]), []):
+                entry = found.get(item["id"])
+                if entry is None:
+                    entry = found[item["id"]] = {
+                        "id": item["id"],
+                        "name": item["name"],
+                        "url": f"/medicines/{item['id']}",
+                        "kind_label": t(f"med.kind.{item['kind']}"),
+                        "period_text": _period(item["start"], item["end"], bool(item["point"]), ongoing=not item["point"]),
+                        "approximate": item["approximate"],
+                        "start": item["start"],
+                        "effects": [],
+                    }
+                entry["effects"].append({
+                    "direction": item["direction"],
+                    "direction_label": t(f"med.dir.{item['direction']}"),
+                    "label": row["name"],
+                    "url": row["url"],
+                    "origin": item["origin"],
+                })
+    return sorted(found.values(), key=lambda entry: (entry["start"] or "", entry["name"]), reverse=True)

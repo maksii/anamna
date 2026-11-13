@@ -1,0 +1,231 @@
+{#
+  The /results list when the search box is empty: the period, the scope, the
+  view controls and every result section, then the conclusions and the device
+  cards. The route passes `data`, `arranged`, `area`, `findings`, `devices` and
+  `page`; `with_view` and `view_inputs` carry the reader's sort, filter and
+  grouping across the period picker.
+#}
+{% from "_components.html" import empty_state, plural_t, pagination_nav with context %}
+{% from "_results_rows.html" import result_row with context %}
+{% from "_result_rows.html" import metric_row, link_row with context %}
+
+{#- A link to another period keeps the reader's sort, filter and grouping. -#}
+{%- macro with_view(url) -%}{{ url }}{% if view_query %}{{ '&' if '?' in url else '?' }}{{ view_query }}{% endif %}{%- endmacro -%}
+{%- macro view_inputs() -%}
+{% if arranged %}
+{% if arranged.sort != 'status' %}<input type="hidden" name="sort" value="{{ arranged.sort }}">{% endif %}
+{% if arranged.show != 'all' %}<input type="hidden" name="show" value="{{ arranged.show }}">{% endif %}
+{% if arranged.group != arranged.default_group %}<input type="hidden" name="group" value="{{ arranged.group }}">{% endif %}
+{% if arranged.reverse %}<input type="hidden" name="reverse" value="1">{% endif %}
+{% endif %}
+{%- endmacro -%}
+
+{%- macro count_list(group, always=()) -%}
+<ul class="an-change-counts" aria-label="{{ t('changes.counts_aria', date=group.date_text) }}">
+  {% for bucket in buckets %}{% if group.counts[bucket] or bucket in always %}
+  <li data-bucket="{{ bucket }}"><span>{{ t('changes.bucket_' ~ bucket) }}</span> <strong>{{ group.counts[bucket]|countfmt }}</strong></li>
+  {% endif %}{% endfor %}
+</ul>
+{%- endmacro -%}
+
+{#- Folded behind a count: one episode can draw on a dozen documents, and the
+    list is provenance a reader opens when they want it, not the report. -#}
+{%- macro document_list(group) -%}
+{% if group.documents %}
+<details class="an-change-docs">
+  <summary>{{ t('changes.documents_label') }} <span class="pill">{{ group.documents|length|countfmt }}</span></summary>
+  <ul>
+    {% for doc in group.documents %}<li><a href="{{ doc.url }}">{{ doc.title_text }}</a>{% if doc.vendor not in doc.title_text %} <small>{{ doc.vendor }}</small>{% endif %}{% if doc.filename_text %} <small>{{ doc.filename_text }}</small>{% endif %}</li>{% endfor %}
+  </ul>
+</details>
+{% endif %}
+{%- endmacro -%}
+
+{% if data.document %}
+<p class="an-change-scope">
+  <span>{{ t('changes.document_lead', document=data.document.title_text) }}</span>
+  <a class="an-change-doc-link" href="{{ data.document.url }}">{{ data.document.title_text }}</a>
+  <a class="an-change-doc-link" href="/results?episode=latest">{{ t('changes.show_latest') }}</a>
+</p>
+{% elif data.episodes %}
+<div class="an-change-picker">
+  <form class="an-change-picker__episode" method="get" action="/results">
+    {{ view_inputs() }}
+    {% if area %}<input type="hidden" name="area" value="{{ area.id }}">{% endif %}
+    <label for="changes-episode">{{ t('changes.period_label') }}</label>
+    <select id="changes-episode" name="episode">
+      <option value="all" data-url="{{ with_view('/results') }}"{% if data.everything %} selected{% endif %}>{{ t('results.period_all') }}</option>
+      {% if data.selection.kind == 'range' %}<option value="" selected disabled>{{ t('changes.range_option', span=data.selection.label) }}</option>{% endif %}
+      {% for episode in data.episodes %}
+      <option value="{{ episode.value }}" data-url="{{ with_view(episode.url) }}"{% if episode.current %} selected{% endif %}>{{ episode.label }} · {{ plural_t('changes.tests_count', episode.count) }}</option>
+      {% endfor %}
+    </select>
+    <button class="secondary" type="submit" data-js-hide>{{ t('changes.show') }}</button>
+  </form>
+  <details class="an-change-range"{% if data.selection.kind == 'range' %} open{% endif %}>
+    <summary>{{ t('changes.custom_range') }}</summary>
+    <form method="get" action="/results">
+      {{ view_inputs() }}
+      {% if area %}<input type="hidden" name="area" value="{{ area.id }}">{% endif %}
+      <label>{{ t('changes.range_from') }} <input type="date" name="from" value="{{ data.selection.from }}" min="{{ data.bounds.min }}" max="{{ data.bounds.max }}"></label>
+      <label>{{ t('changes.range_to') }} <input type="date" name="to" value="{{ data.selection.to }}" min="{{ data.bounds.min }}" max="{{ data.bounds.max }}"></label>
+      <button class="secondary" type="submit">{{ t('changes.range_apply') }}</button>
+    </form>
+    <p class="muted">{{ t('changes.range_hint') }}</p>
+  </details>
+</div>
+{% endif %}
+
+{% if area %}
+<p class="an-result-note">{{ t('results.area_only', area=area.name) }} <a href="{{ with_view('/results') }}">{{ t('results.area_clear') }}</a> <a href="{{ area.url }}">{{ t('results.open_area') }}</a></p>
+{% endif %}
+
+{% if not data.report %}
+{% if data.document %}
+{{ empty_state(t('changes.empty_title'), t('changes.document_empty_body'), 2) }}
+{% elif data.selection.kind == 'range' and data.episodes %}
+{{ empty_state(t('changes.range_empty_title', span=data.selection.label), t('changes.range_empty_body'), 2, '/results', t('changes.show_latest')) }}
+{% else %}
+{{ empty_state(t('changes.empty_title'), t('changes.empty_body'), 2, '/upload', t('changes.empty_cta')) }}
+{% endif %}
+{% else %}
+{% set report = data.report %}
+{% set nav = data.nav %}
+
+<section class="panel an-change-group" id="{{ report.anchor }}" aria-labelledby="{{ report.anchor }}-heading">
+  <header class="an-change-group__head">
+    <div class="an-change-group__top">
+      <h2 id="{{ report.anchor }}-heading"{% if data.everything %} class="visually-hidden"{% endif %}>{% if data.everything %}{{ t('results.period_all') }} <span class="an-change-group__count">· {{ plural_t('changes.tests_count', arranged.total) }}</span>{% else %}{{ report.date_text }} <span class="an-change-group__count">· {{ plural_t('changes.tests_count', report.total) }}</span>{% endif %}</h2>
+      {% if not data.everything and (nav.earlier or nav.newer or data.selection.kind == 'range') %}
+      <nav class="an-change-group__nav" aria-label="{{ t('changes.episode_nav') }}">
+        {% if nav.earlier %}<a class="button secondary" href="{{ with_view(nav.earlier.url) }}" rel="prev">{{ t('changes.earlier', span=nav.earlier.label) }}</a>{% endif %}
+        {% if nav.newer %}<a class="button secondary" href="{{ with_view(nav.newer.url) }}" rel="next">{{ t('changes.newer', span=nav.newer.label) }}</a>{% endif %}
+        {% if data.selection.kind == 'range' %}<a class="button secondary" href="/results?episode=latest">{{ t('changes.show_latest') }}</a>{% endif %}
+      </nav>
+      {% endif %}
+    </div>
+    {% if not data.everything %}{{ count_list(report) }}{% endif %}
+    <div class="an-change-group__folds">
+    {% if not data.everything %}{{ document_list(report) }}{% endif %}
+    <details class="an-change-legend">
+      <summary>{{ t('results.legend_heading') }}</summary>
+      {% if data.everything %}<p>{{ t('results.legend_everything') }}</p>{% endif %}
+      <dl>
+        {% for bucket in buckets %}
+        <div><dt><span class="an-change-tag" data-bucket="{{ bucket }}">{{ t('changes.bucket_' ~ bucket) }}</span></dt><dd>{{ t('changes.explain_' ~ bucket) }}</dd></div>
+        {% endfor %}
+      </dl>
+      <p>{{ t('changes.legend_episode', days=plural_t('changes.gap_days', episode_gap_days)) }}</p>
+      <p>{{ t('changes.legend_change') }}</p>
+      <p>{{ t('changes.legend_source') }}</p>
+      <p>{{ t('results.legend_spark') }}</p>
+      <p>{{ t('med.influence.legend') }}</p>
+      <p>{{ t('metrics.legend_marks') }}</p>
+      <ul class="an-legend__marks">
+        {% for key in ['critical_high', 'high', 'borderline_high', 'normal', 'borderline_low', 'low', 'negative', 'positive'] %}
+        <li><em class="an-micro" data-interpretation="{{ key }}" aria-hidden="true"></em> {{ t('verdict.' ~ key) }}</li>
+        {% endfor %}
+        <li><em class="an-micro" data-interpretation="high" data-conflict="true" aria-hidden="true"></em> {{ t('verdict.conflict') }}</li>
+      </ul>
+      <p class="an-legend__conflict">{{ t('metrics.legend_conflict', label=t('verdict.conflict')) }}</p>
+      <p>{{ t('metrics.legend_unverified', label='Needs verification'|phrase) }}</p>
+      <p>{{ t('metrics.legend_no_mark') }}</p>
+    </details>
+    </div>
+    {#- Sort, filter and grouping.  A plain GET form: it works without script;
+        with script every control answers on its own and the button goes. -#}
+    {% set sort_labels = {'status': t('results.sort_status') if arranged.everything else t('changes.sort_status'), 'name': t('changes.sort_name'), 'change': t('changes.sort_change'), 'date': t('results.sort_date')} %}
+    {% set show_labels = {'all': t('changes.filter_all'), 'attention': t('results.filter_attention'), 'changed': t('changes.filter_changed'), 'medicine': t('changes.filter_medicine'), 'unverified': t('changes.filter_unverified'), 'due': t('results.filter_due')} %}
+    {% set group_labels = {'area': t('results.group_area'), 'panel': t('changes.group_panel'), 'status': t('changes.group_status'), 'none': t('changes.group_none')} %}
+    <details class="an-res-controls" data-res-controls{% if view_query %} open{% endif %}>
+      <summary>{{ t('changes.view_heading') }}</summary>
+    <form class="an-change-view" method="get" action="/results#{{ report.anchor }}" aria-label="{{ t('changes.view_heading') }}" data-change-view>
+      {% for name, value in selection_pairs %}<input type="hidden" name="{{ name }}" value="{{ value }}">{% endfor %}
+      {% if area %}<input type="hidden" name="area" value="{{ area.id }}">{% endif %}
+      <label>{{ t('changes.sort_label') }}
+        <select name="sort">{% for value in view_sorts %}<option value="{{ value }}"{% if arranged.sort == value %} selected{% endif %}>{{ sort_labels[value] }}</option>{% endfor %}</select></label>
+      <label>{{ t('changes.filter_label') }}
+        <select name="show">{% for value in view_shows %}<option value="{{ value }}"{% if arranged.show == value %} selected{% endif %}>{{ show_labels[value] }}</option>{% endfor %}</select></label>
+      <label>{{ t('changes.group_label') }}
+        <select name="group">{% for value in view_groups %}<option value="{{ value }}"{% if arranged.group == value %} selected{% endif %}>{{ group_labels[value] }}</option>{% endfor %}</select></label>
+      <label class="an-change-view__check"><input type="checkbox" name="reverse" value="1"{% if arranged.reverse %} checked{% endif %}> {{ t('changes.order_reverse') }}</label>
+      <button class="secondary" type="submit" data-js-hide>{{ t('changes.apply') }}</button>
+    </form>
+    </details>
+    {% if arranged.shown != arranged.total %}<p class="an-change-view__count" role="status">{{ t('changes.shown_count', shown=arranged.shown|countfmt, total=arranged.total|countfmt) }}</p>{% endif %}
+  </header>
+  {% if arranged.shown == 0 %}
+  <p class="an-change-empty">{{ t('changes.filter_empty') }} <a href="{{ reset_url }}">{{ t('changes.filter_reset') }}</a></p>
+  {% elif arranged.nothing_open %}
+  <p class="muted">{{ t('changes.nothing_open') }}</p>
+  {% endif %}
+  {% if arranged.show == 'unverified' and arranged.shown > 0 %}
+  <p class="an-result-note">{{ t('insights.unverified_lead') }} <a href="/documents?review_state=open">{{ t('insights.open_review') }}</a></p>
+  {% endif %}
+  {#- Only the first rows draw their chart at once; the rest wait in a
+      <template> until the row is scrolled to or its disclosure is opened.
+      Consecutive body-system or test-group disclosures share one grid. -#}
+  {% set drawn = namespace(n=0) %}
+  {% set grid = namespace(on=false) %}
+  {% for section in arranged.sections %}
+  {% if section.kind == 'section' %}
+  {% if not grid.on %}{% set grid.on = true %}<div class="an-area-sections">{% endif %}
+  <details class="an-area-section an-res-section" data-section="{{ section.key }}"{% if section.open %} open{% endif %}>
+    <summary><span class="an-area-section__title"><strong>{{ section.title }}</strong>
+      <small>{{ t_plural('metrics.result_count', section.total) }}{% if section.flagged %} · <span class="an-area-section__flagged">{{ t_plural('metrics.section_flagged', section.flagged) }}</span>{% endif %}</small></span></summary>
+    <ul class="an-res-list">{% for entry in section.entries %}{% set drawn.n = drawn.n + 1 %}{{ result_row(entry, not section.open or drawn.n > 12) }}{% endfor %}</ul>
+    <p class="an-area-section__foot">
+      {% if section.more_url %}<a href="{{ section.more_url }}">{{ t('metrics.show_all', count=section.total|countfmt) }}<span class="visually-hidden"> {{ section.title }}</span></a>{% endif %}
+      {% if section.url and section.url != section.more_url %}<a href="{{ section.url }}">{{ t('results.open_area') if section.url_kind == 'area' else t('results.open_group') }}<span class="visually-hidden">: {{ section.title }}</span></a>{% endif %}
+    </p>
+  </details>
+  {% else %}
+  {% if grid.on %}{% set grid.on = false %}</div>{% endif %}
+  {% if section.kind == 'fold' %}
+  <details class="an-change-more">
+    <summary><span>{{ section.title }}</span> <span class="pill">{{ section.entries|length|countfmt }}</span></summary>
+    <ul class="an-res-list">{% for entry in section.entries %}{{ result_row(entry, true) }}{% endfor %}</ul>
+  </details>
+  {% else %}
+  <ul class="an-res-list">{% for entry in section.entries %}{% set drawn.n = drawn.n + 1 %}{{ result_row(entry, drawn.n > 12) }}{% endfor %}</ul>
+  {% endif %}
+  {% endif %}
+  {% endfor %}
+  {% if grid.on %}</div>{% endif %}
+  {% if page %}{{ pagination_nav(page) }}{% endif %}
+</section>
+{% endif %}
+
+{% if findings %}
+<section class="an-result-group an-res-extra" aria-labelledby="results-findings">
+  <h3 id="results-findings">{{ t('results.findings_heading') }} <span class="an-result-group__count">{{ findings|length|countfmt }}</span></h3>
+  <div class="an-panel-card__members an-result-list">{% for row in findings %}{{ link_row(row) }}{% endfor %}</div>
+</section>
+{% endif %}
+
+{% if devices %}
+<div class="an-area-sections an-res-extra">
+  <details class="an-area-section" data-section="devices" data-expanded="true">
+    <summary>
+      <span class="an-area-section__title">
+        <strong>{{ t('metrics.group_devices') }}</strong>
+        <small>{{ t_plural('metrics.result_count', devices|length) }}</small>
+      </span>
+    </summary>
+    <div class="an-panel-card__members an-result-list">
+      {% for card in devices %}{{ metric_row(card) }}{% endfor %}
+    </div>
+    <p class="an-area-section__foot"><a href="/devices">{{ t('results.devices_link') }}</a></p>
+  </details>
+</div>
+{% endif %}
+
+{% if data.everything and not area and arranged and arranged.show == 'all' %}
+<section class="an-result-group an-res-extra" aria-labelledby="results-overviews">
+  <h3 id="results-overviews">{{ t('panels.overviews_aria') }}</h3>
+  <div class="an-panel-card__members an-result-list">
+    {{ link_row({'url': '/allergy', 'title': t('nav.allergy'), 'subtitle': t('panels.overview_allergy_lead')}) }}
+    {{ link_row({'url': '/genetics', 'title': t('nav.genetics'), 'subtitle': t('panels.overview_genetics_lead')}) }}
+  </div>
+</section>
+{% endif %}

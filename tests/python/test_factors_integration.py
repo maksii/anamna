@@ -224,10 +224,10 @@ def test_a_medicine_is_found_by_name_and_by_substance_under_its_group(tmp_path: 
         assert "Medicine" in medicines["rows"][0]["subtitle"] and "Current" in medicines["rows"][0]["subtitle"]
         assert "warfarin" in medicines["rows"][0]["subtitle"]
     client.cookies.set("anamna_lang", "uk")
-    page = client.get("/metrics?q=warfarin").text
+    page = client.get("/results?q=warfarin").text
     assert MESSAGES["metrics.group_medicines"]["uk"] in page and "Marevan" in page
     client.cookies.set("anamna_lang", "en")
-    assert MESSAGES["metrics.group_medicines"]["en"] in client.get("/metrics?q=marevan").text
+    assert MESSAGES["metrics.group_medicines"]["en"] in client.get("/results?q=marevan").text
 
 
 # --- the dashboard tile ----------------------------------------------------------

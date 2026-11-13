@@ -658,6 +658,78 @@ def periods(connection: sqlite3.Connection, owner_id: str, concept_ids, *, today
     return out
 
 
+def influences(connection: sqlite3.Connection, owner_id: str, *, today: date) -> dict[str, list[dict]]:
+    """Concept id -> the entries that list an effect on it, oldest first.
+
+    The same entries a chart draws (:func:`periods`), plus an entry that is under
+    way now with no start date recorded (``undated``).  One row per entry and
+    concept: the first effect recorded."""
+    out: dict[str, list[dict]] = {}
+    seen: set[tuple[str, str]] = set()
+    rows = connection.execute(
+        "SELECT f.*, e.concept_id AS effect_concept_id, e.direction AS effect_direction, "
+        "e.note AS effect_note, e.origin AS effect_origin "
+        "FROM factor_effects e JOIN factors f ON f.id=e.factor_id "
+        "WHERE e.owner_user_id=? AND f.owner_user_id=? AND e.concept_id IS NOT NULL "
+        "AND f.status <> 'prescribed' "
+        "ORDER BY f.started_on, f.name, e.created_at, e.id",
+        (owner_id, owner_id),
+    )
+    for row in rows:
+        key = (row["id"], row["effect_concept_id"])
+        if key in seen:
+            continue
+        seen.add(key)
+        undated = row["started_on"] is None
+        if undated and (row["kind"] in POINT_KINDS or effective_status(row, today) != "current"):
+            # No date and not under way now: nothing can be said of when it bore on a result.
+            continue
+        point = row["kind"] in POINT_KINDS or (
+            effective_status(row, today) == "past" and row["ended_on"] is None
+        )
+        out.setdefault(row["effect_concept_id"], []).append({
+            "id": row["id"],
+            "name": row["name"],
+            "kind": row["kind"],
+            "start": row["started_on"],
+            "end": row["ended_on"] or None,
+            "point": point,
+            "approximate": bool(row["dates_approximate"]),
+            "undated": undated,
+            "direction": row["effect_direction"],
+            "note": row["effect_note"],
+            "origin": row["effect_origin"],
+        })
+    return out
+
+
+def influencing(items: list[dict], day: str | None, previous_day: str | None = None) -> list[dict]:
+    """The entries of ``items`` that bear on a result measured on ``day``.
+
+    A period counts when it was under way that day (``when`` is ``"during"``).
+    A one-day entry (an operation, or a finished entry with no end date) counts
+    when it happened after the previous result and no later than this one
+    (``when`` is ``"since"``); with no previous result nothing is claimed for it.
+    An entry under way now with no start date is returned for any day, as ``"undated"``."""
+    wanted = str(day or "")[:10]
+    if not wanted:
+        return []
+    earlier = str(previous_day or "")[:10]
+    out = []
+    for item in items:
+        if item.get("undated"):
+            # Under way now, since a date nobody recorded: said as exactly that.
+            out.append({**item, "when": "undated"})
+            continue
+        start = str(item["start"])[:10]
+        if item["point"]:
+            if earlier and earlier < start <= wanted:
+                out.append({**item, "when": "since"})
+        elif start <= wanted and (item["end"] is None or wanted <= str(item["end"])[:10]):
+            out.append({**item, "when": "during"})
+    return out
+
+
 def fact_periods(connection: sqlite3.Connection, owner_id: str) -> list[tuple[str, str, str | None]]:
     out: list[tuple[str, str, str | None]] = []
     rows = connection.execute(

@@ -8,6 +8,8 @@
 # It must ship: create_app() seeds from it, so a fresh clone without it has no
 # reference intervals at all. Verified to contain no patient information.
 !/data/reference_library.json
+# ICD-10 titles (WHO 2019 and НК 025:2021): published classification, not patient data.
+!/data/icd10.json
 # Local drop zone for unmodified device exports (see docs/device-imports.md).
 /Device_Vendor_stats/
 /work/

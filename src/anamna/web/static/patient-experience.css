@@ -75,11 +75,6 @@
 .px-period-summary dl { display:flex; flex-wrap:wrap; gap:24px; margin:0; }
 .px-period-summary dt { font-size:11px; color:var(--muted); }
 .px-period-summary dd { font-size:20px; letter-spacing:-.025em; margin:5px 0 0; font-weight:650; font-variant-numeric:tabular-nums; }
-.px-device-intro { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:20px; padding:24px; border:1px solid var(--line); border-radius:20px; background:var(--surface); }
-.px-device-intro>div { flex:1; min-width:240px; }
-.px-device-intro h2 { margin:6px 0 10px; font-size:24px; letter-spacing:-.03em; }
-.px-device-intro p { max-width:58ch; line-height:1.65; font-size:14px; color:var(--muted); margin:0; }
-.px-device-intro .px-area-nav { margin:0; }
 .px-source-policy { margin:16px 0; background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:0 18px; }
 .px-source-policy summary { padding:14px 0; min-height:44px; cursor:pointer; font-weight:650; font-size:14px; }
 .px-source-policy p { font-size:13px; line-height:1.7; max-width:85ch; color:var(--muted); }
@@ -113,6 +108,20 @@
    the details into a 340 px strip of 10 px type. */
 .metric-detail-hero.an-metric-hero { min-height:0; margin:0 0 14px; padding:20px 28px; display:grid; grid-template-columns:minmax(0,1fr); gap:14px; }
 .an-metric-hero__head { display:flex; flex-wrap:wrap; align-items:flex-end; justify-content:space-between; gap:12px 32px; }
+/* "Read together with": one button that opens the panel's sibling tests. */
+.an-hero-together { margin:12px 0 0; }
+.an-hero-together>summary { display:inline-flex; flex-wrap:wrap; align-items:center; gap:4px 8px; min-height:44px; max-width:100%; padding:8px 14px 8px 32px; position:relative; border:1px solid var(--line-strong); border-radius:12px; cursor:pointer; list-style:none; font-size:14px; }
+.an-hero-together>summary::-webkit-details-marker { display:none; }
+.an-hero-together>summary::before { content:""; position:absolute; left:12px; top:50%; width:8px; height:8px; border-right:2px solid var(--teal); border-bottom:2px solid var(--teal); transform:translateY(-50%) rotate(-45deg); transition:transform .15s ease; }
+.an-hero-together[open]>summary::before { transform:translateY(-75%) rotate(45deg); }
+.an-hero-together>summary:focus-visible { outline:3px solid var(--focus); outline-offset:3px; }
+.an-hero-together__label { color:var(--muted); }
+.an-hero-together__body { display:grid; grid-template-columns:minmax(0,1fr); gap:10px; margin-top:10px; }
+.an-hero-together__body p { margin:0; }
+.an-hero-together__body .button { white-space:normal; max-width:100%; }
+.an-hero-together .an-sibling-chips { list-style:none; margin:0; padding:0; min-width:0; }
+.an-hero-together .an-sibling-chips li { min-width:0; max-width:100%; }
+.an-hero-together .an-sibling-chips a { overflow-wrap:anywhere; }
 .an-metric-hero__title { flex:1 1 16rem; min-width:0; }
 .an-metric-hero h1 { margin:6px 0 0; font-size:clamp(28px,3.2vw,44px); line-height:1.1; overflow-wrap:anywhere; }
 .an-metric-hero__value { display:grid; gap:6px; min-width:0; }
@@ -289,8 +298,6 @@ details.an-change-ai { display:block; padding:0 24px; margin:16px 0; }
   .px-detail-nav { gap:6px; }.px-detail-nav a { padding:8px 12px; font-size:12px; }
   .px-period-summary { display:block; }.px-period-summary dl { margin-top:16px; gap:16px; }
   .px-period-summary dd { font-size:19px; }.px-period-summary dt { max-width:110px; line-height:1.45; }
-  .px-device-intro { padding:20px; }.px-device-intro>div { min-width:0; flex-basis:100%; }
-  .px-device-intro .px-area-nav { width:100%; }
   .px-source-form { padding:14px; }.px-source-form label { flex-basis:100%; }.px-source-form button { width:100%; }
   .px-day-values dl { grid-template-columns:minmax(0,1fr); }
   .metric-detail-hero.an-metric-hero { padding:14px 16px; gap:10px; border-radius:18px; }

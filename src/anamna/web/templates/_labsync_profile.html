@@ -5,9 +5,9 @@
 <section class="panel an-lab-card" id="lab-{{ card.key }}" aria-labelledby="lab-heading-{{ card.key }}">
   <div class="panel-head">
     <div><span class="eyebrow">{{ t('labsync.eyebrow') }}</span><h2 id="lab-heading-{{ card.key }}">{{ t('labsync.card_heading', name=card.name|phrase) }}</h2></div>
-    {% set rejected = card.connected and lab_for == card.key and lab_msg == 'labsync.error_auth' %}
-    <span class="pill {{ 'an-pill--ok' if card.connected and not card.expired and not rejected else 'an-pill--warn' }}">
-      {{ t('labsync.rejected_pill') if rejected else (t('labsync.expired_pill') if card.expired else (t('integrations.connected') if card.connected else t('integrations.not_connected'))) }}
+    {% set rejected = card.connected and (card.reauth == 'rejected' or (lab_for == card.key and lab_msg == 'labsync.error_auth')) %}
+    <span class="pill {{ 'an-pill--ok' if card.connected and card.reauth != 'expired' and not rejected else 'an-pill--warn' }}">
+      {{ t('labsync.rejected_pill') if rejected else (t('labsync.expired_pill') if card.reauth == 'expired' else (t('integrations.connected') if card.connected else t('integrations.not_connected'))) }}
     </span>
   </div>
 
@@ -21,11 +21,14 @@
   <div class="alert warning">{{ t('labsync.error_no_profile') }}</div>
   {% endif %}
 
-  {% if not card.connected and card.sign_in in ('password', 'sms') %}
+  {#- The sign-in forms: one macro, shown while nothing is stored and again
+      (`again`) inside the reauth block when the stored sign-in ran out. -#}
+  {% macro sign_in_forms(card, again=false) %}
+  {% if card.sign_in in ('password', 'sms') %}
   {#- A lab with only a mobile app: sign in here once, as in the app, with
       phone and password, or (sms) phone and a texted code. -#}
   {% set pending = lab_pending_code(user, card.key) %}
-  <h3 class="an-lab-subhead">{{ t('labsync.how_heading') }}</h3>
+  {% if not again %}<h3 class="an-lab-subhead">{{ t('labsync.how_heading') }}</h3>{% endif %}
   {#- Which phone and which password: the one thing the fields cannot say.
       A lab may word it its own way (labsync.<key>_<sign_in>_what); t() hands
       back the key itself when there is no such message. -#}
@@ -47,6 +50,7 @@
   </form>
   <form action="/profile/lab/{{ card.key }}/forget" method="post" class="inline-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    {% if again %}<input type="hidden" name="pending_only" value="1">{% endif %}
     <button class="secondary" type="submit">{{ t('labsync.password_code_cancel') }}</button>
   </form>
   {% elif pending %}
@@ -63,6 +67,7 @@
   </form>
   <form action="/profile/lab/{{ card.key }}/forget" method="post" class="inline-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    {% if again %}<input type="hidden" name="pending_only" value="1">{% endif %}
     <button class="secondary" type="submit">{{ t('labsync.password_code_cancel') }}</button>
   </form>
   {% else %}
@@ -86,9 +91,9 @@
   </form>
   {% endif %}
 
-  {% elif not card.connected %}
+  {% else %}
   {#- How to get the credential: the hard part, so it is spelled out. -#}
-  <h3 class="an-lab-subhead">{{ t('labsync.how_heading') }}</h3>
+  {% if not again %}<h3 class="an-lab-subhead">{{ t('labsync.how_heading') }}</h3>{% endif %}
   <ol class="an-lab-steps">
     <li>{{ t('labsync.synevo_step1') }}
       <a class="an-lab-open" href="{{ card.url }}/personal-cabinet/my-results" target="_blank" rel="noopener noreferrer">{{ t('labsync.open_site', site=card.url.split('://')[-1] ~ '/personal-cabinet/my-results') }}</a></li>
@@ -109,15 +114,30 @@
     <p class="tiny muted" id="lab-cookie-hint-{{ card.key }}">{{ t('labsync.synevo_cookie_hint') }}</p>
     <button class="primary" type="submit" data-working="{{ t('labsync.working') }}">{{ t('labsync.save_credentials') }}</button>
   </form>
+  {% endif %}
+  {% endmacro %}
 
+  {% if not card.connected %}
+  {{ sign_in_forms(card) }}
   {% else %}
+  {% if card.reauth %}
+  {#- The stored sign-in ran out or was refused: say which, and sign in again
+      right here.  Links to people and the order history are untouched. -#}
+  <div class="an-lab-reauth" id="lab-reauth-{{ card.key }}">
+    <h3 class="an-lab-subhead">{{ t('labsync.reauth_heading') }}</h3>
+    <div class="alert warning" role="status">
+      <p>{{ t('labsync.reauth_' ~ card.reauth, name=card.name|phrase) }}</p>
+      <p>{{ t('labsync.reauth_keeps') }}</p>
+    </div>
+    {{ sign_in_forms(card, again=true) }}
+  </div>
+  {% endif %}
   <dl class="an-lab-facts">
     <div><dt>{{ t('labsync.secret_label') }}</dt><dd class="hash">...{{ card.secret_tail }}</dd></div>
     <div><dt>{{ t('labsync.expires_label') }}</dt>
       <dd>{% if card.expires_at %}{{ card.expires_at[:10]|datefmt }}{% else %}{{ t('labsync.expires_unknown') }}{% endif %}</dd></div>
     {% if card.phone %}<div><dt>{{ t('labsync.phone_label') }}</dt><dd class="hash">{{ card.phone }}</dd></div>{% endif %}
   </dl>
-  {% if card.expired %}<div class="alert warning">{{ t('labsync.error_expired') }}</div>{% endif %}
 
   <div class="an-lab-actions">
     <form action="/profile/lab/{{ card.key }}/check" method="post" class="inline-form">
@@ -220,7 +240,7 @@
       the page stay as they are (PERF-06). -#}
   <form action="/profile/lab/{{ card.key }}/sync" method="post" class="inline-form" data-lab-live="sync">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <button class="primary" type="submit" data-working="{{ t('labsync.working') }}" {{ 'disabled' if card.sync_state == 'running' else '' }}>{{ t('labsync.sync_action') }}</button>
+    <button class="primary" type="submit" data-working="{{ t('labsync.working') }}" {{ 'disabled' if card.sync_state == 'running' or card.reauth else '' }}>{{ t('labsync.sync_action') }}</button>
   </form>
 
   <div class="an-lab-status" role="status" aria-live="polite" data-lab-live="status">

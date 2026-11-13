@@ -327,7 +327,7 @@ def suggestion_query(raw: str) -> str:
 
 # --- search: one matcher for both boxes ------------------------------------------
 #
-# Matching is /metrics' (web/search.py): whole words, case- and script-folded,
+# Matching is the /results search's (web/search.py): whole words, case- and script-folded,
 # its abbreviation table.  Two things are added on both sides here: apostrophes
 # are dropped («зв’язок», "зв'язок" and «звʼязок» are one word, not two), and a
 # Latin abbreviation spelled with Cyrillic lookalikes («МСН» for MCH, «LDLС»)
@@ -1022,7 +1022,8 @@ def _without_edits(pairs: list[tuple[str, str]], lab: str, cut: str, put: str, a
     mine = f"{lab}:"
     keep = []
     for name, value in pairs:
-        if name in {"notice", "olab", "oq", "have"} or (alt is not None and name == f"alt_{lab}"):
+        if name in {"notice", "failed", "opoint", "odate", "opay", "olab", "oq", "have"} or (
+                alt is not None and name == f"alt_{lab}"):
             continue
         if name in {"cut", "put"} and value.startswith(mine) and (reset or value in {cut, put}):
             continue
@@ -1082,8 +1083,25 @@ def _regions(settings, key: str) -> list[dict]:
         return []
 
 
-def _back(request_query: str, notice: str) -> RedirectResponse:
-    return RedirectResponse(f"/plan-tests?{request_query}&notice={notice}#plan-result", status_code=303)
+def _back(request_query: str, notice: str, lab: str = "", choices: dict[str, str] | None = None) -> RedirectResponse:
+    """Back to the plan exactly as it stood, with what happened.  ``lab`` names
+    the tile the order was sent from: the page opens it and says there what
+    failed.  ``choices`` are the order form's answers, put back into the form."""
+    extra = {"notice": notice, **({"failed": lab} if lab else {}), **{k: v for k, v in (choices or {}).items() if v}}
+    # The message's own id inside the tile; when the tile is gone the page stays at the top, where the message is.
+    anchor = f"plan-fail-{lab}" if lab else "plan-result"
+    return RedirectResponse(f"/plan-tests?{request_query}&{urlencode(extra)}#{anchor}", status_code=303)
+
+
+def _order_choices(form) -> dict[str, str]:
+    """What the person chose in the order form, to put back after a failure."""
+    payment = str(form.get("payment") or "")
+    try:
+        day = date.fromisoformat(str(form.get("date") or "")).isoformat()
+    except ValueError:
+        day = ""
+    return {"opoint": str(form.get("point") or "")[:40], "odate": day,
+            "opay": payment if payment in {"online", "point"} else ""}
 
 
 def _active_labs(settings) -> list[str]:
@@ -1653,40 +1671,50 @@ def _build(settings, request, user, owner, params=None) -> dict:
             "left_out_names": _left_out_names(left_out, names, needs, params)}
 
 
-def _esculab_form(settings, user, owner, plan) -> dict:
+def _esculab_form(settings, user, owner, plan, params) -> dict:
     account_id, person = _order_account(settings, user["id"], owner["id"], "esculab")
     row = labsync.account(settings, account_id, "esculab")
     if not (row and row["secret"]):
         return {"connected": False}
+    reauth = labsync.reauth_reason(row)
     try:
         points = esculab_shop.points(settings, plan["region"])
     except LabSyncError:
         points = []
     last = None
-    if person:
+    if person and not reauth:
         client = labsync._client(settings, "esculab", row["secret"], row["phone"], row["refresh_secret"])
         last = esculab_shop.last_point(client, person)
-    if any(p["id"] == last for p in points):
-        point = last
+    wanted = params.get("opoint") or last
+    if any(p["id"] == wanted for p in points):
+        point = wanted
     elif points:
         point = points[0]["id"]
     else:
         point = ""
+    try:
+        day = date.fromisoformat(str(params.get("odate") or ""))
+    except ValueError:
+        day = None
+    if day is None or day < date.today():
+        day = date.today()
+    payment = params.get("opay")
     return {"connected": True, "person": person, "points": points, "nonce": secrets.token_urlsafe(16),
-            "point": point}
+            "point": point, "date": day.isoformat(), "payment": payment if payment == "point" else "online",
+            "reauth": reauth}
 
 
-def _order_forms(settings, user, owner, view: dict) -> dict:
+def _order_forms(settings, user, owner, view: dict, params) -> dict:
     order_forms = {}
     if view["best"] is None:
         return order_forms
     for plan in view["plans"]:
         if plan["lab"] == "esculab":
-            order_forms["esculab"] = _esculab_form(settings, user, owner, plan)
+            order_forms["esculab"] = _esculab_form(settings, user, owner, plan, params)
         elif plan["lab"] == "synevo":
             account_id, _person = _order_account(settings, user["id"], owner["id"], "synevo")
             row = labsync.account(settings, account_id, "synevo")
-            order_forms["synevo"] = {"connected": bool(row and row["secret"])}
+            order_forms["synevo"] = {"connected": bool(row and row["secret"]), "reauth": labsync.reauth_reason(row)}
     return order_forms
 
 
@@ -1716,6 +1744,16 @@ def _remember_choices(response, request, view: dict) -> None:
                             httponly=True, samesite="lax", secure=request.url.scheme == "https")
 
 
+#: Order and suggestion outcomes the page can say, and the message of each.
+_NOTICES = {
+    "prices_changed": "plan.notice_prices_changed", "items_gone": "plan.notice_items_gone",
+    "order_failed": "plan.notice_order_failed", "cart_failed": "plan.notice_cart_failed",
+    "esculab_not_connected": "plan.notice_esculab_not_connected",
+    "order_repeat": "plan.error_order_repeat", "order_uncertain": "plan.error_order_uncertain",
+    "suggestion_saved": "plan.notice_suggestion_saved", "suggestion_empty": "plan.notice_suggestion_empty",
+}
+
+
 def _plan_page(deps: dict, request, user, owner):
     settings, templates = deps["settings"], deps["templates"]
     view = _build(settings, request, user, owner)
@@ -1727,13 +1765,19 @@ def _plan_page(deps: dict, request, user, owner):
     read_only = _share_read_only(user, owner)
     can_order = not doctor and not read_only
     can_suggest = doctor or read_only
-    order_forms = _order_forms(settings, user, owner, view) if can_order else {}
+    order_forms = _order_forms(settings, user, owner, view, request.query_params) if can_order else {}
     suggestions = _suggestions(settings, user, owner, doctor)
+    notice = request.query_params.get("notice", "")
+    notice = notice if notice in _NOTICES else ""
+    notice_text = t(_NOTICES[notice]) if notice else ""
+    failed = request.query_params.get("failed", "")
+    failed_lab = failed if notice and any(plan["lab"] == failed for plan in view["plans"]) else ""
     response = templates.TemplateResponse(request, "plan_tests.html", deps["template_context"](
         request, active="plan_tests", can_order=can_order, order_forms=order_forms, doctor=doctor,
         can_suggest=can_suggest, share_read_only=read_only, suggestions=suggestions,
         suggestion_source=suggestion_query(str(request.url.query)),
-        notice=request.query_params.get("notice", ""), today=date.today().isoformat(), **view))
+        notice=notice, notice_text=notice_text, failed_lab=failed_lab,
+        today=date.today().isoformat(), **view))
     _remember_choices(response, request, view)
     return response
 
@@ -1845,10 +1889,10 @@ async def _esculab_place(deps: dict, request, user, owner, form, order: dict):
     settings, audit, templates = deps["settings"], deps["audit"], deps["templates"]
     fresh, total, notice = await _esculab_priced(settings, order)
     if notice:
-        return _back(order["plan_query"], notice)
+        return _back(order["plan_query"], notice, "esculab", _order_choices(form))
     plan_query, account_id, person, row = order["plan_query"], order["account_id"], order["person"], order["row"]
     if not _spend_nonce(settings, user, order["nonce"]):
-        return _back(plan_query, "order_repeat")
+        return _back(plan_query, "order_repeat", "esculab", _order_choices(form))
     client = labsync._client(settings, "esculab", row["secret"], row["phone"], row["refresh_secret"])
     try:
         visit = date.fromisoformat(str(form.get("date") or ""))
@@ -1861,7 +1905,8 @@ async def _esculab_place(deps: dict, request, user, owner, form, order: dict):
     except LabSyncError as exc:
         logger.warning("esculab order refused: %s", exc.key)
         # Unreachable or timed out: the lab may have filed the order before the answer was lost.
-        return _back(plan_query, "order_uncertain" if exc.key == "labsync.error_unreachable" else "order_failed")
+        return _back(plan_query, "order_uncertain" if exc.key == "labsync.error_unreachable" else "order_failed",
+                     "esculab", _order_choices(form))
     audit(owner["id"], user["id"], "lab_order_created", "lab_order", f"esculab:{created['number']}",
           {"items": len(fresh), "total": total, "account": account_id})
     return templates.TemplateResponse(request, "plan_tests_done.html", deps["template_context"](
@@ -1883,15 +1928,15 @@ async def _esculab_order(deps: dict, request, user, form):
     # The form's one-time token: spent below, before the lab is asked.  A form without one is not sent.
     nonce = str(form.get("order_nonce") or "")
     if not nonce:
-        return _back(plan_query, "order_repeat")
+        return _back(plan_query, "order_repeat", "esculab", _order_choices(form))
     ids = [str(value) for value in form.getlist("item")]
     expected = _expected_total(form)
     if expected is None or not _known_region(settings, "esculab", region):
-        return _back(plan_query, "items_gone")
+        return _back(plan_query, "items_gone", "esculab", _order_choices(form))
     account_id, person = _order_account(settings, user["id"], owner["id"], "esculab")
     row = labsync.account(settings, account_id, "esculab")
     if not (row and row["secret"] and person):
-        return _back(plan_query, "esculab_not_connected")
+        return _back(plan_query, "esculab_not_connected", "esculab", _order_choices(form))
     order = {"nonce": nonce, "region": region, "plan_query": plan_query, "ids": ids, "expected": expected,
              "account_id": account_id, "person": person, "row": row}
     return await _esculab_place(deps, request, user, owner, form, order)
@@ -1921,16 +1966,16 @@ async def _synevo_cart(deps: dict, request, user, form):
         raise HTTPException(403, t("plan.error_share_read_only"))
     region, plan_query = str(form.get("region") or ""), str(form.get("plan_query") or "")
     if not _known_region(settings, "synevo", region):
-        return _back(plan_query, "items_gone")
+        return _back(plan_query, "items_gone", "synevo")
     account_id, _person = _order_account(settings, user["id"], owner["id"], "synevo")
     chosen = _synevo_chosen(settings, region, form)
     if not chosen:
-        return _back(plan_query, "items_gone")
+        return _back(plan_query, "items_gone", "synevo")
     try:
         result = await run_in_threadpool(lambda: synevo_shop.add_to_cart(settings, account_id, chosen, region=region))
     except LabSyncError as exc:
         logger.warning("synevo cart refused: %s", exc.key)
-        return _back(plan_query, "cart_failed")
+        return _back(plan_query, "cart_failed", "synevo")
     audit(owner["id"], user["id"], "lab_cart_filled", "lab_cart", "synevo",
           {"added": len(result.get("added") or []), "failed": len(result.get("failed") or [])})
     added, fees, total = _synevo_added(chosen, result)
@@ -2013,10 +2058,16 @@ def register_routes(app, settings, *, templates, template_context, require_user,
         return await _synevo_cart(deps, request, user, form)
 
 
+#: Parameters that are not part of a plan: the outcome of an order, what the
+#: order form held, and the searches.  Everything else reopens the same plan,
+#: including results added from the search (``add``) or by a preset.
+_NOT_THE_PLAN = frozenset({"notice", "failed", "opoint", "odate", "opay", "q", "sq", "sg", "sp", "slab", "skind",
+                           "smax", "ssort", "olab", "oq", "have"})
+
+
 def plan_query(params) -> str:
     """The query string that reopens the same plan."""
-    keep = [(name, value) for name, value in params.multi_items() if name not in {"notice", "add", "preset", "drop", "q", "sq", "sg", "sp", "slab", "skind", "smax", "ssort", "olab", "oq", "have"}]
-    return urlencode(keep)
+    return urlencode([(name, value) for name, value in params.multi_items() if name not in _NOT_THE_PLAN])
 
 
 def stamp(value: str | None) -> str:

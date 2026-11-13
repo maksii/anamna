@@ -254,7 +254,7 @@ def save_provider_settings(settings: Settings, key: str, *, enabled: bool, url: 
         if url != previous:
             forgotten = connection.execute(
                 """UPDATE lab_accounts SET secret='', refresh_secret='', phone='', secret_expires_at=NULL,
-                       updated_at=? WHERE provider=? AND (secret<>'' OR refresh_secret<>'')""",
+                       auth_rejected_at=NULL, updated_at=? WHERE provider=? AND (secret<>'' OR refresh_secret<>'')""",
                 (utc_now(), key),
             ).rowcount
         for name, value in ((f"labsync_{key}_enabled", "1" if enabled else "0"), (f"labsync_{key}_url", url)):
@@ -305,7 +305,8 @@ def _store_credentials(settings: Settings, user_id: str, key: str, parsed: dict)
                VALUES (?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(user_id, provider) DO UPDATE SET secret=excluded.secret,
                    refresh_secret=excluded.refresh_secret, phone=excluded.phone,
-                   secret_expires_at=excluded.secret_expires_at, updated_at=excluded.updated_at""",
+                   secret_expires_at=excluded.secret_expires_at, updated_at=excluded.updated_at,
+                   auth_rejected_at=NULL""",
             (user_id, key, parsed["secret"], parsed.get("refresh_secret") or "", parsed["phone"],
              parsed["expires_at"], utc_now()),
         )
@@ -356,6 +357,13 @@ def pending_code(user_id: str, key: str) -> dict | None:
     users = entry["challenge"].get("users")
     return {"phone_masked": entry["challenge"]["phone_masked"],
             "code_length": entry["challenge"]["code_length"], **({"users": users} if users else {})}
+
+
+def cancel_pending(user_id: str, key: str) -> None:
+    """Drop a texted-code step that is waiting, and nothing else: the stored
+    sign-in, the person list and the links stay."""
+    with _PENDING_LOCK:
+        _PENDING.pop((user_id, key), None)
 
 
 def _verify_pending(module, url: str, user_id: str, key: str, form: dict[str, str], chosen: str) -> dict:
@@ -415,13 +423,33 @@ def forget(settings: Settings, user_id: str, key: str) -> None:
     with transaction(settings) as connection:
         connection.execute(
             """UPDATE lab_accounts SET secret='', refresh_secret=?, phone='', secret_expires_at=NULL,
-                   persons_json=NULL, checked_at=NULL, updated_at=? WHERE user_id=? AND provider=?""",
+                   persons_json=NULL, checked_at=NULL, auth_rejected_at=NULL, updated_at=? WHERE user_id=? AND provider=?""",
             (device, utc_now(), user_id, key),
         )
 
 
 def _expired(expires_at: str | None) -> bool:
     return bool(expires_at) and str(expires_at)[:19] <= datetime.now(UTC).isoformat(timespec="seconds")[:19]
+
+
+def _mark_auth_rejected(settings: Settings, user_id: str, key: str, rejected: bool) -> None:
+    """Remember that the lab refused the stored sign-in, or that it works again."""
+    with transaction(settings) as connection:
+        connection.execute(
+            "UPDATE lab_accounts SET auth_rejected_at=? WHERE user_id=? AND provider=?",
+            (utc_now() if rejected else None, user_id, key),
+        )
+
+
+def reauth_reason(row) -> str:
+    """Why a stored sign-in must be renewed: ``"expired"``, ``"rejected"``, or
+    ``""`` when it works or there is none."""
+    if not row or not row["secret"]:
+        return ""
+    if _expired(row["secret_expires_at"]) or (
+            row["provider"] == esculab.KEY and _expired(esculab.token_expiry(row["secret"]))):
+        return "expired"
+    return "rejected" if row["auth_rejected_at"] else ""
 
 
 def _client(settings: Settings, key: str, secret: str, phone: str, refresh: str | None = None):
@@ -484,12 +512,16 @@ def check_account(settings: Settings, user_id: str, key: str) -> list[dict]:
     client = _client(settings, key, row["secret"], row["phone"], row["refresh_secret"])
     try:
         people, expires = client.check()
+    except LabSyncError as exc:
+        if exc.key == ERROR_AUTH:
+            _mark_auth_rejected(settings, user_id, key, True)
+        raise
     finally:
         _store_rolled_secret(settings, user_id, key, row["secret"], client)
     with transaction(settings) as connection:
         connection.execute(
             """UPDATE lab_accounts SET persons_json=?, checked_at=?, secret_expires_at=COALESCE(?, secret_expires_at),
-                   updated_at=? WHERE user_id=? AND provider=?""",
+                   auth_rejected_at=NULL, updated_at=? WHERE user_id=? AND provider=?""",
             (json.dumps(people, ensure_ascii=False), utc_now(), expires, utc_now(), user_id, key),
         )
         # A person the account no longer lists, who never brought an order,
@@ -2841,6 +2873,8 @@ def sync(settings: Settings, user_id: str, key: str, *, secret: str | None = Non
     try:
         _sync_account(settings, user_id, key, secret, phone, person, inline, summary)
     except LabSyncError as exc:
+        if exc.key == ERROR_AUTH and secret is None:
+            _mark_auth_rejected(settings, user_id, key, True)
         _finish_run(settings, user_id, key, "failed", exc.key, summary)
         raise
     except Exception:
@@ -2849,6 +2883,8 @@ def sync(settings: Settings, user_id: str, key: str, *, secret: str | None = Non
         raise
     finally:
         _notify_run_owners(settings, user_id, key)
+    if secret is None:
+        _mark_auth_rejected(settings, user_id, key, False)
     _finish_run(settings, user_id, key, "done", None, summary)
     return summary
 
@@ -2976,7 +3012,9 @@ def profile_cards(settings: Settings, user) -> list[dict]:
     an API credential, which are not the account holder in person."""
     if not user or user.get("token_kind") in {"guest", "api"}:
         return []
-    return [_card(settings, user["id"], key) for key in active_providers(settings)]
+    # The same people for every laboratory's card: read once, not once per card.
+    candidates = link_candidates(settings, user["id"])
+    return [_card(settings, user["id"], key, candidates) for key in active_providers(settings)]
 
 
 def profile_card(settings: Settings, user, key: str) -> dict | None:
@@ -2984,6 +3022,21 @@ def profile_card(settings: Settings, user, key: str) -> dict | None:
     if not user or user.get("token_kind") in {"guest", "api"} or key not in PROVIDERS or not active(settings, key):
         return None
     return _card(settings, user["id"], key)
+
+
+def reauth_needed(settings: Settings, user) -> list[dict]:
+    """The enabled labs whose stored sign-in this person must renew, as
+    ``{"key", "name", "reason"}``.  None for a guest link or an API credential."""
+    if not user or user.get("token_kind") in {"guest", "api"}:
+        return []
+    keys = set(active_providers(settings))
+    if not keys:
+        return []
+    with connect(settings) as connection:
+        rows = connection.execute(
+            "SELECT * FROM lab_accounts WHERE user_id=? AND secret<>''", (user["id"],)).fetchall()
+    return [{"key": row["provider"], "name": provider(row["provider"]).NAME, "reason": reason}
+            for row in rows if row["provider"] in keys and (reason := reauth_reason(row))]
 
 
 def _name_unlisted_targets(connection, links: dict, names: dict) -> None:
@@ -3045,9 +3098,10 @@ def _card_person(person: dict, link, candidates: list[dict], fed: dict, names: d
     }
 
 
-def _card(settings: Settings, user_id: str, key: str) -> dict:
+def _card(settings: Settings, user_id: str, key: str, candidates: list[dict] | None = None) -> dict:
     row = account(settings, user_id, key)
-    candidates = link_candidates(settings, user_id)
+    if candidates is None:
+        candidates = link_candidates(settings, user_id)
     names = {c["id"]: c["name"] for c in candidates}
     with connect(settings) as connection:
         patient = _patient(connection, user_id)
@@ -3091,6 +3145,7 @@ def _card(settings: Settings, user_id: str, key: str) -> dict:
         "secret_tail": secret_tail(secret),
         "expires_at": row["secret_expires_at"] if row else None,
         "expired": _expired(row["secret_expires_at"]) if row else False,
+        "reauth": reauth_reason(row),
         "phone": _mask_phone(str(row["phone"])) if secret else "",
         "has_profile": patient is not None,
         "persons": persons,
@@ -3144,7 +3199,8 @@ def _card_order(order, records: set, live: dict, titles: dict) -> dict:
 __all__ = [
     "LINK_KEYS", "LabSyncError", "PROVIDERS", "active", "active_providers", "check_account", "cross_check",
     "decide_orders", "document_check", "forget", "inbox", "inbox_count", "link_candidates", "link_person",
-    "observation_classes", "profile_card", "profile_cards", "provider_settings", "recheck", "save_credentials",
-    "save_provider_settings", "set_consent", "start_sync", "sync", "unlink_person", "verify_matches",
+    "cancel_pending", "observation_classes", "profile_card", "profile_cards", "provider_settings", "reauth_needed",
+    "reauth_reason", "recheck", "save_credentials", "save_provider_settings", "set_consent", "start_sync", "sync", "unlink_person",
+    "verify_matches",
 ]
 

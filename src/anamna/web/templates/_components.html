@@ -356,6 +356,13 @@
       {{ state_strip(card.verdict.label, card.staleness, card.verification_status == 'extracted', card.verification_label, t('verify.provisional_body'), interpretation=card.verdict.interpretation, conflict=card.verdict.conflicts_with_vendor, show_verify=not card.is_device) }}
     </div>
   </div>
+  {#- Kept for history, not raised: said in words, with what it means. -#}
+  {% if card.historical %}
+  <details class="an-verdict-details an-historical-note">
+    <summary>{{ t('metrics.historical_chip') }}</summary>
+    <p class="an-verdict-details__body">{{ t('metrics.historical_body') }}</p>
+  </details>
+  {% endif %}
   <h{{ level }}><a class="an-metric-card__link" href="{{ card.url }}">{{ card.name }}</a></h{{ level }}>
   <div class="result-reading">
     {#- The exact value rode only on `title`, which touch and keyboard never
@@ -414,6 +421,7 @@
       on demand (tap, click or keyboard). -#}
   <footer class="an-panel-card__footer">
     <span>{{ t('panel.members_in_record' if panel.has_device_members else 'panel.coverage', present=panel.present_count, total=panel.member_count) }}{% if panel.flagged_count %} · {{ t('panel.flagged', count=panel.flagged_count) }}{% endif %}</span>
+    {% if panel.medicines_count %}<span class="an-panel-card__medicines">{{ plural_t('panels.medicines_count', panel.medicines_count) }}</span>{% endif %}
     {% if panel.conflict_count %}
     <details class="an-verdict-details an-panel-card__conflicts" data-conflict="true">
       <summary>{{ t('panel.conflicts', count=panel.conflict_count) }}</summary>
@@ -436,11 +444,12 @@
 #}
 {#- `context_name`: the panel whose page this row is on. Its name under every
     row of that panel's own page said nothing, 46 times. -#}
-{% macro panel_member_row(row, context_name='') -%}
+{% macro panel_member_row(row, context_name='', marks='') -%}
 <div class="an-panel-member-row" data-interpretation="{{ row.verdict.interpretation }}"{% if row.verdict.conflicts_with_vendor %} data-conflict="true"{% endif %}>
   <div class="an-panel-member-row__name">
     <a href="{{ row.url }}">{{ row.name }}</a>
     {% if row.category_label != context_name %}<small>{{ row.category_label }}</small>{% endif %}
+    {% if row.historical %}<small class="an-historical-note">{{ t('metrics.historical_chip') }}<span class="visually-hidden">: {{ t('metrics.historical_body') }}</span></small>{% endif %}
   </div>
   <div class="an-panel-member-row__value"{% if row.value_exact %} title="{{ t('metrics.exact_value', value=row.value_exact) }}"{% endif %}>{{ row.value_text }}{% if row.unit %} <small>{{ row.unit|unitfmt }}</small>{% endif %}{% if row.value_exact %}<span class="visually-hidden">, {{ t('metrics.exact_value', value=row.value_exact) }}</span>{% endif %}</div>
   <div class="an-panel-member-row__bar">
@@ -453,6 +462,7 @@
   </div>
   <div class="an-panel-member-row__date"><span class="an-panel-member-row__label">{{ t('panel.th_date') }}</span>{{ row.date_text }}</div>
   <div class="an-panel-member-row__verify"><span class="status {{ row.verification_status }}">{{ row.verification_label }}</span></div>
+  {% if marks %}<div class="an-panel-member-row__influences">{{ marks }}</div>{% endif %}
   {{ verdict_details(row.verdict) }}
 </div>
 {%- endmacro %}

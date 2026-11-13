@@ -254,9 +254,11 @@ def test_panel_and_area_routes_404_on_unknown_ids(tmp_path: Path):
 def test_every_route_requires_a_session(tmp_path: Path):
     settings, _, _ = build(tmp_path)
     anonymous = TestClient(create_app(settings))
-    # /insights is a permanent redirect to /metrics now, which is guarded below.
-    assert anonymous.get("/insights", follow_redirects=False).headers["location"] == "/metrics?status=attention"
-    for route in ("/", "/panels", "/panels/lipids", "/metrics", "/documents", "/review"):
+    # /insights is a permanent redirect to /results now, which is guarded below.
+    assert anonymous.get("/insights", follow_redirects=False).headers["location"] == "/results?show=attention"
+    # The retired list addresses answer with a redirect first; the redirect
+    # target is what has to be guarded, so the target is what is listed.
+    for route in ("/", "/results", "/results?group=panel", "/panels/lipids", "/documents", "/review"):
         response = anonymous.get(route, follow_redirects=False)
         assert response.status_code == 303, route
         assert response.headers["location"].startswith("/login")
@@ -294,22 +296,30 @@ def test_live_search_returns_the_cards_the_page_renders(tmp_path: Path):
     try:
         # The type-ahead's result region is, byte for byte, the region the page
         # load renders -- for a query, a status filter and the default list.
-        for query in ("q=", "q=cholesterol", "status=attention", "status=due"):
-            page = client.get(f"/metrics?{query}").text
+        # The type-ahead answers a typed search only: with the box empty the
+        # page keeps the list it drew, and the status filters are page
+        # addresses, not search parameters.
+        for query in ("q=cholesterol",):
+            page = client.get(f"/results?{query}").text
             payload = client.get(f"/api/metrics/search?{query}").json()
             assert payload["html"].strip(), query
             assert payload["html"] in page, f"the live region differs from the page for {query}"
         rows = client.get("/api/metrics/search?q=LDL").json()["html"]
-        ldl = re.search(r'<a class="an-panel-member an-result-row" href="/metrics/ldl-cholesterol".*?</a>', rows, re.S)
-        assert ldl and 'data-interpretation="high"' in ldl.group(0)
-        assert t("verdict.you_are_within") not in ldl.group(0)
+        ldl_row = next(
+            chunk.split("</li>", 1)[0]
+            for chunk in rows.split('<li class="an-res"')[1:]
+            if 'href="/metrics/ldl-cholesterol"' in chunk
+        )
+        assert 'data-interpretation="high"' in ldl_row
+        assert t("verdict.you_are_within") not in ldl_row
 
         # The full metric card (range bar, chip) lives on the area pages now.
         page = client.get("/areas/heart").text
         cards = re.findall(r'<article class="result-card an-metric-card".*?</article>', page, re.S)
-        panels = re.findall(r'<article class="an-panel-card".*?</article>', client.get("/panels").text, re.S)
         assert cards, "the area page rendered no metric cards"
-        assert panels, "/panels rendered no panel cards"
+        assert 'data-section="panel-' in client.get("/results?group=panel").text, (
+            "the test-group view rendered no sections"
+        )
 
         high = next((c for c in cards if 'data-out-of-range="high"' in c), None)
         assert high, "fixture no longer produces an out-of-range card to guard"
@@ -413,7 +423,7 @@ def test_panel_json_does_not_mutate_the_catalog_memo(tmp_path: Path):
         assert "search_text" not in row
     for member in payload["panel"]["members"]:
         assert "search_text" not in member
-    assert client.get("/metrics?q=cholesterol").status_code == 200
+    assert client.get("/results?q=cholesterol").status_code == 200
     assert client.get("/api/metrics/search?q=cholesterol").status_code == 200
 
 
@@ -546,7 +556,7 @@ def test_device_metric_group_is_never_truncated(tmp_path: Path):
         user_id,
         [(f"test_metric_{index:02d}", f"Test metric {index:02d}") for index in range(45)],
     )
-    page = client.get("/metrics").text
+    page = client.get("/results").text
     links = {match for match in re.findall(r'href="(/devices/metrics/[^"]+)"', page)}
     assert len(links) >= 45
 
@@ -576,7 +586,7 @@ def test_attention_filter_names_how_far_outside_the_interval(tmp_path: Path):
     _, _, client = build(tmp_path)
     token = activate_locale("en")
     try:
-        page = client.get("/metrics?status=attention").text
+        page = client.get("/results?show=attention").text
         # LDL 4.42 with no cardiovascular risk category on record is judged by
         # the population cut-point (EAS/EFLM < 3.0 -- CLIN-01: risk-tier goals
         # never judge without a category), so it sits 1.42 mmol/L outside and

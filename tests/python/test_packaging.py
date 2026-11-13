@@ -35,6 +35,7 @@ def artifacts(tmp_path_factory: pytest.TempPathFactory):
         shutil.copytree(REPO / name, checkout / name, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     (checkout / "data").mkdir()
     shutil.copy2(REPO / "data/reference_library.json", checkout / "data/reference_library.json")
+    shutil.copy2(REPO / "data/icd10.json", checkout / "data/icd10.json")
     # There is deliberately no .gitignore here: the package allowlist must stand
     # on its own, including when a source archive is built outside git.
     for name in (".env", "data/anamna.sqlite3", "sources/report.pdf", "work/private.json", ".tool-cache/state.json"):
@@ -57,17 +58,19 @@ def test_release_artifacts_exclude_private_state_and_include_runtime_resources(a
     with tarfile.open(sdist) as archive:
         names = [member.name.split("/", 1)[1] for member in archive.getmembers() if member.isfile()]
         assert "data/reference_library.json" in names
+        assert "data/icd10.json" in names
         for member in archive.getmembers():
             if member.isfile():
                 assert PRIVATE_SENTINEL not in archive.extractfile(member).read()
         assert all(name.startswith(("src/anamna/", "migrations/")) or name in {
-            "data/reference_library.json", "README.md", "pyproject.toml", "uv.lock", "PKG-INFO", ".gitignore"
+            "data/reference_library.json", "data/icd10.json", "README.md", "pyproject.toml", "uv.lock", "PKG-INFO", ".gitignore"
         } for name in names)
     with zipfile.ZipFile(wheel) as archive:
         names = archive.namelist()
         expected = {f"anamna/resources/migrations/{path.name}" for path in (REPO / "migrations").glob("*.sql")}
         assert expected <= set(names)
         assert "anamna/resources/reference_library.json" in names
+        assert "anamna/resources/icd10.json" in names
         assert "anamna/web/templates/login.html" in names
         assert "anamna/web/static/app.css" in names
         for name in names:
@@ -122,3 +125,27 @@ with TestClient(app) as client:
 print('Installed wheel: migrations, guidance, login and assets passed')
 """
     assert "Installed wheel:" in run([str(python), "-c", script], cwd=state, env=env)
+
+
+def test_every_file_the_dockerfile_copies_is_in_the_build_context():
+    """`.dockerignore` starts from `*`: a COPY source that is not re-included never reaches the builder."""
+    sources: list[str] = []
+    for line in (REPO / "Dockerfile").read_text(encoding="utf-8").splitlines():
+        words = line.split()
+        if not words or words[0].upper() != "COPY" or any(word.startswith("--from") for word in words):
+            continue
+        arguments = [word for word in words[1:] if not word.startswith("--")]
+        sources.extend(arguments[:-1])
+    reincluded: list[str] = []
+    for line in (REPO / ".dockerignore").read_text(encoding="utf-8").splitlines():
+        entry = line.strip()
+        if entry.startswith("!"):
+            reincluded.append(entry[1:].strip())
+    assert sources, "no COPY sources parsed from Dockerfile"
+    assert {"data/icd10.json", "data/reference_library.json"} <= set(sources)
+    missing = [
+        source
+        for source in sources
+        if not any(source == pattern or source.startswith(pattern + "/") for pattern in reincluded)
+    ]
+    assert not missing, f"COPY sources excluded from the build context by .dockerignore: {missing}"

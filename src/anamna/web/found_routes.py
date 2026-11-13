@@ -138,21 +138,24 @@ def _dismiss_found(connection, user, keys: list[str]) -> RedirectResponse:
     return _redirect("/medicines/found?saved=found_dismissed")
 
 
-def _found_action(settings, audit, user, form) -> RedirectResponse:
+def _found_action(settings, audit, user, form, invalidate) -> RedirectResponse:
     keys = [str(key) for key in form.getlist("key")][:_MAX_KEYS]
     if not keys:
         return _redirect("/medicines/found?error=found_none")
     action = str(form.get("action") or "")
     with connect(settings) as connection:
         if action == "accept":
-            return _accept_found(connection, audit, user, keys, form)
+            response = _accept_found(connection, audit, user, keys, form)
+            # An accepted medicine is a clinical fact a verdict reads, so the person's memoised verdicts go.
+            invalidate(user["id"])
+            return response
         if action == "dismiss":
             return _dismiss_found(connection, user, keys)
     raise HTTPException(400)
 
 
 def register_routes(app, settings, *, templates, template_context, require_user, record_user, require_csrf,
-                    audit, document_row) -> None:
+                    audit, document_row, invalidate) -> None:
     """``audit`` is ``partial(_audit, settings)``; ``document_row`` renders a documents row as the record search does."""
 
     @app.get("/medicines/found", response_class=HTMLResponse)
@@ -203,4 +206,4 @@ def register_routes(app, settings, *, templates, template_context, require_user,
         if not _writable(user, owner):
             raise HTTPException(403)
         require_csrf(user, str(form.get("csrf_token") or ""))
-        return await run_in_threadpool(_found_action, settings, audit, user, form)
+        return await run_in_threadpool(_found_action, settings, audit, user, form, invalidate)

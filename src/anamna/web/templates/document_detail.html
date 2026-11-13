@@ -9,18 +9,40 @@
 <a class="back-link" href="/documents">{{ t('doc.back') }}</a>
 <section class="detail-head">
   <div>
-    <div class="eyebrow">{{ document.type_label }} · {{ document.vendor|phrase }}</div>
+    <div class="eyebrow">{{ document.type_label }} · {{ document.vendor|phrase }}{% if document.historical_at %} · <span class="pill an-historical-pill">{{ t('doc.historical_pill') }}</span>{% endif %}</div>
     <h1>{{ display_title }}</h1>
     {#- Labelled for what it is: a heading printed on the report, or the name
         the reader gave it. A filename is neither. -#}
     {% if document.source_title_key %}<p class="source-title"><span>{{ t(document.source_title_key) }}</span> {{ document.title }}</p>{% endif %}
     <p>{{ document.original_filename }} · {{ plural_t('area.pages', document.page_count) }} · {{ document.extraction_strategy|enumfmt }}</p>
-    {% if observations %}<p><a class="an-change-doc-link" href="/changes?document={{ document.id }}">{{ t('changes.document_link') }}</a></p>{% endif %}
+    {% if observations %}<p><a class="an-change-doc-link" href="/results?document={{ document.id }}">{{ t('changes.document_link') }}</a></p>{% endif %}
   </div>
   <div class="detail-date"><span>{{ t('doc.report_date') }}</span><strong>{{ document.report_date|datefmt }}</strong><small>{{ t('doc.imported', date=document.imported_at[:10]|datefmt) }}</small></div>
 </section>
 
 {% include "_document_relations.html" %}
+{#- Historical: the problem this document describes is over.  It stays in the
+    record; it stops raising attention.  One button either way, with what it
+    does said beside it. -#}
+<section class="an-doc-historical{{ ' is-on' if document.historical_at else '' }}" id="document-historical" aria-labelledby="document-historical-heading">
+  <div>
+    <h2 id="document-historical-heading" class="visually-hidden">{{ t('doc.historical_pill') }}</h2>
+    {% set historical_notice = request.query_params.get('historical') %}
+    {% if historical_notice in ('saved', 'cleared') %}<p class="alert" role="status">{{ t('doc.historical_' ~ historical_notice) }}</p>{% endif %}
+    {% if document.historical_at %}
+    <p><span class="pill an-historical-pill">{{ t('doc.historical_pill') }}</span> {{ t('doc.historical_on', date=document.historical_at[:10]|datefmt) }}</p>
+    {% else %}
+    <p class="tiny muted">{{ t('doc.historical_help') }}</p>
+    {% endif %}
+  </div>
+  {% if csrf_token and not viewing and not guest %}
+  <form method="post" action="/documents/{{ document.id }}/historical" class="inline-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="historical" value="{{ '0' if document.historical_at else '1' }}">
+    <button class="secondary" type="submit">{{ t('doc.historical_unmark') if document.historical_at else t('doc.historical_mark') }}</button>
+  </form>
+  {% endif %}
+</section>
 {% if document.notes %}<div class="alert neutral">{{ document.notes|phrase }}</div>{% endif %}
 {% if review_task %}
 <section class="panel an-document-review" id="review-status">
@@ -243,11 +265,10 @@
         {% endfor %}
       </div>
       {{ issue_report_list(issue_reports, none if viewing else csrf_token, return_url) }}
-      {#- 646 names, needed only once somebody opens a correction: shipped as
-          one JSON text node and turned into options on first use, instead of
-          646 elements on every document page. -#}
-      <datalist id="an-concept-list"></datalist>
-      <script type="application/json" nonce="{{ csp_nonce }}" id="an-concept-names">{{ concepts|tojson }}</script>
+      {#- The names a correction can map to are fetched from /concepts/names the
+          first time a correction field is focused: most visits never open one,
+          so they are not shipped with every document page. -#}
+      <datalist id="an-concept-list" data-src="/concepts/names"></datalist>
       {% if immunizations and not viewing %}{{ vaccine_datalist(vaccine_options) }}{% endif %}
     </section>
 
@@ -609,13 +630,19 @@
   showFromHash();
   globalThis.addEventListener("hashchange", showFromHash);
 
-  /* The concept picker's options, built the first time a correction field asks. */
+  /* The concept picker's options, fetched the first time a correction field asks. */
   const conceptList = document.getElementById("an-concept-list");
-  const conceptNames = document.getElementById("an-concept-names");
-  document.addEventListener("focusin", (event) => {
-    if (!conceptList || !conceptNames || conceptList.options.length) return;
-    if (event.target.getAttribute && event.target.getAttribute("list") === "an-concept-list") {
-      conceptList.append(...JSON.parse(conceptNames.textContent).map((name) => new Option(name)));
+  let conceptsAsked = false;
+  document.addEventListener("focusin", async (event) => {
+    if (!conceptList || conceptsAsked) return;
+    if (!(event.target.getAttribute && event.target.getAttribute("list") === "an-concept-list")) return;
+    conceptsAsked = true;
+    try {
+      const response = await fetch(conceptList.dataset.src);
+      if (!response.ok) throw new Error(String(response.status));
+      conceptList.append(...(await response.json()).map((name) => new Option(name)));
+    } catch {
+      conceptsAsked = false; /* the next focus asks again */
     }
   });
 

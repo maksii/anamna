@@ -208,7 +208,7 @@ def test_the_endpoint_needs_a_session_and_serves_plain_text(tmp_path: Path):
 
 def test_the_button_appears_on_result_pages_and_not_on_the_others(tmp_path: Path):
     _settings, _user_id, client = build(tmp_path)
-    for path in ("/", "/panels", "/metrics", "/documents", "/devices"):
+    for path in ("/", "/results", "/documents", "/devices"):
         assert "data-ai-open" in client.get(path).text, path
     for path in ("/upload", "/profile"):
         assert "data-ai-open" not in client.get(path).text, path
@@ -244,7 +244,7 @@ def test_a_metric_page_scope_is_an_excerpt_about_that_metric(tmp_path: Path):
 def test_page_scope_on_a_list_page_falls_back_to_the_whole_record(tmp_path: Path):
     """A path that names no subject must yield more, never less."""
     _settings, _user_id, client = build(tmp_path)
-    text = _prompt(client, scope="page", path="/metrics")
+    text = _prompt(client, scope="page", path="/results")
     assert "My personal health record" in text
     assert "Current results" in text
 
@@ -303,7 +303,7 @@ def test_the_scope_choice_appears_only_on_detail_pages(tmp_path: Path):
     detail = client.get("/metrics/ldl-cholesterol").text
     assert "data-ai-scope" in detail
     assert "LDL cholesterol" in detail
-    for path in ("/", "/metrics", "/documents"):
+    for path in ("/", "/results", "/documents"):
         assert "data-ai-scope" not in client.get(path).text, path
 
 

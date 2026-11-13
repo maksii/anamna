@@ -37,3 +37,11 @@ def test_read_then_write_survives_a_commit_in_between(tmp_path: Path):
     thread.join()
     with connect(settings) as db:
         assert db.execute("SELECT n FROM t").fetchone()[0] == 11
+
+
+def test_connect_creates_a_missing_data_directory(tmp_path: Path):
+    settings = Settings(database_path=tmp_path / "a" / "b" / "ledger.sqlite3", source_dir=tmp_path, secret_key="x")
+    connection = connect(settings)
+    assert connection.execute("SELECT 1").fetchone()[0] == 1
+    connection.close()
+    assert settings.database_path.exists()

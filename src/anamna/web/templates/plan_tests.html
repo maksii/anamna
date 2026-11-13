@@ -50,10 +50,9 @@
   {% endif %}
 </section>
 
-{% if notice %}
-{#- Order outcomes that have no `plan.notice_*` text of their own. -#}
-{% set notice_keys = {'order_repeat': 'plan.error_order_repeat', 'order_uncertain': 'plan.error_order_uncertain'} %}
-<div class="alert {{ 'warning' if notice in ('prices_changed', 'items_gone', 'suggestion_empty') else ('neutral' if notice == 'suggestion_saved' else 'error') }}" role="alert">{{ t(notice_keys[notice]) if notice in notice_keys else t('plan.notice_' ~ notice) }}</div>
+{#- An order's outcome is said inside its tile when the tile is there. -#}
+{% if notice_text and not failed_lab %}
+<div class="alert {{ 'warning' if notice in ('prices_changed', 'items_gone', 'suggestion_empty') else ('neutral' if notice == 'suggestion_saved' else 'error') }}" role="alert">{{ notice_text }}</div>
 {% endif %}
 
 {#- A doctor reads the record through an access code: they plan, and save

@@ -92,7 +92,7 @@ def test_summary_level_is_clamped_to_the_engine_verdict_and_stored_and_rendered(
         stored = json.loads(connection.execute("SELECT content_json FROM ai_change_summaries").fetchone()[0])
     (finding,) = stored["findings"]
     assert finding["test"] == "Theta marker" and finding["level"] == "moderate"
-    theta_row = client.get("/changes").text.split(">Theta marker</a>", 1)[1].split("</li>", 1)[0]
+    theta_row = client.get("/results?episode=latest").text.split(">Theta marker</a>", 1)[1].split("</li>", 1)[0]
     assert 'data-level="moderate"' in theta_row and 'data-level="urgent"' not in theta_row
 
 

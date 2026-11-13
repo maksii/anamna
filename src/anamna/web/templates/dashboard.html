@@ -20,7 +20,7 @@
       {% if counts.latest_device %}<span>{{ t('dashboard.device_through', date=counts.latest_device|datefmt) }}</span>{% endif %}
     </div>
   </div>
-  <form class="an-home-search" action="/metrics" method="get">
+  <form class="an-home-search" action="/results" method="get">
     <label for="dashboard-search">{{ t('dashboard.search_label') }}</label>
     <div>
       <input id="dashboard-search" type="search" name="q" placeholder="{{ t('dashboard.search_placeholder') }}" autocomplete="off">
@@ -54,6 +54,13 @@
   <a href="/profile?tab=connections#lab-inbox">{{ t('labsync.inbox_notice_link') }}</a></p>
 {% endif %}
 
+{#- A lab sign-in that ran out stops results arriving without a word, so the
+    home page says it and leads to the place that fixes it. -#}
+{% for item in lab_reauth(user) %}
+<p class="alert warning an-lab-inbox-notice" role="status">{{ t('labsync.reauth_notice', name=item.name|phrase) }}
+  <a href="/profile?tab=connections&amp;lab={{ item.key }}#lab-{{ item.key }}">{{ t('labsync.reauth_notice_link') }}</a></p>
+{% endfor %}
+
 {% if not record_empty %}
 {#- What needs attention comes first, as the results themselves; the tiles
     under it are shortcuts into the same filtered lists. The navigation
@@ -70,7 +77,7 @@
         <summary>{{ t('dashboard.priority_note_summary') }}</summary>
         <p>{{ t('dashboard.priority_note') }}</p>
       </details>
-      {% if attention_total > priorities|length %}<a href="/metrics?status=attention">{{ t('dashboard.priority_all', count=attention_total|countfmt) }}</a>{% endif %}
+      {% if attention_total > priorities|length %}<a href="/results?show=attention">{{ t('dashboard.priority_all', count=attention_total|countfmt) }}</a>{% endif %}
     </div>
   </div>
   {% else %}

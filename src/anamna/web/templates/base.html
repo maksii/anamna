@@ -10,7 +10,9 @@
   <link rel="stylesheet" href="{{ asset('app.css') }}">
   <link rel="stylesheet" href="{{ asset('integration-ui.css') }}">
   {% block page_styles %}{% endblock %}
-  <script nonce="{{ csp_nonce }}">window.__HL_I18N__={{ js_i18n|tojson }};window.__HL_LOCALE__={{ js_locale|tojson }};</script>
+  {# The strings scripts read: one file per locale, cached by its content hash.
+     Not deferred, and before chart.js: inline scripts read it during parse. #}
+  <script src="{{ i18n_src }}"></script>
   {# Not deferred: the trend charts are inline scripts that run during parse. #}
   <script src="{{ asset('chart.js') }}"></script>
   <script src="{{ asset('busy.js') }}" defer></script>
@@ -78,12 +80,13 @@
       <nav class="nav-links" aria-label="{{ t('nav.primary') }}">
         <span class="nav-group">
           {{ nav_link('dashboard', '/', t('nav.overview')) }}
-          {{ nav_link('changes', '/changes', t('changes.nav')) }}
-          {{ nav_link('panels', '/panels', t('nav.panels')) }}
-          {{ nav_link('metrics', '/metrics', t('nav.metrics')) }}
+          {#- One destination for every list of results. The detail pages (a test, a test group)
+              still mark it, so the reader sees where they are. -#}
+          <a class="{{ 'active' if active in ('results', 'metrics', 'panels', 'changes') else '' }}" href="/results"{% if active == 'results' %} aria-current="page"{% endif %}>{{ t('nav.results') }}</a>
           {{ nav_link('devices', '/devices', t('nav.devices')) }}
           {{ nav_link('vaccinations', '/vaccinations', t('nav.vaccinations')) }}
           {{ nav_link('medicines', '/medicines', t('nav.medicines')) }}
+          {{ nav_link('diagnoses', '/diagnoses', t('nav.diagnoses')) }}
           {{ nav_link('plan_tests', '/plan-tests', t('nav.plan_tests')) }}
           {{ nav_link('documents', '/documents', t('nav.documents')) }}
           {% if not guest %}{{ nav_link('chat', '/chat', t('nav.chat')) }}{% endif %}

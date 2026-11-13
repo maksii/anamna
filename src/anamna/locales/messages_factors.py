@@ -97,6 +97,11 @@ MESSAGES_FACTORS: dict[str, dict[str, str]] = {
     "med.dir_this.raises": {"en": "can raise this result", "uk": "може підвищувати цей показник"},
     "med.dir_this.lowers": {"en": "can lower this result", "uk": "може знижувати цей показник"},
     "med.dir_this.changes": {"en": "can change this result", "uk": "може змінювати цей показник"},
+    "med.influence.label": {"en": "May be affected by", "uk": "Може впливати"},
+    "med.influence.during": {"en": "under way on the day of the result", "uk": "тривало в день результату"},
+    "med.influence.since": {"en": "happened after the previous result", "uk": "відбулося після попереднього результату"},
+    "med.influence.undated": {"en": "under way now; start date not recorded", "uk": "триває зараз; дату початку не вказано"},
+    "med.influence.legend": {"en": "A mark under a result names an entry from your Medicines page that lists an effect on it and was under way on the day it was measured, or, for a one-day entry such as an operation, happened after the previous result. The arrow says which way the entry can move the result. It is a reminder to read the number with that in mind, not a verdict. An entry that is under way now but has no start date is shown too and says so: add the date on the Medicines page to make it exact.", "uk": "Позначка під результатом називає запис зі сторінки «Ліки», для якого вказано вплив на цей показник і який тривав у день вимірювання, або, для одноденного запису (як-от операція), відбувся після попереднього результату. Стрілка показує, у який бік запис може змінити результат. Це нагадування зважати на нього, а не висновок. Запис, який триває зараз, але не має дати початку, теж показано, і про це сказано: додайте дату на сторінці «Ліки», щоб уточнити."},
     "med.axis_aria": {
         "en": "Time scale of the bars below, from {start} to today",
         "uk": "Шкала часу для смужок нижче, від {start} до сьогодні",

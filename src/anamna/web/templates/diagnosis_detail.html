@@ -1,0 +1,217 @@
+{% extends "base.html" %}
+{% block title %}{{ item.name }}{% endblock %}
+{% block page_styles %}<link rel="stylesheet" href="{{ asset('diagnoses.css') }}">{% endblock %}
+
+{#- One diagnosis: what the classification says, what it affects, and how it
+    came to be in the record. Status and certainty are written out as words. -#}
+
+{% macro code_chip(code) -%}
+{% if code %}<span class="dx-code"><span class="visually-hidden">{{ t('dx.code_prefix') }} </span>{{ code }}</span>{% endif %}
+{%- endmacro %}
+
+{% macro post_button(url, fields, label, name='', css='secondary', confirm='') -%}
+<form class="dx-act" action="{{ url }}" method="post"{% if confirm %} data-confirm="{{ confirm }}"{% endif %}>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  {% for key, value in fields %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}
+  <button class="{{ css }}" type="submit"{% if name %} aria-label="{{ t('dx.card.action_aria', action=label, name=name) }}"{% endif %}>{{ label }}</button>
+</form>
+{%- endmacro %}
+
+{% macro watch_chips(item) -%}
+{% if item.watch %}
+<div class="dx-watch">
+  <p class="dx-kicker">{{ t('dx.card.watch') }}</p>
+  <ul class="dx-chips">
+    {% for chip in item.watch %}
+    <li><a class="dx-chip dx-state-{{ chip.state }}" href="{{ chip.url }}">
+      <span class="dx-chip__head">
+        <span class="dx-chip__name">{{ chip.name }}</span>
+        <span class="dx-chip__value">{{ chip.value_text }}{% if chip.unit %} {{ chip.unit }}{% endif %}</span>
+      </span>
+      <span class="dx-chip__foot">
+        <span class="dx-chip__verdict"><span class="dx-dot" aria-hidden="true"></span>{{ chip.verdict_label }}</span>
+        <span class="dx-chip__date">{{ chip.date_text }}</span>
+      </span>
+    </a></li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+{%- endmacro %}
+
+{#- The results that suggested a possible diagnosis, as the matrix found them. -#}
+{% macro evidence_list(evidence, labelled_by) -%}
+<ul class="dx-evidence" aria-labelledby="{{ labelled_by }}">
+  {% for e in evidence %}
+  <li>
+    <span class="dx-evidence__head">
+      <a href="{{ e.url }}">{{ e.metric }}</a>
+      <span class="dx-evidence__value">{{ e.value_text }}{% if e.unit %} {{ e.unit }}{% endif %}</span>
+    </span>
+    <span class="dx-evidence__meta">
+      <span>{{ e.date_text }}</span>
+      <span class="dx-evidence__band">{{ e.band }}</span>
+    </span>
+    {% if e.source_url %}<span class="dx-evidence__source"><a href="{{ e.source_url }}" target="_blank" rel="noopener noreferrer">{{ e.source_name }}<span class="visually-hidden"> ({{ t('dx.opens_new_tab') }})</span></a></span>{% elif e.source_name %}<span class="dx-evidence__source">{{ e.source_name }}</span>{% endif %}
+  </li>
+  {% endfor %}
+</ul>
+{%- endmacro %}
+
+{% block content %}
+<nav class="dx-crumb" aria-label="{{ t('dx.title') }}"><a href="/diagnoses"><span aria-hidden="true">←</span> {{ t('dx.back') }}</a></nav>
+
+<header class="dx-hero">
+  <div>
+    <p class="dx-hero__tags">
+      {{ code_chip(item.code) }}
+      <span class="dx-pill" data-status="{{ item.status }}">{{ item.status_label }}</span>
+      <span class="dx-pill" data-certainty="{{ item.certainty }}">{{ item.certainty_label }}</span>
+    </p>
+    <h1>{{ item.name }}</h1>
+    {% if item.written %}<p class="dx-hero__official"><span class="dx-label">{{ t('dx.card.written') }}</span> {{ item.written }}</p>{% endif %}
+    {% if item.approximate or item.since_text or item.until_text %}
+    <p class="dx-card__meta">
+      {% if item.since_text %}<span>{{ item.since_text }}{% if item.approximate %} <span class="dx-approx">({{ t('dx.approx') }})</span>{% endif %}</span>{% elif item.approximate %}<span class="dx-approx">({{ t('dx.approx') }})</span>{% endif %}
+      {% if item.until_text %}<span>{{ item.until_text }}</span>{% endif %}
+    </p>
+    {% endif %}
+  </div>
+  {% if writable %}
+  <div class="dx-hero__actions">
+    <a class="primary" href="{{ item.url }}/edit">{{ t('dx.card.edit') }}</a>
+    {% if item.status == 'active' %}
+    {{ post_button(item.url ~ '/status', [('status', 'resolved')], t('dx.card.resolve'), item.name) }}
+    {{ post_button(item.url ~ '/status', [('status', 'outdated')], t('dx.card.outdate'), item.name) }}
+    {% else %}
+    {{ post_button(item.url ~ '/status', [('status', 'active')], t('dx.card.reactivate'), item.name) }}
+    {% endif %}
+  </div>
+  {% endif %}
+</header>
+
+{% if error %}<div class="alert error" role="alert">{{ error }}</div>{% endif %}
+{% if saved %}<div class="alert" role="status">{{ saved }}</div>{% endif %}
+
+<section class="panel dx-panel" aria-labelledby="dx-classification">
+  <h2 id="dx-classification">{{ t('dx.detail.classification') }}</h2>
+  {% if entry %}
+  <dl class="dx-facts">
+    <div><dt>{{ t('dx.detail.title_uk') }}</dt><dd>{{ entry.uk }}</dd></div>
+    <div><dt>{{ t('dx.detail.title_en') }}</dt><dd>{{ entry.en }}</dd></div>
+    {% if entry.category_title %}<div class="dx-facts__wide"><dt>{{ t('dx.detail.category') }}</dt><dd>{{ entry.category }} · {{ entry.category_title }}</dd></div>{% endif %}
+  </dl>
+  {% if entry.chapter or entry.block %}
+  <nav aria-label="{{ t('dx.detail.path_aria') }}">
+    <ol class="dx-path">
+      {% if entry.chapter %}<li><span class="dx-label">{{ t('dx.detail.chapter') }}</span> {{ entry.chapter.range }} · {{ entry.chapter.uk if locale == 'uk' else entry.chapter.en }}</li>{% endif %}
+      {% if entry.block %}<li><span class="dx-label">{{ t('dx.detail.block') }}</span> {{ entry.block.range }} · {{ entry.block.uk if locale == 'uk' else entry.block.en }}</li>{% endif %}
+    </ol>
+  </nav>
+  {% endif %}
+  {% if not entry.en_exact %}<p class="dx-notice">{{ t('dx.detail.en_nearest') }}</p>{% endif %}
+  {% else %}
+  <p class="dx-empty">{{ t('dx.detail.not_coded') }}</p>
+  {% if writable %}<p><a class="secondary" href="{{ item.url }}/edit">{{ t('dx.detail.add_code') }}</a></p>{% endif %}
+  {% endif %}
+</section>
+
+<section class="panel dx-panel" aria-labelledby="dx-affects">
+  <h2 id="dx-affects">{{ t('dx.detail.affects') }}</h2>
+  {% if item.area or item.chapter_text %}
+  <p class="dx-card__area">
+    {% if item.area %}<span><span class="dx-label">{{ t('dx.card.area') }}</span> <a href="{{ item.area.url }}">{{ item.area.name }}</a></span>{% endif %}
+    {% if item.chapter_text %}<span>{{ item.chapter_text }}</span>{% endif %}
+  </p>
+  {% endif %}
+  {% if item.watch %}
+  <p class="dx-field-help">{{ t('dx.detail.watch_help') }}</p>
+  {{ watch_chips(item) }}
+  {% else %}
+  <p class="dx-empty">{{ t('dx.detail.watch_none') }}</p>
+  {% endif %}
+</section>
+
+<section class="panel dx-panel" id="dx-treatment" aria-labelledby="dx-treatment-heading">
+  <h2 id="dx-treatment-heading">{{ t('dx.treat.heading') }}</h2>
+  <p class="dx-field-help">{{ t('dx.treat.lead') }}</p>
+  {% if item.medicines %}
+  <ul class="dx-meds">
+    {% for m in item.medicines %}
+    <li class="dx-med">
+      <p class="dx-med__head"><a href="{{ m.url }}">{{ m.name }}</a> <span class="dx-pill" data-med-status="{{ m.status }}">{{ m.status_label }}</span></p>
+      {% if m.substance %}<p class="dx-med__line">{{ m.substance }}</p>{% endif %}
+      {% if m.regimen %}<p class="dx-med__line">{{ m.regimen }}</p>{% endif %}
+      {% if m.since_text or m.until_text %}<p class="dx-card__meta">{% if m.since_text %}<span>{{ m.since_text }}</span>{% endif %}{% if m.until_text %}<span>{{ m.until_text }}</span>{% endif %}</p>{% endif %}
+      <p class="dx-med__why">{{ m.basis_text }}</p>
+      {% if writable %}{{ post_button(item.url ~ '/medicines', [('action', 'remove'), ('factor_id', m.id)], t('dx.treat.remove'), m.name) }}{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="dx-empty">{{ t('dx.treat.none') }}</p>
+  {% endif %}
+  {% if writable and medicine_choices %}
+  <form class="dx-med-add" action="{{ item.url }}/medicines" method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="action" value="add">
+    <label for="dx-med-pick">{{ t('dx.treat.add_label') }}</label>
+    <div class="dx-med-add__row">
+      <select id="dx-med-pick" name="factor_id" required>
+        {% for choice in medicine_choices %}<option value="{{ choice.id }}">{{ choice.name }}</option>{% endfor %}
+      </select>
+      <button class="secondary" type="submit">{{ t('dx.treat.add') }}</button>
+    </div>
+  </form>
+  {% elif writable and not item.medicines %}
+  <p><a class="secondary" href="/medicines">{{ t('dx.treat.open_medicines') }}</a></p>
+  {% endif %}
+  {% if item.medicines | selectattr('basis', 'equalto', 'atc') | list %}
+  <p class="dx-field-help">{{ t('dx.treat.atc_explain') }} <a href="{{ treatment_source_url }}" target="_blank" rel="noopener noreferrer">{{ t('dx.treat.source') }}<span class="visually-hidden"> ({{ t('dx.opens_new_tab') }})</span></a></p>
+  {% endif %}
+</section>
+
+<section class="panel dx-panel" aria-labelledby="dx-how">
+  <h2 id="dx-how">{{ t('dx.detail.how') }}</h2>
+  <p><span class="dx-pill">{{ item.origin_label }}</span></p>
+  {% if item.document %}
+  <p><span class="dx-label">{{ t('dx.card.source') }}</span> <a href="{{ item.document.url }}">{{ item.document.label }}</a></p>
+  {% endif %}
+  {% if suspicion %}
+  <h3 class="dx-subhead" id="dx-how-evidence">{{ t('dx.detail.evidence') }}</h3>
+  {{ evidence_list(suspicion.evidence, 'dx-how-evidence') }}
+  {% endif %}
+  {% if mentions %}
+  <h3 class="dx-subhead" id="dx-how-mentions">{{ t('dx.detail.mentions') }}</h3>
+  <ol class="dx-timeline" aria-labelledby="dx-how-mentions">
+    {% for m in mentions %}
+    <li>
+      <p class="dx-timeline__head">
+        <span class="dx-timeline__date">{{ m.date_text }}</span>
+        <span class="dx-pill">{{ m.certainty_label }}</span>
+        <span class="dx-pill">{{ m.method_label }}</span>
+      </p>
+      <blockquote class="dx-quote"><span class="dx-quote__label">{{ t('dx.found.says') }}</span> <q>{{ m.quote }}</q></blockquote>
+      {% if m.document %}<p class="dx-found__docs"><a href="{{ m.document.url }}">{{ m.document.label }}</a></p>{% endif %}
+    </li>
+    {% endfor %}
+  </ol>
+  {% endif %}
+  {% if not item.document and not mentions %}
+  <p class="dx-empty">{{ t('dx.detail.person_only') }}</p>
+  {% endif %}
+</section>
+
+{% if item.notes %}
+<section class="panel dx-panel" aria-labelledby="dx-notes">
+  <h2 id="dx-notes">{{ t('dx.detail.notes') }}</h2>
+  <p class="dx-notes">{{ item.notes }}</p>
+</section>
+{% endif %}
+
+{% if writable %}
+<div class="dx-danger">
+  {{ post_button(item.url ~ '/delete', [], t('dx.detail.delete'), item.name, css='secondary', confirm=t('dx.detail.delete_confirm')) }}
+</div>
+{% endif %}
+{% endblock %}

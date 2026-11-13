@@ -13,8 +13,8 @@ from .catalog import CORE_METRIC_KEYS, CUMULATIVE_KEYS, DEVICE_CATEGORY_LABELS
 from .timezone import today as local_today, user_timezone
 from .workout_reconcile import reconcile_workouts
 from .reconcile import (
-    SLEEP_FAMILY, bridge_origin, human_source_label, preference_group, select_daily, select_metrics,
-    selection_priority, sleep_cohorts, source_key, source_kind, source_switches,
+    SLEEP_FAMILY, bridge_origin, human_source_label, preference_group, priority_memo, select_daily,
+    select_metrics, selection_priority, sleep_cohorts, source_key, source_kind, source_switches,
 )
 
 
@@ -123,11 +123,11 @@ def _disambiguated_labels(identities: list[tuple[str, str]]) -> dict[tuple[str, 
 
 def _comparison_day(
     metric_key: str, day: str, rows: list[dict[str, object]],
-    labels: dict[tuple[str, str], str], tz,
+    labels: dict[tuple[str, str], str], tz, *, priority=selection_priority,
 ) -> dict[str, object]:
     rows.sort(key=lambda item: (
         0 if item["selected"] else 1,
-        selection_priority(item),
+        priority(item),
         str(item["source_name"]),
     ))
     for item in rows:
@@ -197,8 +197,9 @@ def device_metric_comparison(
 
     labels = _disambiguated_labels(identities)
     tz = user_timezone(connection, owner_user_id)
+    priority = priority_memo()
     days = [
-        _comparison_day(metric_key, day, rows, labels, tz)
+        _comparison_day(metric_key, day, rows, labels, tz, priority=priority)
         for day, rows in sorted(by_day.items(), reverse=True)
     ]
     sources = [
@@ -1046,7 +1047,9 @@ def _overview_overlap(overlap_rows: list[sqlite3.Row]) -> list[dict[str, object]
     return overlap_list
 
 
-def device_overview(connection: sqlite3.Connection, owner_user_id: str) -> dict[str, object]:
+def device_overview(
+    connection: sqlite3.Connection, owner_user_id: str, cards: list[dict[str, object]] | None = None,
+) -> dict[str, object]:
     imports = _overview_imports(connection, owner_user_id)
     connected = {
         str(row[0])
@@ -1067,7 +1070,9 @@ def device_overview(connection: sqlite3.Connection, owner_user_id: str) -> dict[
         entry[0] = int(entry[0]) + int(row["rows_held"])
         entry[1] = max(str(entry[1]), str(row["last_day"]))
     vendors = _overview_vendors(imports, connected, bridged)
-    cards = device_metric_catalog(connection, owner_user_id)
+    # The caller may already hold this scan of every stored day.
+    if cards is None:
+        cards = device_metric_catalog(connection, owner_user_id)
     by_key = {str(item["id"]).removeprefix("device:"): item for item in cards}
     core_metrics = [by_key[key] for key in CORE_METRIC_KEYS if key in by_key]
     # Read more rows than are shown, because several of them are the same
