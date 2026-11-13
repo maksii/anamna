@@ -20,10 +20,23 @@ def utc_now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat()
 
 
+class _Connection(sqlite3.Connection):
+    """``with connect() as connection:`` commits (or rolls back) and then
+    closes.  The stock ``__exit__`` only ends the transaction and leaves the
+    file open until garbage collection, which Python 3.13+ reports as a
+    ``ResourceWarning`` and which on Windows keeps the file locked."""
+
+    def __exit__(self, *exc):
+        try:
+            return super().__exit__(*exc)
+        finally:
+            self.close()
+
+
 def connect(settings: Settings | None = None) -> sqlite3.Connection:
     settings = settings or get_settings()
     settings.database_path.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(settings.database_path)
+    connection = sqlite3.connect(settings.database_path, factory=_Connection)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
     connection.execute("PRAGMA journal_mode = WAL")

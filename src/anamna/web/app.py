@@ -14371,11 +14371,13 @@ def metric_detail(request: Request, concept_id: str, offset: int = 0):
         factor_periods = factors_view.chart_periods(
             connection, user["id"], [concept_id], locale=get_locale(), today=date.today(),
         )
-    for row in values:
-        _metric_history_row(connection, concept_id, row, date_of_birth, sex)
-    # Only an analyte whose published bands are written for fasting samples
-    # asks the question; everywhere else the column and its sentence are absent.
-    fasting_applies = _fasting_applies(connection, concept_id)
+        for row in values:
+            _metric_history_row(connection, concept_id, row, date_of_birth, sex)
+        # Only an analyte whose published bands are written for fasting samples
+        # asks the question; everywhere else the column and its sentence are absent.
+        fasting_applies = _fasting_applies(connection, concept_id)
+        chart_points = _metric_chart(connection, values, concept["preferred_unit"], date_of_birth, sex)
+        latest, previous_numeric, verdict = _metric_latest(connection, concept_id, values, card)
     if fasting_applies:
         for row in values:
             row["fasting_state"] = _fasting_state(row)
@@ -14387,11 +14389,9 @@ def metric_detail(request: Request, concept_id: str, offset: int = 0):
     )
     sample_saved = request.query_params.get("saved") == "sample_condition"
     parsed_rules = [_metric_rule(raw_rule, age, sex, page_context) for raw_rule in rules]
-    chart_points = _metric_chart(connection, values, concept["preferred_unit"], date_of_birth, sex)
     _extend_chart_with_methods(chart_points, method_series)
     chart_points.sort(key=lambda point: str(point["date"]))
     chart_sources = _chart_sources(chart_points)
-    latest, previous_numeric, verdict = _metric_latest(connection, concept_id, values, card)
     chart_band = _chart_band(verdict)
     history_page = _pagination(len(values), max(0, offset), METRIC_HISTORY_PAGE_SIZE, f"/metrics/{concept_id}")
     history = values[history_page["offset"]: history_page["offset"] + METRIC_HISTORY_PAGE_SIZE]

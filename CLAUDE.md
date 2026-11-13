@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Anamna: local-first personal medical record. Python 3.12 / FastAPI / Jinja2 / hand-written CSS +
+Anamna: local-first personal medical record. Python 3.14 / FastAPI / Jinja2 / hand-written CSS +
 vanilla JS. The application is the Python package under `src/anamna/`.
 
 `AGENTS.md` points here: this file is the single set of engineering rules for every contributor,
@@ -60,7 +60,7 @@ server for `preview_start`, plus a sandbox target on a throwaway database with b
 off.
 
 ```bash
-uv tool run --from ruff==0.17.4 ruff check src scripts tests
+uv tool run --from ruff==0.17.5 ruff check src scripts tests
 uv run pytest --basetemp=work/pytest-run
 node --test tests/js/*.test.mjs
 ```
@@ -466,6 +466,9 @@ Each of these has already produced a confident, wrong, or silently missing clini
 - **A question before a destructive action is a `<dialog>`, never `window.confirm`.** An embedded browser answers `confirm()` with "no" and shows nothing, and so does any browser after "stop this page opening dialogs": every Delete was a dead button. `busy.js` builds the dialog; the confirming button repeats the pressed button's word, and Cancel holds the focus.
 - **Administration is one area.** The account menu carries one link, `/admin`. Every `admin_*.html` page includes `_admin_tabs.html` at the top of its content, and a new section is added to that strip, not to the menu (`tests/python/test_web_admin_area.py`).
 - **The document box searches text, then asks nothing of a model.** `factor_documents.search` matches the medicine's name and the typed words against `search_index`, and reads the doctor and the diagnosis off labelled lines with plain patterns. It is a prefill into empty fields, never a judgement.
+- **`with connect() as connection:` closes the connection.** `db._Connection.__exit__` commits or rolls
+  back and then closes, so a connection read after its block raises "Cannot operate on a closed
+  database". Do every read inside the block (`tests/python/test_db_connection_closes.py` scans for it).
 - **The AI client writes on a connection of its own.** `ai.complete` records usage with `BEGIN IMMEDIATE` on a new connection. Commit your own connection before calling it. Otherwise it waits on your open write and the request ends in "database is locked". Tests that fake `complete` itself cannot see this: fake the provider adapter instead.
 - **The medicine reference is one site: its public page by default, its API with a token.** `drugref.py` searches through the open search endpoint of the tabletki.ua API and reads the instruction from the public page of the medicine. That is the default and needs nothing. The alternative is the product-card endpoint of the same API (`drug_lookup_mode` = `api` on the AI settings page). It needs a token that tabletki.ua issued: `ANAMNA_TABLETKI_TOKEN` in the server's environment (`TABLETKI_TOKEN` in `.env`), or one saved on that page. Without a token the page is used. `_api_headers` is the header set tabletki.ua expects: leave it as it is. The card is addressed by a product code and answers for whatever product that code names, so the reply is refused unless it names the code and the page that were asked for; an entry linked to a trade name alone has no product code and is read from the page. The card is never asked without a token: a 403 pauses every call for 15 minutes, the search included. Every request passes `_admit` (at most 30 a minute, none while a pause lasts), HTTP 429 or 503 pauses for `Retry-After`, and nothing retries. Searches are cached for 15 minutes, instructions for 90 days.
 - **A linked medicine keeps its instruction, as text.** Saving an entry with a reference starts a `reference` job (`factors_routes._keep_reference`) that stores the instruction in `drug_references` and fills the entry's empty active substance and ATC code from it (`factors.fill_from_reference`): reference text, never a model's. `details_json` holds what the product card adds: facts by key and who may take the medicine. `/medicines/<id>/instruction` shows the stored copy, `medicine_info.js` shows that page's article in a dialog, and the assistant reads the same copy through `get_medicines`. The text is stored with its markup removed. `drugref._text` removes only real tags: the instructions print a bare «<» («кліренс креатиніну < 10 мл/хв»), and treating it as a tag dropped every word up to the next «>».
@@ -487,7 +490,7 @@ Each of these has already produced a confident, wrong, or silently missing clini
 
 1. Checks pass: the same set CI runs, plus the data validators:
    ```bash
-   uv tool run --from ruff==0.17.4 ruff check src scripts tests
+   uv tool run --from ruff==0.17.5 ruff check src scripts tests
    uv run pytest -q --basetemp=work/pytest-run
    node --test tests/js/*.test.mjs
    uv run python -m compileall -q src
