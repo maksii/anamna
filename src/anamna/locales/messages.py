@@ -4505,11 +4505,52 @@ MESSAGES: dict[str, dict[str, str]] = {
             "Про це запитайте мене, а не здогадуйтеся. У застосунку цих даних немає:\n\n- Симптоми і моє реальне самопочуття\n- Діагнози, які вже встановлено, якщо їх не названо в документах вище\n- Сімейний анамнез\n- Робота і стрес\n- Будь-які ліки, добавки, операції, хвороби, харчування чи тренування, яких немає в переліку моїх записів вище\n- Усе, що вимірювали, але не завантажили сюди\n\nКрім того, у це повідомлення навмисно не ввійшло:"
         ),
     },
+    # Same text as ai.gaps_body; used once the export lists recorded diagnoses above.
+    "ai.gaps_body_diagnoses": {
+        "en": (
+            "Ask me about these rather than assuming them. They are not stored in this application:\n"
+            "\n"
+            "- Symptoms, or how I actually feel\n"
+            "- Diagnoses that are not in the list of my diagnoses above\n"
+            "- Family history\n"
+            "- Occupation and stress\n"
+            "- Any medicine, supplement, operation, illness, diet or training that is not in the list of my entries above\n"
+            "- Anything measured but never uploaded here\n"
+            "\n"
+            "Also deliberately left out of this message:"
+        ),
+        "uk": (
+            "Про це запитайте мене, а не здогадуйтеся. У застосунку цих даних немає:\n\n- Симптоми і моє реальне самопочуття\n- Діагнози, яких немає в переліку моїх діагнозів вище\n- Сімейний анамнез\n- Робота і стрес\n- Будь-які ліки, добавки, операції, хвороби, харчування чи тренування, яких немає в переліку моїх записів вище\n- Усе, що вимірювали, але не завантажили сюди\n\nКрім того, у це повідомлення навмисно не ввійшло:"
+        ),
+    },
     "ai.gaps_excluded": {"en": "not included", "uk": "не включено"},
     "ai.factors_heading": {"en": "Medicines and other entries I recorded", "uk": "Мої записи про ліки та інше"},
     "ai.factors_none": {"en": "None recorded. Ask me what I take.", "uk": "Нічого не записано. Запитайте, що я приймаю."},
     "ai.factors_from": {"en": "from {date}", "uk": "з {date}"},
     "ai.factors_range": {"en": "{start} to {end}", "uk": "{start} – {end}"},
+    # Diagnoses on the record and the possible ones (ai_export.diagnosis_line, possible_line).
+    "ai.dx_heading": {"en": "Diagnoses on my record", "uk": "Діагнози в моїй картці"},
+    "ai.dx_none": {
+        "en": "None recorded. Ask me what I have been diagnosed with.",
+        "uk": "Нічого не записано. Запитайте, які діагнози мені встановлено.",
+    },
+    "ai.dx_status": {"en": "status: {status}", "uk": "статус: {status}"},
+    "ai.dx_certainty": {"en": "certainty: {certainty}", "uk": "достовірність: {certainty}"},
+    "ai.dx_written_as": {"en": "(written as: {name})", "uk": "(записано як: {name})"},
+    "ai.dx_since": {"en": "since {date}", "uk": "з {date}"},
+    "ai.dx_until": {"en": "until {date}", "uk": "до {date}"},
+    "ai.dx_approx": {"en": "(approximate)", "uk": "(приблизно)"},
+    "ai.dx_clinician": {"en": "clinician: {name}", "uk": "лікар: {name}"},
+    "ai.dx_notes": {"en": "notes: {text}", "uk": "примітки: {text}"},
+    "ai.dx_on": {"en": "on {date}", "uk": "від {date}"},
+    "ai.dx_possible_intro": {
+        "en": "These were found by the application in my results, and no doctor has confirmed them:",
+        "uk": "Їх знайшов застосунок у моїх результатах, і жоден лікар їх не підтвердив:",
+    },
+    "ai.dx_possible_none": {
+        "en": "No possible diagnoses were found in my results.",
+        "uk": "У моїх результатах можливих діагнозів не знайдено.",
+    },
     "ai.section_history": {"en": "Trends over time", "uk": "Динаміка показників"},
     "ai.section_devices": {"en": "Watch and device measurements", "uk": "Вимірювання з годинника та пристроїв"},
     "ai.section_findings": {"en": "Conclusions written in my reports", "uk": "Письмові висновки з моїх документів"},
@@ -4992,6 +5033,8 @@ MESSAGES: dict[str, dict[str, str]] = {
     "chat.tool_allergy": {"en": "Allergy overview", "uk": "Огляд алергії"},
     "chat.tool_genetics": {"en": "DNA and antibody tests", "uk": "ДНК-тести й аналізи на антитіла"},
     "chat.tool_plan": {"en": "Test planner suggestions", "uk": "Пропозиції планувальника аналізів"},
+    "chat.tool_diagnoses": {"en": "Diagnoses and possible diagnoses", "uk": "Діагнози і можливі діагнози"},
+    "chat.tool_medicines": {"en": "Medicines and other factors", "uk": "Ліки та інші чинники"},
     "chat.tool_other": {"en": "Another part of the record", "uk": "Інша частина картки"},
     "aiassist.task_off": {"en": "Task off", "uk": "Завдання вимкнено"},
     "aiassist.task_enable": {"en": "Use AI for this task", "uk": "Використовувати ШІ для цього завдання"},

@@ -11,6 +11,8 @@ from .locales.source_policy import MESSAGES as SOURCE_POLICY_MESSAGES
 from .locales.openwearables_webhooks import MESSAGES as OW_HOOK_MESSAGES
 from .locales.telegram import MESSAGES as TELEGRAM_MESSAGES
 from .locales.messages_allergy import MESSAGES as ALLERGY_MESSAGES
+from .locales.messages_diagnoses import MESSAGES_DIAGNOSES
+from .locales.messages_diagnosis_rules import MESSAGES_DIAGNOSIS_RULES
 from .locales.messages_factors import MESSAGES_FACTORS
 from .locales.messages_genetics import MESSAGES as GENETICS_MESSAGES
 
@@ -20,6 +22,8 @@ MESSAGES.update(TELEGRAM_MESSAGES)
 MESSAGES.update(ALLERGY_MESSAGES)
 MESSAGES.update(GENETICS_MESSAGES)
 MESSAGES.update(MESSAGES_FACTORS)
+MESSAGES.update(MESSAGES_DIAGNOSES)
+MESSAGES.update(MESSAGES_DIAGNOSIS_RULES)
 
 
 SUPPORTED_LOCALES = ("en", "uk")

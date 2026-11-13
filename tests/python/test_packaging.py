@@ -35,6 +35,7 @@ def artifacts(tmp_path_factory: pytest.TempPathFactory):
         shutil.copytree(REPO / name, checkout / name, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     (checkout / "data").mkdir()
     shutil.copy2(REPO / "data/reference_library.json", checkout / "data/reference_library.json")
+    shutil.copy2(REPO / "data/icd10.json", checkout / "data/icd10.json")
     # There is deliberately no .gitignore here: the package allowlist must stand
     # on its own, including when a source archive is built outside git.
     for name in (".env", "data/anamna.sqlite3", "sources/report.pdf", "work/private.json", ".tool-cache/state.json"):
@@ -57,17 +58,19 @@ def test_release_artifacts_exclude_private_state_and_include_runtime_resources(a
     with tarfile.open(sdist) as archive:
         names = [member.name.split("/", 1)[1] for member in archive.getmembers() if member.isfile()]
         assert "data/reference_library.json" in names
+        assert "data/icd10.json" in names
         for member in archive.getmembers():
             if member.isfile():
                 assert PRIVATE_SENTINEL not in archive.extractfile(member).read()
         assert all(name.startswith(("src/anamna/", "migrations/")) or name in {
-            "data/reference_library.json", "README.md", "pyproject.toml", "uv.lock", "PKG-INFO", ".gitignore"
+            "data/reference_library.json", "data/icd10.json", "README.md", "pyproject.toml", "uv.lock", "PKG-INFO", ".gitignore"
         } for name in names)
     with zipfile.ZipFile(wheel) as archive:
         names = archive.namelist()
         expected = {f"anamna/resources/migrations/{path.name}" for path in (REPO / "migrations").glob("*.sql")}
         assert expected <= set(names)
         assert "anamna/resources/reference_library.json" in names
+        assert "anamna/resources/icd10.json" in names
         assert "anamna/web/templates/login.html" in names
         assert "anamna/web/static/app.css" in names
         for name in names:

@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% block title %}{{ t('dx.form.new_title') if is_new else t('dx.form.edit_title') }}{% endblock %}
+{% block page_styles %}<link rel="stylesheet" href="{{ asset('diagnoses.css') }}">{% endblock %}
+
+{#- One form for a new diagnosis and for an edit. Every field has a visible
+    label and a hint, and the code can be typed without any script: the search
+    above it only fills the same field. -#}
+
+{% block content %}
+<nav class="dx-crumb" aria-label="{{ t('dx.title') }}"><a href="{{ cancel_url }}"><span aria-hidden="true">←</span> {{ t('dx.back') }}</a></nav>
+<h1 class="dx-form-title">{{ t('dx.form.new_title') if is_new else t('dx.form.edit_title') }}</h1>
+
+{% if errors %}
+<div class="alert error" role="alert">
+  <ul class="dx-errors">
+    {% for message in errors %}<li>{{ message }}</li>{% endfor %}
+  </ul>
+</div>
+{% endif %}
+{% if suspicion_id %}<p class="alert neutral">{{ t('dx.form.from_suspicion') }}</p>{% endif %}
+
+<form class="dx-form" action="{{ action_url }}" method="post" autocomplete="off">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="suspicion_id" value="{{ suspicion_id }}">
+
+  <section class="dx-form__section" aria-labelledby="dx-form-what">
+    <h2 id="dx-form-what">{{ t('dx.form.section_what') }}</h2>
+
+    <div class="dx-field">
+      <label for="dx-code-search">{{ t('dx.form.search_label') }}</label>
+      <input id="dx-code-search" type="search" autocomplete="off" aria-describedby="dx-code-search-help"
+             aria-controls="dx-code-results" aria-autocomplete="list"
+             data-searching="{{ t('dx.form.searching') }}" data-none="{{ t('dx.form.no_match') }}" data-error="{{ t('dx.form.search_failed') }}">
+      <span id="dx-code-search-help" class="dx-field-help">{{ t('dx.form.search_help') }}</span>
+      <p class="dx-field-help" data-dx-codes-status role="status" aria-live="polite" hidden></p>
+      <ul id="dx-code-results" class="dx-codes" role="listbox" aria-label="{{ t('dx.form.results_aria') }}" hidden></ul>
+    </div>
+
+    <div class="dx-field">
+      <label for="dx-code">{{ t('dx.form.code') }}</label>
+      <input id="dx-code" name="code" value="{{ values.code or '' }}" maxlength="8" aria-describedby="dx-code-help dx-code-title">
+      <span id="dx-code-help" class="dx-field-help">{{ t('dx.form.code_help') }}</span>
+      <p id="dx-code-title" class="dx-code-title" aria-live="polite">{{ code_title }}</p>
+    </div>
+
+    <div class="dx-field">
+      <label for="dx-name">{{ t('dx.form.name') }}</label>
+      <input id="dx-name" name="name" value="{{ values.name or '' }}" maxlength="200" aria-describedby="dx-name-help">
+      <span id="dx-name-help" class="dx-field-help">{{ t('dx.form.name_help') }}</span>
+    </div>
+  </section>
+
+  <section class="dx-form__section" aria-labelledby="dx-form-state">
+    <h2 id="dx-form-state">{{ t('dx.form.section_state') }}</h2>
+
+    <fieldset class="dx-choices">
+      <legend>{{ t('dx.form.certainty') }}</legend>
+      <p class="dx-field-help">{{ t('dx.form.certainty_help') }}</p>
+      {% for value, label in certainties %}
+      <label class="dx-choice"><input type="radio" name="certainty" value="{{ value }}"{% if values.certainty == value or (not values.certainty and loop.first) %} checked{% endif %}><span>{{ label }}</span></label>
+      {% endfor %}
+    </fieldset>
+
+    <fieldset class="dx-choices">
+      <legend>{{ t('dx.form.status') }}</legend>
+      {% for value, label in statuses %}
+      <label class="dx-choice"><input type="radio" name="status" value="{{ value }}"{% if values.status == value or (not values.status and loop.first) %} checked{% endif %}><span>{{ label }}</span></label>
+      {% endfor %}
+    </fieldset>
+  </section>
+
+  <section class="dx-form__section" aria-labelledby="dx-form-when">
+    <h2 id="dx-form-when">{{ t('dx.form.section_when') }}</h2>
+
+    <div class="dx-dates">
+      <div class="dx-field">
+        <label for="dx-diagnosed_on">{{ t('dx.form.diagnosed_on') }}</label>
+        <input id="dx-diagnosed_on" type="date" name="diagnosed_on" value="{{ values.diagnosed_on or '' }}" aria-describedby="dx-diagnosed_on-help">
+        <span id="dx-diagnosed_on-help" class="dx-field-help">{{ t('dx.form.diagnosed_on_help') }}</span>
+      </div>
+      <div class="dx-field">
+        <label for="dx-resolved_on">{{ t('dx.form.resolved_on') }}</label>
+        <input id="dx-resolved_on" type="date" name="resolved_on" value="{{ values.resolved_on or '' }}" aria-describedby="dx-resolved_on-help">
+        <span id="dx-resolved_on-help" class="dx-field-help">{{ t('dx.form.resolved_on_help') }}</span>
+      </div>
+    </div>
+
+    <label class="dx-check" for="dx-approximate">
+      <input id="dx-approximate" type="checkbox" name="dates_approximate" value="1"{% if values.dates_approximate %} checked{% endif %} aria-describedby="dx-approximate-help">
+      <span class="dx-check__text">
+        <span>{{ t('dx.form.approximate') }}</span>
+        <span id="dx-approximate-help" class="dx-field-help">{{ t('dx.form.approximate_help') }}</span>
+      </span>
+    </label>
+  </section>
+
+  <section class="dx-form__section" aria-labelledby="dx-form-more">
+    <h2 id="dx-form-more">{{ t('dx.form.section_more') }}</h2>
+
+    <div class="dx-field">
+      <label for="dx-clinician">{{ t('dx.form.clinician') }}</label>
+      <input id="dx-clinician" name="clinician" value="{{ values.clinician or '' }}" maxlength="200" aria-describedby="dx-clinician-help">
+      <span id="dx-clinician-help" class="dx-field-help">{{ t('dx.form.clinician_help') }}</span>
+    </div>
+
+    <div class="dx-field">
+      <label for="dx-document">{{ t('dx.form.document') }}</label>
+      <select id="dx-document" name="document_id" aria-describedby="dx-document-help">
+        <option value="">{{ t('dx.form.document_none') }}</option>
+        {% for document in documents %}<option value="{{ document.id }}"{% if values.document_id == document.id %} selected{% endif %}>{{ document.label }}</option>{% endfor %}
+      </select>
+      <span id="dx-document-help" class="dx-field-help">{{ t('dx.form.document_help') }}</span>
+    </div>
+
+    <div class="dx-field">
+      <label for="dx-notes">{{ t('dx.form.notes') }}</label>
+      <textarea id="dx-notes" name="notes" rows="4" maxlength="2000" aria-describedby="dx-notes-help">{{ values.notes or '' }}</textarea>
+      <span id="dx-notes-help" class="dx-field-help">{{ t('dx.form.notes_help') }}</span>
+    </div>
+  </section>
+
+  <div class="dx-form__actions">
+    <button class="primary" type="submit" data-busy="{{ t('dx.saving') }}">{{ t('dx.save') }}</button>
+    <a class="secondary" href="{{ cancel_url }}">{{ t('dx.cancel') }}</a>
+  </div>
+</form>
+
+<script src="{{ asset('diagnoses.js') }}" defer></script>
+{% endblock %}

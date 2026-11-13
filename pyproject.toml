@@ -63,6 +63,7 @@ packages = ["src/anamna"]
 [tool.hatch.build.targets.wheel.force-include]
 "migrations" = "anamna/resources/migrations"
 "data/reference_library.json" = "anamna/resources/reference_library.json"
+"data/icd10.json" = "anamna/resources/icd10.json"
 
 # Package only application code and published guidance. Never rely on a local
 # .gitignore to keep patient records, credentials, or tool caches out of releases.
@@ -71,6 +72,7 @@ include = [
   "/src/anamna",
   "/migrations/*.sql",
   "/data/reference_library.json",
+  "/data/icd10.json",
   "/README.md",
   "/LICENSE",
   "/pyproject.toml",

@@ -38,13 +38,13 @@ from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from markupsafe import Markup
 from starlette.concurrency import run_in_threadpool
 
-from .. import chat
+from .. import chat, diagnoses, diagnosis_matrix
 from ..ai import AIUnavailable, redact_document_text
 from ..db import connect
 from ..i18n import activate_locale, format_number_localized, get_locale, reset_locale, t, t_plural
 from ..reference import RULE_CACHE
 from . import ai_export as fx
-from .ai_export import Sources, _code, judged
+from .ai_export import Sources, _code, diagnosis_line, judged, possible_line
 
 MAX_LIST = 30
 NO_ARGUMENTS = {"type": "object", "properties": {}, "additionalProperties": False}
@@ -714,6 +714,23 @@ def _tool_get_medicines(connection, owner_id: str, args: dict) -> str:
     return out + _medicine_card_lines(details)
 
 
+def _tool_get_diagnoses(connection, owner_id: str) -> str:
+    """The recorded diagnoses, then the possible ones the results suggest (English, for the model)."""
+    rows = diagnoses.listing(connection, owner_id)
+    possible = diagnosis_matrix.listing(connection, owner_id)
+    if rows:
+        out = ["Diagnoses:", *(diagnosis_line(row, "en", plain=True) for row in rows)]
+    else:
+        out = ["Diagnoses: none recorded."]
+    if possible:
+        out += ["Possible diagnoses (found by the application in the results, not confirmed by a doctor):",
+                *(possible_line(item) for item in possible)]
+    else:
+        out.append("Possible diagnoses: none.")
+    out.append("Possible diagnoses the person hid are not listed.")
+    return "\n".join(out)
+
+
 def _schema(**properties: tuple[str, str]) -> dict:
     return {
         "type": "object",
@@ -765,6 +782,10 @@ def build_tools(connection, owner_id: str) -> dict[str, chat.Tool]:
          "the section titles of its official instruction. With medicine_id and section: that section's text.",
          _schema(medicine_id=("string", "m:id"), section=("string", "words from a section title")),
          lambda args: _tool_get_medicines(connection, owner_id, args), lambda a: ""),
+        ("get_diagnoses", "Diagnoses the person recorded or accepted from their documents (ICD-10 code, name, status, "
+         "since when, who made it), and possible diagnoses the application noticed in the results that a doctor "
+         "has not confirmed.", NO_ARGUMENTS,
+         lambda _args: _tool_get_diagnoses(connection, owner_id), lambda a: ""),
     ]
 
     def wrapped(run: Callable[[dict], str]) -> Callable[[dict], str]:
@@ -865,7 +886,8 @@ def _profile_summary(connection, owner_id: str) -> str:
         _body_line(connection, owner_id, patient, today=date.today()),
     ]
     out += factors.chat_lines(connection, owner_id, today=date.today())
-    out.append("not in this record unless a document or the person states it: symptoms, diagnoses, family history")
+    out.append("not in this record unless a document or the person states it: symptoms, family history, and "
+               "diagnoses the person has not recorded (the diagnoses on record: get_diagnoses)")
     # The verdict and the interval it was judged against, nothing more: the
     # history, the guidance and the other readings are one get_metric away.
     attention = web._attention_cards(catalog)
@@ -953,6 +975,7 @@ TOOL_LABELS = {
     "list_documents": "chat.tool_documents", "read_document": "chat.tool_document", "list_visits": "chat.tool_visits",
     "get_vaccinations": "chat.tool_vaccinations", "get_devices": "chat.tool_devices", "get_panel": "chat.tool_panel",
     "get_allergy": "chat.tool_allergy", "get_genetics": "chat.tool_genetics", "get_test_plan": "chat.tool_plan",
+    "get_diagnoses": "chat.tool_diagnoses", "get_medicines": "chat.tool_medicines",
 }
 
 

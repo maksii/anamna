@@ -1,0 +1,379 @@
+{% extends "base.html" %}
+{% from "_components.html" import plural_t with context %}
+{% block title %}{{ t('dx.title') }}{% endblock %}
+{% block page_styles %}<link rel="stylesheet" href="{{ asset('diagnoses.css') }}">{% endblock %}
+
+{#- Each kind of row is a macro, so one kind reads the same wherever it shows.
+    Status, certainty and verdict are always written out as words; colour only
+    adds to them. Every control that changes the record posts a form with the
+    CSRF token and is only written when `writable`. -#}
+
+{#- The ICD-10 code chip. The visually hidden prefix gives it the accessible
+    name "ICD-10 code E78.2". -#}
+{% macro code_chip(code) -%}
+{% if code %}<span class="dx-code"><span class="visually-hidden">{{ t('dx.code_prefix') }} </span>{{ code }}</span>{% endif %}
+{%- endmacro %}
+
+{#- A small form that posts fixed fields to one address. The button names what
+    it acts on, so a list of identical buttons is not ambiguous to a screen
+    reader. A destructive one carries `data-confirm`: busy.js asks first. -#}
+{% macro post_button(url, fields, label, name='', css='secondary', confirm='') -%}
+<form class="dx-act" action="{{ url }}" method="post"{% if confirm %} data-confirm="{{ confirm }}"{% endif %}>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  {% for key, value in fields %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}
+  <button class="{{ css }}" type="submit"{% if name %} aria-label="{{ t('dx.card.action_aria', action=label, name=name) }}"{% endif %}>{{ label }}</button>
+</form>
+{%- endmacro %}
+
+{#- The results a diagnosis is watched by. Each chip is one link: the name,
+    the latest value, its date and the verdict in words. -#}
+{% macro watch_chips(item) -%}
+{% if item.watch %}
+<div class="dx-watch">
+  <p class="dx-kicker">{{ t('dx.card.watch') }}</p>
+  <ul class="dx-chips">
+    {% for chip in item.watch %}
+    <li><a class="dx-chip dx-state-{{ chip.state }}" href="{{ chip.url }}">
+      <span class="dx-chip__head">
+        <span class="dx-chip__name">{{ chip.name }}</span>
+        <span class="dx-chip__value">{{ chip.value_text }}{% if chip.unit %} {{ chip.unit }}{% endif %}</span>
+      </span>
+      <span class="dx-chip__foot">
+        <span class="dx-chip__verdict"><span class="dx-dot" aria-hidden="true"></span>{{ chip.verdict_label }}</span>
+        <span class="dx-chip__date">{{ chip.date_text }}</span>
+      </span>
+    </a></li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+{%- endmacro %}
+
+{#- A diagnosis in the record. A preliminary one asks the doctor's question
+    instead of offering the status actions. -#}
+{% macro diag_card(item, provisional=false) -%}
+<li class="dx-card {{ 'dx-card--provisional' if (provisional or item.certainty == 'provisional') else 'dx-card--current' }}" data-status="{{ item.status }}">
+  <div class="dx-card__head">
+    <p class="dx-card__tags">
+      {{ code_chip(item.code) }}
+      {% if item.certainty == 'provisional' %}<span class="dx-pill" data-certainty="provisional">{{ item.certainty_label }}</span>{% endif %}
+    </p>
+    <h3 class="dx-card__title"><a href="{{ item.url }}">{{ item.name }}</a></h3>
+    {% if item.title %}<p class="dx-card__official">{{ item.title }}</p>{% endif %}
+  </div>
+  {% if item.approximate or item.since_text or item.clinician or item.document %}
+  <p class="dx-card__meta">
+    {% if item.since_text %}<span>{{ item.since_text }}{% if item.approximate %} <span class="dx-approx">({{ t('dx.approx') }})</span>{% endif %}</span>{% elif item.approximate %}<span class="dx-approx">({{ t('dx.approx') }})</span>{% endif %}
+    {% if item.clinician %}<span>{{ t('dx.card.clinician', name=item.clinician) }}</span>{% endif %}
+    {% if item.document %}<span><span class="dx-label">{{ t('dx.card.source') }}</span> <a href="{{ item.document.url }}">{{ item.document.label }}</a></span>{% endif %}
+  </p>
+  {% endif %}
+  {% if item.area or item.chapter_text %}
+  <p class="dx-card__area">
+    {% if item.area %}<span><span class="dx-label">{{ t('dx.card.area') }}</span> <a href="{{ item.area.url }}">{{ item.area.name }}</a></span>{% endif %}
+    {% if item.chapter_text %}<span>{{ item.chapter_text }}</span>{% endif %}
+  </p>
+  {% endif %}
+  {{ watch_chips(item) }}
+  {% if writable %}
+  <div class="dx-card__actions">
+    {% if provisional %}
+    <a class="primary" href="{{ item.url }}/edit">{{ t('dx.possible.confirmed') }}</a>
+    {{ post_button(item.url ~ '/status', [('status', 'outdated')], t('dx.provisional.not_confirmed'), item.name) }}
+    {% else %}
+    {{ post_button(item.url ~ '/status', [('status', 'resolved')], t('dx.card.resolve'), item.name) }}
+    {{ post_button(item.url ~ '/status', [('status', 'outdated')], t('dx.card.outdate'), item.name) }}
+    <a class="secondary" href="{{ item.url }}/edit" aria-label="{{ t('dx.card.action_aria', action=t('dx.card.edit'), name=item.name) }}">{{ t('dx.card.edit') }}</a>
+    {% endif %}
+  </div>
+  {% endif %}
+</li>
+{%- endmacro %}
+
+{#- A possible diagnosis: the reason it is shown, what a doctor can do about
+    it, and the two answers the person can give. Never worded as a diagnosis. -#}
+{% macro possible_card(item) -%}
+<li class="dx-card dx-card--possible" id="dx-possible-{{ item.id }}">
+  <div class="dx-card__head">
+    <p class="dx-card__tags">
+      {{ code_chip(item.code) }}
+      <span class="dx-pill" data-kind="possible">{{ t('dx.possible.pill') }}</span>
+    </p>
+    <h3 class="dx-card__title">{{ item.title or item.code }}</h3>
+  </div>
+  <div class="dx-why">
+    <p class="dx-kicker" id="dx-why-{{ item.id }}">{{ t('dx.possible.why') }}</p>
+    <ul class="dx-evidence" aria-labelledby="dx-why-{{ item.id }}">
+      {% for e in item.evidence %}
+      <li>
+        <span class="dx-evidence__head">
+          <a href="{{ e.url }}">{{ e.metric }}</a>
+          <span class="dx-evidence__value">{{ e.value_text }}{% if e.unit %} {{ e.unit }}{% endif %}</span>
+        </span>
+        <span class="dx-evidence__meta">
+          <span>{{ e.date_text }}</span>
+          <span class="dx-evidence__band">{{ e.band }}</span>
+        </span>
+        {% if e.source_url %}<span class="dx-evidence__source"><a href="{{ e.source_url }}" target="_blank" rel="noopener noreferrer">{{ e.source_name }}<span class="visually-hidden"> ({{ t('dx.opens_new_tab') }})</span></a></span>{% elif e.source_name %}<span class="dx-evidence__source">{{ e.source_name }}</span>{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+  <p class="dx-note">{{ item.note }}</p>
+  <p class="dx-doctor">{{ item.doctor_text }}</p>
+  <p class="dx-card__meta"><span>{{ t('dx.possible.first_seen', date=item.first_seen_text) }}</span></p>
+  {% if writable %}
+  <div class="dx-card__actions">
+    <a class="primary" href="{{ item.confirm_url }}" aria-label="{{ t('dx.card.action_aria', action=t('dx.possible.confirmed'), name=item.title or item.code) }}">{{ t('dx.possible.confirmed') }}</a>
+    {{ post_button('/diagnoses/possible/' ~ item.id, [('action', 'mute')], t('dx.possible.mute'), item.title or item.code, confirm=t('dx.possible.mute_confirm')) }}
+  </div>
+  {% endif %}
+</li>
+{%- endmacro %}
+
+{#- One thing the documents say. Nothing starts ticked: the tick is the person's
+    word. The quote is always shown, so the person can check the document. -#}
+{#- The text of a found diagnosis, shared by the checkbox row and the plain row. -#}
+{% macro found_text(item) -%}
+      <span class="dx-found__name">{{ code_chip(item.code) }} <strong>{{ item.name }}</strong></span>
+      {% if item.title and item.title != item.name %}<span class="dx-found__title">{{ item.title }}</span>{% endif %}
+      <span class="dx-found__meta">
+        <span class="dx-pill" data-certainty="{{ item.certainty }}">{{ item.certainty_label }}</span>
+        {% if item.ai %}<span class="dx-pill" data-method="ai">{{ t('dx.found.ai_badge') }}</span>{% endif %}
+      </span>
+      {% if item.code %}<span class="dx-found__code">{{ t('dx.found.code_printed') if item.code_printed else t('dx.found.code_ai') }}</span>{% endif %}
+      {% if item.mentions_text or item.when_text %}<span class="dx-found__when">{{ item.mentions_text }}{% if item.mentions_text and item.when_text %} · {% endif %}{{ item.when_text }}</span>{% endif %}
+{%- endmacro %}
+
+{% macro found_row(item) -%}
+<li class="dx-found">
+  {% if writable %}
+  <label class="dx-check">
+    <input type="checkbox" name="key" value="{{ item.key }}">
+    <span class="dx-check__text">
+      {{ found_text(item) }}
+    </span>
+  </label>
+  {% else %}
+  <div class="dx-check">
+    <span class="dx-check__text">
+      {{ found_text(item) }}
+    </span>
+  </div>
+  {% endif %}
+  <blockquote class="dx-quote"><span class="dx-quote__label">{{ t('dx.found.says') }}</span> <q>{{ item.quote }}</q></blockquote>
+  {% if item.documents %}
+  <p class="dx-found__docs"><span class="dx-label">{{ t('dx.found.docs') }}</span>
+    {% for d in item.documents %}<a href="{{ d.url }}">{{ d.label }}</a>{% if not loop.last %}, {% endif %}{% endfor %}
+  </p>
+  {% endif %}
+  {% if item.existing_url %}<p class="dx-found__existing"><a href="{{ item.existing_url }}">{{ t('dx.found.open_existing') }}</a></p>{% endif %}
+</li>
+{%- endmacro %}
+
+{#- A finished or outdated diagnosis, in one compact row. -#}
+{% macro past_row(item) -%}
+<li class="dx-past">
+  <p class="dx-past__head">{{ code_chip(item.code) }} <a href="{{ item.url }}">{{ item.name }}</a></p>
+  <p class="dx-past__meta">
+    <span class="dx-pill" data-status="{{ item.status }}">{{ item.status_label }}</span>
+    {% if item.since_text %}<span>{{ item.since_text }}{% if item.approximate %} <span class="dx-approx">({{ t('dx.approx') }})</span>{% endif %}</span>{% elif item.approximate %}<span class="dx-approx">({{ t('dx.approx') }})</span>{% endif %}
+    {% if item.until_text %}<span>{{ item.until_text }}</span>{% endif %}
+  </p>
+  {% if writable %}{{ post_button(item.url ~ '/status', [('status', 'active')], t('dx.card.reactivate'), item.name) }}{% endif %}
+</li>
+{%- endmacro %}
+
+{% block content %}
+{% set possible_note = plural_t('dx.tile.note_possible', summary.possible) %}
+
+<section class="dx-head" aria-labelledby="dx-heading">
+  <div>
+    <h1 id="dx-heading">{{ t('dx.title') }}</h1>
+    <p class="dx-lead">{{ t('dx.lead') }}</p>
+  </div>
+  {% if writable %}<a class="primary dx-add" href="/diagnoses/new">{{ t('dx.add') }}</a>{% endif %}
+</section>
+
+{% if error %}<div class="alert error" role="alert">{{ error }}</div>{% endif %}
+{% if saved %}<div class="alert" role="status">{{ saved }}</div>{% endif %}
+
+<nav class="dx-tiles" aria-label="{{ t('dx.tile.label') }}">
+  <a class="dx-tile dx-tile--current" href="#dx-current">
+    <span class="dx-tile__count">{{ summary.active }}</span>
+    <span class="dx-tile__label">{{ t('dx.tile.current') }}</span>
+    {% if not summary.active %}<span class="dx-tile__note">{{ t('dx.tile.note_empty') }}</span>{% endif %}
+  </a>
+  <a class="dx-tile{% if summary.possible %} dx-tile--attention{% endif %}" href="#dx-possible"{% if summary.possible %} aria-label="{{ possible_note }}"{% endif %}>
+    <span class="dx-tile__count">{{ summary.possible }}</span>
+    <span class="dx-tile__label">{{ t('dx.tile.possible') }}</span>
+  </a>
+  <a class="dx-tile{% if summary.found %} dx-tile--info{% endif %}" href="#dx-found">
+    <span class="dx-tile__count">{{ summary.found }}</span>
+    <span class="dx-tile__label">{{ t('dx.tile.found') }}</span>
+  </a>
+</nav>
+
+<section class="dx-section" id="dx-current" aria-labelledby="dx-current-heading">
+  <h2 id="dx-current-heading">{{ t('dx.tile.current') }}</h2>
+  <p class="dx-section__lead">{{ t('dx.current.lead') }}</p>
+  {% if current %}
+  <ul class="dx-cards">
+    {% for item in current %}{{ diag_card(item) }}{% endfor %}
+  </ul>
+  {% else %}
+  <p class="dx-empty">{{ t('dx.current.empty') }}</p>
+  {% endif %}
+</section>
+
+<section class="dx-section" id="dx-possible" aria-labelledby="dx-possible-heading">
+  <h2 id="dx-possible-heading">{{ t('dx.tile.possible') }}</h2>
+  <p class="dx-section__lead">{{ t('dx.possible.lead') }}</p>
+  {% if provisional %}
+  <p class="dx-kicker">{{ t('dx.provisional.label') }}</p>
+  <ul class="dx-cards">
+    {% for item in provisional %}{{ diag_card(item, true) }}{% endfor %}
+  </ul>
+  {% endif %}
+  {% if possible %}
+  <ul class="dx-cards">
+    {% for item in possible %}{{ possible_card(item) }}{% endfor %}
+  </ul>
+  {% elif not provisional %}
+  <p class="dx-empty">{{ t('dx.possible.empty') }}</p>
+  {% endif %}
+  {% if checked_text or writable %}
+  <div class="dx-checked">
+    {% if checked_text %}<p class="dx-field-help">{{ checked_text }}</p>{% endif %}
+    {% if writable %}{{ post_button('/diagnoses/possible/check', [], t('dx.possible.check')) }}{% endif %}
+  </div>
+  {% endif %}
+</section>
+
+<section class="dx-section" id="dx-found" aria-labelledby="dx-found-heading">
+  <h2 id="dx-found-heading">{{ t('dx.tile.found') }}</h2>
+  <p class="dx-section__lead">{{ t('dx.found.lead') }}</p>
+  {% if found or found_existing %}
+  {% if writable %}
+  <form class="dx-found-form" action="/diagnoses/found" method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  {% else %}
+  <div class="dx-found-form">
+  {% endif %}
+    {% if found %}
+    <ul class="dx-found-list">
+      {% for item in found %}{{ found_row(item) }}{% endfor %}
+    </ul>
+    {% endif %}
+    {% if found_existing %}
+    <h3 class="dx-subhead">{{ t('dx.found.existing_heading') }}</h3>
+    <ul class="dx-found-list">
+      {% for item in found_existing %}{{ found_row(item) }}{% endfor %}
+    </ul>
+    {% endif %}
+    {% if writable %}
+    <div class="dx-actions-bar">
+      <button class="primary" type="submit" name="action" value="accept" data-busy="{{ t('dx.saving') }}">{{ t('dx.found.add') }}</button>
+      <button class="secondary" type="submit" name="action" value="dismiss" data-confirm="{{ t('dx.found.dismiss_confirm') }}">{{ t('dx.found.dismiss') }}</button>
+    </div>
+  </form>
+  {% else %}
+  </div>
+  {% endif %}
+  {% else %}
+  <p class="dx-empty">{{ t('dx.found.empty') }}</p>
+  {% endif %}
+
+  <div class="dx-scan" id="dx-scan"{% if writable %} data-job="{{ scan.job }}"
+       data-progress="{{ t('dx.scan.progress') }}" data-starting="{{ t('dx.scan.starting') }}" data-failed="{{ t('dx.scan.failed') }}"
+       data-error-disabled="{{ t('dx.scan.error_disabled') }}" data-error-budget="{{ t('dx.scan.error_budget') }}"
+       data-error-provider_error="{{ t('dx.scan.error_provider_error') }}" data-error-lost="{{ t('dx.scan.error_lost') }}"{% endif %}>
+    <h3 class="dx-subhead" id="dx-scan-heading">{{ t('dx.scan.heading') }}</h3>
+    {% if not scan.documents %}
+    <p>{{ t('dx.scan.none') }}</p>
+    {% elif scan.waiting %}
+    <p>{{ plural_t('dx.scan.waiting', scan.waiting) }}</p>
+    {% else %}
+    <p>{{ t('dx.scan.all_read') }}</p>
+    {% endif %}
+    {% if not scan.ai_ready %}
+    <p class="dx-notice">{{ t('dx.scan.off') }}</p>
+    {% elif writable and (scan.waiting or scan.job) %}
+    <form action="/diagnoses/found/scan" method="post" data-dx-scan-start>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button class="primary" type="submit">{{ t('dx.scan.start') }}</button>
+    </form>
+    <p class="dx-progress" role="status" aria-live="polite" data-dx-scan-status hidden></p>
+    <p class="dx-field-help">{{ t('dx.scan.sent') }}</p>
+    {% endif %}
+  </div>
+</section>
+
+{% if past %}
+<details class="dx-disclosure" id="dx-past">
+  <summary><h2 class="dx-disclosure__title">{{ t('dx.past.heading') }}</h2></summary>
+  <div class="dx-disclosure__body">
+    <ul class="dx-past-list">
+      {% for item in past %}{{ past_row(item) }}{% endfor %}
+    </ul>
+  </div>
+</details>
+{% endif %}
+
+{% if muted or found_dismissed %}
+<details class="dx-disclosure" id="dx-hidden">
+  <summary><h2 class="dx-disclosure__title">{{ t('dx.hidden.heading') }}</h2></summary>
+  <div class="dx-disclosure__body">
+    {% if muted %}
+    <h3 class="dx-subhead">{{ t('dx.hidden.possible') }}</h3>
+    <ul class="dx-past-list">
+      {% for item in muted %}
+      <li class="dx-past">
+        <p class="dx-past__head">{{ code_chip(item.code) }} <span>{{ item.title or item.code }}</span></p>
+        {% if writable %}{{ post_button('/diagnoses/possible/' ~ item.id, [('action', 'restore')], t('dx.hidden.show'), item.title or item.code) }}{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+    {% if found_dismissed %}
+    <h3 class="dx-subhead">{{ t('dx.hidden.found') }}</h3>
+    <ul class="dx-past-list">
+      {% for item in found_dismissed %}
+      <li class="dx-past">
+        <p class="dx-past__head">{{ code_chip(item.code) }} <span>{{ item.name }}</span></p>
+        {% if writable %}{{ post_button('/diagnoses/found', [('action', 'restore'), ('key', item.key)], t('dx.hidden.offer'), item.name) }}{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </div>
+</details>
+{% endif %}
+
+<section class="dx-section dx-about" aria-labelledby="dx-about-heading">
+  <h2 id="dx-about-heading">{{ t('dx.about.heading') }}</h2>
+  <h3>{{ t('dx.about.icd_heading') }}</h3>
+  <p>{{ t('dx.about.icd') }}</p>
+  <h3>{{ t('dx.about.sources_heading') }}</h3>
+  <p>{{ t('dx.about.sources') }}</p>
+  <ul class="dx-sources">
+    {% for source in sources %}
+    <li>
+      <strong>{{ source.publisher }}</strong>
+      {% if source.url %}<a href="{{ source.url }}" target="_blank" rel="noopener noreferrer">{{ source.name }}<span class="visually-hidden"> ({{ t('dx.opens_new_tab') }})</span></a>{% else %}<span>{{ source.name }}</span>{% endif %}
+      <span class="dx-region">{{ t('dx.region.' ~ (source.region|lower)) }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+  <h3>{{ t('dx.about.found_heading') }}</h3>
+  <p>{{ t('dx.about.found') }}</p>
+  <h3>{{ t('dx.about.possible_heading') }}</h3>
+  <p>{{ t('dx.about.possible') }}</p>
+  <h3>{{ t('dx.about.hide_heading') }}</h3>
+  <p>{{ t('dx.about.hide') }}</p>
+  <h3>{{ t('dx.about.labels_heading') }}</h3>
+  <p>{{ t('dx.about.certainty') }}</p>
+</section>
+
+<script src="{{ asset('diagnoses.js') }}" defer></script>
+{% endblock %}
