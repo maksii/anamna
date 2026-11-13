@@ -782,7 +782,9 @@ def needs(cards: list[dict], from_labs: set[str]) -> list[dict]:
         state = str((card.get("staleness") or {}).get("state") or "")
         reading = str((card.get("verdict") or {}).get("interpretation") or "")
         due = state in {"overdue", "due_soon"}
-        flagged = reading in ATTENTION_INTERPRETATIONS or reading in {"critical_low", "critical_high"}
+        # A result kept as historical is not a reason to measure again.
+        flagged = not card.get("historical") and (
+            reading in ATTENTION_INTERPRETATIONS or reading in {"critical_low", "critical_high"})
         if due or flagged:
             out.append({"key": str(card["id"]), "card": card, "due": due, "flagged": flagged,
                         "preselected": card.get("category") not in OPTIONAL})

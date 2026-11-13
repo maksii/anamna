@@ -11,6 +11,17 @@
 {% set display_name = concept_name if concept_name else concept.canonical_name|conceptfmt %}
 {#- Documents and device days on one page; every row and point says which. -#}
 {% set mixed_sources = values|selectattr('is_device')|list|length > 0 %}
+{% macro sibling_chips(items) -%}
+  <ul class="an-sibling-chips">
+    {% for sibling in items %}
+    <li data-interpretation="{{ sibling.verdict_interpretation }}">
+      {#- The verdict glyph is CSS-only, so the state it encodes is repeated as
+          hidden text a screen reader can actually hear. -#}
+      <a href="{{ sibling.url }}">{{ sibling.name }}<span class="visually-hidden"> · {{ t('verdict.' ~ sibling.verdict_interpretation) }}</span></a>
+    </li>
+    {% endfor %}
+  </ul>
+  {%- endmacro %}
 
 <div class="an-detail-topline">
   <a class="back-link" href="/metrics">{{ t('metric.back') }}</a>
@@ -50,6 +61,30 @@
     {% endif %}
   </div>
 
+  {#- The other results of the same test group, one press from the top of the
+      page: they used to wait in a folded section under the history table. -#}
+  {% if panel or siblings %}
+  <details class="an-hero-together" id="read-together">
+    <summary>
+      <span class="an-hero-together__label">{{ t('panel.read_together') }}</span>
+      {% if panel %}<strong class="an-hero-together__panel">{{ panel.name }}</strong>{% endif %}
+      {% if siblings %}<span class="pill an-hero-together__count">{{ plural_t('changes.tests_count', siblings|length) }}</span>{% endif %}
+    </summary>
+    <div class="an-hero-together__body">
+      {% if panel %}<p><a class="button secondary" href="{{ panel.url }}">{{ panel.name }} · {{ t('panels.open') }}</a></p>{% endif %}
+      {#- A 296-allergen panel made 296 chips here; past a dozen the rest wait
+          behind one disclosure (UX-09). -#}
+      {{ sibling_chips(siblings[:12]) }}
+      {% if siblings|length > 12 %}
+      <details class="an-disclosure">
+        <summary>{{ t('area.table_show_all', count=siblings|length) }}</summary>
+        <div class="an-disclosure__body">{{ sibling_chips(siblings[12:]) }}</div>
+      </details>
+      {% endif %}
+    </div>
+  </details>
+  {% endif %}
+
   {% if latest %}
   <div class="an-metric-hero__reading">
     {#- A qualitative result has no interval to draw, but the laboratory said
@@ -57,6 +92,14 @@
         contradicted it. -#}
     {{ range_bar(verdict, latest.display_value, latest.display_unit, expected_text=latest.vendor_reference_text|reffmt if latest.value_numeric is none and latest.vendor_reference_text else '') }}
     {{ verdict_details(verdict) }}
+    {#- The latest value comes from a document the person marked historical:
+        kept, not raised.  Said here in words, with what it means. -#}
+    {% if latest.document_historical_at %}
+    <details class="an-verdict-details an-historical-note">
+      <summary>{{ t('metrics.historical_chip') }}</summary>
+      <p class="an-verdict-details__body">{{ t('metrics.historical_body') }}</p>
+    </details>
+    {% endif %}
     {% if blocked_notice %}
     <p class="an-no-range-note an-blocked-notice" data-reason="{{ blocked_notice.reason }}">
       {{ blocked_notice.text }}
@@ -263,36 +306,6 @@
 {% endif %}
 
 <div class="an-metric-more" id="reading-guidance">
-{% if panel or siblings %}
-<details class="panel an-fold an-siblings">
-  <summary>
-    <span class="eyebrow">{{ t('panel.eyebrow') }}</span>
-    <h2>{{ t('panel.read_together') }}{% if panel %} · {{ panel.name }}{% endif %}</h2>
-  </summary>
-  {% if panel %}<p><a href="{{ panel.url }}">{{ panel.name }} · {{ t('panels.open') }}</a></p>{% endif %}
-  {#- A 296-allergen panel made 296 chips here; past a dozen the rest wait
-      behind one disclosure (UX-09). -#}
-  {% macro sibling_chips(items) -%}
-  <ul class="an-sibling-chips">
-    {% for sibling in items %}
-    <li data-interpretation="{{ sibling.verdict_interpretation }}">
-      {#- The verdict glyph is CSS-only, so the state it encodes is repeated as
-          hidden text a screen reader can actually hear. -#}
-      <a href="{{ sibling.url }}">{{ sibling.name }}<span class="visually-hidden"> · {{ t('verdict.' ~ sibling.verdict_interpretation) }}</span></a>
-    </li>
-    {% endfor %}
-  </ul>
-  {%- endmacro %}
-  {{ sibling_chips(siblings[:12]) }}
-  {% if siblings|length > 12 %}
-  <details class="an-disclosure">
-    <summary>{{ t('area.table_show_all', count=siblings|length) }}</summary>
-    <div class="an-disclosure__body">{{ sibling_chips(siblings[12:]) }}</div>
-  </details>
-  {% endif %}
-</details>
-{% endif %}
-
 {{ correlation_block(correlation, chart_band) }}
 
 <details class="panel an-fold official-guidance">

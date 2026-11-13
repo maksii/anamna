@@ -54,6 +54,13 @@
   <a href="/profile?tab=connections#lab-inbox">{{ t('labsync.inbox_notice_link') }}</a></p>
 {% endif %}
 
+{#- A lab sign-in that ran out stops results arriving without a word, so the
+    home page says it and leads to the place that fixes it. -#}
+{% for item in lab_reauth(user) %}
+<p class="alert warning an-lab-inbox-notice" role="status">{{ t('labsync.reauth_notice', name=item.name|phrase) }}
+  <a href="/profile?tab=connections&amp;lab={{ item.key }}#lab-{{ item.key }}">{{ t('labsync.reauth_notice_link') }}</a></p>
+{% endfor %}
+
 {% if not record_empty %}
 {#- What needs attention comes first, as the results themselves; the tiles
     under it are shortcuts into the same filtered lists. The navigation

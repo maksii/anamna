@@ -1393,6 +1393,7 @@ def _deduped_observation_rows(
                  SELECT o.*, c.canonical_name, c.category, c.preferred_unit,
                         d.title document_title, d.original_filename, d.duplicate_of_document_id,
                         d.order_identifier document_order, d.clinical_type document_clinical_type,
+                        d.historical_at document_historical_at,
                         COALESCE(rv.canonical_name, dv.canonical_name, 'Unknown provider') vendor,
                         COALESCE(r.vendor_id, d.vendor_id) resolved_vendor_id,
                         r.title report_title,
@@ -1433,7 +1434,7 @@ SAME_TWIN_CONCEPTS = tuple(concept_id for concept_id in MEASUREMENT_TWINS if dev
 #: Fields `_deduped_observation_rows` joins in beside the observation's own.
 _JOINED_ROW_FIELDS = (
     "canonical_name", "category", "preferred_unit", "document_title", "original_filename",
-    "duplicate_of_document_id", "document_order", "document_clinical_type", "vendor",
+    "duplicate_of_document_id", "document_order", "document_clinical_type", "document_historical_at", "vendor",
     "resolved_vendor_id", "report_title", "evidence_rank", "evidence_count",
 )
 
@@ -1658,7 +1659,12 @@ def _attention_rank(card: dict[str, object]) -> int:
     0 critical · 1 outside the governing interval · 2 the two cited authorities
     disagree · 3 borderline · 4 nothing to say.  Nothing here is a hand-picked
     concept id: the ranking is whatever the evaluation engine returned.
+    A result whose latest reading comes from a historical document says nothing.
     """
+    # Kept, not raised: the latest reading comes from a document the person
+    # marked historical.  The verdict itself is untouched.
+    if card.get("historical"):
+        return 4
     verdict = card.get("verdict") or {}
     reading = str(verdict.get("interpretation") or "unjudged")
     if reading in {"critical_low", "critical_high"}:
@@ -2260,6 +2266,8 @@ def _lab_card(
         "count": len(daily),
         "evidence_count": sum(int(item["evidence_count"]) for item in values),
         "is_device": False,
+        # The latest reading comes from a document the person marked historical.
+        "historical": bool(latest.get("document_historical_at")),
         "is_unmapped": category == "unmapped",
         "verdict": verdict,
         "trend": trend,
@@ -2666,7 +2674,10 @@ def _finding_result(row: dict[str, object]) -> dict[str, object]:
             str(part) for part in (row.get("title"), row.get("date_text"), row.get("vendor")) if part
         ),
         "url": f"/documents/{row['document_id']}",
-        "badge": t("panels.status_attention") if row.get("status") == "attention" else "",
+        "badge": (
+            t("panels.status_attention") if row.get("status") == "attention"
+            else (t("doc.historical_pill") if row.get("historical") else "")
+        ),
         "note": t("metrics.finding_attention_note") if row.get("status") == "attention" else "",
     }
 
@@ -2854,11 +2865,20 @@ def _panel_card(
         "conflict_count": conflicted,
         "staleness": freshness,
         "members": members,
+        # Every member that has a result, not only the few the card previews.
+        "present_ids": [key for key in keys if key in by_id],
         "missing_members": missing,
         # Device metrics are not analytes; the card wording switches on this.
         "has_device_members": bool(panel.device_members),
         "renderer": panel.renderer,
     }
+
+
+def _card_influences(card: dict[str, object], by_concept: dict[str, list[dict]]) -> list[dict]:
+    """The Medicines-page entries that bear on this result's latest reading."""
+    series = card.get("series") or []
+    previous = series[-2]["date"] if len(series) > 1 else None
+    return factors.influencing(by_concept.get(str(card["id"]), []), str(card.get("latest_date") or ""), previous)
 
 
 def _panel_cards(
@@ -3173,7 +3193,7 @@ def _area_table(connection, area_id: str, metrics: list[dict[str, object]]) -> d
 
 
 def _attends(card: dict[str, object]) -> bool:
-    return str((card["verdict"] or {}).get("interpretation")) in ATTENTION_INTERPRETATIONS
+    return not card.get("historical") and str((card["verdict"] or {}).get("interpretation")) in ATTENTION_INTERPRETATIONS
 
 
 def _highest_text(cards: list[dict[str, object]]) -> str:
@@ -3509,6 +3529,7 @@ def _finding_catalog(connection, owner_user_id: str) -> list[dict[str, object]]:
             # document's date; «Date unknown» beside a dated report was wrong.
             """SELECT f.*, COALESCE(f.finding_date, d.report_date) shown_date,
                              d.title document_title, d.original_filename,
+                             d.historical_at document_historical_at,
                              COALESCE(v.canonical_name, 'Unknown provider') vendor
                FROM clinical_findings f
                JOIN documents d ON d.id=f.document_id
@@ -3523,6 +3544,12 @@ def _finding_catalog(connection, owner_user_id: str) -> list[dict[str, object]]:
         for raw in rows:
             row = dict(raw)
             row["finding_date"] = row.pop("shown_date")
+            # A conclusion from a document the person marked historical is
+            # kept, not raised: every reader of this catalogue (the home page,
+            # Find results, the areas, the assistant) sees it as information.
+            row["historical"] = bool(row.pop("document_historical_at"))
+            if row["historical"] and row["status"] == "attention":
+                row["status"] = "information"
             key = (row["document_id"], row["page_number"], row["health_area"], row["title"], row["summary_en"], row["finding_date"])
             if key in seen:
                 continue
@@ -9400,6 +9427,13 @@ def panels_page(request: Request, sort: str = ""):
     user = record_user(request, user)
     with connect(settings) as connection:
         panels = _panel_cards(connection, user["id"], member_limit=6)
+        # How many of each group's results a medicine or other entry may be moving.
+        catalog = _by_id(_metric_catalog(connection, user["id"]))
+        by_concept = factors.influences(connection, user["id"], today=date.today())
+        for panel in panels:
+            panel["medicines_count"] = sum(
+                1 for key in panel["present_ids"] if key in catalog and _card_influences(catalog[key], by_concept)
+            )
     # One order for both views: the attention view is this list, flat; the
     # area view stamps each card with its place in it, so the in-page
     # toggle reorders without asking the server again.
@@ -10102,6 +10136,15 @@ def _panel_context(connection, owner_user_id: str, panel_id: str) -> dict[str, o
     )
     card = _panel_card(connection, panel, by_id, names)
     rows = list(card["members"])
+    by_concept = factors.influences(connection, owner_user_id, today=date.today())
+    locale = get_locale()
+    # Per result: the entries that bear on its latest reading.  Kept beside
+    # the rows, never on them: the cards are shared between requests.
+    influences = {
+        str(row["id"]): chips
+        for row in rows
+        if (chips := factors_view.influence_chips(_card_influences(row, by_concept), locale=locale))
+    }
     dates = [
         _date_key(point["date"]) for row in rows for point in (row.get("series") or [])
     ]
@@ -10135,6 +10178,8 @@ def _panel_context(connection, owner_user_id: str, panel_id: str) -> dict[str, o
     return {
         "panel": card,
         "rows": rows,
+        "influences": influences,
+        "medicines": factors_view.panel_entries(rows, by_concept, locale=locale),
         "sparklines": sparklines,
         "documents": documents,
         "sources": sources_for(
@@ -11780,6 +11825,41 @@ def correct_document_finding(
     if _wants_json(request):
         return JSONResponse({"ok": True, "action": action, "finding_ids": [str(row["id"]) for row in rows]})
     return RedirectResponse(destination + "#side-panel-conclusion", status_code=303)
+
+
+@router.post("/documents/{document_id}/historical", responses=_RESPONSES_401_403_404)
+def set_document_historical(
+    request: Request,
+    document_id: str,
+    historical: Annotated[str, Form()] = "",
+    csrf_token: Annotated[str, Form()] = "",
+):
+    """Mark a document historical (its problem is over) or current again.
+
+    Nothing is removed: the flag only stops the document's conclusions and the
+    results whose latest reading comes from it from raising attention."""
+    settings = request.app.state.settings
+    user = require_user(request)
+    require_csrf(user, csrf_token)
+    marked = historical == "1"
+    with connect(settings) as connection:
+        owned = connection.execute(_OWNED_DOCUMENT_SQL, (document_id, user["id"])).fetchone()
+        if not owned:
+            raise HTTPException(404)
+        connection.execute(
+            "UPDATE documents SET historical_at=? WHERE id=? AND owner_user_id=?",
+            (utc_now() if marked else None, document_id, user["id"]),
+        )
+        _audit(
+            settings, user["id"], user["id"],
+            "document_marked_historical" if marked else "document_marked_current",
+            "document", document_id, {}, connection,
+        )
+    invalidate_catalog(user["id"])
+    return RedirectResponse(
+        f"/documents/{document_id}?historical={'saved' if marked else 'cleared'}#document-historical",
+        status_code=303,
+    )
 
 
 @router.post("/documents/{document_id}/tags", responses=_RESPONSES_401_403_404)

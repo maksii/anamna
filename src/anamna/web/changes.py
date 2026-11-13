@@ -20,6 +20,7 @@ import re
 import threading
 from datetime import date
 from typing import Annotated
+from urllib.parse import urlencode
 
 from fastapi import Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -42,6 +43,7 @@ from ..panels import (
     NORMAL_INTERPRETATIONS,
 )
 from ..reference import canonical_unit
+from . import factors_view
 
 #: Display order.  The first four are what a person came to read and are shown
 #: open; the rest collapse behind a count.
@@ -143,7 +145,7 @@ def _change(web, row, previous, unit_source, previous_unit_source, unit) -> dict
     delta = float(current) - float(before)
     amount = format_number_localized(abs(delta), decimals)
     if not re.search(r"[1-9]", amount):
-        return {"comparable": True, "direction": "flat", "text": t("changes.no_change")}
+        return {"comparable": True, "direction": "flat", "text": t("changes.no_change"), "share": 0.0}
     sign = "+" if delta > 0 else "−"
     amount = f"{sign}{amount} {unit}".strip() if unit else f"{sign}{amount}"
     percent = None
@@ -154,6 +156,7 @@ def _change(web, row, previous, unit_source, previous_unit_source, unit) -> dict
         "comparable": True,
         "direction": "up" if delta > 0 else "down",
         "text": t("changes.delta", amount=amount, percent=percent) if percent else amount,
+        "share": abs(delta / float(before) * 100) if float(before) else None,
     }
 
 
@@ -285,6 +288,91 @@ def _sort_key(entry: dict) -> tuple:
     return (BUCKETS.index(entry["bucket"]), _DIRECTION_RANK.get(entry["direction"], 1), entry["name"].casefold())
 
 
+SORTS = ("status", "name", "change")
+SHOWS = ("all", "outside", "changed", "medicine", "unverified")
+GROUPS = ("status", "panel", "none")
+_VIEW_DEFAULTS = (("sort", "status"), ("show", "all"), ("group", "status"))
+_SHOW_BUCKETS = {"outside": ("new", "still", "borderline"), "changed": ("new", "resolved")}
+
+
+def view_options(sort: str = "", show: str = "", group: str = "", reverse: str = "") -> dict:
+    """The reader's sort, filter and grouping; anything unknown is the page's own default."""
+    return {
+        "sort": sort if sort in SORTS else "status",
+        "show": show if show in SHOWS else "all",
+        "group": group if group in GROUPS else "status",
+        "reverse": reverse == "1",
+    }
+
+
+def view_query(options: dict) -> str:
+    """The choices that differ from the default, as a query string: a link to
+    another period carries them, and the default page keeps a clean address."""
+    pairs = [(name, options[name]) for name, default in _VIEW_DEFAULTS if options[name] != default]
+    if options["reverse"]:
+        pairs.append(("reverse", "1"))
+    return urlencode(pairs)
+
+
+def _kept(entry: dict, show: str) -> bool:
+    if show == "medicine":
+        return bool(entry.get("influences"))
+    if show == "unverified":
+        return bool(entry["unverified"])
+    return show == "all" or entry["bucket"] in _SHOW_BUCKETS[show]
+
+
+def _change_size(entry: dict) -> tuple:
+    # Biggest relative change first; a result with nothing to compare goes last.
+    share = (entry.get("change") or {}).get("share")
+    return (share is None, -(share or 0.0), entry["name"].casefold())
+
+
+def _order_key(sort: str):
+    if sort == "name":
+        return lambda entry: entry["name"].casefold()
+    return _change_size if sort == "change" else _sort_key
+
+
+def arrange(report: dict, options: dict) -> dict:
+    """The report's entries as the sections the page prints.
+
+    With the default options this is the page's own layout: the results that
+    changed or are outside their range in one open list, then one fold per
+    quiet bucket.  ``kind`` is ``"list"`` (no heading), ``"fold"`` (a closed
+    disclosure with a count) or ``"group"`` (a heading, one per test group)."""
+    entries = [*report["open"], *(entry for _, found in report["collapsed"] for entry in found)]
+    shown = sorted((entry for entry in entries if _kept(entry, options["show"])), key=_order_key(options["sort"]))
+    if options["reverse"]:
+        shown.reverse()
+    if options["group"] == "none":
+        sections = [{"kind": "list", "title": "", "url": None, "entries": shown}] if shown else []
+    elif options["group"] == "panel":
+        grouped: dict[tuple[str, str | None], list[dict]] = {}
+        for entry in shown:
+            grouped.setdefault((entry["context"], entry["panel_url"]), []).append(entry)
+        sections = [
+            {"kind": "group", "title": title, "url": url, "entries": found}
+            for (title, url), found in sorted(grouped.items(), key=lambda item: item[0][0].casefold())
+        ]
+    else:
+        opened = [entry for entry in shown if entry["bucket"] in OPEN_BUCKETS]
+        sections = [{"kind": "list", "title": "", "url": None, "entries": opened}] if opened else []
+        for bucket in BUCKETS:
+            found = [entry for entry in shown if entry["bucket"] == bucket]
+            if bucket not in OPEN_BUCKETS and found:
+                sections.append({"kind": "fold", "title": t(f"changes.bucket_{bucket}"), "url": None, "entries": found})
+    return {
+        **options,
+        "sections": sections,
+        "shown": len(shown),
+        "total": len(entries),
+        # The page's own "nothing changed" line: only when nothing was filtered away.
+        "nothing_open": options["group"] == "status" and options["show"] == "all"
+        and not any(entry["bucket"] in OPEN_BUCKETS for entry in shown),
+    }
+
+
 #: Days between two result dates that still count as one result episode.  A
 #: laboratory order arrives in parts -- the blood count on day 1, the
 #: biochemistry on day 3, a culture or an allergy panel a week later -- and a
@@ -384,6 +472,13 @@ def build_changes(
             _selected_entry(web, connection, concept_id, daily, positions, focus, document_id, age, sex)
         )
         _note_sources(daily, positions, document_id, days_seen, document_ids)
+    by_concept = factors.influences(connection, owner_user_id, today=date.today())
+    locale = get_locale()
+    for entry in entries:
+        entry["influences"] = factors_view.influence_chips(
+            factors.influencing(by_concept.get(entry["concept_id"], []), entry["day"], entry["previous_day"]),
+            locale=locale,
+        )
 
     report = _build_report(entries, days_seen, document_ids, documents)
     episodes = _episode_rows(spans, concept_days, kind, index)
@@ -560,6 +655,10 @@ def _selected_entry(web, connection, concept_id, daily, positions, focus, docume
         + " ".join(filter(None, (web.format_reading(daily[i], entry["unit"]), entry["unit"])))
         for i in positions[1:]
     ]
+    # The day of this reading and of the one it is compared with: what a
+    # medicine has to cover, or fall between, to bear on the change.
+    entry["day"] = _day(row)
+    entry["previous_day"] = _day(previous) if previous is not None else ""
     return entry
 
 
@@ -1140,6 +1239,10 @@ def register_changes_routes(
         episode: str = "",
         date_from: Annotated[str, Query(alias="from")] = "",
         date_to: Annotated[str, Query(alias="to")] = "",
+        sort: str = "",
+        show: str = "",
+        group: str = "",
+        reverse: str = "",
     ):
         user = require_user(request)
         owner = record_user(request, user)
@@ -1150,6 +1253,14 @@ def register_changes_routes(
                 load_summary(connection, owner["id"], locale, view["scope"], view["fingerprint"])
                 if view["scope"] else None
             )
+        options = view_options(sort, show, group, reverse)
+        arranged = arrange(view["report"], options) if view["report"] else None
+        # What is selected (a document, a period, a range) rides along with every view change.
+        selection_pairs = [
+            (name, request.query_params[name])
+            for name in ("document", "episode", "from", "to")
+            if request.query_params.get(name)
+        ]
         unattached = attach_notes(view, summary)
         can_ask = _can_ask(settings, request, user, view, viewing_row)
         error = request.query_params.get("ai_error")
@@ -1166,6 +1277,13 @@ def register_changes_routes(
                 ai_can_ask=can_ask,
                 ai_error=error if error in AI_ERRORS else None,
                 document_filter=document,
+                arranged=arranged,
+                view_query=view_query(options),
+                selection_pairs=selection_pairs,
+                reset_url="/changes" + (("?" + urlencode(selection_pairs)) if selection_pairs else ""),
+                view_sorts=SORTS,
+                view_shows=SHOWS,
+                view_groups=GROUPS,
                 active="changes",
             ),
         )

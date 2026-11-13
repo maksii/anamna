@@ -15,7 +15,7 @@
   {% for plan in plans %}
   {% set shown = plan.options[plan.option_index] if plan.options else none %}
   <li id="plan-{{ plan.lab }}" class="an-plan-card{{ ' an-plan-card--best' if loop.first else '' }}">
-    <details class="an-plan-tile"{{ ' open' if plans|length == 1 or request.query_params.get('alt_' ~ plan.lab) or plan.edited or order_lab == plan.lab else '' }}>
+    <details class="an-plan-tile"{{ ' open' if plans|length == 1 or request.query_params.get('alt_' ~ plan.lab) or plan.edited or order_lab == plan.lab or failed_lab == plan.lab else '' }}>
       <summary><span class="an-plan-tile__sum">
         <span class="an-plan-tile__top">
           <span class="an-plan-tile__name">
@@ -175,10 +175,21 @@
         {% if not plan.exact %}<p class="tiny muted">{{ t('plan.not_exact') }}</p>{% endif %}
         {% if plan.fetched_at %}<p class="tiny muted">{{ t('plan.prices_read', date=plan.fetched_at|stamp|datefmt) }}</p>{% endif %}
 
+        {#- An order that failed is said here, in the tile it was sent from:
+            the plan above is exactly what was sent, and nothing was lost. -#}
+        {% if failed_lab == plan.lab %}
+        <div class="alert {{ 'warning' if notice in ('prices_changed', 'items_gone') else 'error' }} an-plan-fail" role="alert" id="plan-fail-{{ plan.lab }}">
+          <p><strong>{{ notice_text }}</strong></p>
+          <p>{{ t('plan.fail_kept') }}</p>
+        </div>
+        {% endif %}
         {% set form = order_forms.get(plan.lab) %}
         {% if not plan['items'] %}
         {% elif plan.lab == 'esculab' and can_order %}
-        {% if form and form.connected and form.person %}
+        {% if form and form.connected and form.reauth %}
+        <p class="alert warning" role="status">{{ t('plan.order_reauth', lab=plan.name) }}
+          <a href="/profile?tab=connections&amp;lab={{ plan.lab }}#lab-{{ plan.lab }}">{{ t('labsync.reauth_notice_link') }}</a></p>
+        {% elif form and form.connected and form.person %}
         <form class="stack-form an-plan-order" action="/plan-tests/order/esculab" method="post">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <input type="hidden" name="order_nonce" value="{{ form.nonce }}">
@@ -195,11 +206,11 @@
               {% endfor %}
             </select>
           </label>
-          <label>{{ t('plan.order_date') }}<input type="date" name="date" value="{{ today }}" min="{{ today }}"></label>
+          <label>{{ t('plan.order_date') }}<input type="date" name="date" value="{{ form.date or today }}" min="{{ today }}"></label>
           <fieldset>
             <legend>{{ t('plan.order_payment') }}</legend>
-            <label class="an-plan-check"><input type="radio" name="payment" value="online" checked> {{ t('plan.order_pay_online') }}</label>
-            <label class="an-plan-check"><input type="radio" name="payment" value="point"> {{ t('plan.order_pay_point') }}</label>
+            <label class="an-plan-check"><input type="radio" name="payment" value="online"{{ '' if form.payment == 'point' else ' checked' }}> {{ t('plan.order_pay_online') }}</label>
+            <label class="an-plan-check"><input type="radio" name="payment" value="point"{{ ' checked' if form.payment == 'point' else '' }}> {{ t('plan.order_pay_point') }}</label>
           </fieldset>
           <button class="primary" type="submit" data-busy="{{ t('plan.ordering') }}">{{ t('plan.order_submit', total=plan.cost|uah) }}</button>
         </form>
@@ -209,7 +220,10 @@
         <p class="tiny muted">{{ t('plan.order_not_connected', lab='Esculab') }} <a href="/profile?tab=connections#lab-esculab">{{ t('plan.order_connect') }}</a></p>
         {% endif %}
         {% elif plan.lab == 'synevo' and can_order %}
-        {% if form and form.connected %}
+        {% if form and form.connected and form.reauth %}
+        <p class="alert warning" role="status">{{ t('plan.order_reauth', lab=plan.name) }}
+          <a href="/profile?tab=connections&amp;lab={{ plan.lab }}#lab-{{ plan.lab }}">{{ t('labsync.reauth_notice_link') }}</a></p>
+        {% elif form and form.connected %}
         <form class="stack-form an-plan-order" action="/plan-tests/cart/synevo" method="post">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <input type="hidden" name="region" value="{{ plan.region }}">
@@ -224,6 +238,25 @@
         {% endif %}
         {% elif plan.lab == 'mixed' %}
         <p class="tiny muted">{{ t('plan.mixed_order') }}</p>
+        {% endif %}
+        {#- The same order by hand: every test as a link to its own page on
+            the lab's site.  Open when no order can be sent from here. -#}
+        {% if plan['items'] %}
+        {% set self_form = order_forms.get(plan.lab) %}
+        {% set can_send = can_order and plan.lab != 'mixed' and self_form and self_form.connected and not self_form.reauth and (plan.lab != 'esculab' or self_form.person) %}
+        <details class="an-plan-self"{{ ' open' if failed_lab == plan.lab or not can_send else '' }}>
+          <summary>{{ t('plan.self_heading') }}</summary>
+          <p class="tiny muted">{{ t('plan.self_lead_mixed') if plan.lab == 'mixed' else t('plan.self_lead', lab=plan.name) }}</p>
+          <ul class="an-plan-self__list">
+            {% for item in plan['items'] %}
+            <li>
+              {% if item.url %}<a href="{{ item.url }}" target="_blank" rel="noopener noreferrer"><span lang="{{ item.label_lang }}">{{ item.label }}</span><span class="visually-hidden"> ({{ t('plan.self_external', lab=lab_names[item.lab]) }})</span></a>
+              {% else %}<span><span lang="{{ item.label_lang }}">{{ item.label }}</span> <span class="tiny muted">{{ t('plan.self_no_page') }}</span></span>{% endif %}
+              <span class="an-plan-self__meta tiny muted">{% if plan.lab == 'mixed' %}{{ lab_names[item.lab] }} · {% endif %}{% if item.code %}{{ t('plan.code', code=item.code) }} · {% endif %}{{ item.final_price|uah }}</span>
+            </li>
+            {% endfor %}
+          </ul>
+        </details>
         {% endif %}
       </div>
     </details>
