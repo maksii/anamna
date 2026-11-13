@@ -9,7 +9,7 @@ organizes evidence; it does not diagnose or replace a clinician.
 
 ## Set up
 
-With [uv](https://docs.astral.sh/uv/) and Python 3.12:
+With [uv](https://docs.astral.sh/uv/) and Python 3.14:
 
 ```bash
 uv sync --locked

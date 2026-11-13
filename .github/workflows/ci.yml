@@ -24,13 +24,13 @@ jobs:
           persist-credentials: false
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          python-version: "3.12"
-          version: "0.10.2"
+          python-version: "3.14"
+          version: "0.13.8"
       - name: Install OCR engines exercised by scanned-page tests
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-ukr tesseract-ocr-eng
       - run: uv sync --locked --all-extras
       - name: Lint (pyflakes-level rules configured in pyproject.toml)
-        run: uv tool run --from ruff==0.17.4 ruff check src scripts tests
+        run: uv tool run --from ruff==0.17.5 ruff check src scripts tests
       - run: uv run --no-sync pytest -q -n auto --basetemp=${{ runner.temp }}/pytest
       - run: uv run --no-sync python -m compileall -q src
       - run: uv build --out-dir ${{ runner.temp }}/packages
@@ -48,7 +48,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "22"
+          node-version: "26"
       - run: node --test tests/js/*.test.mjs
 
   image:

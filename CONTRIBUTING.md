@@ -6,7 +6,7 @@ Ukrainian.
 
 ## Setup
 
-You need [uv](https://docs.astral.sh/uv/), Python 3.12 and Node.js 22 (for the JavaScript tests).
+You need [uv](https://docs.astral.sh/uv/), Python 3.14 and Node.js 26 (for the JavaScript tests).
 Tesseract with the `ukr` and `eng` language data is needed to run the OCR tests; without it they
 skip.
 
@@ -22,7 +22,7 @@ the server output. For experiments, point `ANAMNA_DB` at a throwaway file such a
 ## Tests
 
 ```bash
-uv tool run --from ruff==0.17.4 ruff check src scripts tests
+uv tool run --from ruff==0.17.5 ruff check src scripts tests
 uv run pytest --basetemp=work/pytest-run
 node --test tests/js/*.test.mjs
 uv run python -m compileall -q src

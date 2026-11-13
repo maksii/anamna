@@ -1,4 +1,4 @@
-FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim@sha256:e5b65587bce7de595f299855d7385fe7fca39b8a74baa261ba1b7147afa78e58
+FROM ghcr.io/astral-sh/uv:python3.14-trixie-slim@sha256:81a1340fea1e72ad4a8e9a016128b0c61041cf182ea49fd788023e52842bc147
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends fonts-dejavu-core tesseract-ocr tesseract-ocr-ukr tesseract-ocr-eng \

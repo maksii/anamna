@@ -20,7 +20,7 @@ The parts that most often go wrong, in one screen:
 
 Checks to run before calling work finished:
 
-    uv tool run --from ruff==0.17.4 ruff check src scripts tests
+    uv tool run --from ruff==0.17.5 ruff check src scripts tests
     uv run pytest -q --basetemp=work/pytest-run
     node --test tests/js/*.test.mjs
     uv run python -m compileall -q src
