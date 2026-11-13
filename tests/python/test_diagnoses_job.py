@@ -11,7 +11,7 @@ from datetime import date
 
 import pytest
 
-from anamna import diagnoses
+from anamna import diagnosis_candidates, diagnoses
 from anamna.db import connect, migrate
 from anamna.security import create_user
 from anamna.web import diagnoses_job
@@ -103,6 +103,23 @@ def test_a_new_diagnosis_changes_the_fingerprint_and_triggers_a_refresh(world):
     _add_diagnosis(settings, alpha, patient)
 
     assert _run(settings, alpha, _lipid_cards) is True
+
+
+def test_a_change_of_the_reading_rules_makes_the_record_be_read_again(world, monkeypatch):
+    settings, alpha, _ = world
+    _run(settings, alpha, _lipid_cards)
+    assert _run(settings, alpha, _lipid_cards) is False
+    monkeypatch.setattr(diagnosis_candidates, "READER_VERSION", diagnosis_candidates.READER_VERSION + 1)
+    assert _run(settings, alpha, _lipid_cards) is True
+
+
+def test_the_fingerprint_holds_the_reader_version(world, monkeypatch):
+    settings, alpha, _ = world
+    with connect(settings) as connection:
+        before = diagnoses_job.fingerprint(connection, alpha)
+        monkeypatch.setattr(diagnosis_candidates, "READER_VERSION", diagnosis_candidates.READER_VERSION + 1)
+        after = diagnoses_job.fingerprint(connection, alpha)
+    assert before != after
 
 
 def test_force_runs_even_when_nothing_changed(world):

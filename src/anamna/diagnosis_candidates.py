@@ -1,11 +1,14 @@
-"""Diagnoses a person's documents name with an ICD-10 code, read without a model.
+"""Diagnoses a person's documents name, read without a model.
 
 A consultation's diagnosis text (``summary_uk``) and the coded lines of its
 text («Код МКХ Х: K11.2») print codes the document itself wrote.  The codes
 are checked against the catalogue; a code in the diagnosis text must also
 share a word stem with its catalogue title, so an ICPC-2 reason-for-encounter
-code is not taken for a diagnosis.  Candidates wait for the person: accepting
-one makes a diagnosis, dismissing one hides it.  Nothing here calls an AI.
+code is not taken for a diagnosis.  The conclusion of a consultation or of a
+study (MRI, ultrasound, X-ray, ECG, pathology) is read statement by statement,
+word for word, into candidates without a code (method 'text'), unless the AI
+reader has read the document.  Candidates wait for the person: accepting one
+makes a diagnosis, dismissing one hides it.  Nothing here calls an AI.
 """
 
 from __future__ import annotations
@@ -13,10 +16,14 @@ from __future__ import annotations
 import re
 import sqlite3
 import uuid
+from collections.abc import Collection
 from datetime import date
 
 from . import diagnoses, icd10
 from .db import utc_now
+
+# Raise when the reading rules change: the job's fingerprint holds it, so every record is read again.
+READER_VERSION = 2
 
 # A code is a letter, two digits and an optional decimal part.  Cyrillic
 # look-alikes are allowed; icd10.normalize folds them to Latin.
@@ -29,6 +36,27 @@ _PIECE = re.compile(rf"^(?:{_LABEL})?({_CODE})(?![^\W_])(.*)$", re.IGNORECASE | 
 _CODED_LABEL = re.compile(r"(?:Код\s+)?МКХ(?:-10|\s?10|\s[ХX])?\s*:", re.IGNORECASE)
 _ISO_DAY = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 _WORD = re.compile(r"[^\W\d_]+")
+_SENTENCE_END = re.compile(r"(?<=[.?!])\s+(?=[A-ZА-ЯІЇЄҐ0-9])")
+_LIST_NUMBER = re.compile(r"^[0-9]{1,2}[.)]?\s+(?=[^\W\d_])")
+_ON_EXAM = re.compile(r"^на момент огляду[:,]?\s*", re.IGNORECASE)
+# ponytail: word lists, not understanding.  A descriptor counts as "usual" only as a predicate, at the end of a statement or before a comma («Синуси вільні», «чіткі, рівні»); before a noun it is kept («Вільна рідина»).  The AI reader replaces these candidates when it reads the document.
+_NOTHING_FOUND = re.compile(
+    r"не виявлен|не визнача|не знайден|без патолог|без особливост|без змін|без негативної|"
+    r"без вогнищ|вікові особливості|"
+    r"меж(?:ах|і) норми|(?<![^\W_])норм[аі](?![^\W_])|варіант норми|не розширен|не потовщен|"
+    r"не збільшен|не змінен|(?<![^\W_])немає(?![^\W_])|відсутн|(?<![^\W_])normal(?![^\W_])|"
+    r"unremarkable|no evidence|not detected|no signs",
+    re.IGNORECASE,
+)
+_AS_USUAL = re.compile(r"(?:збережен|звичайн|вільн|чітк|типов|прозор|структурн|задовільн)[^\W\d_]*\s*(?:,|$)", re.IGNORECASE)
+_NOT_A_CONDITION = (
+    "клінічний діагноз", "основний діагноз", "супутній діагноз", "підтримання здоров", "опис:",
+    "рекоменд", "необхідн", "доцільн", "показан", "контроль", "повторн", "консультація", "скарги",
+    "огляд", "анамнез", "бакпосів", "копрограма", "антимікотикограма", "антибіотикограма",
+    "чутливість до", "автоматична ідентифікація", "recommend", "follow-up", "follow up",
+)
+# A statement that carries a date refers to a study («Копрограма від 18.05.2026»), it does not name a condition.
+_DATED = re.compile(r"(?<![0-9])[0-9]{1,2}\.[0-9]{2}\.[0-9]{4}(?![0-9])")
 
 
 def _is_condition(code: str) -> bool:
@@ -119,6 +147,64 @@ def parse_coded_line(text: str) -> list[dict]:
     return items
 
 
+def _cut(name: str) -> str:
+    """A name of at most 200 characters: cut at the last space before 200, with an ellipsis."""
+    if len(name) <= 200:
+        return name
+    stop = name.rfind(" ", 0, 200)
+    if stop <= 0:
+        stop = 199
+    return name[:stop].rstrip() + "…"
+
+
+def parse_conclusion(text: str, skip_codes: Collection[str] = ()) -> list[dict]:
+    """The statements of a document's conclusion that read as a condition, word for word.
+
+    [] for a text that starts with «Скарги» or names ICPC-2, and for a piece that starts
+    with an ICD-10 code (``parse_summary`` and ``parse_coded_line`` own those).  Pieces split
+    at ';' and line ends, statements at a sentence end before a capital or a digit.  A
+    statement that says nothing was found, that something is usual, that is a label or an
+    instruction, or that names a diagnosis the same document already prints with a code in
+    ``skip_codes`` is dropped, and so is a statement that carries a date.  A '?' makes it
+    provisional and is removed from the name.
+    Each item: {code: '', name, certainty, quote}; quote is the statement, cut to 400.
+    """
+    text = text or ""
+    if text.lstrip().startswith("Скарги") or "ICPC" in text.upper():
+        return []
+    items: list[dict] = []
+    seen: set[str] = set()
+    for raw_piece in re.split(r"[;\r\n]+", text):
+        piece = raw_piece.strip()
+        if _PIECE.match(piece):
+            continue
+        for statement in _SENTENCE_END.split(piece):
+            sentence = _ON_EXAM.sub("", _LIST_NUMBER.sub("", statement.strip()))
+            provisional = "?" in sentence
+            name = sentence.rstrip(" .;,?!").strip()
+            if not _stems(name) or _NOTHING_FOUND.search(name):
+                continue
+            if _AS_USUAL.search(name):
+                continue
+            if name.casefold().startswith(_NOT_A_CONDITION):
+                continue
+            if _DATED.search(name):
+                continue
+            if any(_names_catalogue(name, code) for code in skip_codes if icd10.entry(code) is not None):
+                continue
+            name = _cut(name)
+            if _fold(name) in seen:
+                continue
+            seen.add(_fold(name))
+            items.append({
+                "code": "",
+                "name": name,
+                "certainty": "provisional" if provisional else "confirmed",
+                "quote": sentence[:400],
+            })
+    return items
+
+
 def _fold(name: str) -> str:
     return " ".join(name.casefold().split())
 
@@ -149,40 +235,76 @@ def dismissed_keys(connection: sqlite3.Connection, owner_id: str) -> set[str]:
     return {key_of(row[0], row[1]) for row in rows}
 
 
-def collect(connection: sqlite3.Connection, owner_id: str) -> int:
-    """Read the coded diagnoses of the owner's consultations and clinical reports into candidates.
+def _insert(
+    connection: sqlite3.Connection,
+    owner_id: str,
+    document_id: str,
+    method: str,
+    item: dict,
+    event_date: str | None,
+    date_exact: int,
+    state: str,
+    now: str,
+) -> int:
+    """One candidate row.  Returns 1 when inserted, 0 when the UNIQUE key already held it."""
+    cursor = connection.execute(
+        """INSERT OR IGNORE INTO diagnosis_candidates (
+               id, owner_user_id, document_id, method, code, code_printed, name, name_key,
+               certainty, timing, event_date, date_exact, quote, state, diagnosis_id, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'now', ?, ?, ?, ?, NULL, ?)""",
+        (
+            str(uuid.uuid4()), owner_id, document_id, method, item["code"], int(method == "code"),
+            item["name"], _fold(item["name"]), item["certainty"], event_date, date_exact,
+            item["quote"], state, now,
+        ),
+    )
+    return cursor.rowcount
 
-    Returns the number of candidates inserted.  Does not commit.
+
+def collect(connection: sqlite3.Connection, owner_id: str) -> int:
+    """Read the owner's documents into candidates: the coded diagnoses of every document, and the
+    conclusion statements word for word where the AI reader has not read the document.
+
+    Text candidates that are still 'new' are rebuilt on every call; accepted and dismissed ones
+    stay.  Duplicate documents are skipped.  Nothing here calls an AI.  Returns the number of
+    candidates inserted.  Does not commit.
     """
     dismissed = dismissed_keys(connection, owner_id)
+    connection.execute(
+        "DELETE FROM diagnosis_candidates WHERE owner_user_id = ? AND method = 'text' AND state = 'new'",
+        (owner_id,),
+    )
     rows = connection.execute(
-        """SELECT f.document_id, f.summary_uk, f.summary_en, f.original_text, d.report_date
+        """SELECT f.document_id, f.summary_uk, f.summary_en, f.original_text, d.report_date,
+                  EXISTS(SELECT 1 FROM diagnosis_scans s WHERE s.document_id = d.id) AS ai_read
              FROM clinical_findings f
              JOIN documents d ON d.id = f.document_id
             WHERE f.owner_user_id = ?
-              AND d.clinical_type IN ('consultation', 'clinical_report')
-              AND d.duplicate_of_document_id IS NULL""",
+              AND d.duplicate_of_document_id IS NULL
+            ORDER BY f.document_id, f.rowid""",
         (owner_id,),
     ).fetchall()
+    by_document: dict[str, list] = {}
+    for row in rows:
+        by_document.setdefault(row["document_id"], []).append(row)
     now = utc_now()
     inserted = 0
-    for row in rows:
-        event_date, date_exact = _day(row["report_date"])
-        found = parse_summary(row["summary_uk"] or row["summary_en"]) + parse_coded_line(row["original_text"])
-        for item in found:
-            name_key = _fold(item["name"])
-            state = "dismissed" if key_of(item["code"], name_key) in dismissed else "new"
-            cursor = connection.execute(
-                """INSERT OR IGNORE INTO diagnosis_candidates (
-                       id, owner_user_id, document_id, method, code, code_printed, name, name_key,
-                       certainty, timing, event_date, date_exact, quote, state, diagnosis_id, created_at)
-                   VALUES (?, ?, ?, 'code', ?, 1, ?, ?, ?, 'now', ?, ?, ?, ?, NULL, ?)""",
-                (
-                    str(uuid.uuid4()), owner_id, row["document_id"], item["code"], item["name"], name_key,
-                    item["certainty"], event_date, date_exact, item["quote"], state, now,
-                ),
-            )
-            inserted += cursor.rowcount
+    for document_id, findings in by_document.items():
+        event_date, date_exact = _day(findings[0]["report_date"])
+        summaries = [row["summary_uk"] or row["summary_en"] or "" for row in findings]
+        coded: list[dict] = []
+        for row, summary in zip(findings, summaries):
+            coded.extend(parse_summary(summary) + parse_coded_line(row["original_text"] or ""))
+        for item in coded:
+            state = "dismissed" if key_of(item["code"], _fold(item["name"])) in dismissed else "new"
+            inserted += _insert(connection, owner_id, document_id, "code", item, event_date, date_exact, state, now)
+        if findings[0]["ai_read"]:
+            continue
+        skip_codes = {item["code"] for item in coded}
+        for summary in summaries:
+            for item in parse_conclusion(summary, skip_codes):
+                state = "dismissed" if key_of("", _fold(item["name"])) in dismissed else "new"
+                inserted += _insert(connection, owner_id, document_id, "text", item, event_date, date_exact, state, now)
     return inserted
 
 

@@ -1,9 +1,10 @@
-"""Reads a person's consultations and clinical reports for the diagnoses they state.
+"""Reads a person's consultations and the reports of their studies for the diagnoses they state.
 
-Each document is read once.  The model lists the diagnoses the document states,
-the application checks every quote and name against the text, and the items
-are stored as diagnosis candidates.  A candidate enters the record only when
-the person accepts it.
+Each document is read once.  The model lists the diagnoses the document states
+(for a study, the abnormal conditions its conclusion names), the application
+checks every quote and name against the text, and the items are stored as
+diagnosis candidates.  A candidate enters the record only when the person
+accepts it.
 """
 
 from __future__ import annotations
@@ -16,11 +17,12 @@ from collections.abc import Callable
 
 from . import ai, diagnosis_candidates, factor_research, factor_scan, icd10
 from .db import utc_now
+from .health import NARRATIVE_TYPES
 
 _LOG = logging.getLogger(__name__)
 
 FEATURE = factor_scan.FEATURE
-SCAN_TYPES = ("consultation", "clinical_report")
+SCAN_TYPES = tuple(sorted(NARRATIVE_TYPES))
 MAX_ITEMS = 30
 MAX_DOCUMENT_ITEMS = 60
 MAX_TOKENS = 2500
@@ -30,12 +32,12 @@ SYSTEM = """You read one medical document from a person's own record and list th
 
 The input is one JSON object: `document` (its type, its date and its text, in Ukrainian or English), `language` and `output_contract`. Return one JSON object matching `output_contract` and nothing else. When `document.part` is present, the text is one part of a longer document: list what this part states.
 
-List one item for each disease, condition or injury the document states this person has or had: a diagnosis a doctor wrote (main, accompanying, preliminary or clinical), and a condition named in the history as already diagnosed.
+List one item for each disease, condition or injury the document states this person has or had: a diagnosis a doctor wrote (main, accompanying, preliminary or clinical), a condition named in the history as already diagnosed, and, when the document is the report of a study (MRI, CT, X-ray, ultrasound, endoscopy, ECG, pathology), each abnormal condition its conclusion names, such as a disc protrusion, a cyst, an enlarged liver or a polyp. A conclusion that lists several conditions gives one item for each.
 
-Do not list: complaints and symptoms the document only describes, findings of an examination or a study that are not named as a diagnosis, reasons for a visit such as a check-up or a vaccination, ICPC-2 codes for the reason of an encounter, medicines, procedures and operations, diagnoses of relatives, conditions the document says the person does not have or denies, and anything about another person.
+Do not list: complaints and symptoms the document only describes, measurements and normal findings of an examination or a study, anything a study's description mentions that its conclusion does not name as abnormal, reasons for a visit such as a check-up or a vaccination, ICPC-2 codes for the reason of an encounter, medicines, procedures and operations, diagnoses of relatives, conditions the document says the person does not have or denies, and anything about another person.
 
 For each item:
-- `name`: the diagnosis as the document writes it, without its code, at most 200 characters.
+- `name`: the condition in the document's own words, copied from the document without its code, at most 200 characters.
 - `code`: the ICD-10 code the document prints for this diagnosis, exactly as printed. When the document prints no code, the ICD-10 code you judge closest, or an empty string when you are not sure.
 - `code_printed`: true only when the code is printed in the document for this diagnosis.
 - `certainty`: `provisional` when the document marks it as preliminary, working, suspected or to be ruled out, or writes it with a question mark; otherwise `confirmed`.
@@ -220,6 +222,11 @@ def store(
     """
     now = utc_now()
     dismissed = diagnosis_candidates.dismissed_keys(connection, owner_id)
+    # The AI's reading of a document replaces the word-for-word conclusion candidates of that document.
+    connection.execute(
+        "DELETE FROM diagnosis_candidates WHERE document_id = ? AND owner_user_id = ? AND method = 'text' AND state = 'new'",
+        (document_id, owner_id),
+    )
     for item in items:
         event_date, date_exact = item["event_date"], item["date_exact"]
         if event_date is None and item["timing"] == "now":

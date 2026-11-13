@@ -40,7 +40,7 @@
 .dx-card__title a:hover { color: var(--teal-dark); }
 .dx-card__official, .dx-card__meta, .dx-card__area, .dx-note { margin: 0; color: var(--muted); font-size: var(--text-sm); overflow-wrap: anywhere; }
 .dx-card__meta, .dx-card__area { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-3); }
-.dx-card__meta a, .dx-card__area a { display: inline-flex; align-items: center; min-width: 44px; max-width: 100%; min-height: 44px; margin-block: -10px; }
+.dx-card__meta a, .dx-card__area a, .dx-treat__list a, .dx-med__head a, #dx-treatment .dx-field-help a { display: inline-flex; align-items: center; min-width: 44px; max-width: 100%; min-height: 44px; margin-block: -10px; overflow-wrap: anywhere; }
 .dx-card__area a { color: var(--teal-dark); }
 .dx-card__actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
 .dx-card__actions .primary, .dx-card__actions .secondary, .dx-card__actions button { min-height: 44px; }
@@ -63,6 +63,8 @@
 .dx-pill[data-certainty="provisional"] { background: var(--st-borderline-bg); color: var(--st-borderline-fg); }
 .dx-pill[data-kind="possible"] { background: var(--st-conflict-bg); color: var(--st-conflict-fg); }
 .dx-pill[data-method="ai"] { background: var(--warn-bg); color: var(--warn-ink); }
+.dx-pill[data-method="text"] { background: var(--surface); color: var(--ink); border: 1px solid var(--line); }
+.dx-pill[data-med-status="past"] { background: var(--surface-sunken); color: var(--muted); }
 
 .dx-watch { display: grid; gap: var(--space-2); }
 .dx-chips { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-2); }
@@ -78,6 +80,10 @@
 .dx-state-out .dx-dot { background: var(--mk-high); }
 .dx-state-edge .dx-dot { background: var(--mk-borderline); }
 .dx-state-in .dx-dot { background: var(--mk-normal); }
+.dx-treat { display: grid; gap: var(--space-2); }
+.dx-treat__list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
+.dx-treat__list li { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); min-width: 0; overflow-wrap: anywhere; }
+.dx-treat__how { color: var(--muted); font-size: var(--text-xs); }
 
 /* ---- possible diagnoses ------------------------------------------------- */
 .dx-why { display: grid; gap: var(--space-2); }
@@ -170,6 +176,19 @@
 .dx-timeline li:first-child { border-top: 0; padding-top: 0; }
 .dx-timeline__head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin: 0; }
 .dx-timeline__date { font-weight: 700; font-variant-numeric: tabular-nums; }
+.dx-meds { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-3); }
+.dx-med { display: grid; gap: var(--space-2); min-width: 0; padding: var(--space-3); border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); }
+.dx-med__head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin: 0; overflow-wrap: anywhere; }
+.dx-med__head a { font-weight: 750; }
+.dx-med__line { margin: 0; font-size: var(--text-sm); overflow-wrap: anywhere; }
+.dx-med__why { margin: 0; color: var(--muted); font-size: var(--text-xs); line-height: 1.5; overflow-wrap: anywhere; }
+.dx-med .dx-act { margin: 0; }
+.dx-med button { min-height: 44px; }
+.dx-med-add { display: grid; gap: var(--space-2); margin-top: var(--space-4); min-width: 0; }
+.dx-med-add label { font-weight: 700; color: var(--ink); font-size: var(--text-sm); }
+.dx-med-add__row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-width: 0; }
+.dx-med-add select { min-height: 44px; max-width: 100%; flex: 1 1 14rem; min-width: 0; }
+.dx-med-add button { min-height: 44px; }
 .dx-danger { margin-top: var(--space-5); }
 .dx-danger button { min-height: 44px; color: var(--error-ink); }
 

@@ -59,7 +59,7 @@
       {% if item.certainty == 'provisional' %}<span class="dx-pill" data-certainty="provisional">{{ item.certainty_label }}</span>{% endif %}
     </p>
     <h3 class="dx-card__title"><a href="{{ item.url }}">{{ item.name }}</a></h3>
-    {% if item.title %}<p class="dx-card__official">{{ item.title }}</p>{% endif %}
+    {% if item.written %}<p class="dx-card__official"><span class="dx-label">{{ t('dx.card.written') }}</span> {{ item.written }}</p>{% endif %}
   </div>
   {% if item.approximate or item.since_text or item.clinician or item.document %}
   <p class="dx-card__meta">
@@ -75,6 +75,16 @@
   </p>
   {% endif %}
   {{ watch_chips(item) }}
+  {% if item.medicines %}
+  <div class="dx-treat">
+    <p class="dx-kicker">{{ t('dx.treat.heading') }}</p>
+    <ul class="dx-treat__list">
+      {% for m in item.medicines %}
+      <li><a href="{{ m.url }}">{{ m.name }}</a>{% if m.regimen %} <span class="dx-treat__how">{{ m.regimen }}</span>{% endif %} <span class="dx-pill" data-med-status="{{ m.status }}">{{ m.status_label }}</span></li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
   {% if writable %}
   <div class="dx-card__actions">
     {% if provisional %}
@@ -136,12 +146,13 @@
 {#- The text of a found diagnosis, shared by the checkbox row and the plain row. -#}
 {% macro found_text(item) -%}
       <span class="dx-found__name">{{ code_chip(item.code) }} <strong>{{ item.name }}</strong></span>
-      {% if item.title and item.title != item.name %}<span class="dx-found__title">{{ item.title }}</span>{% endif %}
+      {% if item.written %}<span class="dx-found__title"><span class="dx-label">{{ t('dx.card.written') }}</span> {{ item.written }}</span>{% endif %}
       <span class="dx-found__meta">
-        <span class="dx-pill" data-certainty="{{ item.certainty }}">{{ item.certainty_label }}</span>
+        {% if not item.text or item.certainty == 'provisional' %}<span class="dx-pill" data-certainty="{{ item.certainty }}">{{ item.certainty_label }}</span>{% endif %}
         {% if item.ai %}<span class="dx-pill" data-method="ai">{{ t('dx.found.ai_badge') }}</span>{% endif %}
+        {% if item.text %}<span class="dx-pill" data-method="text">{{ t('dx.found.text_badge') }}</span>{% endif %}
       </span>
-      {% if item.code %}<span class="dx-found__code">{{ t('dx.found.code_printed') if item.code_printed else t('dx.found.code_ai') }}</span>{% endif %}
+      {% if item.code %}<span class="dx-found__code">{{ t('dx.found.code_printed') if item.code_printed else t('dx.found.code_ai') }}</span>{% else %}<span class="dx-found__code">{{ t('dx.found.no_code') }}</span>{% endif %}
       {% if item.mentions_text or item.when_text %}<span class="dx-found__when">{{ item.mentions_text }}{% if item.mentions_text and item.when_text %} · {% endif %}{{ item.when_text }}</span>{% endif %}
 {%- endmacro %}
 
@@ -299,6 +310,7 @@
     {% if not scan.ai_ready %}
     <p class="dx-notice">{{ t('dx.scan.off') }}</p>
     {% elif writable and (scan.waiting or scan.job) %}
+    <p class="dx-field-help">{{ t('dx.scan.why') }}</p>
     <form action="/diagnoses/found/scan" method="post" data-dx-scan-start>
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <button class="primary" type="submit">{{ t('dx.scan.start') }}</button>

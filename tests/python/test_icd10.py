@@ -152,6 +152,14 @@ def test_every_code_is_well_formed_and_has_a_ukrainian_title():
         assert exact in (0, 1), code
 
 
+def test_every_catalogue_source_names_itself_and_its_publisher_in_both_languages():
+    sources = _catalogue()["sources"]
+    assert sources
+    for source in sources:
+        for key in ("name_en", "name_uk", "publisher_en", "publisher_uk"):
+            assert source.get(key, "").strip(), (source.get("id"), key)
+
+
 def test_chapter_of_endocrine_codes_is_spelled_with_two_н():
     assert icd10.entry("E78.2")["chapter"]["uk"].startswith("Ендокринні")
 

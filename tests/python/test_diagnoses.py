@@ -191,6 +191,58 @@ def test_another_owner_cannot_read_change_or_delete_the_row(db):
     assert row["status"] == "active"
 
 
+def add_document(db, document_id: str, owner: str, patient: str) -> None:
+    db.connection.execute(
+        """INSERT INTO documents(id, owner_user_id, patient_id, original_filename, source_path, mime_type,
+               byte_size, sha256, page_count, title, clinical_type, extraction_strategy, imported_at)
+           VALUES (?, ?, ?, 'consult.pdf', 'consult.pdf', 'application/pdf', 1, ?, 1, 'Consultation',
+               'other', 'native', ?)""",
+        (document_id, owner, patient, f"sha-{document_id}", utc_now()),
+    )
+
+
+def add_accepted_candidate(db, candidate_id: str, document_id: str, owner: str, diagnosis_id: str) -> None:
+    db.connection.execute(
+        """INSERT INTO diagnosis_candidates(id, owner_user_id, document_id, method, code, code_printed, name,
+               name_key, certainty, timing, event_date, date_exact, quote, state, diagnosis_id, created_at)
+           VALUES (?, ?, ?, 'code', 'E78.2', 1, 'Mixed lipids', 'mixed lipids', 'confirmed', 'now',
+               '2025-01-15', 1, 'E78.2 Mixed lipids', 'accepted', ?, ?)""",
+        (candidate_id, owner, document_id, diagnosis_id, utc_now()),
+    )
+
+
+def candidate_row(db, candidate_id: str) -> tuple:
+    row = db.connection.execute(
+        "SELECT state, diagnosis_id FROM diagnosis_candidates WHERE id=?", (candidate_id,)
+    ).fetchone()
+    return row["state"], row["diagnosis_id"]
+
+
+def test_deleting_a_diagnosis_sends_its_accepted_candidates_to_the_hidden_suggestions(db):
+    add_document(db, "doc-alpha", db.alpha, db.alpha_patient)
+    diagnosis_id = add(db, db.alpha, db.alpha_patient, code="E78.2", name="Mixed lipids")
+    add_accepted_candidate(db, "cand-alpha", "doc-alpha", db.alpha, diagnosis_id)
+    db.connection.commit()
+
+    assert diagnoses.delete(db.connection, db.alpha, diagnosis_id) is True
+    assert candidate_row(db, "cand-alpha") == ("dismissed", None)
+
+
+def test_deleting_another_owners_diagnosis_leaves_their_candidates_alone(db):
+    add_document(db, "doc-alpha", db.alpha, db.alpha_patient)
+    add_document(db, "doc-beta", db.beta, db.beta_patient)
+    alpha_id = add(db, db.alpha, db.alpha_patient, code="E78.2", name="Mixed lipids")
+    beta_id = add(db, db.beta, db.beta_patient, code="E78.2", name="Mixed lipids")
+    add_accepted_candidate(db, "cand-alpha", "doc-alpha", db.alpha, alpha_id)
+    add_accepted_candidate(db, "cand-beta", "doc-beta", db.beta, beta_id)
+    db.connection.commit()
+
+    assert diagnoses.delete(db.connection, db.alpha, beta_id) is False
+    assert candidate_row(db, "cand-beta") == ("accepted", beta_id)
+    assert diagnoses.delete(db.connection, db.beta, alpha_id) is False
+    assert candidate_row(db, "cand-alpha") == ("accepted", alpha_id)
+
+
 def test_set_status_moves_between_the_three_states(db):
     diagnosis_id = add(db, db.alpha, db.alpha_patient, name="Gout", diagnosed_on="2024-01-10")
 
@@ -250,15 +302,58 @@ def test_display_name_uses_the_catalogue_title_for_a_coded_row_without_a_name():
     assert "E78.2" not in (english, ukrainian)
 
 
-def test_display_name_prefers_the_written_name_in_both_locales():
-    row = {"code": "E78.2", "name": "Mixed lipids as written"}
-    assert diagnoses.display_name(row, "en") == "Mixed lipids as written"
-    assert diagnoses.display_name(row, "uk") == "Mixed lipids as written"
+def test_display_name_is_the_catalogue_title_in_the_readers_language_for_a_written_name():
+    row = {"code": "E78.2", "name": "Змішана гіперліпідемія, уточнено лікарем"}
+    assert diagnoses.display_name(row, "en") == icd10.name("E78.2", "en") == "Mixed hyperlipidaemia"
+    assert diagnoses.display_name(row, "uk") == icd10.name("E78.2", "uk") == "Змішана гіперліпідемія"
+
+
+def test_display_name_is_the_written_name_for_an_uncoded_row_in_both_locales():
+    row = {"code": "", "name": "Плантарний фасциїт"}
+    assert diagnoses.display_name(row, "en") == "Плантарний фасциїт"
+    assert diagnoses.display_name(row, "uk") == "Плантарний фасциїт"
+
+
+def test_display_name_is_the_written_name_for_a_code_outside_the_catalogue():
+    assert icd10.entry("Z99.99") is None
+    row = {"code": "Z99.99", "name": "Written only"}
+    assert diagnoses.display_name(row, "en") == "Written only"
+    assert diagnoses.display_name(row, "uk") == "Written only"
 
 
 def test_display_name_falls_back_to_the_code_for_an_unknown_code():
     assert diagnoses.display_name({"code": "Ж00", "name": ""}, "en") == "Ж00"
     assert diagnoses.display_name({"code": "", "name": ""}, "en") == ""
+
+
+def test_written_detail_is_what_the_document_adds_after_the_ukrainian_title():
+    title = icd10.name("I11.9", "uk")
+    row = {"code": "I11.9", "name": title + " Гіпертонічна хвороба Іст, 1ст"}
+    assert diagnoses.written_detail(row) == "Гіпертонічна хвороба Іст, 1ст"
+
+
+def test_written_detail_drops_a_separator_between_the_title_and_the_addition():
+    title = icd10.name("E78.2", "uk")
+    assert diagnoses.written_detail({"code": "E78.2", "name": title + ", як записано"}) == "як записано"
+
+
+def test_written_detail_is_empty_when_the_name_repeats_a_title():
+    uk = icd10.name("E78.2", "uk")
+    en = icd10.name("E78.2", "en")
+    assert diagnoses.written_detail({"code": "E78.2", "name": uk}) == ""
+    assert diagnoses.written_detail({"code": "E78.2", "name": en}) == ""
+    assert diagnoses.written_detail({"code": "E78.2", "name": en.upper()}) == ""
+
+
+def test_written_detail_is_empty_without_a_code_or_a_name_or_for_an_unknown_code():
+    assert diagnoses.written_detail({"code": "", "name": "Плантарний фасциїт"}) == ""
+    assert diagnoses.written_detail({"code": "E78.2", "name": ""}) == ""
+    assert diagnoses.written_detail({"code": "Z99.99", "name": "Written only"}) == ""
+
+
+def test_written_detail_is_the_whole_name_when_it_does_not_start_with_the_title():
+    row = {"code": "B07", "name": "бородавки на руці"}
+    assert diagnoses.written_detail(row) == "бородавки на руці"
 
 
 def test_active_codes_leaves_out_resolved_rows_and_blank_codes(db):

@@ -48,6 +48,10 @@ SOURCES = [
         "name": "НК 025:2021 Класифікатор хвороб та споріднених проблем охорони здоров'я (МКХ-10-АМ), словник ЕСОЗ eHealth/ICD10_AM/condition_codes",
         "url": "https://docs.ehealth.gov.ua/general-mis/tag/public-medical-service-provider-integration-layer/GET/api/dictionaries",
         "identifier": "НК 025:2021",
+        "publisher_uk": "Міністерство охорони здоров'я України / Національна служба здоров'я України",
+        "publisher_en": "Ministry of Health of Ukraine / National Health Service of Ukraine",
+        "name_uk": "НК 025:2021 Класифікатор хвороб та споріднених проблем охорони здоров'я (МКХ-10-АМ), словник ЕСОЗ eHealth/ICD10_AM/condition_codes",
+        "name_en": "NK 025:2021 Classifier of diseases and related health problems (ICD-10-AM), the eHealth dictionary eHealth/ICD10_AM/condition_codes",
     },
     {
         "id": "who-icd10-2019",
@@ -56,6 +60,10 @@ SOURCES = [
         "name": "International Statistical Classification of Diseases and Related Health Problems, 10th Revision (ICD-10), version 2019",
         "url": "https://icd.who.int/browse10/2019/en",
         "identifier": "ICD-10 2019",
+        "publisher_en": "World Health Organization",
+        "publisher_uk": "Всесвітня організація охорони здоров'я",
+        "name_en": "International Statistical Classification of Diseases and Related Health Problems, 10th Revision (ICD-10), version 2019",
+        "name_uk": "Міжнародна статистична класифікація хвороб і споріднених проблем охорони здоров'я, десятий перегляд (МКХ-10), версія 2019 року",
     },
 ]
 

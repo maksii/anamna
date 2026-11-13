@@ -51,6 +51,12 @@ Every imported document has a `review_tasks` record. A review can verify all obs
 
 `diagnoses.py` holds the person's diagnoses: an ICD-10 code (or the words written under it), status, certainty, dates and clinician, entered by hand or accepted from a document. The codes come from the catalogue bundled in `data/icd10.json` (read by `icd10.py`, built by `scripts/build_icd10.py`). Two readers propose diagnoses from documents and wait for the person to accept them: `diagnosis_candidates.py` reads the coded diagnoses in a consultation's text without a model, and `diagnosis_scan.py` reads the rest with the configured AI provider. `diagnosis_matrix.py` lists possible diagnoses that the results suggest; it only combines published bands from the reference library and never sets a threshold of its own. `web/diagnoses_job.py` re-checks the matrix in the background when the record changes. The assistant and the AI export read the recorded and possible diagnoses; neither ever counts a possible one as a diagnosis.
 
+The reader of documents (`diagnosis_candidates.collect`) reads every narrative document, a study report included. Besides coded diagnoses it offers each statement of a conclusion word for word (`parse_conclusion`, candidates with method `text` and no code); statements that say nothing was found are dropped by word lists. The AI reader (`diagnosis_scan`) reads the same document types, and its reading of a document replaces that document's `text` candidates. `READER_VERSION` is part of the job's fingerprint, so a change of the reading rules makes every record be read again.
+
+A diagnosis is titled by the catalogue in the reader's language (`diagnoses.display_name`). What the person or the document wrote beyond that title is `diagnoses.written_detail`, shown as "As written".
+
+Medicines belong to a diagnosis through `diagnosis_treatment`: `GROUPS` maps groups of the WHO ATC classification to ICD-10 categories, and the table `diagnosis_medicines` holds the person's own word, a link (`linked` 1) or a refusal (`linked` 0), which wins over the group match. The page prints the reason for every match.
+
 ## Security model
 
 - Passwords use salted `scrypt` hashes.

@@ -37,6 +37,7 @@ _OWNED_TABLES = {
     "diagnoses.csv": "diagnoses",
     "diagnosis_candidates.csv": "diagnosis_candidates",
     "diagnosis_suspicions.csv": "diagnosis_suspicions",
+    "diagnosis_medicines.csv": "diagnosis_medicines",
 }
 
 

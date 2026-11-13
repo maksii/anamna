@@ -108,6 +108,125 @@ def test_codes_printed_in_a_text_are_the_normalized_codes_it_names():
     assert diagnosis_candidates.codes_in("Код МКХ-10: К11,2 та E78.2; L20-L30") == {"K11.2", "E78.2", "L20", "L30"}
 
 
+# --- conclusions, word for word -----------------------------------------------------
+
+NORMAL_ECHO = (
+    "Лівий шлуночок не розширений, стінки не потовщені. Функція клапанів звичайна. "
+    "Рідини в порожнині перикарду не виявлено."
+)
+LONG_PRESERVED = (
+    "Гіпертрофія лівого шлуночка помірного ступеня з частково збереженими скороченнями стінок серця "
+    "та ознаками перевантаження тиском"
+)
+
+
+def test_a_conclusion_gives_one_item_per_statement_and_a_question_mark_makes_it_provisional():
+    items = diagnosis_candidates.parse_conclusion(
+        "Плантарний фасциїт правої стопи. Артрит. Реактивний артрит, гіперурикемія?"
+    )
+    assert [(item["name"], item["certainty"]) for item in items] == [
+        ("Плантарний фасциїт правої стопи", "confirmed"),
+        ("Артрит", "confirmed"),
+        ("Реактивний артрит, гіперурикемія", "provisional"),
+    ]
+    assert all(item["code"] == "" for item in items)
+
+
+def test_a_sentence_end_after_an_abbreviation_or_before_a_bracket_does_not_split_the_statement():
+    items = diagnosis_candidates.parse_conclusion(
+        "МР-ознаки хондромаляції надколінника І ст. (за Outerbridge). Протрузія диска L5-S1."
+    )
+    assert [item["name"] for item in items] == [
+        "МР-ознаки хондромаляції надколінника І ст. (за Outerbridge)",
+        "Протрузія диска L5-S1",
+    ]
+
+
+def test_a_normal_echo_conclusion_gives_nothing():
+    assert diagnosis_candidates.parse_conclusion(NORMAL_ECHO) == []
+
+
+@pytest.mark.parametrize("text", ["Синусовий ритм, вольтаж збережений. ЕКГ в межах норми.", "Normal Sinus Rhythm"])
+def test_a_normal_ecg_statement_gives_nothing(text):
+    assert diagnosis_candidates.parse_conclusion(text) == []
+
+
+def test_a_preserved_word_before_a_noun_is_kept_because_the_statement_also_holds_a_finding():
+    [item] = diagnosis_candidates.parse_conclusion(LONG_PRESERVED)
+    assert item["name"] == LONG_PRESERVED
+
+
+def test_a_conclusion_that_starts_with_complaints_or_names_icpc_gives_nothing():
+    assert diagnosis_candidates.parse_conclusion("Скарги: A44 вакцинація. Огляд: без змін.") == []
+    assert diagnosis_candidates.parse_conclusion("Вакцинація; ICPC-2: A44") == []
+    assert diagnosis_candidates.parse_conclusion(None) == []
+
+
+def test_a_coded_piece_is_left_to_the_code_reader_and_a_bare_label_is_dropped():
+    assert diagnosis_candidates.parse_conclusion("L02.0 - Абсцес шкіри обличчя; Клінічний діагноз") == []
+
+
+def test_a_statement_the_same_document_already_codes_is_not_offered_again():
+    [item] = diagnosis_candidates.parse_conclusion(
+        "Правобічний сіалоаденіт; Реактивна лімфаденопатія", skip_codes={"K11.2"},
+    )
+    assert item["name"] == "Реактивна лімфаденопатія"
+
+
+def test_a_list_number_is_not_part_of_the_name_and_an_instruction_is_dropped():
+    [item] = diagnosis_candidates.parse_conclusion(
+        "1 Морфологія відповідає зубчастій аденомі; 2. Необхідна кореляція з клінічними даними"
+    )
+    assert item["name"] == "Морфологія відповідає зубчастій аденомі"
+
+
+def test_a_statement_longer_than_200_characters_is_cut_with_an_ellipsis():
+    [item] = diagnosis_candidates.parse_conclusion("Гіпертрофія стінок " * 20)
+    assert len(item["name"]) <= 200
+    assert item["name"].endswith("…")
+
+
+def test_the_same_statement_twice_is_offered_once():
+    assert [item["name"] for item in diagnosis_candidates.parse_conclusion("Артрит. Артрит.")] == ["Артрит"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Синуси вільні.",
+        "Контури діафрагми чіткі, рівні.",
+        "Газовий міхур шлунка розташований типово.",
+        "На рентгенограмі ОГК в прямій проекції легеневі поля прозорі.",
+        "Корені легень структурні, тяжисті.",
+        "Серце - вікові особливості.",
+        "Легеневі поля без вогнищево-інфільтративних змін.",
+        "Бакпосів калу на дисбактеріоз. Чутливість до антибіотиків ДДМ.",
+        "Копрограма від 18.05.2026р: кал неоформлений",
+        "Антимікотикограма від 18.05.2026р: виявлено",
+    ],
+)
+def test_a_description_of_a_normal_finding_or_a_study_heading_gives_nothing(text):
+    assert diagnosis_candidates.parse_conclusion(text) == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Легеневий рисунок збагачений за рахунок судинного компоненту, перибронхіальних змін.",
+        "Незначні сольові нашарування в нирках без порушення уродинаміки.",
+        "Протрузія м/х диска L5-L6.",
+        "Хронічний панкреатит.",
+        "Гостра анальна тріщина.",
+        "Вільна рідина в черевній порожнині.",
+        "Типові ознаки гострого апендициту.",
+        "Структурні зміни печінки.",
+    ],
+)
+def test_a_finding_that_only_resembles_a_normal_word_is_still_one_item(text):
+    [item] = diagnosis_candidates.parse_conclusion(text)
+    assert item["name"] == text.rstrip(".")
+
+
 # --- the database --------------------------------------------------------------------
 
 CONSULTATIONS = {
@@ -183,10 +302,14 @@ def test_collect_inserts_each_diagnosis_once_and_a_second_run_inserts_nothing(db
     assert collect(db) == 0
 
 
-def test_a_duplicate_document_and_a_laboratory_report_are_not_read(db):
+def test_a_duplicate_document_is_not_read(db):
     finding(db, db.docs["dup"], TWO_CODED)
-    finding(db, db.docs["lab"], TWO_CODED)
     assert collect(db) == 0
+
+
+def test_a_laboratory_report_is_read_like_any_other_document(db):
+    finding(db, db.docs["lab"], TWO_CODED)
+    assert collect(db) == 2
 
 
 def test_the_same_code_in_two_documents_is_one_group_with_its_dates(db):
@@ -315,3 +438,77 @@ def test_another_owner_sees_and_accepts_nothing(db):
     assert diagnosis_candidates.accept(db.connection, db.beta, db.beta_patient, ["E78.2"]) == []
     assert diagnosis_candidates.dismiss(db.connection, db.beta, ["E78.2"]) == 0
     assert offered(db)["E78.2"]["mentions"] == 1
+
+
+# --- conclusions in the database -----------------------------------------------------
+
+MRI_KEY = "n:протрузія диска l5-s1"
+
+
+def make_mri(db) -> str:
+    """The laboratory document of the fixture as a study report (MRI)."""
+    db.connection.execute("UPDATE documents SET clinical_type = 'radiology_mri' WHERE id = ?", (db.docs["lab"],))
+    db.connection.commit()
+    return db.docs["lab"]
+
+
+def text_rows(db, document_id: str) -> list[tuple]:
+    rows = db.connection.execute(
+        "SELECT method, code, code_printed, name, certainty, state FROM diagnosis_candidates "
+        "WHERE document_id = ? AND method = 'text' ORDER BY name",
+        (document_id,),
+    ).fetchall()
+    return [tuple(row) for row in rows]
+
+
+def test_a_conclusion_of_a_study_gives_one_text_candidate_and_collecting_again_does_not_repeat_it(db):
+    mri = make_mri(db)
+    finding(db, mri, "Протрузія диска L5-S1.")
+    collect(db)
+    collect(db)
+    assert text_rows(db, mri) == [("text", "", 0, "Протрузія диска L5-S1", "confirmed", "new")]
+    [group] = diagnosis_candidates.groups(db.connection, db.alpha, locale="en")
+    assert group["key"] == MRI_KEY
+    assert group["code"] == ""
+    assert group["methods"] == ["text"]
+
+
+def test_an_uncoded_consultation_diagnosis_is_offered_word_for_word(db):
+    finding(db, db.docs["jan"], NO_CODE)
+    collect(db)
+    found = {group["name"]: group["certainty"] for group in diagnosis_candidates.groups(db.connection, db.alpha, locale="en")}
+    assert found == {
+        "Правобічний сіалоаденіт": "confirmed",
+        "Реактивна підщелепна лімфаденопатія": "confirmed",
+        "Епідемічний паротит": "provisional",
+    }
+
+
+def test_a_dismissed_text_candidate_stays_dismissed_after_collect(db):
+    mri = make_mri(db)
+    finding(db, mri, "Протрузія диска L5-S1.")
+    collect(db)
+    assert diagnosis_candidates.dismiss(db.connection, db.alpha, [MRI_KEY]) == 1
+    db.connection.commit()
+    collect(db)
+    assert offered(db) == {}
+    assert [group["key"] for group in diagnosis_candidates.dismissed(db.connection, db.alpha, locale="en")] == [MRI_KEY]
+    assert text_rows(db, mri) == [("text", "", 0, "Протрузія диска L5-S1", "confirmed", "dismissed")]
+
+
+def test_a_document_the_ai_reader_has_read_gets_no_conclusion_candidates(db):
+    mri = make_mri(db)
+    db.connection.execute(
+        "INSERT INTO diagnosis_scans(document_id, owner_user_id, scanned_at, model, found) "
+        "VALUES (?, ?, '2026-01-01T00:00:00+00:00', 'test/model', 0)",
+        (mri, db.alpha),
+    )
+    db.connection.commit()
+    finding(db, mri, "Протрузія диска L5-S1.")
+    collect(db)
+    assert text_rows(db, mri) == []
+
+
+def test_a_finding_with_empty_summaries_and_text_does_not_crash(db):
+    finding(db, db.docs["jan"], "", text="")
+    assert collect(db) == 0

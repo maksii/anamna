@@ -34,6 +34,10 @@ MESSAGES_DIAGNOSES: dict[str, dict[str, str]] = {
     "dx.origin.suspicion": {"en": "Confirmed from a possible diagnosis", "uk": "Підтверджено з можливого діагнозу"},
     "dx.method.code": {"en": "Read from the code in the document", "uk": "Зчитано за кодом у документі"},
     "dx.method.ai": {"en": "Read by AI", "uk": "Зчитано ШІ"},
+    "dx.method.text": {
+        "en": "Read from the document’s conclusion, word for word",
+        "uk": "Прочитано з висновку документа, дослівно",
+    },
     # Notices and errors after a save or a press.
     "dx.notice.added": {"en": "The diagnosis was added.", "uk": "Діагноз додано."},
     "dx.notice.saved": {"en": "Your changes are saved.", "uk": "Зміни збережено."},
@@ -103,6 +107,7 @@ MESSAGES_DIAGNOSES: dict[str, dict[str, str]] = {
     },
     "dx.card.edit": {"en": "Edit", "uk": "Редагувати"},
     "dx.card.action_aria": {"en": "{action}: {name}", "uk": "{action}: {name}"},
+    "dx.card.written": {"en": "As written:", "uk": "Як записано:"},
     "dx.card.watch": {"en": "Results to watch", "uk": "Показники, за якими варто стежити"},
     "dx.card.area": {"en": "Body area", "uk": "Ділянка організму"},
     "dx.card.clinician": {"en": "Doctor: {name}", "uk": "Лікар: {name}"},
@@ -136,14 +141,22 @@ MESSAGES_DIAGNOSES: dict[str, dict[str, str]] = {
     },
     # Found in documents.
     "dx.found.lead": {
-        "en": "These diagnoses were read from your consultations and clinical reports. Nothing is added until you tick it and press a button.",
-        "uk": "Ці діагнози прочитано з ваших консультацій і клінічних звітів. Нічого не додається, доки ви не позначите пункт і не натиснете кнопку.",
+        "en": "These were read from your consultations and from the conclusions of your studies: MRI, ultrasound, X-ray, ECG and pathology reports. A conclusion of a study is a finding, and your doctor decides what it means. Nothing is added until you tick it and press a button.",
+        "uk": "Це прочитано з ваших консультацій і з висновків ваших досліджень: МРТ, УЗД, рентгену, ЕКГ та гістології. Висновок дослідження є знахідкою, а що вона означає, вирішує ваш лікар. Нічого не додається, доки ви не позначите пункт і не натиснете кнопку.",
     },
     "dx.found.says": {"en": "The document says", "uk": "У документі написано"},
     "dx.found.docs": {"en": "Documents", "uk": "Документи"},
     "dx.found.code_printed": {"en": "The code is printed in the document", "uk": "Код вказано в документі"},
     "dx.found.code_ai": {"en": "The code was suggested by AI", "uk": "Код запропонував ШІ"},
     "dx.found.ai_badge": {"en": "Read by AI, check it against the document", "uk": "Прочитано ШІ, перевірте за документом"},
+    "dx.found.text_badge": {
+        "en": "From the document’s conclusion, word for word",
+        "uk": "З висновку документа, дослівно",
+    },
+    "dx.found.no_code": {
+        "en": "The document prints no ICD-10 code. You can add one after you add the diagnosis.",
+        "uk": "У документі немає коду МКХ-10. Його можна додати після того, як ви додасте діагноз.",
+    },
     "dx.found.add": {"en": "Add to my diagnoses", "uk": "Додати до моїх діагнозів"},
     "dx.found.dismiss": {"en": "Not mine, do not offer again", "uk": "Не мій, більше не пропонувати"},
     "dx.found.dismiss_confirm": {
@@ -156,16 +169,20 @@ MESSAGES_DIAGNOSES: dict[str, dict[str, str]] = {
     # The reading of the documents by AI.
     "dx.scan.heading": {"en": "Reading your documents", "uk": "Читання ваших документів"},
     "dx.scan.none": {
-        "en": "You have no consultations or clinical reports yet. Add them on the Documents page, then come back here.",
-        "uk": "У вас ще немає консультацій чи клінічних звітів. Додайте їх на сторінці «Документи» і поверніться сюди.",
+        "en": "You have no consultations or study reports yet. Add them on the Documents page, then come back here.",
+        "uk": "У вас ще немає консультацій чи висновків досліджень. Додайте їх на сторінці «Документи» і поверніться сюди.",
     },
     "dx.scan.waiting_one": {"en": "{count} document is waiting to be read.", "uk": "{count} документ чекає на читання."},
     "dx.scan.waiting_few": {"en": "{count} documents are waiting to be read.", "uk": "{count} документи чекають на читання."},
     "dx.scan.waiting_many": {"en": "{count} documents are waiting to be read.", "uk": "{count} документів чекають на читання."},
     "dx.scan.all_read": {"en": "All your documents are read.", "uk": "Усі ваші документи прочитано."},
     "dx.scan.off": {
-        "en": "AI reading is switched off on this server. Coded diagnoses are still found without it.",
-        "uk": "Читання ШІ на цьому сервері вимкнено. Діагнози з кодами знаходяться й без нього.",
+        "en": "AI reading is switched off on this server. Coded diagnoses and conclusions of studies are still found without it.",
+        "uk": "Читання ШІ на цьому сервері вимкнено. Діагнози з кодами та висновки досліджень знаходяться й без нього.",
+    },
+    "dx.scan.why": {
+        "en": "Without AI the page shows each conclusion word for word and only the codes the documents print. AI splits a conclusion into separate conditions and suggests an ICD-10 code for each.",
+        "uk": "Без ШІ сторінка показує кожен висновок дослівно і лише ті коди, що надруковані в документах. ШІ розділяє висновок на окремі стани і пропонує для кожного код МКХ-10.",
     },
     "dx.scan.start": {"en": "Read my documents with AI", "uk": "Прочитати мої документи за допомогою ШІ"},
     "dx.scan.sent": {
@@ -209,8 +226,8 @@ MESSAGES_DIAGNOSES: dict[str, dict[str, str]] = {
     },
     "dx.about.found_heading": {"en": "How diagnoses are read from documents", "uk": "Як діагнози читаються з документів"},
     "dx.about.found": {
-        "en": "Coded diagnoses are read from the text of your consultations and clinical reports. A diagnosis is added only when you tick it. Where AI read a diagnosis, the page says so and shows the quote from the document, so you can check it.",
-        "uk": "Діагнози з кодами читаються з тексту ваших консультацій і клінічних звітів. Діагноз додається лише тоді, коли ви його позначите. Якщо діагноз прочитав ШІ, сторінка про це повідомляє і показує цитату з документа, щоб ви могли її перевірити.",
+        "en": "Coded diagnoses and the conclusions of consultations and studies (MRI, ultrasound, X-ray, ECG, pathology) are read from the text of your documents. A statement that says nothing was found is left out. A diagnosis is added only when you tick it. Where AI read a diagnosis, the page says so and shows the quote from the document, so you can check it.",
+        "uk": "Діагнози з кодами та висновки консультацій і досліджень (МРТ, УЗД, рентген, ЕКГ, гістологія) читаються з тексту ваших документів. Твердження про те, що нічого не виявлено, пропускаються. Діагноз додається лише тоді, коли ви його позначите. Якщо діагноз прочитав ШІ, сторінка про це повідомляє і показує цитату з документа, щоб ви могли її перевірити.",
     },
     "dx.about.possible_heading": {"en": "How possible diagnoses are found", "uk": "Як знаходяться можливі діагнози"},
     "dx.about.possible": {
@@ -243,6 +260,7 @@ MESSAGES_DIAGNOSES: dict[str, dict[str, str]] = {
         "en": "This diagnosis has no ICD-10 code, so it has no classification entry.",
         "uk": "Цей діагноз не має коду МКХ-10, тому в класифікації для нього немає запису.",
     },
+    "dx.detail.add_code": {"en": "Add an ICD-10 code", "uk": "Додати код МКХ-10"},
     "dx.detail.affects": {"en": "What it affects", "uk": "На що це впливає"},
     "dx.detail.watch_help": {
         "en": "Each result below is the latest value of a test this diagnosis is watched by. The verdict says which published reference band the value falls in.",
@@ -294,7 +312,7 @@ MESSAGES_DIAGNOSES: dict[str, dict[str, str]] = {
         "uk": "Наприклад, E78.2. Можна також обрати його в пошуку вище.",
     },
     "dx.form.name": {"en": "Name, as your doctor wrote it", "uk": "Назва, як її написав лікар"},
-    "dx.form.name_help": {"en": "Leave it empty to use the official title.", "uk": "Залиште порожнім, щоб використати офіційну назву."},
+    "dx.form.name_help": {"en": "The official title of the code is always shown. Write the doctor’s wording here when it says more, such as the stage or the side.", "uk": "Офіційна назва коду показується завжди. Запишіть тут формулювання лікаря, якщо воно каже більше, наприклад стадію чи бік."},
     "dx.form.certainty": {"en": "How certain is it?", "uk": "Наскільки це певно?"},
     "dx.form.certainty_help": {
         "en": "Preliminary is a working diagnosis that a doctor has not confirmed yet.",

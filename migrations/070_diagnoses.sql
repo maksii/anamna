@@ -50,7 +50,9 @@ CREATE INDEX IF NOT EXISTS idx_diagnosis_scans_owner ON diagnosis_scans(owner_us
 
 -- A diagnosis read from a document, not yet part of the record.
 -- method      'code' when the document printed an ICD-10 code and a name we
---             could check against the catalogue; 'ai' when the model read it.
+--             could check against the catalogue; 'text' a statement of the
+--             document's conclusion, word for word, with no code; 'ai' when
+--             the model read it.
 -- code_printed 1 when the code itself is written in the document.
 -- name_key    the name casefolded with single spaces; with code it is what
 --             makes two mentions of the same diagnosis one candidate.
@@ -64,7 +66,7 @@ CREATE TABLE IF NOT EXISTS diagnosis_candidates (
     id TEXT PRIMARY KEY,
     owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
-    method TEXT NOT NULL CHECK (method IN ('code','ai')),
+    method TEXT NOT NULL CHECK (method IN ('code','text','ai')),
     code TEXT NOT NULL DEFAULT '',
     code_printed INTEGER NOT NULL DEFAULT 0,
     name TEXT NOT NULL,
@@ -111,3 +113,18 @@ CREATE TABLE IF NOT EXISTS diagnosis_refresh (
     fingerprint TEXT NOT NULL,
     refreshed_at TEXT NOT NULL
 );
+
+-- Which of the person's medicines and supplements (factors) belong to a
+-- diagnosis, in the person's own word.  linked 1: "I take this for this
+-- diagnosis".  linked 0: "not for this diagnosis", which hides a match the
+-- application made from the medicine's ATC group.  No row: the ATC group
+-- alone decides.
+CREATE TABLE IF NOT EXISTS diagnosis_medicines (
+    diagnosis_id TEXT NOT NULL REFERENCES diagnoses(id) ON DELETE CASCADE,
+    factor_id TEXT NOT NULL REFERENCES factors(id) ON DELETE CASCADE,
+    owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    linked INTEGER NOT NULL CHECK (linked IN (0, 1)),
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (diagnosis_id, factor_id)
+);
+CREATE INDEX IF NOT EXISTS idx_diagnosis_medicines_owner ON diagnosis_medicines(owner_user_id);

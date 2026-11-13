@@ -29,7 +29,7 @@ import re
 from collections.abc import Callable, Collection, Mapping, Sequence
 from datetime import date
 
-from .. import diagnoses, diagnosis_matrix, factors, icd10
+from .. import diagnoses, diagnosis_matrix, diagnosis_treatment, factors, icd10
 from ..devices.catalog import CORE_METRIC_KEYS
 from ..i18n import get_locale, t, t_plural, translate_phrase
 from ..panels import SAME_DEVICE_KEYS
@@ -753,7 +753,12 @@ def _add_diagnoses(out, connection, owner_user_id: str, catalog) -> bool:
     possible = diagnosis_matrix.listing(connection, owner_user_id)
     out += [f"## {t('ai.dx_heading')}", ""]
     if rows:
-        out += [diagnosis_line(row, get_locale()) for row in rows]
+        for row in rows:
+            line = diagnosis_line(row, get_locale())
+            meds = diagnosis_treatment.names(connection, owner_user_id, row, today=date.today())
+            if meds:
+                line += "; " + t("ai.dx_treated_with", names=", ".join(meds))
+            out.append(line)
         out.append("")
     else:
         out += [t("ai.dx_none"), ""]

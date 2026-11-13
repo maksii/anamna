@@ -151,7 +151,13 @@ def set_status(
 
 
 def delete(connection: sqlite3.Connection, owner_id: str, diagnosis_id: str) -> bool:
-    """Delete one of the owner's diagnoses; False when no row matched."""
+    """Delete one of the owner's diagnoses; False when no row matched.  What the documents said about it goes to the hidden suggestions, where the person can offer it again."""
+    if get(connection, owner_id, diagnosis_id) is None:
+        return False
+    connection.execute(
+        "UPDATE diagnosis_candidates SET state='dismissed', diagnosis_id=NULL WHERE diagnosis_id=? AND owner_user_id=?",
+        (diagnosis_id, owner_id),
+    )
     cursor = connection.execute("DELETE FROM diagnoses WHERE id=? AND owner_user_id=?", (diagnosis_id, owner_id))
     return cursor.rowcount > 0
 
@@ -175,13 +181,33 @@ def listing(connection: sqlite3.Connection, owner_id: str) -> list[dict]:
     return [dict(row) for row in rows]
 
 
+_DETAIL_SEPARATORS = " ,.;:-–—"
+
+
 def display_name(row: Mapping[str, Any], locale: str) -> str:
-    """The name the person or a document wrote, else the catalogue title, else the code."""
+    """The catalogue title of the code in the reader's language.  Without a catalogued code, the
+    name as written.  Without a name, the code."""
+    code = str(row["code"] or "")
+    title = icd10.name(code, locale) if code else ""
+    return title or str(row["name"] or "").strip() or code
+
+
+def written_detail(row: Mapping[str, Any]) -> str:
+    """What the person or the document wrote beyond the catalogue title; '' when the name only
+    repeats the title."""
     name = str(row["name"] or "").strip()
-    if name:
-        return name
-    title = icd10.name(row["code"], locale) if row["code"] else ""
-    return title or row["code"]
+    code = str(row["code"] or "")
+    if not name or not code or icd10.entry(code) is None:
+        return ""
+    for locale in ("uk", "en"):
+        title = icd10.name(code, locale)
+        if not title:
+            continue
+        if name.casefold() == title.casefold():
+            return ""
+        if name.casefold().startswith(title.casefold()):
+            return name[len(title):].lstrip(_DETAIL_SEPARATORS)
+    return name
 
 
 def active_codes(connection: sqlite3.Connection, owner_id: str) -> set[str]:

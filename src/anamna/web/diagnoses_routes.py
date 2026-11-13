@@ -18,7 +18,9 @@ from fastapi import HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from starlette.concurrency import run_in_threadpool
 
-from .. import ai, diagnoses, diagnosis_candidates, diagnosis_matrix, diagnosis_scan, factor_jobs, icd10
+from .. import (
+    ai, diagnoses, diagnosis_candidates, diagnosis_matrix, diagnosis_scan, diagnosis_treatment, factor_jobs, factors, icd10,
+)
 from ..config import resource_path
 from ..db import connect
 from ..health import AREA_BY_ID, _diagnosis_areas
@@ -134,6 +136,30 @@ def _chip(card: dict) -> dict:
     }
 
 
+def _medicine_view(page: _Page, item: dict) -> dict:
+    """One medicine of a diagnosis as the pages print it, with the reason it is shown."""
+    factor = item["factor"]
+    status = str(factor["effective_status"])
+    basis = item["basis"]
+    if basis == "linked":
+        basis_text = t("dx.treat.basis_linked")
+    else:
+        basis_text = t("dx.treat.basis_atc", group=t("dx.atc." + item["group"]), code=item["atc_prefix"])
+    return {
+        "id": factor["id"],
+        "name": str(factor["name"]),
+        "substance": _text(factor["substance"]),
+        "regimen": factors.regimen_text(factor, page.locale),
+        "status": status,
+        "status_label": t("med.status." + status),
+        "since_text": t("dx.since", date=_date(factor["started_on"])) if factor["started_on"] else "",
+        "until_text": t("dx.until", date=_date(factor["ended_on"])) if factor["ended_on"] else "",
+        "url": f"/medicines/{factor['id']}",
+        "basis": basis,
+        "basis_text": basis_text,
+    }
+
+
 def _watch(page: _Page, code: str) -> list[dict]:
     """The metrics the person has a card for that bear on this diagnosis."""
     chips = []
@@ -146,16 +172,14 @@ def _watch(page: _Page, code: str) -> list[dict]:
 
 def _diagnosis_view(page: _Page, row) -> dict:
     code = str(row["code"] or "")
-    name = diagnoses.display_name(row, page.locale)
-    title = icd10.name(code, page.locale) if code else ""
-    if title.casefold() == name.casefold():
-        title = ""
+    # ponytail: one factors.listing per diagnosis card; hoist to one listing per request if a record grows to hundreds of diagnoses.
+    medicines = diagnosis_treatment.medicines(page.connection, page.owner_id, row, today=date.today())
     return {
         "id": row["id"],
         "url": f"/diagnoses/{row['id']}",
         "code": code,
-        "name": name,
-        "title": title,
+        "name": diagnoses.display_name(row, page.locale),
+        "written": diagnoses.written_detail(row),
         "status": row["status"],
         "status_label": t(f"dx.status.{row['status']}"),
         "certainty": row["certainty"],
@@ -171,6 +195,7 @@ def _diagnosis_view(page: _Page, row) -> dict:
         "chapter_text": _chapter_text(code, page.locale),
         "area": _area(code),
         "watch": _watch(page, code),
+        "medicines": [_medicine_view(page, item) for item in medicines],
     }
 
 
@@ -226,30 +251,46 @@ def _found_when(group: dict) -> str:
 
 def _found_view(page: _Page, group: dict) -> dict:
     documents = [ref for document in group["documents"] if (ref := _document_ref(page, document["id"]))]
+    code, title = group["code"], group["title"]
+    titled = bool(code and title)
+    written_raw = group["name"] if group["name"] != title else ""
+    method = "ai" if "ai" in group["methods"] else "code" if "code" in group["methods"] else "text"
     return {
         "key": group["key"],
-        "code": group["code"],
-        "name": group["name"],
-        "title": group["title"],
+        "code": code,
+        "name": title if titled else group["name"],
+        "written": diagnoses.written_detail({"code": code, "name": written_raw}) if titled else "",
         "certainty": group["certainty"],
         "certainty_label": t(f"dx.certainty.{group['certainty']}"),
         "mentions_text": t_plural("dx.found.mentions", group["mentions"]),
         "when_text": _found_when(group),
         "quote": group["quote"],
         "code_printed": bool(group["code_printed"]),
-        "ai": "ai" in group["methods"],
+        "method": method,
+        "ai": method == "ai",
+        "text": method == "text",
         "documents": documents,
         "existing_url": f"/diagnoses/{group['existing_id']}" if group.get("existing_id") else "",
     }
 
 
 @lru_cache(maxsize=1)
-def _sources() -> list[dict]:
-    """The catalogue's sources as the page lists them; read once."""
+def _raw_sources() -> list[dict]:
+    """The catalogue's sources exactly as the file carries them; read once."""
     data = json.loads(resource_path("icd10.json").read_text(encoding="utf-8"))
+    return list(data["sources"])
+
+
+def _sources(locale: str) -> list[dict]:
+    """The catalogue's sources as the page lists them, names and publishers in the reader's locale."""
     return [
-        {key: source.get(key, "") for key in ("name", "publisher", "url", "region")}
-        for source in data["sources"]
+        {
+            "name": source.get(f"name_{locale}") or source.get("name", ""),
+            "publisher": source.get(f"publisher_{locale}") or source.get("publisher", ""),
+            "url": source.get("url", ""),
+            "region": source.get("region", ""),
+        }
+        for source in _raw_sources()
     ]
 
 
@@ -312,7 +353,7 @@ def _diagnoses_page(w: _Wiring, request: Request, saved: str, error: str):
         current=lists["current"], provisional=lists["provisional"], past=lists["past"],
         possible=possible, muted=muted, found=fresh, found_existing=existing, found_dismissed=dismissed,
         scan=scan, saved=_message("dx.notice", saved), error=_message("dx.error", error),
-        checked_text=t("dx.checked", date=_date(last)) if last else "", sources=_sources(),
+        checked_text=t("dx.checked", date=_date(last)) if last else "", sources=_sources(get_locale()),
     ))
 
 
@@ -461,6 +502,29 @@ def _delete(w: _Wiring, diagnosis_id: str, user, form):
     return _redirect("/diagnoses?saved=deleted")
 
 
+def _medicine_action(w: _Wiring, diagnosis_id: str, user, form):
+    """Link a medicine to a diagnosis, or say it is not for this diagnosis."""
+    owner_id = user["id"]
+    factor_id = str(form.get("factor_id") or "")
+    action = str(form.get("action") or "")
+    refused = _redirect(f"/diagnoses/{diagnosis_id}?error=medicine#dx-treatment")
+    with connect(w.settings) as connection:
+        if diagnoses.get(connection, owner_id, diagnosis_id) is None:
+            raise HTTPException(404)
+        if action not in ("add", "remove"):
+            return refused
+        linked = action == "add"
+        write = diagnosis_treatment.link if linked else diagnosis_treatment.unlink
+        if not write(connection, owner_id, diagnosis_id, factor_id):
+            return refused
+        audit_action = "diagnosis.medicine_link" if linked else "diagnosis.medicine_unlink"
+        w.audit(user["id"], user["id"], audit_action, "diagnosis", diagnosis_id, {"factor_id": factor_id},
+                connection=connection)
+        connection.commit()
+    saved = "medicine_linked" if linked else "medicine_unlinked"
+    return _redirect(f"/diagnoses/{diagnosis_id}?saved={saved}#dx-treatment")
+
+
 def _possible_action(w: _Wiring, suspicion_id: str, user, form):
     owner_id = user["id"]
     action = str(form.get("action") or "")
@@ -561,8 +625,13 @@ def _detail_page(w: _Wiring, request: Request, diagnosis_id: str, saved: str, er
             for mention in diagnosis_candidates.mentions(connection, owner["id"], diagnosis_id)
         ]
         suspicion = _confirmed_suspicion(page, diagnosis_id)
+        medicine_choices = [
+            {"id": factor["id"], "name": factor["name"]}
+            for factor in diagnosis_treatment.choices(connection, owner["id"], row, today=date.today())
+        ]
     return w.templates.TemplateResponse(request, "diagnosis_detail.html", w.template_context(
         request, active="diagnoses", item=item, entry=entry, mentions=mentions, suspicion=suspicion,
+        medicine_choices=medicine_choices, treatment_source_url=diagnosis_treatment.SOURCE_URL,
         writable=_writable(user, owner), saved=_message("dx.notice", saved),
         error=_message("dx.error", error),
     ))
@@ -677,6 +746,10 @@ def register_routes(app, settings, *, templates, template_context, require_user,
     @app.post("/diagnoses/{diagnosis_id}/status")
     async def status_page(request: Request, diagnosis_id: str):
         return await _write(w, request, partial(_set_status, w, diagnosis_id))
+
+    @app.post("/diagnoses/{diagnosis_id}/medicines")
+    async def medicines_page(request: Request, diagnosis_id: str):
+        return await _write(w, request, partial(_medicine_action, w, diagnosis_id))
 
     @app.post("/diagnoses/{diagnosis_id}/delete")
     async def delete_page(request: Request, diagnosis_id: str):

@@ -38,7 +38,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from markupsafe import Markup
 from starlette.concurrency import run_in_threadpool
 
-from .. import chat, diagnoses, diagnosis_matrix
+from .. import chat, diagnoses, diagnosis_matrix, diagnosis_treatment
 from ..ai import AIUnavailable, redact_document_text
 from ..db import connect
 from ..i18n import activate_locale, format_number_localized, get_locale, reset_locale, t, t_plural
@@ -719,7 +719,11 @@ def _tool_get_diagnoses(connection, owner_id: str) -> str:
     rows = diagnoses.listing(connection, owner_id)
     possible = diagnosis_matrix.listing(connection, owner_id)
     if rows:
-        out = ["Diagnoses:", *(diagnosis_line(row, "en", plain=True) for row in rows)]
+        out = ["Diagnoses:"]
+        for row in rows:
+            line = diagnosis_line(row, "en", plain=True)
+            meds = diagnosis_treatment.names(connection, owner_id, row, today=date.today())
+            out.append(f"{line}; treated with: {', '.join(meds)}" if meds else line)
     else:
         out = ["Diagnoses: none recorded."]
     if possible:

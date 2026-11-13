@@ -7,6 +7,8 @@ switch is set by hand, so nothing here reaches a model.
 
 from __future__ import annotations
 
+import re
+import uuid
 from contextlib import ExitStack
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
@@ -15,7 +17,7 @@ import pytest
 from fastapi.testclient import TestClient
 from markupsafe import escape
 
-from anamna import ai, diagnosis_matrix, factor_jobs, security
+from anamna import ai, diagnosis_matrix, factor_jobs, icd10, security
 from anamna.db import connect, migrate, utc_now
 from anamna.i18n import MESSAGES
 from anamna.security import create_access_token, create_user
@@ -143,6 +145,52 @@ def add_candidate(world: World, code: str, name: str) -> None:
 
 def candidate_state(world: World, code: str) -> str:
     return rows(world, "SELECT state FROM diagnosis_candidates WHERE code = ?", (code,))[0]["state"]
+
+
+def add_factor(world: World, *, name: str = "Valsartan 80 mg", atc: str = "C09CA03") -> str:
+    """A medicine on the owner's Medicines page, as the page saves it."""
+    factor_id = str(uuid.uuid4())
+    now = utc_now()
+    with connect(world.settings) as connection:
+        connection.execute(
+            "INSERT INTO factors(id, owner_user_id, patient_id, kind, name, atc_code, status, created_at, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            (factor_id, world.alpha, world.patient, "medicine", name, atc, "current", now, now),
+        )
+        connection.commit()
+    return factor_id
+
+
+def add_text_candidate(world: World, name: str, certainty: str = "confirmed") -> None:
+    """A statement of a conclusion the reader took word for word; the document prints no ICD-10 code."""
+    with connect(world.settings) as connection:
+        connection.execute(
+            """INSERT INTO diagnosis_candidates(
+                   id, owner_user_id, document_id, method, code, code_printed, name, name_key,
+                   certainty, timing, event_date, date_exact, quote, state, created_at)
+               VALUES (?, ?, ?, 'text', '', 0, ?, ?, ?, 'now', '2025-01-15', 1, ?, 'new', ?)""",
+            (str(uuid.uuid4()), world.alpha, world.document, name, name.casefold(), certainty, name, utc_now()),
+        )
+        connection.commit()
+
+
+def found_row(page: str, name: str) -> str:
+    """The one row of the found list that names the diagnosis, cut at its closing tag."""
+    part = next(piece for piece in page.split('class="dx-found"')[1:] if name in piece)
+    return part[: part.index("</li>")]
+
+
+def heading_text(page: str) -> str:
+    """The text of the page's first heading, tags removed."""
+    match = re.search(r"<h1[^>]*>(.*?)</h1>", page, re.DOTALL)
+    assert match is not None
+    return " ".join(re.sub(r"<[^>]+>", " ", match.group(1)).split())
+
+
+def page_title(page: str) -> str:
+    match = re.search(r"<title[^>]*>(.*?)</title>", page, re.DOTALL)
+    assert match is not None
+    return match.group(1)
 
 
 def test_the_record_is_listed_in_both_locales(world, clients):
@@ -490,3 +538,171 @@ def test_a_guest_is_sent_back_from_the_form_and_refused_every_write(world, clien
     assert rows(world, "SELECT code FROM diagnoses WHERE owner_user_id = ?", (world.alpha,))[0]["code"] == "E78.2"
     assert len(rows(world, "SELECT id FROM diagnoses WHERE owner_user_id = ?", (world.alpha,))) == 1
     assert candidate_state(world, "K11.2") == "new"
+
+
+def test_a_coded_diagnosis_is_titled_in_the_reader_language_and_keeps_the_written_words(world, clients):
+    alpha = clients("alpha@example.test")
+    written = "Гіпертонічна хвороба"
+    assert post_new(world, alpha, code="I11.9", name=written).status_code == 303
+    diagnosis_id = diagnosis_id_for(world, "I11.9", name=written)
+    english_title = str(escape(icd10.name("I11.9", "en")))
+    ukrainian_title = str(escape(icd10.name("I11.9", "uk")))
+
+    alpha.cookies.set("anamna_lang", "en")
+    detail = alpha.get(f"/diagnoses/{diagnosis_id}").text
+    assert english_title in heading_text(detail)
+    assert written not in heading_text(detail)
+    assert written not in page_title(detail)
+    assert "As written:" in detail
+    assert written in detail[detail.index("As written:"):]
+    assert english_title in alpha.get("/diagnoses").text
+
+    alpha.cookies.set("anamna_lang", "uk")
+    detail = alpha.get(f"/diagnoses/{diagnosis_id}").text
+    assert ukrainian_title in heading_text(detail)
+    assert "Як записано:" in detail
+    assert written in detail[detail.index("Як записано:"):]
+
+
+def test_a_medicine_for_the_diagnosis_is_shown_on_its_detail_page_and_its_card(world, clients):
+    alpha = clients("alpha@example.test")
+    assert post_new(world, alpha, code="I11.9").status_code == 303
+    diagnosis_id = diagnosis_id_for(world, "I11.9")
+    factor_id = add_factor(world)
+
+    alpha.cookies.set("anamna_lang", "en")
+    detail = alpha.get(f"/diagnoses/{diagnosis_id}").text
+    assert "Valsartan 80 mg" in detail
+    assert "Agents acting on the renin-angiotensin system" in detail
+    assert f"/medicines/{factor_id}" in detail
+    assert "Valsartan 80 mg" in alpha.get("/diagnoses").text
+
+    alpha.cookies.set("anamna_lang", "uk")
+    detail = alpha.get(f"/diagnoses/{diagnosis_id}").text
+    assert str(escape(MESSAGES["dx.atc.c09"]["uk"])) in detail
+    assert f"/medicines/{factor_id}" in detail
+
+
+def test_a_medicine_is_removed_from_a_diagnosis_and_linked_back(world, clients):
+    alpha = clients("alpha@example.test")
+    alpha.cookies.set("anamna_lang", "en")
+    assert post_new(world, alpha, code="I11.9").status_code == 303
+    diagnosis_id = diagnosis_id_for(world, "I11.9")
+    factor_id = add_factor(world)
+    path = f"/diagnoses/{diagnosis_id}/medicines"
+
+    removed = alpha.post(path, data={"factor_id": factor_id, "action": "remove", "csrf_token": csrf(world, alpha)},
+                         follow_redirects=False)
+    assert removed.status_code == 303
+    assert "saved=medicine_unlinked" in removed.headers["location"]
+    notice = alpha.get(removed.headers["location"]).text
+    assert str(escape(MESSAGES["dx.notice.medicine_unlinked"]["en"])) in notice
+    detail = alpha.get(f"/diagnoses/{diagnosis_id}").text
+    assert f"/medicines/{factor_id}" not in detail
+    assert f'<option value="{factor_id}">' in detail
+
+    linked = alpha.post(path, data={"factor_id": factor_id, "action": "add", "csrf_token": csrf(world, alpha)},
+                        follow_redirects=False)
+    assert linked.status_code == 303
+    assert "saved=medicine_linked" in linked.headers["location"]
+    detail = alpha.get(f"/diagnoses/{diagnosis_id}").text
+    assert f"/medicines/{factor_id}" in detail
+    assert "You linked this medicine" in detail
+    assert f'<option value="{factor_id}">' not in detail
+
+
+def test_a_medicine_link_that_cannot_be_made_is_refused_and_writes_nothing(world, clients):
+    alpha = clients("alpha@example.test")
+    alpha.cookies.set("anamna_lang", "en")
+    assert post_new(world, alpha, code="I11.9").status_code == 303
+    diagnosis_id = diagnosis_id_for(world, "I11.9")
+    factor_id = add_factor(world)
+    path = f"/diagnoses/{diagnosis_id}/medicines"
+
+    missing = alpha.post(path, data={"factor_id": "no-such-medicine", "action": "add",
+                                     "csrf_token": csrf(world, alpha)}, follow_redirects=False)
+    assert missing.status_code == 303
+    assert "error=medicine" in missing.headers["location"]
+    assert str(escape(MESSAGES["dx.error.medicine"]["en"])) in alpha.get(missing.headers["location"]).text
+    unknown_action = alpha.post(path, data={"factor_id": factor_id, "action": "explode",
+                                            "csrf_token": csrf(world, alpha)}, follow_redirects=False)
+    assert "error=medicine" in unknown_action.headers["location"]
+    assert rows(world, "SELECT factor_id FROM diagnosis_medicines") == []
+
+    unknown = alpha.post("/diagnoses/nothing-here/medicines",
+                         data={"factor_id": factor_id, "action": "add", "csrf_token": csrf(world, alpha)})
+    assert unknown.status_code == 404
+    refused = alpha.post(path, data={"factor_id": factor_id, "action": "add", "csrf_token": "x"},
+                         follow_redirects=False)
+    assert refused.status_code == 403
+    assert rows(world, "SELECT factor_id FROM diagnosis_medicines") == []
+
+
+def test_a_share_viewer_and_a_guest_see_the_treatment_but_cannot_change_it(world, clients):
+    alpha = clients("alpha@example.test")
+    assert post_new(world, alpha, code="I11.9").status_code == 303
+    diagnosis_id = diagnosis_id_for(world, "I11.9")
+    factor_id = add_factor(world)
+    path = f"/diagnoses/{diagnosis_id}/medicines"
+    alpha.post("/profile/shares", data={"email": "bravo@example.test", "csrf_token": csrf(world, alpha)})
+    bravo = clients("bravo@example.test")
+    bravo.post("/profile/view", data={"owner_user_id": world.alpha, "csrf_token": csrf(world, bravo)})
+
+    page = bravo.get(f"/diagnoses/{diagnosis_id}").text
+    assert f"/medicines/{factor_id}" in page
+    assert f'action="{path}"' not in page
+    refused = bravo.post(path, data={"factor_id": factor_id, "action": "remove", "csrf_token": csrf(world, bravo)})
+    assert refused.status_code == 403
+
+    with TestClient(create_app(world.settings)) as guest_app:
+        expires = (datetime.now(UTC) + timedelta(days=14)).replace(microsecond=0).isoformat()
+        _, secret = create_access_token(world.settings, world.alpha, kind="guest", label="doctor", expires_at=expires)
+        assert guest_app.get(f"/t/{secret}", follow_redirects=False).status_code in (302, 303)
+        guest_app.cookies.set("anamna_lang", "en")
+        page = guest_app.get(f"/diagnoses/{diagnosis_id}").text
+        assert f"/medicines/{factor_id}" in page
+        assert f'action="{path}"' not in page
+        refused = guest_app.post(path, data={"factor_id": factor_id, "action": "remove", "csrf_token": "x"})
+        assert refused.status_code == 403
+
+    assert rows(world, "SELECT factor_id FROM diagnosis_medicines") == []
+
+
+def test_a_text_candidate_says_the_document_prints_no_code(world, clients):
+    alpha = clients("alpha@example.test")
+    alpha.cookies.set("anamna_lang", "en")
+    add_text_candidate(world, "Плантарний фасциїт")
+    page = alpha.get("/diagnoses").text
+    assert "Плантарний фасциїт" in page
+    assert str(escape(MESSAGES["dx.found.text_badge"]["en"])) in page
+    assert str(escape(MESSAGES["dx.found.no_code"]["en"])) in page
+
+
+def test_a_text_candidate_carries_a_certainty_pill_only_when_it_is_provisional(world, clients):
+    alpha = clients("alpha@example.test")
+    alpha.cookies.set("anamna_lang", "en")
+    add_text_candidate(world, "Плантарний фасциїт", certainty="confirmed")
+    add_text_candidate(world, "Тендиніт ахілового сухожилля", certainty="provisional")
+    page = alpha.get("/diagnoses").text
+    confirmed = found_row(page, "Плантарний фасциїт")
+    provisional = found_row(page, "Тендиніт ахілового сухожилля")
+    assert str(escape(MESSAGES["dx.certainty.confirmed"]["en"])) not in confirmed
+    assert str(escape(MESSAGES["dx.certainty.provisional"]["en"])) in provisional
+
+
+def test_a_coded_candidate_shows_the_english_catalogue_title_first(world, clients):
+    alpha = clients("alpha@example.test")
+    alpha.cookies.set("anamna_lang", "en")
+    add_candidate(world, "I11.9", "Гіпертонічна хвороба")
+    page = alpha.get("/diagnoses").text
+    assert str(escape(icd10.name("I11.9", "en"))) in page
+    assert str(escape(icd10.name("I11.9", "uk"))) not in page
+    assert "Гіпертонічна хвороба" in page[page.index(str(escape(icd10.name("I11.9", "en")))):]
+
+
+def test_the_sources_are_named_in_the_reader_language(world, clients):
+    alpha = clients("alpha@example.test")
+    alpha.cookies.set("anamna_lang", "en")
+    assert str(escape("Ministry of Health of Ukraine / National Health Service of Ukraine")) in alpha.get("/diagnoses").text
+    alpha.cookies.set("anamna_lang", "uk")
+    assert str(escape("Всесвітня організація охорони здоров'я")) in alpha.get("/diagnoses").text

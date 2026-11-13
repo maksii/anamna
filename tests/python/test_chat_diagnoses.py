@@ -133,6 +133,26 @@ def test_another_persons_diagnoses_and_possible_diagnoses_never_appear(tmp_path:
     assert "E03.9" not in text
 
 
+def _medicine(settings, owner: str, name: str, atc: str) -> None:
+    """A current medicine of ``owner`` on the Medicines page, inserted as the page would store it."""
+    now = utc_now()
+    with connect(settings) as db:
+        db.execute(
+            "INSERT INTO factors(id, owner_user_id, patient_id, kind, name, atc_code, status, created_at, updated_at) "
+            "VALUES (?, ?, ?, 'medicine', ?, ?, 'current', ?, ?)",
+            (f"f-{name}-{owner}", owner, f"patient-{owner}", name, atc, now, now),
+        )
+
+
+def test_the_tool_names_a_current_medicine_beside_the_diagnosis_it_treats(tmp_path: Path):
+    settings, owner, _client = build(tmp_path)
+    _add(settings, owner, code="I11.9")
+    _medicine(settings, owner, "Valsartan", "C09CA03")
+    lines = _run(settings, owner).splitlines()
+    (line,) = [line for line in lines if line.startswith("- I11.9 ")]
+    assert line.endswith("; treated with: Valsartan")
+
+
 # --- the account archive ----------------------------------------------------------
 
 
@@ -175,6 +195,14 @@ def test_the_export_lists_recorded_diagnoses_in_ukrainian(tmp_path: Path):
     assert "- E78.2 Змішана гіперліпідемія; статус: " in text
     assert "Діагнози, яких немає в переліку моїх діагнозів вище" in text
     assert "Діагнози, які вже встановлено" not in text
+
+
+def test_the_export_names_the_current_medicine_of_a_recorded_diagnosis(tmp_path: Path):
+    settings, owner, client = build(tmp_path)
+    _add(settings, owner, code="I11.9")
+    _medicine(settings, owner, "Valsartan", "C09CA03")
+    text = _prompt(client, locale="en")
+    assert any(line.startswith("- I11.9 ") and line.endswith("; treated with: Valsartan") for line in text.splitlines())
 
 
 def test_the_export_without_diagnoses_keeps_the_old_gap_line(tmp_path: Path):

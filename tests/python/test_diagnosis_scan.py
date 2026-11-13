@@ -9,6 +9,7 @@ from __future__ import annotations
 import functools
 import json
 import urllib.request
+import uuid
 from pathlib import Path
 
 import pytest
@@ -114,6 +115,16 @@ def sent_payload(calls: list[dict]) -> dict:
 
 
 # --- what is waiting ---------------------------------------------------------------
+
+def test_waiting_includes_the_report_of_a_study_but_not_a_laboratory_report(tmp_path: Path):
+    settings = seeded(tmp_path)
+    with connect(settings) as connection:
+        add_document(connection, "d7", "u1", "p1", clinical_type="radiology_mri", report_date="2026-03-01")
+        add_document(connection, "d8", "u1", "p1", clinical_type="laboratory", report_date="2026-03-02")
+    with connect(settings) as connection:
+        assert [row["id"] for row in diagnosis_scan.waiting(connection, "u1")] == ["d1", "d7"]
+        assert diagnosis_scan.counts(connection, "u1") == {"documents": 2, "waiting": 2}
+
 
 def test_waiting_sees_only_the_owners_scanned_types_that_are_not_duplicates_or_already_scanned(tmp_path: Path):
     settings = seeded(tmp_path)
@@ -340,3 +351,45 @@ def test_with_ai_switched_off_read_document_raises_disabled_before_any_call(tmp_
             diagnosis_scan.read_document(settings, connection, DOCUMENT, locale="uk")
     assert refused.value.reason == "disabled"
     assert calls == []
+
+
+def test_a_study_report_is_sent_with_its_type_and_the_prompt_asks_for_the_abnormal_conditions_it_names(
+    tmp_path: Path, monkeypatch,
+):
+    settings = seeded(tmp_path)
+    calls = stub_model(settings, monkeypatch, [reply()])
+    study = {"id": "d1", "clinical_type": "radiology_mri", "date": "2026-01-01"}
+    with connect(settings) as connection:
+        diagnosis_scan.read_document(settings, connection, study, locale="uk")
+    assert sent_payload(calls)["document"]["type"] == "radiology_mri"
+    assert "each abnormal condition its conclusion names" in diagnosis_scan.SYSTEM
+    assert "measurements and normal findings of an examination or a study" in diagnosis_scan.SYSTEM
+
+
+# --- the AI's reading replaces the word-for-word conclusion candidates ---------------
+
+def insert_text(connection, document_id: str, name: str, state: str) -> None:
+    connection.execute(
+        """INSERT INTO diagnosis_candidates(id, owner_user_id, document_id, method, code, code_printed, name,
+               name_key, certainty, timing, event_date, date_exact, quote, state, diagnosis_id, created_at)
+           VALUES (?, 'u1', ?, 'text', '', 0, ?, ?, 'confirmed', 'now', NULL, 0, ?, ?, NULL,
+                   '2026-01-01T00:00:00+00:00')""",
+        (str(uuid.uuid4()), document_id, name, name.casefold(), name, state),
+    )
+
+
+def test_store_replaces_the_new_conclusion_candidates_of_its_document_and_keeps_a_dismissed_one(tmp_path: Path):
+    settings = seeded(tmp_path)
+    with connect(settings) as connection:
+        insert_text(connection, "d1", "Протрузія диска L5-S1", "new")
+        insert_text(connection, "d1", "Кіста нирки", "dismissed")
+        diagnosis_scan.store(connection, "u1", "d1", "2026-01-01", [store_item()], "test/model")
+        connection.commit()
+    with connect(settings) as connection:
+        rows = connection.execute(
+            "SELECT method, name, state FROM diagnosis_candidates WHERE document_id = 'd1' ORDER BY method, name"
+        ).fetchall()
+        assert [tuple(row) for row in rows] == [
+            ("ai", "Гіпертонічна хвороба", "new"),
+            ("text", "Кіста нирки", "dismissed"),
+        ]

@@ -47,7 +47,7 @@ def _patient_inputs(connection, owner_id: str) -> tuple:
 
 def fingerprint(connection, owner_id: str) -> str:
     """One string that changes whenever a refresh could give a different answer."""
-    parts: list = [date.today().isoformat(), len(diagnosis_matrix.RULES)]
+    parts: list = [date.today().isoformat(), len(diagnosis_matrix.RULES), diagnosis_candidates.READER_VERSION]
     for table in ("observations", "device_metric_days", "clinical_findings"):
         parts.extend(_count_and_latest(connection, table, owner_id))
     parts.append(
