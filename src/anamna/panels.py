@@ -669,21 +669,37 @@ def panel_for_concept(concept_id: str, category: str | None = None) -> Panel | N
     return _PANEL_BY_CATEGORY.get(category or "")
 
 
+def _per_request(key: tuple, build):
+    """`reference._cached`: one read per web request, and no caching outside one.
+    Imported here because `reference` imports this module."""
+    from .reference import _cached
+
+    return _cached(key, build)
+
+
 def panel_members(connection: sqlite3.Connection, panel: Panel) -> list[str]:
     """Concept ids in clinical reading order, named members first."""
     members = [member for member in panel.members if member not in DISPLAY_SUPPRESSED]
     if not panel.member_categories:
         return members
     seen = set(members)
-    placeholders = ",".join("?" for _ in panel.member_categories)
-    rows = connection.execute(
-        f"SELECT id FROM concepts WHERE category IN ({placeholders}) ORDER BY canonical_name",
-        panel.member_categories,
-    ).fetchall()
+    categories = tuple(panel.member_categories)
+    placeholders = ",".join("?" for _ in categories)
+    # Thirty panel cards on one page asked this once each.
+    swept = _per_request(
+        ("panel_category_members", categories),
+        lambda: [
+            row["id"]
+            for row in connection.execute(
+                f"SELECT id FROM concepts WHERE category IN ({placeholders}) ORDER BY canonical_name",
+                categories,
+            )
+        ],
+    )
     members.extend(
-        row["id"]
-        for row in rows
-        if row["id"] not in seen and row["id"] not in DISPLAY_SUPPRESSED
+        concept_id
+        for concept_id in swept
+        if concept_id not in seen and concept_id not in DISPLAY_SUPPRESSED
     )
     return members
 
@@ -702,17 +718,21 @@ def panel_retest_months(connection: sqlite3.Connection, panel: Panel) -> int | N
     keys = panel_members(connection, panel) + list(panel.device_members)
     if not keys:
         return None
-    placeholders = ",".join("?" for _ in keys)
     # A conditional cadence ("repeat a raised TSH after 3 months", FIT from 45)
     # is not the panel's schedule. Each member judges its own condition in
     # staleness(), and the worst member state still governs the panel.
-    row = connection.execute(
-        f"""SELECT MIN(retest_interval_months) FROM concept_guidance
-            WHERE concept_id IN ({placeholders}) AND retest_interval_months IS NOT NULL
-              AND retest_condition_json IS NULL""",
-        keys,
-    ).fetchone()
-    return int(row[0]) if row and row[0] is not None else None
+    cadences = _per_request(
+        ("unconditional_retest_months",),
+        lambda: {
+            row[0]: row[1]
+            for row in connection.execute(
+                """SELECT concept_id, retest_interval_months FROM concept_guidance
+                   WHERE retest_interval_months IS NOT NULL AND retest_condition_json IS NULL"""
+            )
+        },
+    )
+    found = [cadences[key] for key in keys if key in cadences]
+    return int(min(found)) if found else None
 
 
 def _interpretation_of(member: object) -> str:

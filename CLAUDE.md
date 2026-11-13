@@ -278,7 +278,7 @@ defect even when it reads fine in English.
   [locales/phrases.py](src/anamna/locales/phrases.py), rendered via `translate_phrase()`.
 - Concept names → `CONCEPT_NAMES_EN` / `CONCEPT_NAMES_UK`. WHO/IUIS allergen codes (`Bet v 1`,
   `Der p 1`) are reproduced verbatim: never translated, reordered or dropped.
-- Client-side strings must be added to `JS_KEYS` or they will not reach the browser.
+- Client-side strings must be added to `JS_KEYS` or they will not reach the browser. They reach the browser as `/i18n/<locale>.js` (`_i18n_script` in `web/app.py`), a file cached by its content hash, not inline in the page.
 - Numbers, dates and separators are localized too — use `format_number_localized()` and
   `format_date_localized()`. Ukrainian groups thousands with U+00A0 and uses a comma decimal
   separator; month abbreviations must match the CLDR forms JavaScript emits, or one page shows two
@@ -495,6 +495,9 @@ Each of these has already produced a confident, wrong, or silently missing clini
 - **The ICD-10 catalogue is a built file.** `data/icd10.json` comes from `scripts/build_icd10.py`: the Ukrainian titles of НК 025:2021 (ICD-10-AM, the eHealth dictionary `eHealth/ICD10_AM/condition_codes`) and the WHO ICD-10 2019 English titles. An English title with `en_exact` 0 is the nearest WHO ancestor's. Do not edit the JSON by hand: fix the script and rebuild.
 - **A diagnosis is titled by the catalogue, in the reader's language.** `diagnoses.display_name` gives the ICD-10 title for the locale, and the words of the document are `diagnoses.written_detail`, shown as "As written". Printing the stored name as the title put Ukrainian document text on the English page.
 - **A medicine belongs to a diagnosis by its ATC group or by the person's word.** `diagnosis_treatment.GROUPS` maps groups of the WHO ATC classification to ICD-10 categories, and `diagnosis_medicines` holds the person's link (`linked` 1) or refusal (`linked` 0); the person's word wins. The page prints the reason for every match, and a match is never advice to take anything.
+- **A verdict is remembered per person, so whatever changes one must forget it.** `_reading_verdict` in `web/app.py` keeps each stored reading's verdict beside the metric catalog (`_memoised`), on a GET that has its request cache. A route that changes what `evaluate()` reads (a value, the profile, a medicine, a sample's condition) calls `invalidate_catalog(owner)` after its commit. The Medicines routes did not, and an INR stayed unjudged on the overview after warfarin was saved (`tests/python/test_medicine_refreshes_verdicts.py`).
+- **A read kept across a laboratory edit reads only device data.** `_device_only` in `web/app.py` holds the scan of every stored device day, the excludable sources and the device half of the correlation index. `invalidate_catalog(owner)` leaves them alone; their stamp is the device fingerprint, the person's time zone and their source preferences. A read that also touches documents, the profile or laboratory results belongs in `_memoised`. The device history stays there on purpose (`tests/python/test_audit_perf.py`).
+- **No memo lookup without a request cache.** `_matrix_cards` builds the English catalog with the request cache switched off, and `_cached` then builds on every call. A memo consulted once per reading ran the record fingerprint 3,879 times on the diagnoses page: ten seconds.
 
 ## Definition of done
 

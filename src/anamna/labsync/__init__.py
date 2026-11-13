@@ -3012,7 +3012,9 @@ def profile_cards(settings: Settings, user) -> list[dict]:
     an API credential, which are not the account holder in person."""
     if not user or user.get("token_kind") in {"guest", "api"}:
         return []
-    return [_card(settings, user["id"], key) for key in active_providers(settings)]
+    # The same people for every laboratory's card: read once, not once per card.
+    candidates = link_candidates(settings, user["id"])
+    return [_card(settings, user["id"], key, candidates) for key in active_providers(settings)]
 
 
 def profile_card(settings: Settings, user, key: str) -> dict | None:
@@ -3096,9 +3098,10 @@ def _card_person(person: dict, link, candidates: list[dict], fed: dict, names: d
     }
 
 
-def _card(settings: Settings, user_id: str, key: str) -> dict:
+def _card(settings: Settings, user_id: str, key: str, candidates: list[dict] | None = None) -> dict:
     row = account(settings, user_id, key)
-    candidates = link_candidates(settings, user_id)
+    if candidates is None:
+        candidates = link_candidates(settings, user_id)
     names = {c["id"]: c["name"] for c in candidates}
     with connect(settings) as connection:
         patient = _patient(connection, user_id)

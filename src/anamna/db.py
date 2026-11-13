@@ -35,8 +35,13 @@ class _Connection(sqlite3.Connection):
 
 def connect(settings: Settings | None = None) -> sqlite3.Connection:
     settings = settings or get_settings()
-    settings.database_path.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(settings.database_path, factory=_Connection)
+    try:
+        connection = sqlite3.connect(settings.database_path, factory=_Connection)
+    except sqlite3.OperationalError:
+        # No data directory yet: a first start, or a fresh path in a test.
+        # Created here, not before every connection of every request.
+        settings.database_path.parent.mkdir(parents=True, exist_ok=True)
+        connection = sqlite3.connect(settings.database_path, factory=_Connection)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
     connection.execute("PRAGMA journal_mode = WAL")

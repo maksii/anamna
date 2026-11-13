@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import math
@@ -119,6 +120,7 @@ from ..devices.queries import (
     device_metric_values,
     device_overview,
     is_partial_day,
+    source_preferences,
 )
 from ..health import (
     AREA_BY_ID,
@@ -145,6 +147,7 @@ from ..health import (
 )
 from ..i18n import (
     LOCALE_COOKIE,
+    SUPPORTED_LOCALES,
     VISITOR_LOCALE,
     activate_locale,
     format_date_localized,
@@ -327,6 +330,8 @@ _VACCINATIONS_URL = "/vaccinations"
 _UPLOAD_URL = "/upload"
 _DEVICES_URL = "/devices"
 _STATIC_PREFIX = "/static/"
+#: The strings a script reads, one cacheable file per locale (see `_i18n_script`).
+_I18N_PREFIX = "/i18n/"
 _INTEGRATION_SYNC_SAVED_URL = "/profile?saved=integration_sync"
 _PAPERLESS_URL_ERROR_URL = "/admin/paperless?error=paperless.error_url"
 _RESCAN_QUEUED_QUERY = "?rescan=queued"
@@ -431,6 +436,8 @@ GUEST_ALLOWED_PREFIXES = (
     "/results", "/insights", "/changes", "/panels", "/metrics", _DEVICES_URL, _DOCUMENTS_URL,
     "/privacy", "/terms",
     "/api/panels", "/api/metrics", "/api/documents", "/api/ai-export", "/static",
+    # Every page loads its strings from here.
+    _I18N_PREFIX,
     # The correlation explorer is rendered on the metric pages a guest already
     # reads; without its data endpoint every control on it answers 403.
     "/api/correlation",
@@ -677,10 +684,13 @@ def invalidate_catalog(owner_user_id: str | None = None) -> None:
 
     Checking one value changes one person's record; emptying every account's
     memo for it made the next dashboard anyone opened a two-second rebuild.
+    The device scan (`_DEVICE_ONLY`) is forgotten only with everything: its
+    stamp already holds all it reads.
     """
     with _MEMO_LOCK:
         if owner_user_id is None:
             _MEMO.clear()
+            _DEVICE_ONLY.clear()
             _CORRELATION_MEMO.clear()
             return
         for memo in (_MEMO, _CORRELATION_MEMO):
@@ -734,6 +744,46 @@ def _memoised[T](connection, owner_user_id: str, name: str, build: Callable[[], 
         return value
 
     return _cached((name, owner_user_id), resolve)
+
+
+#: Reads that touch only the device tables, the person's time zone and their
+#: source preferences.  All of that is in the stamp, so `invalidate_catalog(owner)`
+#: leaves them alone: checking a laboratory value rebuilds the cards (their
+#: verdicts read the whole record) and not these scans of every stored day,
+#: which were most of the rebuild.
+_DEVICE_ONLY: "OrderedDict[tuple[str, str, str], tuple[tuple, object]]" = OrderedDict()
+
+
+def _device_only[T](connection, owner_user_id: str, name: str, build: Callable[[], T]) -> T:
+    def resolve() -> T:
+        key = (owner_user_id, get_locale(), name)
+        zone = connection.execute("SELECT timezone FROM users WHERE id=?", (owner_user_id,)).fetchone()
+        stamp = (
+            date.today().isoformat(),
+            _fingerprint(connection, owner_user_id, "device"),
+            # Not in the device fingerprint: removing a preference leaves
+            # MAX(updated_at) where it was.
+            zone[0] if zone else None,
+            tuple(sorted(source_preferences(connection, owner_user_id).items())),
+        )
+        with _MEMO_LOCK:
+            entry = _DEVICE_ONLY.get(key)
+            if entry is not None and entry[0] == stamp:
+                _DEVICE_ONLY.move_to_end(key)
+                return entry[1]
+        value = build()
+        with _MEMO_LOCK:
+            _DEVICE_ONLY[key] = (stamp, value)
+            _DEVICE_ONLY.move_to_end(key)
+            while len(_DEVICE_ONLY) > _MEMO_SIZE:
+                _DEVICE_ONLY.popitem(last=False)
+        return value
+
+    return _cached(("device_only", name, owner_user_id), resolve)
+
+
+def _device_rows(connection, owner_user_id: str) -> list[dict[str, object]]:
+    return _device_only(connection, owner_user_id, "rows", lambda: device_metric_catalog(connection, owner_user_id))
 
 
 # --- formatting -------------------------------------------------------------
@@ -1394,8 +1444,9 @@ def _deduped_observation_rows(
     params: list[object] = [owner_user_id]
     if concept_id:
         params.append(concept_id)
-    rows = connection.execute(
-        f"""WITH evidence AS (
+    def read():
+        return connection.execute(
+            f"""WITH evidence AS (
                  SELECT o.*, c.canonical_name, c.category, c.preferred_unit,
                         d.title document_title, d.original_filename, d.duplicate_of_document_id,
                         d.order_identifier document_order, d.clinical_type document_clinical_type,
@@ -1430,8 +1481,16 @@ def _deduped_observation_rows(
              )
              SELECT * FROM evidence WHERE evidence_rank=1
              ORDER BY COALESCE(observed_at, created_at) DESC, canonical_name""",
-        params,
-    ).fetchall()
+            params,
+        ).fetchall()
+
+    # One page reads the whole record several times.  Only on a request that
+    # cannot write (GET), so a route that changes a value and reads again sees
+    # it.  The rows are shared; every caller gets dicts of its own.
+    if concept_id is None and _request_memo.get() is not None:
+        rows = _cached(("deduped_observation_rows", owner_user_id), read)
+    else:
+        rows = read()
     return [_in_preferred_unit(dict(row)) for row in rows]
 
 
@@ -2144,10 +2203,10 @@ def _comparator_of(row) -> str | None:
         return None
 
 
-def _reading_verdict(
+def _judge_reading(
     connection, concept_id: str, row: dict[str, object], age: int | None, sex: str | None
 ) -> tuple[str | None, dict[str, object]]:
-    """One reading's unit and verdict -- the single path every lab page judges by.
+    """One reading's unit and verdict, worked out now.
 
     `_lab_card` judges the latest day through here and /results judges every
     day it compares, so the two can never disagree about the same number.
@@ -2187,6 +2246,39 @@ def _reading_verdict(
         },
     )
     return unit_source, verdict
+
+
+def _reading_verdict(
+    connection, concept_id: str, row: dict[str, object], age: int | None, sex: str | None
+) -> tuple[str | None, dict[str, object]]:
+    """One reading's unit and verdict -- the single path every lab page judges by.
+
+    A stored reading is judged once per person and day and remembered beside
+    the catalog (`_memoised`), so whatever forgets the catalog forgets this
+    too: an edit, a medicine, the profile.  Only on a request that cannot
+    write (GET) and has its request cache; everything else judges afresh.
+    """
+    owner_user_id, row_id = row.get("owner_user_id"), row.get("id")
+    # No memo without a request cache either: `_matrix_cards` switches it off,
+    # and looking the memo up would then cost a record fingerprint per reading.
+    if not owner_user_id or not row_id or _request_memo.get() is None or _request_cache.get() is None:
+        return _judge_reading(connection, concept_id, row, age, sex)
+    verdicts = _memoised(connection, str(owner_user_id), "reading_verdicts", dict)
+    # Everything the verdict reads from the row is in the key: one reading
+    # reaches here as stored and converted to its preferred unit.
+    key = (
+        str(row_id), concept_id, row["value_numeric"], row["value_text"],
+        row.get("preferred_unit"), row.get("unit_raw"), row.get("observed_at"), age, sex,
+        # What else the verdict reads from the stored row.
+        row.get("comparator"), row.get("vendor_reference_text"), row.get("vendor_reference_low"),
+        row.get("vendor_reference_high"), row.get("vendor_interpretation"), row.get("sample_condition"),
+    )
+    found = verdicts.get(key)
+    if found is None:
+        found = verdicts[key] = _judge_reading(connection, concept_id, row, age, sex)
+    unit_source, verdict = found
+    # A copy: the remembered verdict is shared by every later page.
+    return unit_source, dict(verdict)
 
 
 def _lab_card(
@@ -2522,7 +2614,7 @@ def _build_device_catalog(connection, owner_user_id: str) -> list[dict[str, obje
     guidance_index = _guidance_index(connection)
     return [
         _device_card(connection, raw, age, sex, guidance_index)
-        for raw in device_metric_catalog(connection, owner_user_id)
+        for raw in _device_rows(connection, owner_user_id)
         # Read on its concept's card; listing it here would show it twice.
         if str(raw["id"]).removeprefix(_DEVICE_METRIC_PREFIX) not in SAME_DEVICE_KEYS
     ]
@@ -2547,9 +2639,11 @@ def _catalog(connection, owner_user_id: str) -> list[dict[str, object]]:
 
 
 def _device_overview(connection, owner_user_id: str) -> dict[str, object]:
-    """The devices summary, memoised: it rescans all 58k daily rows to build it."""
+    """The devices summary, memoised: it rescans all 58k daily rows to build it.
+    The scan of every stored day comes from `_device_rows`, which a laboratory edit keeps."""
     return _memoised(
-        connection, owner_user_id, "devices", lambda: device_overview(connection, owner_user_id)
+        connection, owner_user_id, "devices",
+        lambda: device_overview(connection, owner_user_id, _device_rows(connection, owner_user_id)),
     )
 
 
@@ -3888,6 +3982,19 @@ def _correlation_lab_series(connection, owner_user_id: str) -> dict[str, dict[st
     return labs
 
 
+def _correlation_device_half(connection, owner_user_id: str) -> dict[str, object]:
+    """What device metrics exist and the suggestion candidates' series.  Both
+    read only device data, so a laboratory edit keeps them (`_device_only`)."""
+    def build() -> dict[str, object]:
+        device_options = _correlation_device_options(connection, owner_user_id)
+        return {
+            "device_options": device_options,
+            "candidates": _correlation_candidates(connection, owner_user_id, device_options),
+        }
+
+    return _device_only(connection, owner_user_id, "correlation", build)
+
+
 def _correlation_index(connection, owner_user_id: str) -> dict[str, object]:
     """Everything the section needs except the primary series, in one memo slot.
 
@@ -3899,10 +4006,8 @@ def _correlation_index(connection, owner_user_id: str) -> dict[str, object]:
     """
 
     def build() -> dict[str, object]:
-        device_options = _correlation_device_options(connection, owner_user_id)
-        candidates = _correlation_candidates(connection, owner_user_id, device_options)
         labs = _correlation_lab_series(connection, owner_user_id)
-        return {"device_options": device_options, "candidates": candidates, "labs": labs}
+        return {**_correlation_device_half(connection, owner_user_id), "labs": labs}
 
     return _memoised(connection, owner_user_id, "correlation", build)
 
@@ -5767,7 +5872,8 @@ async def security_headers(request: Request, call_next):
     # /cdn-cgi/l/email-protection links, even inside <option>/<template>.
     if request.url.path.startswith(_STATIC_PREFIX):
         response.headers["Cache-Control"] = _static_cache_control(request)
-    else:
+    # The strings script sets its own (it is public and named by its content).
+    elif not request.url.path.startswith(_I18N_PREFIX):
         response.headers["Cache-Control"] = "private, no-store, no-transform"
     if _secure_cookie(request):
         # Only over TLS: sent on a plain-http reply it is ignored by every
@@ -5794,7 +5900,7 @@ async def locale_middleware(request: Request, call_next):
         # Never on a static file: Cloudflare refuses to cache any response
         # that sets a cookie, so every first visit's CSS and scripts went
         # BYPASS to the origin. Assets do not depend on the locale anyway.
-        if request.url.path.startswith(_STATIC_PREFIX):
+        if request.url.path.startswith((_STATIC_PREFIX, _I18N_PREFIX)):
             return response
         # Only a choice is remembered; the default is not, so it can change.
         if request.query_params.get("lang"):
@@ -5905,6 +6011,28 @@ def record_user(request: Request, user):
     """
     return viewing_row(request) or user
 
+@lru_cache(maxsize=len(SUPPORTED_LOCALES))
+def _i18n_script(locale: str) -> tuple[str, str]:
+    """The strings scripts read (`JS_KEYS`) as one script for a locale, and its
+    version.  They were 15 KB inline in every page; as a file named by its own
+    content the browser fetches them once."""
+    token = activate_locale(locale)
+    try:
+        strings = json.dumps(js_strings(), ensure_ascii=False, separators=(",", ":"))
+    finally:
+        reset_locale(token)
+    # JSON allows these two characters, but a script before ES2019 ends its
+    # line at them, so the literal would break.
+    strings = strings.replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
+    tag = "uk-UA" if locale == "uk" else "en-GB"
+    body = f'window.__HL_I18N__={strings};window.__HL_LOCALE__="{tag}";'
+    return body, hashlib.sha256(body.encode()).hexdigest()[:16]
+
+
+def _i18n_src(locale: str) -> str:
+    locale = "uk" if locale == "uk" else "en"
+    return f"{_I18N_PREFIX}{locale}.js?v={_i18n_script(locale)[1]}"
+
 def template_context(request: Request, **values):
     user = current_user(request)
     locale = get_locale()
@@ -5929,8 +6057,7 @@ def template_context(request: Request, **values):
         "html_lang": "uk" if locale == "uk" else "en",
         # "system" follows the operating system; the explicit values pin it.
         "theme": _theme_choice(request),
-        "js_i18n": js_strings(),
-        "js_locale": "uk-UA" if locale == "uk" else "en-GB",
+        "i18n_src": _i18n_src(locale),
         # The hand-off offers the whole record, so it belongs on the pages
         # that show results and nowhere else: on /upload or /profile the
         # button would advertise data the reader is not looking at.
@@ -5984,6 +6111,18 @@ def switch_theme(
             secure=_secure_cookie(request),
         )
     return response
+
+@router.get(_I18N_PREFIX + "{name}")
+def i18n_script(name: str, v: str = ""):
+    """Public: these are the interface's own words, the same for everyone."""
+    locale = name.removesuffix(".js")
+    if not name.endswith(".js") or locale not in SUPPORTED_LOCALES:
+        raise HTTPException(404)
+    body, version = _i18n_script(locale)
+    # The same rule as a static file: only the current version is kept for long.
+    cache = "public, max-age=31536000, immutable, no-transform" if v == version else "public, max-age=300, no-transform"
+    return Response(body, media_type="text/javascript", headers={"Cache-Control": cache})
+
 
 @router.post("/locale")
 def switch_locale(
@@ -11098,6 +11237,16 @@ def _document_ai_error(request: Request) -> str | None:
     )
 
 
+@router.get("/concepts/names")
+def concept_names(request: Request):
+    """The names a correction can map a value to, for the document page's
+    picker.  Fetched when a correction field is first focused: on the page
+    itself they were 88 KB that most visits never used."""
+    require_user(request)
+    with connect(request.app.state.settings) as connection:
+        return JSONResponse(sorted(_concept_picker(connection)))
+
+
 @router.get("/documents/{document_id}", response_class=HTMLResponse, responses=_RESPONSES_401_404)
 def document_detail(
     request: Request,
@@ -11141,7 +11290,6 @@ def document_detail(
         part_candidates = [] if document.get("duplicate_of_document_id") else _part_candidates(
             connection, user["id"], document
         )
-        concepts = sorted(_concept_picker(connection))
         document["is_stale"] = document_id in set(_stale_document_ids(connection, user["id"]))
         known_vendors = _known_vendors(connection)
         issue_reports = _document_issue_reports(connection, user["id"], document_id)
@@ -11178,7 +11326,7 @@ def document_detail(
             request, document=document, reports=reports, observations=observations, given_here=given_here,
             listed_observations=listed, bp_readings=bp_readings,
             negative_allergens=negative_allergens, findings=findings, narrative=narrative,
-            pages=pages, tags=tags, relations=relations, concepts=concepts, part_candidates=part_candidates,
+            pages=pages, tags=tags, relations=relations, part_candidates=part_candidates,
             dup_error=f"dup.error_{dup_error}" if dup_error in DUPLICATE_ERRORS else None,
             finding_error=f"doc.finding_error_{finding_error}" if finding_error in FINDING_ERRORS else None,
             # A written conclusion is never about what only a wearable measures.
@@ -14614,17 +14762,21 @@ def _device_twin_link(connection, owner_user_id: str, metric_key: str) -> dict[s
     }
 
 
-def _excludable_sources(connection, owner_user_id: str) -> set[str]:
+def _excludable_sources(connection, owner_user_id: str) -> frozenset[str]:
     """Stored source names a "not my reading" rule can reach: OpenWearables
-    sources that name their app, and file exports."""
-    names = set()
-    for name, adapter in connection.execute(
-        """SELECT DISTINCT d.source_name, i.adapter_key FROM device_metric_days d
-           JOIN device_imports i ON i.id=d.import_id WHERE d.owner_user_id=?""", (owner_user_id,)):
-        if adapter in device_exclusions.ADAPTERS or (
-                adapter == openwearables.ADAPTER_KEY and device_exclusions.origin_from_label(name)):
-            names.add(name)
-    return names
+    sources that name their app, and file exports.
+    Kept across a laboratory edit: the query walks every stored day and reads only device tables."""
+    def read() -> frozenset[str]:
+        names = set()
+        for name, adapter in connection.execute(
+            """SELECT DISTINCT d.source_name, i.adapter_key FROM device_metric_days d
+               JOIN device_imports i ON i.id=d.import_id WHERE d.owner_user_id=?""", (owner_user_id,)):
+            if adapter in device_exclusions.ADAPTERS or (
+                    adapter == openwearables.ADAPTER_KEY and device_exclusions.origin_from_label(name)):
+                names.add(name)
+        return frozenset(names)
+
+    return _device_only(connection, owner_user_id, "excludable", read)
 
 
 def _review_url(metric_key: str, day: str, source_name: str) -> str:
@@ -15438,7 +15590,9 @@ class _Compression:
 
     def __init__(self, app, minimum_size: int = 1024) -> None:
         self._app = app
-        self._gzip = GZipMiddleware(self._inner, minimum_size=minimum_size)
+        # Level 6, not Starlette's 9: on a 380 KB page the output is the same
+        # size within 1% and takes 4 ms instead of 10.
+        self._gzip = GZipMiddleware(self._inner, minimum_size=minimum_size, compresslevel=6)
 
     async def __call__(self, scope, receive, send) -> None:
         if scope["type"] != "http":
@@ -15533,12 +15687,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     register_found_routes(
         app, settings, templates=templates, template_context=template_context, require_user=require_user,
         record_user=record_user, require_csrf=require_csrf, audit=partial(_audit, settings),
-        document_row=_document_row,
+        document_row=_document_row, invalidate=invalidate_catalog,
     )
     register_factors_routes(
         app, settings, templates=templates, template_context=template_context, require_user=require_user,
         record_user=record_user, require_csrf=require_csrf, audit=partial(_audit, settings),
-        document_row=_document_row,
+        document_row=_document_row, invalidate=invalidate_catalog,
     )
     register_diagnoses_routes(
         app, settings, templates=templates, template_context=template_context, require_user=require_user,

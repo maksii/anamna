@@ -10,7 +10,7 @@ import hashlib
 import math
 import re
 from collections import defaultdict
-from functools import partial
+from functools import lru_cache, partial
 from collections.abc import Mapping
 
 from .catalog import canonical_source_vendor, source_priority
@@ -35,9 +35,14 @@ def preference_group(metric_key: str) -> str:
     return "sleep" if metric_key in SLEEP_FAMILY else metric_key
 
 
+@lru_cache(maxsize=4096)
+def _identity_key(vendor: str, name: str) -> str:
+    return hashlib.sha256(f"{vendor}\0{name}".encode()).hexdigest()[:24]
+
+
 def source_key(row: Mapping) -> str:
-    identity = f"{row['source_vendor']}\0{row['source_name']}"
-    return hashlib.sha256(identity.encode()).hexdigest()[:24]
+    # One page asks this for every stored row and has a handful of sources.
+    return _identity_key(str(row["source_vendor"]), str(row["source_name"]))
 
 
 def source_kind(row: Mapping) -> str:
@@ -114,6 +119,22 @@ def selection_priority(row: Mapping) -> int:
     return source_priority(str(row["metric_key"]), vendor, name) * 10
 
 
+def priority_memo():
+    """`selection_priority`, worked out once per source for one pass over many rows.
+
+    Kept for one pass only: the ranking reads the installation's own device
+    names, which an edit can change between two pages."""
+    seen: dict[tuple[str, str, str], int] = {}
+
+    def priority(row: Mapping) -> int:
+        key = (str(row["metric_key"]), str(row["source_vendor"]), str(row["source_name"]))
+        if key not in seen:
+            seen[key] = selection_priority(row)
+        return seen[key]
+
+    return priority
+
+
 def valid_row(row: Mapping) -> bool:
     """A finite value a human body could have produced.  An implausible body
     measurement (a 0.99 cm waist) stays stored as evidence but is never
@@ -136,11 +157,11 @@ def _low_coverage(row: Mapping, peak: float) -> bool:
     return float(row["value"]) < peak * LOW_COVERAGE_SHARE
 
 
-def _rank(row: Mapping, preferred: str = "", peak: float = 0.0) -> tuple:
+def _rank(row: Mapping, preferred: str = "", peak: float = 0.0, priority=selection_priority) -> tuple:
     return (
         1 if _low_coverage(row, peak) else 0,
         0 if preferred and source_key(row) == preferred else 1,
-        selection_priority(row),
+        priority(row),
         -int(row.get("sample_count") or 0),
         str(row["source_vendor"]), str(row["source_name"]), str(row.get("id") or ""),
     )
@@ -201,9 +222,10 @@ def select_daily(rows: list[dict], preferred: str = "", cohorts: dict[str, str] 
             continue
         candidates[day].append(row)
     chosen = []
+    priority = priority_memo()
     for day_rows in candidates.values():
         peak = max(float(row["value"]) for row in day_rows)
-        chosen.append(min(day_rows, key=partial(_rank, preferred=preferred, peak=peak)))
+        chosen.append(min(day_rows, key=partial(_rank, preferred=preferred, peak=peak, priority=priority)))
     return sorted(chosen, key=lambda row: str(row["day"]), reverse=True)
 
 

@@ -818,13 +818,9 @@ form[data-submitting] :is(button, .button, input, select, textarea, label) { poi
    44x44 box without changing its look; `.stretched-card` + `.stretched-link`
    make a whole card the target of its title link (the card's other controls
    are lifted above the overlay so they stay operable). */
-.tap-target { display: inline-flex; align-items: center; min-height: 44px; min-width: 44px; }
 
-.stretched-card { position: relative; }
 
-.stretched-card .stretched-link::after { content: ""; position: absolute; inset: 0; z-index: 1; border-radius: inherit; }
 
-.stretched-card :is(a, button, summary, input, select, label):not(.stretched-link) { position: relative; z-index: 2; }
 
 /* Keyboard-only escape hatch past the header. Off-screen until focused. */
 .skip-link { position: fixed; z-index: 60; top: 8px; left: 8px; display: inline-flex; align-items: center; min-height: 44px; padding: 10px 16px; border-radius: var(--radius-xs); background: var(--teal); color: var(--on-brand); font-size: var(--text-sm); font-weight: 700; transform: translateY(-200%); }
@@ -862,11 +858,14 @@ p.tiny a, p.muted a { display: inline-flex; align-items: center; min-height: 44p
 
 .eyebrow { color: var(--teal); font-weight: 750; font-size: 11px; letter-spacing: .13em; text-transform: uppercase; margin-bottom: 12px; }
 
-.hero-row, .page-head, .detail-head { display: flex; justify-content: space-between; gap: 36px; align-items: flex-end; margin-bottom: 34px; }
+.page-head,
+.detail-head { display: flex; justify-content: space-between; gap: 36px; align-items: flex-end; margin-bottom: 34px; }
 
-.hero-row > div, .page-head > div, .detail-head > div:first-child { max-width: 860px; min-width: 0; }
+.page-head > div,
+.detail-head > div:first-child { max-width: 860px; min-width: 0; }
 
-.hero-row p, .page-head p, .detail-head p { color: var(--muted); max-width: 680px; margin-bottom: 0; }
+.page-head p,
+.detail-head p { color: var(--muted); max-width: 680px; margin-bottom: 0; }
 
 /* A page that opens on its content: the primary action, and at most one line saying what to do here. */
 .page-head.an-page-tools { justify-content: flex-start; align-items: center; flex-direction: row; flex-wrap: wrap; gap: var(--space-2) var(--space-4); margin-bottom: var(--space-4); }
@@ -900,11 +899,9 @@ p.tiny a, p.muted a { display: inline-flex; align-items: center; min-height: 44p
 
 .stat-grid article { padding: 22px; border: 1px solid var(--line); background: var(--surface-veil); border-radius: 15px; display: grid; gap: 5px; min-height: 142px; box-shadow: 0 8px 30px rgba(46, 74, 67, .04); }
 
-.stat-grid article.accent { background: var(--accent-bg); color: var(--accent-ink); border-color: transparent; }
 
 .stat-grid article > span { color: var(--muted); font-size: 13px; }
 
-.stat-grid .accent > span, .stat-grid .accent small { color: var(--hero-muted); }
 
 .stat-grid strong { font-family: Georgia, serif; font-size: 42px; font-weight: 500; }
 
@@ -924,33 +921,19 @@ p.tiny a, p.muted a { display: inline-flex; align-items: center; min-height: 44p
 
 .timeline { display: grid; }
 
-.timeline-item { display: grid; grid-template-columns: 110px 1fr 38px; gap: 18px; align-items: center; padding: 15px 0; border-top: 1px solid var(--line); color: var(--ink); }
 
-.timeline-item:first-child { border-top: 0; }
 
-.timeline-item time { color: var(--muted); font-size: 12px; }
 
-.timeline-item div { display: grid; gap: 5px; }
 
-.timeline-item strong { font-size: 14px; }
 
-.timeline-item div span { color: var(--muted); font-size: 12px; }
 
-.timeline-item .count { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 50%; background: var(--mint); color: var(--teal-dark); font-size: 12px; font-weight: 750; }
 
-.metric-list { display: grid; gap: 10px; }
 
-.metric-list > a { display: grid; grid-template-columns: 44px minmax(220px, 1fr) 110px 100px 150px; align-items: center; gap: 16px; padding: 16px 18px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface-veil); color: var(--ink); }
 
-.metric-list.compact > a { grid-template-columns: 1fr auto; padding: 14px 0; border: 0; border-top: 1px solid var(--line); border-radius: 0; background: transparent; }
 
-.metric-list.compact > a:first-child { border-top: 0; }
 
-.metric-list span { display: grid; gap: 4px; min-width: 0; }
 
-.metric-list small { color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-.metric-count { font-size: 12px; color: var(--muted); }
 
 .category-chip { display: grid !important; place-items: center; width: 38px; height: 38px; border-radius: 11px; background: var(--mint); color: var(--teal-dark); font-weight: 800; font-size: 11px; }
 
@@ -962,7 +945,6 @@ p.tiny a, p.muted a { display: inline-flex; align-items: center; min-height: 44p
 
 .attention-grid small { color: var(--muted); }
 
-.legend-dot::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--amber); margin-right: 7px; }
 
 
 
@@ -1049,11 +1031,8 @@ small.an-historical-note { display:inline-block; padding:2px 8px; border-radius:
 
 .source-title span,.obs-item-top small b { color:var(--teal); font-size:8px; font-weight:800; letter-spacing:.07em; text-transform:uppercase; }
 
-.detail-grid { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 20px; align-items: start; }
 
-.side-stack { display: grid; gap: 0; position: sticky; top: 96px; }
 
-.compact-panel h2 { margin-bottom: 18px; }
 
 .facts { display: grid; gap: 10px; margin: 0 0 18px; }
 
@@ -1088,7 +1067,8 @@ td.result { font-weight: 750; white-space: nowrap; }
 
 .status { display: inline-flex; max-width: 100%; margin-top: 4px; border-radius: 999px; padding: 3px 7px; background: var(--st-unjudged-bg); color: var(--muted); font-size: 9px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
 
-.status.high, .status.low, .trend-point.high, .trend-point.low { background: var(--st-high-bg); color: var(--red); }
+.status.high,
+.status.low { background: var(--st-high-bg); color: var(--red); }
 
 .status.within_vendor_range, .status.verified, .status.resolved { background: var(--mint); color: var(--teal-dark); }
 
@@ -1105,13 +1085,9 @@ td.result { font-weight: 750; white-space: nowrap; }
 
 .alert.neutral { border-color: var(--line); background: var(--surface-sunken); color: var(--ink); }
 
-.report-sections { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
 
-.report-sections article { border: 1px solid var(--line); padding: 15px; border-radius: 12px; }
 
-.report-sections span, .report-sections p { font-size: 11px; color: var(--muted); }
 
-.report-sections h3 { font-size: 14px; margin: 8px 0; }
 
 .evidence-panel details { border-top: 1px solid var(--line); }
 
@@ -1138,35 +1114,20 @@ td.result { font-weight: 750; white-space: nowrap; }
 
 
 
-.metric-name { overflow: hidden; }
 
-.alias-box { text-align: right; max-width: 420px; color: var(--muted); }
 
-.alias-box span { font-size: 10px; text-transform: uppercase; letter-spacing: .1em; font-weight: 750; }
 
-.alias-box p { font-size: 12px; margin: 6px 0 0; }
 
-.chart-wrap { width: 100%; overflow-x: auto; }
 
-.chart-wrap svg { min-width: 680px; width: 100%; }
 
-.chart-wrap text { fill: var(--muted); font-size: 10px; }
 
-.gridline { stroke: var(--line); stroke-width: 1; }
 
-.trend-line { fill: none; stroke: var(--teal); stroke-width: 3; stroke-linejoin: round; stroke-linecap: round; }
 
-.trend-point { fill: var(--surface); stroke: var(--teal); stroke-width: 3; }
 
-.trend-point.high, .trend-point.low { fill: var(--st-high-bg); stroke: var(--red); }
 
-.metric-columns { grid-template-columns: minmax(0, 1.3fr) minmax(300px, .7fr); }
 
-.reference-panel article { display: grid; gap: 6px; padding: 14px 0; border-top: 1px solid var(--line); }
 
-.reference-panel article b { font-family: Georgia, serif; font-size: 21px; }
 
-.reference-panel article span, .reference-panel article a { font-size: 11px; color: var(--muted); }
 
 
 
@@ -1316,7 +1277,6 @@ img.viewer-media { object-fit: contain; padding: 16px; background: var(--surface
 
 .side-panel .inline-form { margin-top: 12px; }
 
-.side-panel h3.detail-subhead { margin: 8px 0 12px; font-size: 16px; }
 
 
 
@@ -1373,15 +1333,11 @@ img.viewer-media { object-fit: contain; padding: 16px; background: var(--surface
 
 .review-file.is-active .review-file-progress { color: var(--teal-dark); }
 
-.principle-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 20px; }
 
-.principle-grid article { border: 1px solid var(--line); background: var(--surface); border-radius: 15px; padding: 22px; }
 
-.principle-grid article > span { color: var(--teal); font-family: Georgia, serif; font-size: 24px; }
 
-.principle-grid h2 { margin: 24px 0 8px; }
 
-.principle-grid p, .prose p { color: var(--muted); font-size: 14px; }
+.prose p { color: var(--muted); font-size: 14px; }
 
 .empty, .empty-card { color: var(--muted); }
 
@@ -1508,9 +1464,11 @@ img.viewer-media { object-fit: contain; padding: 16px; background: var(--surface
 
   .stat-grid { grid-template-columns: repeat(2, 1fr); }
 
-  .two-column, .detail-grid, .metric-columns, .review-workspace { grid-template-columns: 1fr; }
+  .two-column,
+  .review-workspace { grid-template-columns: 1fr; }
 
-  .side-stack, .review-queue, .review-stage { position: static; max-height: none; }
+  .review-queue,
+  .review-stage { position: static; max-height: none; }
 
   .review-stage .viewer-stage, .viewer-stage { height: min(62vh, 700px); max-height: none; }
 
@@ -1525,11 +1483,8 @@ img.viewer-media { object-fit: contain; padding: 16px; background: var(--surface
 
      data the user cannot reach at any width. */
 
-  .metric-list > a { grid-template-columns: 40px minmax(180px, 1fr) auto auto; }
 
-  .metric-list > a > span:last-child { grid-column: 2 / -1; }
 
-  .principle-grid { grid-template-columns: repeat(2, 1fr); }
 
   .login-page { grid-template-columns: 1fr; }
 
@@ -1573,9 +1528,11 @@ img.viewer-media { object-fit: contain; padding: 16px; background: var(--surface
 
   .topbar .ai-header { padding-inline: 12px; }
 
-  .hero-row, .page-head, .detail-head { align-items: flex-start; flex-direction: column; }
+  .page-head,
+  .detail-head { align-items: flex-start; flex-direction: column; }
 
-  .stat-grid, .attention-grid, .report-sections, .principle-grid, .side-stack { grid-template-columns: 1fr; }
+  .stat-grid,
+  .attention-grid { grid-template-columns: 1fr; }
 
   .filters, .filters.single, .filters:not(.single) { grid-template-columns: 1fr; }
 
@@ -1591,9 +1548,7 @@ img.viewer-media { object-fit: contain; padding: 16px; background: var(--surface
 
   .doc-facts strong + span { margin-right: 8px; }
 
-  .metric-list > a { grid-template-columns: 38px minmax(0, 1fr) auto; }
 
-  .metric-list > a > span:nth-last-child(2), .metric-list > a > span:last-child { grid-column: 2 / -1; }
 
   .review-actions, .review-stage-head, .viewer-bar { flex-direction: column; align-items: stretch; }
 
@@ -1612,41 +1567,23 @@ img.viewer-media { object-fit: contain; padding: 16px; background: var(--surface
 
 /* Patient-first dashboard */
 
-.health-hero { min-height: 520px; margin: -18px 0 48px; padding: clamp(34px, 6vw, 84px); border-radius: 30px; color: white; display: grid; grid-template-columns: minmax(0, 1fr) 330px; align-items: center; gap: 60px; overflow: hidden; position: relative; background: radial-gradient(circle at 80% 38%, rgba(95, 233, 196, .2), transparent 22rem), radial-gradient(circle at 8% 100%, rgba(70, 128, 190, .2), transparent 28rem), var(--hero-bg); box-shadow: 0 36px 90px rgba(12, 28, 25, .23); }
 
-.health-hero::after { content: ""; width: 520px; height: 520px; border: 1px solid var(--hero-line-soft); border-radius: 50%; position: absolute; right: -160px; top: -230px; box-shadow: 0 0 0 70px rgba(255,255,255,.018), 0 0 0 140px rgba(255,255,255,.012); }
 
-.health-hero-copy { position: relative; z-index: 2; max-width: 860px; }
 
-.health-hero .eyebrow { color: var(--hero-accent); }
 
-.health-hero h1 { font-family: Inter, ui-sans-serif, system-ui, sans-serif; font-size: clamp(46px, 6vw, 84px); font-weight: 620; letter-spacing: -.055em; max-width: 900px; }
 
-.health-hero p { color: var(--hero-muted); font-size: 16px; }
 
-.hero-search { max-width: 760px; margin-top: 38px; }
 
-.hero-search label { color: var(--hero-faint); margin-bottom: 9px; }
 
-.hero-search > div { display: grid; grid-template-columns: 1fr auto; border-radius: 15px; background: var(--surface); padding: 5px; box-shadow: 0 18px 55px rgba(0,0,0,.3); }
 
-.hero-search input { border: 0; padding: 15px 17px; font-size: 15px; }
 
-.hero-search input:focus { box-shadow: none; }
 
-.hero-search button { border: 0; border-radius: 11px; padding: 0 23px; color: var(--on-brand); background: var(--teal); font-weight: 750; }
 
-.health-orbit { width: 300px; height: 300px; z-index: 2; justify-self: end; display: grid; place-items: center; align-content: center; gap: 14px; text-align: center; border-radius: 50%; border: 1px solid var(--hero-line); background: radial-gradient(circle, rgba(51, 117, 101, .4), rgba(13, 26, 23, .4) 62%); box-shadow: 0 0 0 22px rgba(255,255,255,.025), 0 0 0 45px rgba(255,255,255,.015), inset 0 0 60px rgba(104, 235, 198, .08); }
 
-.health-orbit.attention { background: radial-gradient(circle, rgba(147, 91, 54, .38), rgba(28, 22, 18, .45) 64%); }
 
-.health-orbit div { display: grid; }
 
-.health-orbit strong { font-size: 76px; line-height: .95; letter-spacing: -.07em; font-weight: 430; }
 
-.health-orbit span { color: var(--hero-muted); font-size: 12px; text-transform: uppercase; letter-spacing: .12em; }
 
-.health-orbit small { color: var(--hero-muted); max-width: 190px; line-height: 1.45; }
 
 .dashboard-section { margin: 0 0 54px; }
 
@@ -1656,13 +1593,9 @@ img.viewer-media { object-fit: contain; padding: 16px; background: var(--surface
 
 .section-heading > span, .dashboard-note { color: var(--muted); font-size: 12px; }
 
-.health-area-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 
-.health-area-card { min-height: 250px; padding: 17px; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 16px; background: var(--surface-veil); box-shadow: 0 10px 34px rgba(31, 57, 51, .055); }
 
-.health-area-card.attention { border-color: var(--attention-line); background: var(--attention-wash); }
 
-.health-area-card.no_data { background: var(--st-absent-bg); box-shadow: none; }
 
 /* Stacked, not side-by-side. "Review available findings" is 25 characters and
    the card is ~330px wide at four-up, so the badge always wrapped to two lines
@@ -1679,7 +1612,6 @@ img.viewer-media { object-fit: contain; padding: 16px; background: var(--surface
 
 .area-index { flex: none; color: var(--muted); font: 10px ui-monospace, monospace; }
 
-.health-area-card > p { color: var(--muted); font-size: 10px; margin: 9px 0 11px; }
 
 .area-finding { display: grid; gap: 5px; padding: 10px; color: var(--ink); border-left: 3px solid var(--amber); background: var(--warn-bg); border-radius: 4px 11px 11px 4px; }
 
@@ -1715,21 +1647,13 @@ img.viewer-media { object-fit: contain; padding: 16px; background: var(--surface
 
 .area-footer a { font-weight: 750; }
 
-.quick-metric-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
 
-.quick-metric { min-height: 205px; padding: 21px; border: 1px solid var(--line); border-radius: 18px; display: flex; flex-direction: column; color: var(--ink); background: var(--surface); transition: transform .18s ease, box-shadow .18s ease; }
 
-.quick-metric:hover { transform: translateY(-3px); box-shadow: var(--shadow); color: var(--ink); }
 
-.quick-metric > span { color: var(--teal); font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .08em; }
 
-.quick-metric h3 { font-size: 15px; margin: 13px 0; }
 
-.quick-metric > strong { font-size: 36px; letter-spacing: -.045em; margin: auto 0 16px; }
 
-.quick-metric > strong small { color: var(--muted); font-size: 12px; letter-spacing: 0; margin-left: 5px; }
 
-.quick-metric > div { display: flex; justify-content: space-between; align-items: center; color: var(--muted); font-size: 10px; }
 
 .secondary-record { padding: 30px; border: 1px solid var(--line); border-radius: 22px; background: var(--surface-sunken); display: grid; grid-template-columns: 1fr auto; gap: 18px 30px; }
 
@@ -2112,9 +2036,7 @@ img.viewer-media { object-fit: contain; padding: 16px; background: var(--surface
 
 .chart-help { display: flex; justify-content: space-between; gap: 15px; color: var(--muted); font-size: 10px; }
 
-.guidance-layout { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(300px, .55fr); gap: 20px; }
 
-.guidance-badge { padding: 5px 8px; border-radius: 999px; color: var(--blue) !important; background: var(--st-stale-bg); font-size: 8px !important; font-weight: 800; text-transform: uppercase; }
 
 .guidance-rule { display: grid; grid-template-columns: 1fr auto; gap: 8px 20px; padding: 18px 0; border-top: 1px solid var(--line); }
 
@@ -2140,11 +2062,8 @@ img.viewer-media { object-fit: contain; padding: 16px; background: var(--surface
 
 .no-universal-range p { color: var(--muted); font-size: 12px; margin: 8px 0 0; }
 
-.metric-context-panel details { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 14px; }
 
-.metric-context-panel summary { cursor: pointer; font-size: 11px; font-weight: 750; }
 
-.metric-context-panel details p { color: var(--muted); font-size: 10px; }
 
 .evidence-history td:nth-child(3) { min-width: 190px; }
 
@@ -2164,17 +2083,12 @@ img.viewer-media { object-fit: contain; padding: 16px; background: var(--surface
 
 @media (max-width: 1120px) {
 
-  .health-area-grid, .result-card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .result-card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 
-  .health-hero { grid-template-columns: 1fr 250px; }
 
-  .health-orbit { width: 230px; height: 230px; }
 
-  .health-orbit strong { font-size: 58px; }
 
-  .quick-metric-grid { grid-template-columns: repeat(2, 1fr); }
 
-  .guidance-layout { grid-template-columns: 1fr; }
 
 }
 
@@ -2182,11 +2096,9 @@ img.viewer-media { object-fit: contain; padding: 16px; background: var(--surface
 
 @media (max-width: 760px) {
 
-  .health-hero { min-height: auto; grid-template-columns: 1fr; padding: 34px 24px; border-radius: 22px; }
 
-  .health-orbit { justify-self: center; }
 
-  .health-area-grid, .quick-metric-grid, .result-card-grid { grid-template-columns: 1fr; }
+  .result-card-grid { grid-template-columns: 1fr; }
 
   .section-heading { align-items: flex-start; flex-direction: column; }
 
@@ -2370,91 +2282,51 @@ img.viewer-media { object-fit: contain; padding: 16px; background: var(--surface
 
 /* Data-dense patient overview */
 
-.overview-hero { min-height: 390px; margin: -18px 0 28px; padding: clamp(28px, 4vw, 52px); display: grid; grid-template-columns: minmax(340px,.78fr) minmax(600px,1.22fr); align-items: stretch; gap: clamp(28px,4vw,58px); overflow: hidden; position: relative; border-radius: 28px; color: white; background: radial-gradient(circle at 84% 12%, rgba(70,187,155,.2), transparent 22rem), radial-gradient(circle at 4% 110%, rgba(73,108,170,.22), transparent 24rem), var(--hero-bg-3); box-shadow: 0 30px 80px rgba(12,28,25,.2); }
 
-.overview-hero::after { content:""; position:absolute; inset:auto -130px -270px auto; width:520px; height:520px; border:1px solid var(--hero-line-soft); border-radius:50%; box-shadow:0 0 0 62px rgba(255,255,255,.015),0 0 0 124px rgba(255,255,255,.01); }
 
-.overview-intro { position:relative; z-index:1; display:flex; flex-direction:column; justify-content:center; min-width:0; }
 
-.overview-intro .eyebrow,.health-snapshot .eyebrow { color:var(--hero-accent); }
 
-.overview-intro h1 { margin:0 0 10px; font-family:Inter,ui-sans-serif,system-ui,sans-serif; font-size:clamp(38px,4.5vw,66px); font-weight:610; letter-spacing:-.055em; }
 
-.overview-intro > p { max-width:600px; margin:15px 0 0; color:var(--hero-muted); font-size:13px; }
 
 .overview-dates { display:flex; flex-wrap:wrap; gap:7px; }
 
 .overview-dates span { padding:6px 9px; border:1px solid var(--hero-line-soft); border-radius:999px; color:var(--hero-muted); background:rgba(255,255,255,.04); font-size:9px; font-weight:700; letter-spacing:.025em; }
 
-.overview-hero .hero-search { max-width:620px; margin-top:24px; }
-
-.overview-hero .hero-search label { margin-bottom:7px; color:var(--hero-faint); }
-
-.overview-hero .hero-search > div { box-shadow:0 14px 40px rgba(0,0,0,.25); }
-
-.overview-hero .hero-search input { padding:12px 14px; }
-
-.health-snapshot { position:relative; z-index:1; align-self:stretch; min-width:0; padding:20px; display:grid; grid-template-rows:auto 1fr auto; gap:14px; border:1px solid var(--hero-line); border-radius:21px; background:var(--hero-veil); backdrop-filter:blur(10px); }
-
-.health-snapshot > header,.health-snapshot > footer { display:flex; justify-content:space-between; align-items:center; gap:16px; }
-
-.health-snapshot > header > div { display:grid; gap:3px; }
-
-.health-snapshot .eyebrow { margin:0; font-size:9px; }
-
-.health-snapshot header strong { font-size:12px; }
-
-.snapshot-coverage { flex:none; padding:6px 9px; border-radius:999px; background:rgba(129,208,185,.12); color:var(--hero-accent); font-size:9px; }
-
-.snapshot-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; }
-
-.snapshot-metric { min-width:0; padding:12px; display:flex; flex-direction:column; border:1px solid var(--hero-line-soft); border-radius:13px; color:white; background:rgba(5,14,12,.24); }
-
-.snapshot-metric:hover { color:white; border-color:rgba(126,214,189,.35); background:rgba(32,78,67,.32); }
-
-.snapshot-metric > span { min-height:29px; color:var(--hero-faint); font-size:10px; line-height:1.4; }
-
-.snapshot-metric > strong { margin:9px 0 10px; font-size:25px; letter-spacing:-.04em; white-space:nowrap; }
-
-.snapshot-metric strong small { margin-left:4px; color:var(--hero-faint); font-size:8px; font-weight:600; letter-spacing:0; }
-
-.snapshot-metric > div { margin-top:auto; display:flex; justify-content:space-between; align-items:end; gap:6px; }
-
-.snapshot-metric time { color:var(--hero-faint); font-size:8px; }
-
-.snapshot-metric .metric-state { max-width:none; text-align:center; background:rgba(203,218,213,.12); color:var(--hero-muted); }
-
-.snapshot-metric .metric-state.high,.snapshot-metric .metric-state.low { background:rgba(190,91,68,.2); color:var(--hero-alert); }
-
-.health-snapshot > footer { padding-top:10px; border-top:1px solid var(--hero-line-soft); color:var(--hero-faint); font-size:9px; }
-
-.health-snapshot > footer .has-flags { color:var(--hero-alert); }
-
-.health-snapshot > footer a { color:var(--hero-accent); font-weight:750; }
 
 
 
-.priority-panel { margin:0 0 24px; padding:24px; border:1px solid var(--attention-line); border-radius:20px; background:var(--attention-wash); }
 
-.priority-panel .section-heading { margin-bottom:16px; }
 
-.priority-panel .section-heading h2 { font-size:28px; }
 
-.priority-results { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }
 
-.priority-result { min-height:168px; padding:16px; display:flex; flex-direction:column; border:1px solid var(--attention-line); border-radius:14px; color:var(--ink); background:var(--surface-veil); }
 
-.priority-result:hover { color:var(--ink); border-color:var(--attention-line); box-shadow:0 10px 28px rgba(85,54,34,.08); }
 
-.priority-result > span { color:var(--attention-ink); font-size:8px; font-weight:850; letter-spacing:.08em; text-transform:uppercase; }
 
-.priority-result h3 { margin:10px 0 8px; font-size:14px; }
 
-.priority-result > strong { margin:auto 0 12px; font-size:28px; letter-spacing:-.04em; }
 
-.priority-result > strong small { margin-left:4px; color:var(--muted); font-size:9px; }
 
-.priority-result > div { display:flex; justify-content:space-between; align-items:end; gap:10px; color:var(--muted); font-size:8px; }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 .finding-result { grid-column:span 2; }
 
@@ -2462,7 +2334,6 @@ img.viewer-media { object-fit: contain; padding: 16px; background: var(--surface
 
 .finding-result b { color:var(--teal-dark); }
 
-.compact-empty { padding:20px; }
 
 .source-strip { margin:0 0 38px; padding:14px 18px; display:grid; grid-template-columns:minmax(300px,1fr) auto auto; align-items:center; gap:22px; border:1px solid var(--line); border-radius:16px; background:var(--surface-veil); }
 
@@ -2482,7 +2353,6 @@ img.viewer-media { object-fit: contain; padding: 16px; background: var(--surface
 
 .source-vendors small { color:var(--muted); font-size:8px; }
 
-.health-map-section { margin-bottom:38px; }
 
 
 
@@ -2632,21 +2502,16 @@ img.viewer-media.rendered-page { height:auto; min-height:0; margin:16px; padding
 
 @media (max-width:1280px) {
 
-  .overview-hero { grid-template-columns:minmax(300px,.7fr) minmax(500px,1.3fr); gap:28px; }
 
-  .snapshot-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
 
-  .snapshot-metric:nth-child(n+5) { display:none; }
 
-  .priority-results,.health-area-grid,.area-metric-grid { grid-template-columns:repeat(3,minmax(0,1fr)); }
+  .area-metric-grid { grid-template-columns:repeat(3,minmax(0,1fr)); }
 
 }
 
 @media (max-width:980px) {
 
-  .overview-hero { grid-template-columns:1fr; }
 
-  .priority-results,.health-area-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
 
   .source-strip { grid-template-columns:1fr; gap:12px; }
 
@@ -2677,19 +2542,14 @@ img.viewer-media.rendered-page { height:auto; min-height:0; margin:16px; padding
 
   .review-bench .an-obs-item { scroll-margin-top: calc(68px + min(30vh, 300px) + 80px); }
 
-  .overview-hero { margin-top:-10px; padding:25px 20px; border-radius:20px; }
 
-  .overview-intro h1 { font-size:39px; }
 
-  .snapshot-grid,.priority-results,.health-area-grid { grid-template-columns:1fr; }
 
-  .snapshot-metric:nth-child(n+5) { display:flex; }
 
   .finding-result { grid-column:auto; }
 
   .source-vendors { flex-wrap:wrap; }
 
-  .health-snapshot > header,.health-snapshot > footer { align-items:flex-start; flex-direction:column; }
 
   .clinical-finding-list,.area-metric-grid,.area-document-list { grid-template-columns:1fr; }
 
@@ -3696,11 +3556,7 @@ img.viewer-media.rendered-page { height:auto; min-height:0; margin:16px; padding
 }
 
 a:focus-visible .dynamic-point,
-
 a:focus .dynamic-point,
-
-a:focus-visible .trend-point,
-
 a:focus-visible .an-sparkline__point { r: 8; stroke: var(--focus); stroke-width: 4; }
 
 .an-range-bar:focus-visible .an-range-bar__marker,
@@ -3729,7 +3585,9 @@ a:focus-visible .an-range-bar__marker { box-shadow: 0 0 0 2px var(--surface), 0 
 
   }
 
-  .document-card:hover, .quick-metric:hover, .result-card:hover, .area-metric-card:hover { transform: none; }
+  .document-card:hover,
+  .result-card:hover,
+  .area-metric-card:hover { transform: none; }
 
 }
 
@@ -4410,18 +4268,10 @@ body { overflow-x: clip; }
    treatment instead, matching .latest-reading. */
 
 .metric-detail-hero .an-guidance-block,
-
 .metric-detail-hero .an-retest-block,
-
 .metric-detail-hero .an-authority-explainer,
-
 .area-detail-hero .an-guidance-block,
-
-.area-detail-hero .an-retest-block,
-
-.overview-hero .an-guidance-block,
-
-.overview-hero .an-retest-block {
+.area-detail-hero .an-retest-block {
 
   border-color: var(--hero-line);
 
@@ -4477,12 +4327,7 @@ body { overflow-x: clip; }
    which is dark-on-dark against the hero. Use the hero accent. */
 
 .metric-detail-hero .eyebrow a,
-
-.area-detail-hero .eyebrow a,
-
-.overview-hero .eyebrow a,
-
-.health-hero .eyebrow a { color: var(--hero-accent); }
+.area-detail-hero .eyebrow a { color: var(--hero-accent); }
 
 
 
@@ -4503,43 +4348,21 @@ body { overflow-x: clip; }
    own --st-bg. */
 
 .metric-detail-hero .an-range-text,
-
 .metric-detail-hero .an-trend-text,
-
 .metric-detail-hero .an-authority-source,
-
 .metric-detail-hero .an-range-bar__ticks,
-
 .metric-detail-hero .an-panel-meta,
-
-/* The device pages put the staleness disclosure inside the dark hero, where
-   --muted is the light-surface grey and disappears. */
-
 .metric-detail-hero .an-staleness-chip__note,
-
 .area-detail-hero .an-staleness-chip__note,
-
 .area-detail-hero .an-range-text,
-
 .area-detail-hero .an-trend-text,
-
 .area-detail-hero .an-authority-source,
-
-.area-detail-hero .an-range-bar__ticks,
-
-.overview-hero .an-range-text,
-
-.overview-hero .an-trend-text { color: var(--hero-muted); }
+.area-detail-hero .an-range-bar__ticks { color: var(--hero-muted); }
 
 
 
 .metric-detail-hero a:not(.button):not([class*="an-authority-item"] a),
-
-.area-detail-hero a:not(.button),
-
-.overview-hero a:not(.button),
-
-.health-hero a:not(.button) { color: var(--hero-accent); }
+.area-detail-hero a:not(.button) { color: var(--hero-accent); }
 
 
 
@@ -4568,10 +4391,7 @@ body { overflow-x: clip; }
    the same value this component already renders at on /panels. */
 
 .metric-detail-hero .an-conflict-note p,
-
-.area-detail-hero .an-conflict-note p,
-
-.overview-hero .an-conflict-note p { color: var(--st-conflict-fg); }
+.area-detail-hero .an-conflict-note p { color: var(--st-conflict-fg); }
 /* The authority-positions box is a light surface inside the dark hero: its
    heading inherited the hero's white (invisible), and the hero column is too
    narrow for the four-column row, so the range overlapped the publisher.
@@ -5287,9 +5107,10 @@ details.panel.an-page-disclosure { padding: 0; }
 
    shape added without a class cannot render as a black block. */
 
-.dynamic-chart svg, .an-sparkline, .chart-wrap svg { fill: none; }
+.dynamic-chart svg,
+.an-sparkline { fill: none; }
 
-.dynamic-chart svg text, .chart-wrap svg text { fill: var(--muted); }
+.dynamic-chart svg text { fill: var(--muted); }
 
 
 
@@ -5593,30 +5414,24 @@ details.panel.an-page-disclosure { padding: 0; }
 
 /* Inside the dark heroes the muted body text keeps the hero's own palette. */
 .metric-detail-hero .an-verdict-details > summary,
-.area-detail-hero .an-verdict-details > summary,
-.overview-hero .an-verdict-details > summary { border-color: var(--hero-faint); color: var(--hero-muted); }
+.area-detail-hero .an-verdict-details > summary { border-color: var(--hero-faint); color: var(--hero-muted); }
 .metric-detail-hero .an-verdict-details__reading,
 .metric-detail-hero .an-verdict-details__authority,
 .area-detail-hero .an-verdict-details__reading,
-.area-detail-hero .an-verdict-details__authority,
-.overview-hero .an-verdict-details__reading,
-.overview-hero .an-verdict-details__authority { color: var(--hero-muted); }
+.area-detail-hero .an-verdict-details__authority { color: var(--hero-muted); }
 .metric-detail-hero .an-verdict-details__reading b,
-.area-detail-hero .an-verdict-details__reading b,
-.overview-hero .an-verdict-details__reading b { color: var(--hero-ink); }
+.area-detail-hero .an-verdict-details__reading b { color: var(--hero-ink); }
 .metric-detail-hero .an-verdict-details__reading a,
 .area-detail-hero .an-verdict-details__reading a { color: var(--hero-ink); }
 /* A disputed summary keeps its light conflict fill even on the dark hero, so
    the hero recolouring above must not wash it out. */
 .metric-detail-hero .an-verdict-details[data-conflict="true"] > summary,
-.area-detail-hero .an-verdict-details[data-conflict="true"] > summary,
-.overview-hero .an-verdict-details[data-conflict="true"] > summary {
+.area-detail-hero .an-verdict-details[data-conflict="true"] > summary {
   border-color: var(--st-conflict-line); color: var(--st-conflict-fg);
 }
 
 .metric-detail-hero .an-range-bar__caption,
-.area-detail-hero .an-range-bar__caption,
-.overview-hero .an-range-bar__caption { color: var(--hero-muted); }
+.area-detail-hero .an-range-bar__caption { color: var(--hero-muted); }
 /* The reader's own value pill lives among the ticks but is not one: it paints
    its own light background, so --hero-muted on it was pale grey on white --
    1.72:1, the least readable thing on the page, and it is the patient's actual
@@ -5676,8 +5491,7 @@ details.panel.an-page-disclosure { padding: 0; }
 /* The reader's own value on the bar. On a dark hero the light chip tint has no
    contrast, so the pill takes the hero's own high-contrast treatment. */
 .metric-detail-hero .an-range-bar__you,
-.area-detail-hero .an-range-bar__you,
-.overview-hero .an-range-bar__you {
+.area-detail-hero .an-range-bar__you {
   background: var(--hero-ink);
   color: var(--hero-bg-2);
 }
@@ -7003,8 +6817,14 @@ svg.an-trend { display: block; width: 100%; max-width: 24rem; height: auto; over
 @media print {
   @page { size:A4 landscape; margin:12mm; }
   body { background:white !important; color:#16252d !important; }
-  .topbar, .footer, .skip-link, .ai-opener, .ai-modal, .export-hero,
-  .export-no-print, .back-link, .report-problem-trigger { display:none !important; }
+  .topbar,
+  .footer,
+  .skip-link,
+  .ai-opener,
+  .ai-modal,
+  .export-hero,
+  .export-no-print,
+  .back-link { display:none !important; }
   main.shell, main, .content, .page-content { width:100% !important; max-width:none !important; margin:0 !important; padding:0 !important; }
   .export-workspace { display:block; }
   .export-preview { width:100%; }

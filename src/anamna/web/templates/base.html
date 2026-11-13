@@ -10,7 +10,9 @@
   <link rel="stylesheet" href="{{ asset('app.css') }}">
   <link rel="stylesheet" href="{{ asset('integration-ui.css') }}">
   {% block page_styles %}{% endblock %}
-  <script nonce="{{ csp_nonce }}">window.__HL_I18N__={{ js_i18n|tojson }};window.__HL_LOCALE__={{ js_locale|tojson }};</script>
+  {# The strings scripts read: one file per locale, cached by its content hash.
+     Not deferred, and before chart.js: inline scripts read it during parse. #}
+  <script src="{{ i18n_src }}"></script>
   {# Not deferred: the trend charts are inline scripts that run during parse. #}
   <script src="{{ asset('chart.js') }}"></script>
   <script src="{{ asset('busy.js') }}" defer></script>
