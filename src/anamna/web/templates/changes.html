@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "_components.html" import status_chip, empty_state, plural_t with context %}
+{% from "_factors.html" import influence_chips with context %}
 {% block title %}{{ t('changes.title') }} · {{ t('brand.name') }}{% endblock %}
 {% block content %}
 <link rel="stylesheet" href="{{ asset('patient-experience.css') }}">
@@ -31,6 +32,12 @@
 {% endif %}{% endfor %}
 {%- endmacro -%}
 
+{#- A link to another period keeps the reader's sort, filter and grouping. -#}
+{%- macro with_view(url) -%}{{ url }}{% if view_query %}{{ '&' if '?' in url else '?' }}{{ view_query }}{% endif %}{%- endmacro -%}
+{%- macro view_inputs() -%}
+{% if arranged %}{% for name in ('sort', 'show', 'group') %}{% if arranged[name] != {'sort': 'status', 'show': 'all', 'group': 'status'}[name] %}<input type="hidden" name="{{ name }}" value="{{ arranged[name] }}">{% endif %}{% endfor %}{% if arranged.reverse %}<input type="hidden" name="reverse" value="1">{% endif %}{% endif %}
+{%- endmacro -%}
+
 {#- `lazy` rows sit inside a closed bucket: their chart waits in a <template>
     (parsed, never laid out) until the bucket is opened. 300+ inline SVGs a
     reader mostly never opens made this the heaviest page in the app. -#}
@@ -52,6 +59,7 @@
     </p>
     {% if entry.also %}<p class="an-change__also">{{ t('changes.also_measured', items=entry.also|join('; ')) }}</p>{% endif %}
   </div>
+  {{ influence_chips(entry.influences) }}
   {% if entry.ai_note %}{% set note = entry.ai_note %}
   <details class="an-change-note" data-level="{{ note.level }}">
     <summary><span>{{ t('changes.ai_note_summary') }}</span> <span class="pill an-ai-level" data-level="{{ note.level }}" title="{{ t('changes.ai_level_' ~ note.level ~ '_hint') }}">{{ t('changes.ai_level_' ~ note.level) }}</span></summary>
@@ -163,11 +171,12 @@
 {% elif view.episodes %}
 <div class="an-change-picker">
   <form class="an-change-picker__episode" method="get" action="/changes">
+    {{ view_inputs() }}
     <label for="changes-episode">{{ t('changes.period_label') }}</label>
     <select id="changes-episode" name="episode">
       {% if selection.kind == 'range' %}<option value="" selected disabled>{{ t('changes.range_option', span=selection.label) }}</option>{% endif %}
       {% for episode in view.episodes %}
-      <option value="{{ episode.value }}" data-url="{{ episode.url }}"{% if episode.current %} selected{% endif %}>{{ episode.label }} · {{ plural_t('changes.tests_count', episode.count) }}</option>
+      <option value="{{ episode.value }}" data-url="{{ with_view(episode.url) }}"{% if episode.current %} selected{% endif %}>{{ episode.label }} · {{ plural_t('changes.tests_count', episode.count) }}</option>
       {% endfor %}
     </select>
     <button class="secondary" type="submit" data-js-hide>{{ t('changes.show') }}</button>
@@ -175,6 +184,7 @@
   <details class="an-change-range"{% if selection.kind == 'range' %} open{% endif %}>
     <summary>{{ t('changes.custom_range') }}</summary>
     <form method="get" action="/changes">
+      {{ view_inputs() }}
       <label>{{ t('changes.range_from') }} <input type="date" name="from" value="{{ selection.from }}" min="{{ view.bounds.min }}" max="{{ view.bounds.max }}"></label>
       <label>{{ t('changes.range_to') }} <input type="date" name="to" value="{{ selection.to }}" min="{{ view.bounds.min }}" max="{{ view.bounds.max }}"></label>
       <button class="secondary" type="submit">{{ t('changes.range_apply') }}</button>
@@ -201,8 +211,8 @@
       {% set nav = view.nav %}
       {% if nav.earlier or nav.newer or selection.kind == 'range' %}
       <nav class="an-change-group__nav" aria-label="{{ t('changes.episode_nav') }}">
-        {% if nav.earlier %}<a class="button secondary" href="{{ nav.earlier.url }}" rel="prev">{{ t('changes.earlier', span=nav.earlier.label) }}</a>{% endif %}
-        {% if nav.newer %}<a class="button secondary" href="{{ nav.newer.url }}" rel="next">{{ t('changes.newer', span=nav.newer.label) }}</a>{% endif %}
+        {% if nav.earlier %}<a class="button secondary" href="{{ with_view(nav.earlier.url) }}" rel="prev">{{ t('changes.earlier', span=nav.earlier.label) }}</a>{% endif %}
+        {% if nav.newer %}<a class="button secondary" href="{{ with_view(nav.newer.url) }}" rel="next">{{ t('changes.newer', span=nav.newer.label) }}</a>{% endif %}
         {% if selection.kind == 'range' %}<a class="button secondary" href="/changes">{{ t('changes.show_latest') }}</a>{% endif %}
       </nav>
       {% endif %}
@@ -221,19 +231,44 @@
       <p>{{ t('changes.legend_change') }}</p>
       <p>{{ t('changes.legend_trend') }}</p>
       <p>{{ t('changes.legend_source') }}</p>
+      <p>{{ t('med.influence.legend') }}</p>
     </details>
     </div>
+    {#- Sort, filter and grouping.  A plain GET form: it works without script;
+        with script every control answers on its own and the button goes. -#}
+    <form class="an-change-view" method="get" action="/changes#{{ report.anchor }}" aria-label="{{ t('changes.view_heading') }}" data-change-view>
+      {% for name, value in selection_pairs %}<input type="hidden" name="{{ name }}" value="{{ value }}">{% endfor %}
+      <label>{{ t('changes.sort_label') }}
+        <select name="sort">{% for value in view_sorts %}<option value="{{ value }}"{% if arranged.sort == value %} selected{% endif %}>{{ t('changes.sort_' ~ value) }}</option>{% endfor %}</select></label>
+      <label>{{ t('changes.filter_label') }}
+        <select name="show">{% for value in view_shows %}<option value="{{ value }}"{% if arranged.show == value %} selected{% endif %}>{{ t('changes.filter_' ~ value) }}</option>{% endfor %}</select></label>
+      <label>{{ t('changes.group_label') }}
+        <select name="group">{% for value in view_groups %}<option value="{{ value }}"{% if arranged.group == value %} selected{% endif %}>{{ t('changes.group_' ~ value) }}</option>{% endfor %}</select></label>
+      <label class="an-change-view__check"><input type="checkbox" name="reverse" value="1"{% if arranged.reverse %} checked{% endif %}> {{ t('changes.order_reverse') }}</label>
+      <button class="secondary" type="submit" data-js-hide>{{ t('changes.apply') }}</button>
+      {% if arranged.shown != arranged.total %}<p class="an-change-view__count" role="status">{{ t('changes.shown_count', shown=arranged.shown|countfmt, total=arranged.total|countfmt) }}</p>{% endif %}
+    </form>
   </header>
-  {% if report.open %}
-  <ul class="an-change-list">{% for entry in report.open %}{{ change_item(entry) }}{% endfor %}</ul>
-  {% else %}
+  {% if arranged.shown == 0 %}
+  <p class="an-change-empty">{{ t('changes.filter_empty') }} <a href="{{ reset_url }}">{{ t('changes.filter_reset') }}</a></p>
+  {% elif arranged.nothing_open %}
   <p class="muted">{{ t('changes.nothing_open') }}</p>
   {% endif %}
-  {% for bucket, entries in report.collapsed %}
+  {#- Only the first rows draw their chart at once; the rest wait in a
+      <template> until the row is scrolled to or its fold is opened. -#}
+  {% set drawn = namespace(n=0) %}
+  {% for section in arranged.sections %}
+  {% if section.kind == 'fold' %}
   <details class="an-change-more">
-    <summary><span>{{ t('changes.bucket_' ~ bucket) }}</span> <span class="pill">{{ entries|length|countfmt }}</span></summary>
-    <ul class="an-change-list">{% for entry in entries %}{{ change_item(entry, true) }}{% endfor %}</ul>
+    <summary><span>{{ section.title }}</span> <span class="pill">{{ section.entries|length|countfmt }}</span></summary>
+    <ul class="an-change-list">{% for entry in section.entries %}{{ change_item(entry, true) }}{% endfor %}</ul>
   </details>
+  {% else %}
+  {% if section.kind == 'group' %}
+  <h3 class="an-change-subhead">{% if section.url %}<a href="{{ section.url }}">{{ section.title }}</a>{% else %}<span>{{ section.title }}</span>{% endif %} <span class="pill">{{ section.entries|length|countfmt }}</span></h3>
+  {% endif %}
+  <ul class="an-change-list">{% for entry in section.entries %}{% set drawn.n = drawn.n + 1 %}{{ change_item(entry, drawn.n > 12) }}{% endfor %}</ul>
+  {% endif %}
   {% endfor %}
 </section>
 {% if view.scope and (summary or ai_can_ask) %}{{ ai_block() }}{% endif %}
@@ -257,6 +292,27 @@
         globalThis.anamnaBusy?.navigating(period);
         location.assign(chosen.dataset.url);
       }
+    });
+  }
+  // A waiting chart that is not inside a closed fold is drawn when its row
+  // comes near the screen.
+  if ('IntersectionObserver' in globalThis) {
+    const seen = new IntersectionObserver(entries => entries.forEach(item => {
+      if (!item.isIntersecting) return;
+      seen.unobserve(item.target);
+      item.target.querySelectorAll('template.an-trend-lazy').forEach(node => node.replaceWith(node.content.cloneNode(true)));
+    }), {rootMargin: '300px'});
+    document.querySelectorAll('.an-change').forEach(row => { if (row.querySelector('template.an-trend-lazy')) seen.observe(row); });
+  } else {
+    document.querySelectorAll('.an-change-list:not(details .an-change-list) template.an-trend-lazy').forEach(node => node.replaceWith(node.content.cloneNode(true)));
+  }
+  // Each control of the view form answers on its own; Apply is the no-script path.
+  const viewForm = document.querySelector('[data-change-view]');
+  if (viewForm) {
+    viewForm.querySelector('[data-js-hide]').remove();
+    viewForm.addEventListener('change', event => {
+      globalThis.anamnaBusy?.navigating(event.target);
+      viewForm.requestSubmit();
     });
   }
   // Arriving at #changes-ai (after generating a summary) opens it.

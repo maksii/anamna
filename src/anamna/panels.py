@@ -721,7 +721,12 @@ def _interpretation_of(member: object) -> str:
     if isinstance(member, dict):
         verdict = member.get("verdict") or member
         if isinstance(verdict, dict):
-            return str(verdict.get("interpretation") or "unjudged")
+            interpretation = str(verdict.get("interpretation") or "unjudged")
+            # Kept, not raised: a historical member can only say the panel is
+            # normal (or that it is not a measurement); it never flags the group.
+            if member.get("historical") and interpretation not in NORMAL_INTERPRETATIONS | {"not_a_measurement"}:
+                return "unjudged"
+            return interpretation
     return "unjudged"
 
 

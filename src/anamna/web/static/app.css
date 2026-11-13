@@ -1037,6 +1037,13 @@ input:focus, select:focus { border-color: var(--teal); box-shadow: 0 0 0 3px rgb
 .detail-date span, .detail-date small { color: var(--muted); font-size: 11px; }
 
 .detail-date strong { font-family: Georgia, serif; font-size: 22px; }
+.an-doc-historical { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:var(--space-2) var(--space-4); margin:0 0 var(--space-3); padding:var(--space-3); border:1px solid var(--line); border-radius:12px; }
+.an-doc-historical>div { flex:1 1 18rem; min-width:0; display:grid; gap:var(--space-1); }
+.an-doc-historical p { margin:0; }
+.an-doc-historical .inline-form { margin:0; }
+.an-doc-historical button { min-height:44px; }
+.an-historical-pill { background:var(--st-absent-bg); color:var(--st-absent-fg); }
+small.an-historical-note { display:inline-block; padding:2px 8px; border-radius:10px; background:var(--st-absent-bg); color:var(--st-absent-fg); font-weight:650; }
 
 .source-title { display:grid; gap:3px; margin:8px 0 0 !important; color:var(--muted); font-size:12px; }
 
@@ -3331,6 +3338,13 @@ img.viewer-media.rendered-page { height:auto; min-height:0; margin:16px; padding
 
 }
 
+.an-panel-card__medicines { flex-basis:100%; font-size:var(--text-xs); color:var(--muted); }
+.an-panel-medicines__list { list-style:none; margin:var(--space-2) 0; padding:0; display:grid; }
+.an-panel-medicines__list li { display:flex; flex-wrap:wrap; align-items:center; gap:var(--space-1) var(--space-3); padding:var(--space-2) 0; border-top:1px solid var(--line); min-width:0; }
+.an-panel-medicines__name { display:inline-flex; align-items:center; min-height:44px; font-weight:700; overflow-wrap:anywhere; }
+.an-panel-medicines__kind, .an-panel-medicines__when { font-size:var(--text-xs); color:var(--muted); }
+.an-panel-medicines__effects { display:flex; flex-wrap:wrap; gap:var(--space-1); flex-basis:100%; }
+.an-panel-medicines__effects .an-effect a { display:inline-block; min-width:44px; padding-block:15px; }
 .an-panel-card__conflicts { margin-top: 0; }
 
 .an-panel-card__conflicts[open] { flex-basis: 100%; }
@@ -3392,6 +3406,8 @@ img.viewer-media.rendered-page { height:auto; min-height:0; margin:16px; padding
 .an-panel-member-row__date      { grid-area: date; color: var(--muted); font-size: var(--text-2xs); white-space: nowrap; }
 
 .an-panel-member-row__verify    { grid-area: verify; }
+.an-panel-member-row__influences { grid-column: 1 / -1; min-width: 0; }
+.an-panel-member-row__influences .an-influences { margin: 0; }
 
 .an-panel-member-row__label     { display: none; }
 
@@ -6880,6 +6896,17 @@ details.panel.an-page-disclosure { padding: 0; }
 /* 18rem does not fit beside the label on a phone, so the select wraps under
    it at full width there instead of truncating its own label. */
 .an-change-picker__episode select { flex: 1 1 18rem; width: auto; min-width: 0; max-width: 32rem; }
+.an-change-view { display:flex; flex-wrap:wrap; align-items:end; gap:var(--space-2) var(--space-3); margin:var(--space-3) 0 0; }
+.an-change-view>label { display:grid; gap:2px; flex:1 1 8.5rem; min-width:0; font-size:var(--text-xs); font-weight:700; }
+.an-change-view select { width:100%; min-height:44px; }
+.an-change-view>.an-change-view__check { display:flex; align-items:center; gap:var(--space-2); flex:0 1 auto; min-height:44px; font-size:var(--text-sm); font-weight:600; }
+.an-change-view>.an-change-view__check input { width:20px; height:20px; flex:none; }
+.an-change-view button { min-height:44px; }
+.an-change-view__count { flex-basis:100%; margin:0; font-size:var(--text-xs); color:var(--muted); }
+.an-change-subhead { display:flex; flex-wrap:wrap; align-items:center; gap:var(--space-2); margin:var(--space-4) 0 var(--space-2); font-size:var(--text-sm); }
+.an-change-subhead a { display:inline-flex; align-items:center; min-height:44px; }
+.an-change-empty { margin:var(--space-3) 0; }
+.an-change-empty a { display:inline-flex; align-items:center; min-height:44px; }
 .an-change-range { flex: 0 1 auto; min-width: 0; }
 .an-change-range[open] { flex-basis: 100%; }
 .an-change-range form { display: flex; flex-wrap: wrap; align-items: end; gap: var(--space-2) var(--space-3); margin-top: var(--space-1); }
@@ -7034,6 +7061,16 @@ svg.an-trend { display: block; width: 100%; max-width: 24rem; height: auto; over
 .an-conn-pill[data-state="ok"] { background: var(--mint); color: var(--teal-dark); }
 .an-conn-pill[data-state="attention"] { background: var(--warn-bg); color: var(--warn-ink); }
 .an-conn-pill[data-state="idle"], .an-conn-pill[data-state="off"] { background: var(--st-absent-bg); color: var(--st-absent-fg); }
+/* The page header is sticky and 68 px tall: a block a link or a redirect jumps to stops below it, not under it. */
+.an-conn, .an-conn .panel, .an-lab-reauth, .an-plan-fail, .an-doc-historical { scroll-margin-top:84px; }
+.an-conn-renew { display:grid; gap:var(--space-2); margin-bottom:var(--space-3); }
+.an-conn-renew h2 { margin:0; font-size:var(--text-sm); }
+.an-conn-renew p { margin:0; }
+.an-conn-renew ul { list-style:none; margin:0; padding:0; display:flex; flex-wrap:wrap; gap:var(--space-2); }
+.an-conn-renew a { display:inline-flex; align-items:center; min-height:44px; padding:0 var(--space-3); border:1px solid currentColor; border-radius:12px; font-weight:650; color:inherit; }
+.an-lab-reauth { display:grid; gap:var(--space-2); margin-bottom:var(--space-4); }
+.an-lab-reauth .alert p { margin:0; }
+.an-lab-reauth .alert p + p { margin-top:var(--space-1); }
 .an-conn-legend summary, .an-conn-more summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; font-weight: 600; }
 .an-conn-legend dl { display: grid; gap: 8px; margin: 8px 0 0; }
 .an-conn-legend dd { margin: 4px 0 0; color: var(--muted); }
@@ -7311,6 +7348,14 @@ svg.an-trend { display: block; width: 100%; max-width: 24rem; height: auto; over
 .an-plan-prep__lab h4 { margin: 12px 0 4px; font-size: var(--text-sm, .95rem); }
 .an-plan-prep__lab .an-plan-prep__group { margin: 12px 0 4px; font-size: var(--text-xs); font-weight: 600; color: var(--muted); }
 .an-plan-prep__lab ul { margin: 0; padding-left: 1.2em; display: grid; gap: 6px; overflow-wrap: anywhere; }
+.an-plan-fail { display:grid; gap:var(--space-1); }
+.an-plan-fail p { margin:0; }
+.an-plan-self { margin:0 0 12px; border-top:1px solid var(--line); padding-top:4px; }
+.an-plan-self>summary { min-height:44px; display:grid; align-content:center; gap:2px; cursor:pointer; font-weight:700; padding:6px 0; }
+.an-plan-self__list { list-style:none; margin:var(--space-2) 0 0; padding:0; display:grid; }
+.an-plan-self__list li { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:0 var(--space-3); border-top:1px solid var(--line); min-width:0; }
+.an-plan-self__list a { display:inline-flex; align-items:center; min-height:44px; min-width:0; overflow-wrap:anywhere; font-weight:650; }
+.an-plan-self__meta { flex:none; }
 /* The whole collapsed panel is the summary: padding moves from the panel into it. */
 .an-plan-form > :is(.an-plan-sets, .an-plan-where) { --pad: 24px; padding: 0; margin-bottom: 0; }
 :is(.an-plan-sets, .an-plan-where) > details { padding: 0 var(--pad); }
@@ -7416,6 +7461,14 @@ svg.an-trend { display: block; width: 100%; max-width: 24rem; height: auto; over
 .an-effect { display: inline-block; max-width: 100%; padding: 3px 9px; border-radius: 12px; background: var(--st-stale-bg); color: var(--st-stale-fg); font-size: var(--text-xs); font-weight: 650; line-height: 1.4; overflow-wrap: break-word; }
 .an-effect__arrow { margin-inline-end: 4px; font-weight: 800; }
 .an-effect a { color: inherit; text-decoration: underline; }
+.an-influences { display:flex; flex-wrap:wrap; align-items:center; gap:var(--space-1) var(--space-2); margin:var(--space-2) 0 0; font-size:var(--text-xs); }
+.an-influences__label { color:var(--muted); font-weight:650; }
+/* The name can be a long product name: the link stays inline so the arrow, the name and the sentence wrap as one
+   line of text. Its 15 px block padding plus the line height clears the 44 px target; the chip carries the same
+   padding so that target never reaches over a neighbour. */
+.an-influence { padding-block:15px; }
+.an-influence a { display:inline; padding-block:15px; font-weight:700; }
+.an-influence__when { font-weight:500; opacity:.85; }
 .an-ai-tag { display: inline-flex; padding: 1px 6px; border: 1px solid var(--st-conflict-line); border-radius: 999px; background: var(--st-conflict-bg); color: var(--st-conflict-fg); font-size: var(--text-2xs); font-weight: 750; cursor: help; vertical-align: middle; }
 
 .an-med-track { display: block; width: 100%; height: 12px; }

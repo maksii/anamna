@@ -113,6 +113,20 @@
    the details into a 340 px strip of 10 px type. */
 .metric-detail-hero.an-metric-hero { min-height:0; margin:0 0 14px; padding:20px 28px; display:grid; grid-template-columns:minmax(0,1fr); gap:14px; }
 .an-metric-hero__head { display:flex; flex-wrap:wrap; align-items:flex-end; justify-content:space-between; gap:12px 32px; }
+/* "Read together with": one button that opens the panel's sibling tests. */
+.an-hero-together { margin:12px 0 0; }
+.an-hero-together>summary { display:inline-flex; flex-wrap:wrap; align-items:center; gap:4px 8px; min-height:44px; max-width:100%; padding:8px 14px 8px 32px; position:relative; border:1px solid var(--line-strong); border-radius:12px; cursor:pointer; list-style:none; font-size:14px; }
+.an-hero-together>summary::-webkit-details-marker { display:none; }
+.an-hero-together>summary::before { content:""; position:absolute; left:12px; top:50%; width:8px; height:8px; border-right:2px solid var(--teal); border-bottom:2px solid var(--teal); transform:translateY(-50%) rotate(-45deg); transition:transform .15s ease; }
+.an-hero-together[open]>summary::before { transform:translateY(-75%) rotate(45deg); }
+.an-hero-together>summary:focus-visible { outline:3px solid var(--focus); outline-offset:3px; }
+.an-hero-together__label { color:var(--muted); }
+.an-hero-together__body { display:grid; grid-template-columns:minmax(0,1fr); gap:10px; margin-top:10px; }
+.an-hero-together__body p { margin:0; }
+.an-hero-together__body .button { white-space:normal; max-width:100%; }
+.an-hero-together .an-sibling-chips { list-style:none; margin:0; padding:0; min-width:0; }
+.an-hero-together .an-sibling-chips li { min-width:0; max-width:100%; }
+.an-hero-together .an-sibling-chips a { overflow-wrap:anywhere; }
 .an-metric-hero__title { flex:1 1 16rem; min-width:0; }
 .an-metric-hero h1 { margin:6px 0 0; font-size:clamp(28px,3.2vw,44px); line-height:1.1; overflow-wrap:anywhere; }
 .an-metric-hero__value { display:grid; gap:6px; min-width:0; }

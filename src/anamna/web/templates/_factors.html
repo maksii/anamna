@@ -8,6 +8,19 @@
 <span class="an-effect" data-direction="{{ effect.direction }}"><span class="an-effect__arrow" aria-hidden="true">{{ {'raises': '↑', 'lowers': '↓'}.get(effect.direction, '↕') }}</span>{{ effect.direction_label }} {% if link and effect.url %}<a href="{{ effect.url }}">{{ effect.label }}</a>{% else %}{{ effect.label }}{% endif %}</span>
 {%- endmacro %}
 
+{#- The entries that bear on one result, printed under it: `chips` is
+    factors_view.influence_chips().  The arrow and the words carry the
+    direction; "during" or "since" is said in words too, never by colour. -#}
+{% macro influence_chips(chips) -%}
+{% if chips %}
+<p class="an-influences"><span class="an-influences__label">{{ t('med.influence.label') }}</span>
+  {% for chip in chips %}
+  <span class="an-effect an-influence" data-direction="{{ chip.direction }}" data-when="{{ chip.when }}"><span class="an-effect__arrow" aria-hidden="true">{{ {'raises': '↑', 'lowers': '↓'}.get(chip.direction, '↕') }}</span><a href="{{ chip.url }}">{{ chip.name }}</a>: {{ chip.direction_label }} <small class="an-influence__when">({{ chip.when_label }})</small>{% if chip.origin == 'ai' %} <span class="an-ai-tag" title="{{ t('med.ai_tag_help') }}">{{ t('med.ai_tag') }}</span>{% endif %}</span>
+  {% endfor %}
+</p>
+{% endif %}
+{%- endmacro %}
+
 {% macro _period_row(item) -%}
 <li>
   <a class="an-factor-key__name" href="{{ item.url }}">{{ item.name }}</a>

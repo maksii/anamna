@@ -16,7 +16,7 @@ RECHECK_COUNTS = ("orders", "relinked", "units", "units_undone", "flags", "flags
 
 SAVED_KEYS = frozenset({
     "labsync.saved_credentials", SAVED_CHECKED,
-    "labsync.saved_sync", "labsync.saved_forgotten",
+    "labsync.saved_sync", "labsync.saved_forgotten", "labsync.reauth_done",
     "labsync.password_code_sent", "labsync.password_code_cancelled", "labsync.sms_choose_person",
 })
 
@@ -66,6 +66,7 @@ def _register_globals(settings, templates) -> None:
     env.globals["lab_inbox_count"] = lambda user: once(
         "inbox_count", user, build=lambda: labsync.inbox_count(settings, user))
     env.globals["lab_pending_code"] = lambda user, key: labsync.pending_code(user["id"], key) if user else None
+    env.globals["lab_reauth"] = lambda user: once("reauth", user, build=lambda: labsync.reauth_needed(settings, user))
     env.globals["lab_sign_in"] = lambda key: getattr(labsync.PROVIDERS.get(key), "SIGN_IN", "paste")
     env.filters["labvalue"] = _lab_value
     env.filters["labnumeric"] = _lab_numeric
@@ -141,13 +142,31 @@ def _register_admin_routes(app, settings, *, templates, template_context, requir
         return RedirectResponse(f"/admin/lab-connections?provider={key}&done={done}#lab-admin-{key}", status_code=303)
 
 
-async def _check_signed_in(settings, user, key: str) -> RedirectResponse:
-    """Signing in already proved the account; ask who is on it at once."""
+async def _check_error(settings, user, key: str) -> str | None:
+    """Ask the lab who is on the account; the error's message key, or None when it answered."""
     try:
         await run_in_threadpool(labsync.check_account, settings, user["id"], key)
     except labsync.LabSyncError as exc:
-        return _back(key, exc.key)
-    return _back(key, SAVED_CHECKED)
+        return exc.key
+    return None
+
+
+async def _check_signed_in(settings, user, key: str) -> RedirectResponse:
+    """Signing in already proved the account; ask who is on it at once."""
+    error = await _check_error(settings, user, key)
+    return _back(key, error or SAVED_CHECKED)
+
+
+async def _resume_after_reauth(settings, user, key: str) -> RedirectResponse | None:
+    """A renewed sign-in picks the sync up where it stopped, when somebody is linked."""
+    if not await run_in_threadpool(labsync.has_links, settings, user["id"], key):
+        return None
+    try:
+        await run_in_threadpool(labsync.start_sync, settings, user["id"], key)
+    except labsync.LabSyncError as exc:
+        if exc.key != "labsync.error_running":
+            return _back(key, exc.key)
+    return _back(key, "labsync.reauth_done")
 
 
 def _register_credential_routes(app, settings, *, person_form, audit) -> None:
@@ -156,6 +175,8 @@ def _register_credential_routes(app, settings, *, person_form, audit) -> None:
         user, form = await person_form(request, key)
         values = {name: str(form.get(name) or "")
                   for name in ("credentials_json", "token", "phone", "password", "code", "patient")}
+        before = await run_in_threadpool(labsync.account, settings, user["id"], key)
+        renewing = bool(before and before["secret"])  # a sign-in again, not the first connection
         try:
             saved = await run_in_threadpool(labsync.save_credentials, settings, user["id"], key, values)
         except labsync.LabSyncError as exc:
@@ -166,13 +187,24 @@ def _register_credential_routes(app, settings, *, person_form, audit) -> None:
             return _back(key, saved)
         # Never the secret: what changed, not what it is.
         await run_in_threadpool(audit, user["id"], user["id"], "labsync_credentials_saved", "lab_accounts", key, {})
-        if labsync.signs_in(key):
-            return await _check_signed_in(settings, user, key)
-        return _back(key, saved)
+        checks = labsync.signs_in(key) or renewing
+        if checks:
+            error = await _check_error(settings, user, key)
+            if error:
+                return _back(key, error)
+        if renewing:
+            resumed = await _resume_after_reauth(settings, user, key)
+            if resumed:
+                return resumed
+        return _back(key, SAVED_CHECKED if checks else saved)
 
     @app.post("/profile/lab/{key}/forget")
     async def forget(request: Request, key: str):
-        user, _ = await person_form(request, key)
+        user, form = await person_form(request, key)
+        if form.get("pending_only") == "1":
+            # Cancelling a texted code while signing in again: the stored sign-in stays.
+            await run_in_threadpool(labsync.cancel_pending, user["id"], key)
+            return _back(key, "labsync.password_code_cancelled")
         row = await run_in_threadpool(labsync.account, settings, user["id"], key)
         await run_in_threadpool(labsync.forget, settings, user["id"], key)
         if not row or not row["secret"]:  # only a texted-code step was waiting

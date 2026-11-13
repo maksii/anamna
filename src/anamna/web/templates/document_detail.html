@@ -9,7 +9,7 @@
 <a class="back-link" href="/documents">{{ t('doc.back') }}</a>
 <section class="detail-head">
   <div>
-    <div class="eyebrow">{{ document.type_label }} · {{ document.vendor|phrase }}</div>
+    <div class="eyebrow">{{ document.type_label }} · {{ document.vendor|phrase }}{% if document.historical_at %} · <span class="pill an-historical-pill">{{ t('doc.historical_pill') }}</span>{% endif %}</div>
     <h1>{{ display_title }}</h1>
     {#- Labelled for what it is: a heading printed on the report, or the name
         the reader gave it. A filename is neither. -#}
@@ -21,6 +21,28 @@
 </section>
 
 {% include "_document_relations.html" %}
+{#- Historical: the problem this document describes is over.  It stays in the
+    record; it stops raising attention.  One button either way, with what it
+    does said beside it. -#}
+<section class="an-doc-historical{{ ' is-on' if document.historical_at else '' }}" id="document-historical" aria-labelledby="document-historical-heading">
+  <div>
+    <h2 id="document-historical-heading" class="visually-hidden">{{ t('doc.historical_pill') }}</h2>
+    {% set historical_notice = request.query_params.get('historical') %}
+    {% if historical_notice in ('saved', 'cleared') %}<p class="alert" role="status">{{ t('doc.historical_' ~ historical_notice) }}</p>{% endif %}
+    {% if document.historical_at %}
+    <p><span class="pill an-historical-pill">{{ t('doc.historical_pill') }}</span> {{ t('doc.historical_on', date=document.historical_at[:10]|datefmt) }}</p>
+    {% else %}
+    <p class="tiny muted">{{ t('doc.historical_help') }}</p>
+    {% endif %}
+  </div>
+  {% if csrf_token and not viewing and not guest %}
+  <form method="post" action="/documents/{{ document.id }}/historical" class="inline-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="historical" value="{{ '0' if document.historical_at else '1' }}">
+    <button class="secondary" type="submit">{{ t('doc.historical_unmark') if document.historical_at else t('doc.historical_mark') }}</button>
+  </form>
+  {% endif %}
+</section>
 {% if document.notes %}<div class="alert neutral">{{ document.notes|phrase }}</div>{% endif %}
 {% if review_task %}
 <section class="panel an-document-review" id="review-status">

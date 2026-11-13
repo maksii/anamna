@@ -6,7 +6,8 @@
 <div class="alert error" role="alert">{{ t('integrations.reauthorize', provider=provider.name) }}</div>
 {#- A link, not a form: Garmin's sign-in bounces across its own SSO hosts,
     which Chrome's form-action would block on a form POST. -#}
-<a class="primary" href="/integrations/garmin/connect">{{ t('integrations.connect', provider=provider.name) }}</a>
+<a class="primary" href="/integrations/garmin/connect">{{ t('integrations.reconnect', provider=provider.name) }}</a>
+<p class="tiny muted">{{ t('integrations.reconnect_hint', provider=provider.name) }}</p>
 {% endif %}
 <dl class="facts ai-facts">
   <div><dt>{{ t('integrations.data_label') }}</dt>

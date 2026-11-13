@@ -3,6 +3,7 @@
         sparkline, empty_state, trend_chip, metric_card, micro_mark,
         panel_member_row, plural_t with context %}
 {% from "_blood_pressure.html" import blood_pressure_block with context %}
+{% from "_factors.html" import influence_chips, effect_chip with context %}
 {% block title %}{{ t('panel.title', name=panel.name) }}{% endblock %}
 {% block content %}
 <link rel="stylesheet" href="{{ asset('patient-experience.css') }}">
@@ -204,7 +205,7 @@
   </div>
   {% if rows %}
   <div class="an-panel-member-rows">
-    {% for row in rows %}{{ panel_member_row(row, panel.name) }}{% endfor %}
+    {% for row in rows %}{{ panel_member_row(row, panel.name, influence_chips(influences.get(row.id))) }}{% endfor %}
   </div>
   {% else %}
   {{ empty_state(t('panel.empty_title'), t('panel.empty_body')) }}
@@ -232,6 +233,30 @@
   </div>
 </section>
 {% endif %}
+{% endif %}
+
+{#- The entries from the Medicines page that list an effect on a result in
+    this group: each with its period and which results it can move.  The
+    marks under the rows above say which were under way at the latest result. -#}
+{% if medicines %}
+<section class="panel an-panel-medicines" aria-labelledby="panel-medicines-heading">
+  <div class="panel-head">
+    <div><span class="eyebrow">{{ t('panel.medicines_eyebrow') }}</span><h2 id="panel-medicines-heading">{{ t('panel.medicines_heading') }}</h2></div>
+    <a class="button secondary" href="/medicines">{{ t('panel.medicines_open') }}</a>
+  </div>
+  <p class="an-field-help">{{ t('panel.medicines_lead') }}</p>
+  <ul class="an-panel-medicines__list">
+    {% for item in medicines %}
+    <li>
+      <a class="an-panel-medicines__name" href="{{ item.url }}">{{ item.name }}</a>
+      <span class="an-panel-medicines__kind">{{ item.kind_label }}</span>
+      <span class="an-panel-medicines__when">{% if item.approximate %}<abbr title="{{ t('med.approx') }}">≈</abbr> {% endif %}{{ item.period_text }}</span>
+      <span class="an-panel-medicines__effects">{% for effect in item.effects %}{{ effect_chip(effect, link=true) }}{% endfor %}</span>
+    </li>
+    {% endfor %}
+  </ul>
+  <p class="an-field-help">{{ t('med.influence.legend') }}</p>
+</section>
 {% endif %}
 
 {% if panel.missing_members %}
