@@ -11,6 +11,7 @@ plug in — so the tests also prove the abstraction actually abstracts.
 
 from __future__ import annotations
 
+import base64
 import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -1554,3 +1555,80 @@ def test_openai_models_are_offered_newest_first(monkeypatch):
     client = SimpleNamespace(models=SimpleNamespace(list=lambda: listing))
     monkeypatch.setattr(ai, "_openai_client", lambda key, timeout: client)
     assert _REAL_FETCH_MODELS("openai", "sk-test") == ["gpt-6-luna", "gpt-5-mini", "gpt-4o"]
+
+
+def _png(image) -> bytes:
+    import io
+
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def test_a_huge_photo_is_sent_as_a_jpeg_within_the_side_and_the_byte_limits():
+    """A vaccination card rendered to 14 and 16 MB PNGs was refused by the provider (10 MB after
+    base64) on every attempt, so the document could never be reviewed."""
+    import io
+    import os as _os
+
+    from PIL import Image
+
+    big = _png(Image.frombytes("RGB", (3000, 4000), _os.urandom(3000 * 4000 * 3)))
+    assert len(big) > ai.AI_IMAGE_MAX_BYTES
+
+    prepared = ai.prepare_image(big)
+
+    assert len(prepared) <= ai.AI_IMAGE_MAX_BYTES
+    assert ai.image_media_type(prepared) == "image/jpeg"
+    with Image.open(io.BytesIO(prepared)) as image:
+        assert max(image.size) <= ai.AI_IMAGE_MAX_SIDE and min(image.size) >= 600
+
+
+def test_a_large_rendered_page_is_scaled_to_the_long_side_and_keeps_its_proportions():
+    import io
+
+    from PIL import Image, ImageDraw
+
+    page = Image.new("RGB", (4960, 7016), "white")
+    draw = ImageDraw.Draw(page)
+    for row in range(0, 7016, 60):
+        draw.text((200, row), "Гемоглобін 145 г/л  Hemoglobin 145 g/L" * 3, fill="black")
+
+    prepared = ai.prepare_image(_png(page))
+
+    with Image.open(io.BytesIO(prepared)) as image:
+        assert image.size == (1414, 2000)
+    assert len(prepared) < 1_500_000
+
+
+def test_an_image_already_small_enough_and_unreadable_bytes_are_sent_unchanged():
+    from PIL import Image
+
+    small = _png(Image.new("RGB", (800, 600), "white"))
+    assert ai.prepare_image(small) == small
+    assert ai.image_media_type(small) == "image/png"
+    fake = bytes((0x89,)) + b"PNG-fake-bytes"
+    assert ai.prepare_image(fake) == fake
+
+
+def test_the_review_sends_a_prepared_page_with_its_own_media_type(tmp_path: Path, monkeypatch):
+    import os as _os
+
+    from PIL import Image
+
+    settings = settings_for(tmp_path)
+    migrate(settings)
+    configure(settings)
+    calls: list = []
+    monkeypatch.setitem(ai.PROVIDERS, "openrouter", stub_provider(calls=calls))
+    ai.document_hints(
+        settings,
+        document={"title": "scan", "original_filename": "scan.pdf", "clinical_type": "laboratory"},
+        pages=[{"page_number": 1, "native_text": "", "ocr_text": ""}],
+        observations=[],
+        images=[_png(Image.frombytes("RGB", (2600, 2600), _os.urandom(2600 * 2600 * 3)))],
+        locale="en",
+    )
+    parts = [part for part in calls[0]["messages"][1]["content"] if part.get("type") == "image_url"]
+    assert parts[0]["image_url"]["url"].startswith("data:image/jpeg;base64,")
+

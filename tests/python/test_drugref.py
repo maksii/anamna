@@ -402,6 +402,28 @@ def test_instruction_parses_sections_atc_codes_and_the_shown_for_sentence(monkey
     assert "Приймати\nщодня." in dosing
 
 
+def test_a_supplement_page_marks_its_sections_descr_and_they_are_read(monkeypatch):
+    # A dietary supplement's description (Сонріза Про Салют) uses descr-desktop_N / descr_cont_N;
+    # read with the medicine form only, its ten sections parsed to none.
+    page = (
+        '<section id="section-desktop_0"><h2 id="descr-desktop_0" data-index="descr_cont_0" style="x">Склад</h2>'
+        ' <div id="descr_cont_0" style="y"><p>Добавка дієтична. Екстракт плодів глоду.</p></div> </section>'
+        '<section id="section-desktop_1"><h2 id="descr-desktop_1" style="x">Протипоказання</h2>'
+        ' <div id="descr_cont_1" style="y"><p>Вагітність.</p></div> </section>'
+    )
+    monkeypatch.setattr(drugref, "_open", lambda url, data=None: page)
+
+    result = drugref.instruction("Sonriza-Pro-Salut")
+
+    assert result["sections"] == [["Склад", "Добавка дієтична. Екстракт плодів глоду."], ["Протипоказання", "Вагітність."]]
+
+
+def test_a_title_and_a_body_of_different_kinds_are_not_paired(monkeypatch):
+    page = ('<h2 id="instr-desktop_0">Склад</h2><div id="descr_cont_0"><p>текст</p></div></section>')
+    monkeypatch.setattr(drugref, "_open", lambda url, data=None: page)
+    assert drugref.instruction("Змішаний")["sections"] == []
+
+
 def test_instruction_of_a_page_without_sections_is_empty_not_an_error(monkeypatch):
     monkeypatch.setattr(drugref, "_open", lambda url, data=None: "<html>no instruction here</html>")
     result = drugref.instruction("Невідомий")

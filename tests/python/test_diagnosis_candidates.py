@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from anamna import diagnoses, diagnosis_candidates
+from anamna import diagnoses, diagnosis_candidates, icd10
 from anamna.db import connect, migrate
 from anamna.security import create_user
 from test_web_security import PASSWORD, seed_document, seed_patient, settings_for
@@ -225,6 +225,84 @@ def test_a_description_of_a_normal_finding_or_a_study_heading_gives_nothing(text
 def test_a_finding_that_only_resembles_a_normal_word_is_still_one_item(text):
     [item] = diagnosis_candidates.parse_conclusion(text)
     assert item["name"] == text.rstrip(".")
+
+
+# The summary of a real cardiology visit ran two diagnoses into one line: E09.9 took the whole
+# line as its name and I11.9 was never offered.
+RUN_ON = (
+    "E09.9 - Проміжна гіперглікемія без ускладнень преддіабет? Клінічний діагноз: I11.9 - Гіпертензивна "
+    "(гіпертонічна) хвороба серця без (застійної) серцевої недостатності"
+)
+
+
+def test_a_second_diagnosis_label_inside_a_piece_starts_a_second_diagnosis():
+    items = diagnosis_candidates.parse_summary(RUN_ON)
+    assert [(item["code"], item["certainty"]) for item in items] == [("E09.9", "provisional"), ("I11.9", "confirmed")]
+    assert items[0]["name"] == "Проміжна гіперглікемія без ускладнень преддіабет"
+
+
+def test_the_coded_lines_of_a_document_are_read_even_when_it_starts_with_complaints():
+    text = (
+        "Скарги: набряк брови\nПОПЕРЕДНІЙ ДІАГНОЗ:\n"
+        "L02.0 - Абсцес, фурункул та карбункул шкіри обличчя правої брови\n"
+        "S31 - Часткове медичне обстеження"
+    )
+    assert diagnosis_candidates.parse_summary(text) == []
+    assert [item["code"] for item in diagnosis_candidates.coded_lines(text)] == ["L02.0"]
+
+
+MRI_TEXT = (
+    "Опис:\nТіла хребців неправильної конфігурації.\nВисновок:\n"
+    "Дегенеративні зміни хребта у вигляді остеохондрозу, протрузій\nм/х дисків L4-L5.\n"
+    "S- подібний сколіоз.\nРекомендовано: консультація невролога\n"
+    "До уваги!\nВисновок не є остаточним діагнозом та потребує консультації з лікуючим лікарем."
+)
+
+
+def test_a_conclusion_runs_to_the_recommendation_and_a_wrapped_line_is_joined():
+    assert diagnosis_candidates.conclusion_text(MRI_TEXT) == (
+        "Дегенеративні зміни хребта у вигляді остеохондрозу, протрузій м/х дисків L4-L5.\nS- подібний сколіоз."
+    )
+
+
+def test_a_conclusion_stops_at_a_labelled_field_and_the_next_heading_starts_another():
+    text = (
+        "Клінічний діагноз: явища ілеїту\nКлінічні дані:\nНадсилається: шматочки тканини\n"
+        "Гістологічний висновок:\nХронічний неактивний ілеїт."
+    )
+    assert diagnosis_candidates.conclusion_text(text) == "явища ілеїту\nХронічний неактивний ілеїт."
+
+
+def test_a_text_without_a_conclusion_heading_has_no_conclusion():
+    assert diagnosis_candidates.conclusion_text("Скарги: печія\nОгляд: живіт м'який") == ""
+
+
+def test_a_label_is_not_part_of_the_name_and_an_abbreviation_alone_is_a_diagnosis():
+    found = diagnosis_candidates.parse_conclusion("Супутній: Комбінований геморой ІІ ст.\nПопередній діагноз: СПК")
+    assert [item["name"] for item in found] == ["Комбінований геморой ІІ ст", "СПК"]
+
+
+def test_a_code_the_catalogue_does_not_know_is_offered_as_written():
+    assert icd10.entry("F90.2") is None
+    [item] = diagnosis_candidates.parse_conclusion("Попередній діагноз: F90.2 Розлад з дефіцитом уваги.")
+    assert item["name"] == "F90.2 Розлад з дефіцитом уваги"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Призначено німесил на 3 дні, флемоксин 1000 мг двічі на день",
+        "лікування Нурофен форте і кларитин 5 днів",
+        "щеплення проведено (деталі у записі вакцинації)",
+        "Цитологія на атипові клітини (зішкріб, мазок на склі): Тип II",
+        "Аналіз у/г мазка на мікрофлору (на склі): Ступінь чистоти III",
+        "КВР високий",
+        "Патологоанатом рекомендує зіставити результат із клінічними даними",
+        "Хворіє близько тижня, раніше не лікувався",
+    ],
+)
+def test_a_prescription_a_vaccination_a_test_or_a_remark_is_not_a_diagnosis(text):
+    assert diagnosis_candidates.parse_conclusion(text) == []
 
 
 # --- the database --------------------------------------------------------------------
@@ -512,3 +590,42 @@ def test_a_document_the_ai_reader_has_read_gets_no_conclusion_candidates(db):
 def test_a_finding_with_empty_summaries_and_text_does_not_crash(db):
     finding(db, db.docs["jan"], "", text="")
     assert collect(db) == 0
+
+
+def native_page(db, document_id: str, text: str) -> None:
+    db.connection.execute(
+        "INSERT INTO document_pages(document_id, page_number, native_text, extraction_method, native_char_count) "
+        "VALUES (?, 1, ?, 'native', ?)",
+        (document_id, text, len(text)),
+    )
+    db.connection.commit()
+
+
+LIPOMA_TEXT = (
+    "Особливості обстеження – підшкірно візуалізується гіперехогенний утвір з чітким рівним контуром,\n" * 5
+    + "ЗАКЛЮЧЕННЯ: Ліпоми лівої руки\nРекомендовано : спостереження в динаміці"
+)
+
+
+def test_a_native_document_offers_its_conclusion_and_only_the_summary_statements_it_says(db):
+    study = make_mri(db)
+    native_page(db, study, LIPOMA_TEXT)
+    finding(db, study, "УЗД м'яких тканин: утвір 8,3 x 4,5 мм, розцінений як ліпома. Ліпоми лівої руки.", text=LIPOMA_TEXT)
+    collect(db)
+    assert [row[3] for row in text_rows(db, study)] == ["Ліпоми лівої руки"]
+
+
+def test_a_scanned_document_without_native_text_is_still_read_from_its_summary(db):
+    study = make_mri(db)
+    finding(db, study, "Протрузія диска L5-S1.", text="Протрузiя диска L5-SI (OCR)")
+    collect(db)
+    assert [row[3] for row in text_rows(db, study)] == ["Протрузія диска L5-S1"]
+
+
+def test_collect_reads_the_coded_diagnosis_lines_of_the_document_text(db):
+    finding(
+        db, db.docs["jan"], "Фурункул правої брови.",
+        text="Скарги: набряк брови\nПОПЕРЕДНІЙ ДІАГНОЗ:\nL02.0 - Абсцес, фурункул та карбункул шкіри обличчя правої брови",
+    )
+    collect(db)
+    assert offered(db)["L02.0"]["code_printed"] is True

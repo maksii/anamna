@@ -1,4 +1,4 @@
-/* Diagnoses pages.  Two jobs, each only where its elements exist:
+/* Diagnoses pages.  Three jobs, each only where its elements exist:
 
    - The code picker of the form: a search over the ICD-10 classification
      fills the code field.  The code field works on its own; the picker is an
@@ -8,6 +8,9 @@
      was found.  The reading runs on the server and stores each document as it
      goes, so leaving the page loses nothing; coming back with a reading still
      running picks its progress up again.
+   - The list's filter and order: typed words narrow the diagnoses shown, and
+     the order sorts each list by date or by name.  Without the script the bar
+     stays hidden and the list keeps the server's newest-first order.
 
    Every message comes from data attributes rendered by the template, so the
    script carries no text of its own.  Results are built with textContent. */
@@ -169,5 +172,54 @@
       });
     }
     if (scan.dataset.job) void follow(scan.dataset.job);
+  }
+
+  // The list's filter and order.  Every diagnosis row carries its words, its
+  // date and its name; the filter hides the rows that miss a typed word and the
+  // groups left empty, the order moves rows within their own list.
+  const bar = document.querySelector('[data-dx-filter]');
+  if (bar) {
+    const query = bar.querySelector('input[type="search"]');
+    const order = bar.querySelector('select');
+    const status = bar.querySelector('[role="status"]');
+    const empty = bar.querySelector('[data-dx-filter-empty]');
+    const rows = [...document.querySelectorAll('[data-dx-item]')];
+    const past = document.getElementById('dx-past');
+    const lang = document.documentElement.lang || undefined;
+
+    const filter = () => {
+      const words = query.value.toLocaleLowerCase(lang).split(/\s+/).filter(Boolean);
+      let shown = 0;
+      for (const row of rows) {
+        const hit = words.every((word) => row.dataset.dxSearch.includes(word));
+        row.hidden = !hit;
+        if (hit) shown += 1;
+      }
+      for (const group of document.querySelectorAll('[data-dx-group]')) {
+        group.hidden = !group.querySelector('[data-dx-item]:not([hidden])');
+      }
+      if (past && words.length && past.querySelector('[data-dx-item]:not([hidden])')) past.open = true;
+      status.textContent = words.length
+        ? bar.dataset.shown.replace('{shown}', String(shown)).replace('{total}', String(rows.length))
+        : '';
+      empty.hidden = !(words.length && shown === 0);
+    };
+
+    // An undated diagnosis goes last in either date order.
+    const compare = {
+      newest: (a, b) => (b.dataset.dxDay || '').localeCompare(a.dataset.dxDay || '') || (!a.dataset.dxDay) - (!b.dataset.dxDay),
+      oldest: (a, b) => (!a.dataset.dxDay) - (!b.dataset.dxDay) || (a.dataset.dxDay || '').localeCompare(b.dataset.dxDay || ''),
+      name: (a, b) => a.dataset.dxName.localeCompare(b.dataset.dxName, lang),
+    };
+    const sort = () => {
+      const by = compare[order.value] || compare.newest;
+      for (const list of document.querySelectorAll('[data-dx-sortable]')) {
+        list.append(...[...list.children].sort(by));
+      }
+    };
+
+    query.addEventListener('input', filter);
+    order.addEventListener('change', sort);
+    bar.hidden = false;
   }
 })();

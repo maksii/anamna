@@ -94,6 +94,33 @@ def _chapter_text(code: str, locale: str) -> str:
     return _title(entry["chapter"], locale)
 
 
+def _chapter_range(code: str) -> str:
+    """The code range of the ICD-10 chapter the code sits in, '' for none."""
+    entry = icd10.entry(code) if code else None
+    if entry is None or entry["chapter"] is None:
+        return ""
+    return str(entry["chapter"]["range"])
+
+
+def _by_chapter(items: list[dict]) -> list[dict]:
+    """The diagnoses grouped by ICD-10 chapter, in the classification's order; uncoded ones last."""
+    groups: dict[str, dict] = {}
+    for item in items:
+        key = item["chapter_range"]
+        group = groups.setdefault(key, {
+            "key": key or "none",
+            "title": item["chapter_text"] if key else t("dx.group.uncoded"),
+            "items": [],
+        })
+        group["items"].append(item)
+    return [groups[key] for key in sorted(groups, key=lambda key: (key == "", key))]
+
+
+def _search_text(*parts: object) -> str:
+    """What the page's filter matches: the visible words of a diagnosis, folded to lower case."""
+    return " ".join(str(part) for part in parts if part).casefold()
+
+
 def _area(code: str) -> dict | None:
     """The health area the code's ICD chapter belongs to, as the Areas pages name it."""
     areas = _diagnosis_areas(code) if code else ()
@@ -174,12 +201,17 @@ def _diagnosis_view(page: _Page, row) -> dict:
     code = str(row["code"] or "")
     # ponytail: one factors.listing per diagnosis card; hoist to one listing per request if a record grows to hundreds of diagnoses.
     medicines = diagnosis_treatment.medicines(page.connection, page.owner_id, row, today=date.today())
+    name = diagnoses.display_name(row, page.locale)
+    written = diagnoses.written_detail(row)
+    chapter_text = _chapter_text(code, page.locale)
     return {
         "id": row["id"],
         "url": f"/diagnoses/{row['id']}",
         "code": code,
-        "name": diagnoses.display_name(row, page.locale),
-        "written": diagnoses.written_detail(row),
+        "name": name,
+        "written": written,
+        "day": row["diagnosed_on"] or "",
+        "search": _search_text(name, written, code, row["clinician"], chapter_text),
         "status": row["status"],
         "status_label": t(f"dx.status.{row['status']}"),
         "certainty": row["certainty"],
@@ -192,7 +224,8 @@ def _diagnosis_view(page: _Page, row) -> dict:
         "origin": row["origin"],
         "origin_label": t(f"dx.origin.{row['origin']}"),
         "document": _document_ref(page, row["document_id"]),
-        "chapter_text": _chapter_text(code, page.locale),
+        "chapter_text": chapter_text,
+        "chapter_range": _chapter_range(code),
         "area": _area(code),
         "watch": _watch(page, code),
         "medicines": [_medicine_view(page, item) for item in medicines],
@@ -350,7 +383,8 @@ def _diagnoses_page(w: _Wiring, request: Request, saved: str, error: str):
     }
     return w.templates.TemplateResponse(request, "diagnoses.html", w.template_context(
         request, active="diagnoses", writable=writable, summary=summary,
-        current=lists["current"], provisional=lists["provisional"], past=lists["past"],
+        current=lists["current"], current_groups=_by_chapter(lists["current"]),
+        provisional=lists["provisional"], past=lists["past"],
         possible=possible, muted=muted, found=fresh, found_existing=existing, found_dismissed=dismissed,
         scan=scan, saved=_message("dx.notice", saved), error=_message("dx.error", error),
         checked_text=t("dx.checked", date=_date(last)) if last else "", sources=_sources(get_locale()),

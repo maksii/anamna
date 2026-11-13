@@ -234,12 +234,18 @@ def _group(kind: str, name_key: str, items: list[dict], *, today: date, locale: 
     }
 
 
+# Doctors write a trade name with і or with и («аторіс» for «Аторис»); for matching they are one letter.
+_SPELLING = str.maketrans({"і": "и", "ї": "и"})
+
+
 def _existing(kind: str, name_key: str, substance: str, entries: list[tuple[str, str, str]]) -> bool:
     """True when the record already holds this medicine, by name or by substance."""
-    substance_key = _fold(substance)
+    substance_key = _fold(substance).translate(_SPELLING)
+    name_key = name_key.translate(_SPELLING)
     for entry_kind, entry_name, entry_substance in entries:
         if entry_kind != kind:
             continue
+        entry_name, entry_substance = entry_name.translate(_SPELLING), entry_substance.translate(_SPELLING)
         if (
             entry_name == name_key
             or entry_name.startswith(name_key + " ")

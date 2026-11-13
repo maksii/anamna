@@ -484,6 +484,15 @@ Each of these has already produced a confident, wrong, or silently missing clini
 - **`[0-9]` means ASCII digits.** In Python `\d` also matches Arabic-Indic, fullwidth and other Unicode digits. Where a pattern spells out `[0-9]`, do not shorten it.
 - **A thousands space is joined only on proof.** `_thousands_split` joins «250 000» when the row's own reference interval proves the magnitude, or when the group starts with a zero. Joining on shape alone turned «Інтерлейкін 6 150 пг/мл» into 6150.
 - **A re-read may pair rows only within one analyte.** A loose pair (a contained label, the same line, a lone number) may stand only when the rows share a concept. A checked row under a catalogue analyte is never relabelled as another analyte with the same value and line: without that, a verified «Білірубін» 5.1 became «Білірубін прямий» 5.1 and stayed verified.
+- **A summary is not the document.** `clinical_findings.summary_uk` was written for the page and
+  paraphrases the whole report: read word for word it offered study titles, measurements,
+  prescriptions, vaccination notes and its own remarks («у висновку це не згадано») as diagnoses.
+  `diagnosis_candidates.collect` offers a summary statement of a document with a native text layer
+  (`NATIVE_TEXT_CHARS`) only when the document's own text says it, and adds the statements under
+  the document's own conclusion headings (`conclusion_text`). A scanned document keeps its summary:
+  OCR garbles the conclusion and cannot confirm a clean sentence. Coded diagnosis lines
+  («I11.9 - …») are read from the document text too, and a piece is cut before a second
+  «Клінічний діагноз:» inside it.
 - **A historical document quiets attention, never the verdict.** `documents.historical_at` (set by `POST /documents/{id}/historical`) marks a problem that is over. `evaluate()` and the stored interpretation are untouched: the result still reads "above range" on its own page and chart. Only the places that raise attention look at the flag: `_attention_rank`, `_attends` and `_finding_catalog` in `web/app.py`, `panels.roll_up` and `testplan.needs`. A new attention surface must read it too.
 - **A lab sign-in that stopped working is renewed in place.** `labsync.reauth_reason(row)` answers `expired` or `rejected` (`lab_accounts.auth_rejected_at` is set when the lab refuses the stored sign-in and cleared by any success). The connection card then shows the sign-in form again; saving it keeps the linked people and the imported results, and the sync resumes. The cancel button of a texted-code step posts `pending_only=1`, which drops the pending step only: without it "cancel" forgot the whole connection.
 - **A medicine mark is a reminder, not a fact for the engine.** `factors.influences()` and `influencing()` feed the "may be affected by" marks on the Results page and on a panel. They include a current entry with no start date, said as exactly that. `fact_periods()`, which changes verdicts, still needs a start date.

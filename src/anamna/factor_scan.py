@@ -46,7 +46,7 @@ List one item for each of these that the document states about this person:
 - an acute illness or infection the person has or had (kind `illness`);
 - a diet the person is put on (kind `diet`), and a prescribed regime of physical activity or a restriction of it (kind `activity`).
 
-Do not list: tests and examinations that are ordered or reported, referrals to other doctors, vaccinations, general advice such as drinking water or sleeping enough, chronic diagnoses, anything about another person, and anything the document mentions only as a possibility.
+Do not list: tests and examinations that are ordered or reported, referrals to other doctors, vaccinations, general advice such as drinking water or sleeping enough, chronic diagnoses, anything about another person, and anything the document mentions only as a possibility. A medicine for a symptom the person might develop is a possibility, for example an antipyretic in case of a fever after a vaccination; a medicine prescribed as needed for a complaint the person has, such as heartburn, is listed with `repeat` as_needed. Do not list the preparation for an operation or its anaesthesia (fasting before it, compression stockings, the planned anaesthesia), nor the dressings, wound care and baths after it: list the operation itself.
 
 For each item:
 - `name`: as the document writes it, the trade name or the substance, without the dose.

@@ -72,8 +72,13 @@ _ATC_BLOCK = re.compile(r'"ATCFull":\[([^\]]*)\]')
 _ATC_CODE = re.compile(r'"([A-Z]\d{2}[A-Z]{2}\d{2})"')
 _ATC_BARE = re.compile(r"[A-Z]\d{2}[A-Z]{2}\d{2}")
 _SHOWN_FOR = re.compile(r"Інструкція вказана для «([^»]+)»")
+#: One section of the page.  A medicine's instruction marks them ``instr-desktop_N`` / ``instr_cont_N``;
+#: a dietary supplement's description marks them ``descr-…`` instead.  Read with the medicine form
+#: alone, a supplement page with a full description parsed to no section at all and the entry was
+#: researched as if the product were unknown.
 _SECTION = re.compile(
-    r'<h2 id="instr-desktop_(\d+)"[^>]*>(.*?)</h2>\s*<div id="instr_cont_\1"[^>]*>(.*?)</div>\s*</section>',
+    r'<h2 id="(?P<kind>instr|descr)-desktop_(?P<n>\d+)"[^>]*>(?P<title>.*?)</h2>'
+    r'\s*<div id="(?P=kind)_cont_(?P=n)"[^>]*>(?P<body>.*?)</div>\s*</section>',
     re.S,
 )
 _UNIT_STEMS = (
@@ -461,7 +466,7 @@ def instruction_page(reference_name: str, code: str = "") -> dict:
     page = _open(url)
     sections = []
     for match in _SECTION.finditer(page):
-        title, text = _text(match.group(2)), _text(match.group(3))
+        title, text = _text(match.group("title")), _text(match.group("body"))
         if text:
             sections.append([title, text])
     atc: list[str] = []
