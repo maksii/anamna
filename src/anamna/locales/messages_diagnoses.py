@@ -1,0 +1,353 @@
+"""Strings of the Diagnoses pages: the record, possible diagnoses and what the documents say.
+
+Plural entries are written as `<key>_one`, `<key>_few`, `<key>_many`, the shape
+`i18n.t_plural` and the `plural_t` template macro read.
+"""
+
+MESSAGES_DIAGNOSES: dict[str, dict[str, str]] = {
+    "nav.diagnoses": {"en": "Diagnoses", "uk": "Діагнози"},
+    "dx.title": {"en": "Diagnoses", "uk": "Діагнози"},
+    "dx.lead": {
+        "en": "The diagnoses in your record, the results they touch, and possible diagnoses worth clarifying with a doctor. A possible diagnosis is a reason to ask a doctor, never a conclusion.",
+        "uk": "Діагнози у вашій картці, показники, яких вони стосуються, і можливі діагнози, які варто з’ясувати з лікарем. Можливий діагноз є приводом запитати лікаря, а не висновком.",
+    },
+    "dx.add": {"en": "Add a diagnosis", "uk": "Додати діагноз"},
+    "dx.back": {"en": "All diagnoses", "uk": "Усі діагнози"},
+    "dx.save": {"en": "Save", "uk": "Зберегти"},
+    "dx.cancel": {"en": "Cancel", "uk": "Скасувати"},
+    "dx.saving": {"en": "Saving…", "uk": "Зберігаємо…"},
+    "dx.opens_new_tab": {"en": "opens in a new tab", "uk": "відкриється в новій вкладці"},
+    "dx.code_prefix": {"en": "ICD-10 code", "uk": "Код МКХ-10"},
+    "dx.approx": {"en": "approximate date", "uk": "дата приблизна"},
+    "dx.region.ua": {"en": "Ukraine", "uk": "Україна"},
+    "dx.region.int": {"en": "International", "uk": "Міжнародна"},
+    "dx.region.eu": {"en": "European Union", "uk": "Європейський Союз"},
+    "dx.region.us": {"en": "United States", "uk": "США"},
+    # Status, certainty, origin and method, as the record names them.
+    "dx.status.active": {"en": "Current", "uk": "Поточний"},
+    "dx.status.resolved": {"en": "Resolved", "uk": "Вилікуваний"},
+    "dx.status.outdated": {"en": "No longer applies", "uk": "Більше не актуальний"},
+    "dx.certainty.confirmed": {"en": "Confirmed by a doctor", "uk": "Підтверджений лікарем"},
+    "dx.certainty.provisional": {"en": "Preliminary", "uk": "Попередній"},
+    "dx.origin.person": {"en": "You added it", "uk": "Ви додали його самі"},
+    "dx.origin.document": {"en": "From your documents", "uk": "Із ваших документів"},
+    "dx.origin.suspicion": {"en": "Confirmed from a possible diagnosis", "uk": "Підтверджено з можливого діагнозу"},
+    "dx.method.code": {"en": "Read from the code in the document", "uk": "Зчитано за кодом у документі"},
+    "dx.method.ai": {"en": "Read by AI", "uk": "Зчитано ШІ"},
+    "dx.method.text": {
+        "en": "Read from the document’s conclusion, word for word",
+        "uk": "Прочитано з висновку документа, дослівно",
+    },
+    # Notices and errors after a save or a press.
+    "dx.notice.added": {"en": "The diagnosis was added.", "uk": "Діагноз додано."},
+    "dx.notice.saved": {"en": "Your changes are saved.", "uk": "Зміни збережено."},
+    "dx.notice.deleted": {"en": "The diagnosis was deleted.", "uk": "Діагноз видалено."},
+    "dx.notice.status_changed": {"en": "The status was changed.", "uk": "Стан змінено."},
+    "dx.notice.muted": {
+        "en": "The possible diagnosis is hidden. You can show it again under Hidden suggestions.",
+        "uk": "Можливий діагноз приховано. Його можна знову показати в розділі «Приховані пропозиції».",
+    },
+    "dx.notice.restored": {"en": "The possible diagnosis is shown again.", "uk": "Можливий діагноз знову показано."},
+    "dx.notice.checked": {"en": "The results were checked again.", "uk": "Результати перевірено знову."},
+    "dx.notice.found_added": {"en": "The ticked diagnoses were added to your record.", "uk": "Позначені діагнози додано до вашої картки."},
+    "dx.notice.found_dismissed": {"en": "Dismissed. These will not be offered again.", "uk": "Відхилено. Їх більше не пропонуватимуть."},
+    "dx.notice.found_restored": {"en": "The diagnosis is offered again.", "uk": "Діагноз знову пропонується."},
+    "dx.error.name_required": {
+        "en": "Enter a name, or choose a code from the classification.",
+        "uk": "Введіть назву або оберіть код із класифікації.",
+    },
+    "dx.error.code_unknown": {
+        "en": "This code is not in the ICD-10 classification. Check it or find the diagnosis by name.",
+        "uk": "Такого коду немає в класифікації МКХ-10. Перевірте його або знайдіть діагноз за назвою.",
+    },
+    "dx.error.date_invalid": {"en": "Enter a real date: day, month and year.", "uk": "Введіть справжню дату: день, місяць і рік."},
+    "dx.error.date_future": {"en": "A date cannot be in the future.", "uk": "Дата не може бути в майбутньому."},
+    "dx.error.date_order": {
+        "en": "The end date cannot be earlier than the start date.",
+        "uk": "Дата завершення не може бути раніше дати встановлення.",
+    },
+    "dx.error.found_none": {"en": "Tick at least one diagnosis first.", "uk": "Спершу позначте хоча б один діагноз."},
+    "dx.error.not_found": {"en": "This diagnosis is no longer in your record.", "uk": "Цього діагнозу більше немає у вашій картці."},
+    # Dates and the reading of documents, as the record words them.
+    "dx.found.mentions_one": {"en": "in {count} document", "uk": "у {count} документі"},
+    "dx.found.mentions_few": {"en": "in {count} documents", "uk": "у {count} документах"},
+    "dx.found.mentions_many": {"en": "in {count} documents", "uk": "у {count} документах"},
+    "dx.found.first_seen": {"en": "first on {date}", "uk": "уперше {date}"},
+    "dx.found.last_seen": {"en": "last on {date}", "uk": "востаннє {date}"},
+    "dx.checked": {"en": "Last checked {date}", "uk": "Останню перевірку виконано {date}"},
+    "dx.since": {"en": "since {date}", "uk": "з {date}"},
+    "dx.until": {"en": "until {date}", "uk": "до {date}"},
+    "dx.search.group": {"en": "Diagnoses", "uk": "Діагнози"},
+    # The three tiles above the sections.
+    "dx.tile.label": {"en": "Diagnoses", "uk": "Діагнози"},
+    "dx.tile.current": {"en": "Current diagnoses", "uk": "Поточні діагнози"},
+    "dx.tile.possible": {"en": "To clarify with a doctor", "uk": "Варто з’ясувати з лікарем"},
+    "dx.tile.found": {"en": "Found in your documents", "uk": "Знайдено у ваших документах"},
+    "dx.tile.note_empty": {"en": "Add what your doctors have diagnosed", "uk": "Додайте діагнози, які встановили ваші лікарі"},
+    "dx.tile.note_possible_one": {
+        "en": "{count} possible diagnosis to clarify with a doctor",
+        "uk": "{count} можливий діагноз варто з’ясувати з лікарем",
+    },
+    "dx.tile.note_possible_few": {
+        "en": "{count} possible diagnoses to clarify with a doctor",
+        "uk": "{count} можливі діагнози варто з’ясувати з лікарем",
+    },
+    "dx.tile.note_possible_many": {
+        "en": "{count} possible diagnoses to clarify with a doctor",
+        "uk": "{count} можливих діагнозів варто з’ясувати з лікарем",
+    },
+    # The current diagnoses and the cards.
+    "dx.current.lead": {
+        "en": "Diagnoses that apply now. One taken from a document shows the document it is written in.",
+        "uk": "Діагнози, які діють зараз. Діагноз, узятий із документа, показує, в якому документі він записаний.",
+    },
+    "dx.current.empty": {
+        "en": "No current diagnosis is recorded yet. Add one yourself, or look at what was found in your documents below.",
+        "uk": "У вашій картці ще немає поточних діагнозів. Додайте діагноз самостійно або перегляньте нижче, що знайдено у ваших документах.",
+    },
+    "dx.card.edit": {"en": "Edit", "uk": "Редагувати"},
+    "dx.card.action_aria": {"en": "{action}: {name}", "uk": "{action}: {name}"},
+    "dx.card.written": {"en": "As written:", "uk": "Як записано:"},
+    "dx.card.watch": {"en": "Results to watch", "uk": "Показники, за якими варто стежити"},
+    "dx.card.area": {"en": "Body area", "uk": "Ділянка організму"},
+    "dx.card.clinician": {"en": "Doctor: {name}", "uk": "Лікар: {name}"},
+    "dx.card.source": {"en": "Source", "uk": "Джерело"},
+    "dx.card.resolve": {"en": "Mark as resolved", "uk": "Позначити як вилікуваний"},
+    "dx.card.outdate": {"en": "No longer applies", "uk": "Більше не актуальний"},
+    "dx.card.reactivate": {"en": "It is current again", "uk": "Знову поточний"},
+    "dx.provisional.label": {
+        "en": "Preliminary: working diagnoses from your doctors that are not confirmed yet.",
+        "uk": "Попередні: робочі діагнози від ваших лікарів, які ще не підтверджено.",
+    },
+    "dx.provisional.not_confirmed": {"en": "It was not confirmed", "uk": "Не підтвердилося"},
+    # Possible diagnoses.
+    "dx.possible.lead": {
+        "en": "These are not diagnoses. The results of the last two years show a pattern that a doctor may want to check. Only a doctor can confirm or rule out a condition.",
+        "uk": "Це не діагнози. Результати за останні два роки показують закономірність, яку лікар може захотіти перевірити. Підтвердити чи виключити захворювання може лише лікар.",
+    },
+    "dx.possible.pill": {"en": "Possible, not a diagnosis", "uk": "Можливо, але це не діагноз"},
+    "dx.possible.why": {"en": "Why it is shown", "uk": "Чому це показано"},
+    "dx.possible.confirmed": {"en": "A doctor confirmed it", "uk": "Лікар це підтвердив"},
+    "dx.possible.mute": {"en": "Not relevant, do not show again", "uk": "Не стосується, більше не показувати"},
+    "dx.possible.mute_confirm": {
+        "en": "Hide this possible diagnosis? It moves to Hidden suggestions, where you can show it again.",
+        "uk": "Приховати цей можливий діагноз? Він перейде до розділу «Приховані пропозиції», звідки його можна знову показати.",
+    },
+    "dx.possible.check": {"en": "Check again", "uk": "Перевірити знову"},
+    "dx.possible.first_seen": {"en": "First noticed {date}", "uk": "Уперше помічено {date}"},
+    "dx.possible.empty": {
+        "en": "Nothing in your results points to a possible diagnosis right now.",
+        "uk": "Зараз у ваших результатах немає ознак можливого діагнозу.",
+    },
+    # Found in documents.
+    "dx.found.lead": {
+        "en": "These were read from your consultations and from the conclusions of your studies: MRI, ultrasound, X-ray, ECG and pathology reports. A conclusion of a study is a finding, and your doctor decides what it means. Nothing is added until you tick it and press a button.",
+        "uk": "Це прочитано з ваших консультацій і з висновків ваших досліджень: МРТ, УЗД, рентгену, ЕКГ та гістології. Висновок дослідження є знахідкою, а що вона означає, вирішує ваш лікар. Нічого не додається, доки ви не позначите пункт і не натиснете кнопку.",
+    },
+    "dx.found.says": {"en": "The document says", "uk": "У документі написано"},
+    "dx.found.docs": {"en": "Documents", "uk": "Документи"},
+    "dx.found.code_printed": {"en": "The code is printed in the document", "uk": "Код вказано в документі"},
+    "dx.found.code_ai": {"en": "The code was suggested by AI", "uk": "Код запропонував ШІ"},
+    "dx.found.ai_badge": {"en": "Read by AI, check it against the document", "uk": "Прочитано ШІ, перевірте за документом"},
+    "dx.found.text_badge": {
+        "en": "From the document’s conclusion, word for word",
+        "uk": "З висновку документа, дослівно",
+    },
+    "dx.found.no_code": {
+        "en": "The document prints no ICD-10 code. You can add one after you add the diagnosis.",
+        "uk": "У документі немає коду МКХ-10. Його можна додати після того, як ви додасте діагноз.",
+    },
+    "dx.found.add": {"en": "Add to my diagnoses", "uk": "Додати до моїх діагнозів"},
+    "dx.found.dismiss": {"en": "Not mine, do not offer again", "uk": "Не мій, більше не пропонувати"},
+    "dx.found.dismiss_confirm": {
+        "en": "Hide these from the list? They will not be offered again. You can offer them again from Hidden suggestions.",
+        "uk": "Сховати їх зі списку? Їх більше не пропонуватимуть. Знову пропонувати їх можна в розділі «Приховані пропозиції».",
+    },
+    "dx.found.existing_heading": {"en": "Also mentioned for diagnoses you already have", "uk": "Також згадано в діагнозах, які у вас уже є"},
+    "dx.found.open_existing": {"en": "Open the diagnosis", "uk": "Відкрити діагноз"},
+    "dx.found.empty": {"en": "Nothing new was found in your documents.", "uk": "У ваших документах нічого нового не знайдено."},
+    # The reading of the documents by AI.
+    "dx.scan.heading": {"en": "Reading your documents", "uk": "Читання ваших документів"},
+    "dx.scan.none": {
+        "en": "You have no consultations or study reports yet. Add them on the Documents page, then come back here.",
+        "uk": "У вас ще немає консультацій чи висновків досліджень. Додайте їх на сторінці «Документи» і поверніться сюди.",
+    },
+    "dx.scan.waiting_one": {"en": "{count} document is waiting to be read.", "uk": "{count} документ чекає на читання."},
+    "dx.scan.waiting_few": {"en": "{count} documents are waiting to be read.", "uk": "{count} документи чекають на читання."},
+    "dx.scan.waiting_many": {"en": "{count} documents are waiting to be read.", "uk": "{count} документів чекають на читання."},
+    "dx.scan.all_read": {"en": "All your documents are read.", "uk": "Усі ваші документи прочитано."},
+    "dx.scan.off": {
+        "en": "AI reading is switched off on this server. Coded diagnoses and conclusions of studies are still found without it.",
+        "uk": "Читання ШІ на цьому сервері вимкнено. Діагнози з кодами та висновки досліджень знаходяться й без нього.",
+    },
+    "dx.scan.why": {
+        "en": "Without AI the page shows each conclusion word for word and only the codes the documents print. AI splits a conclusion into separate conditions and suggests an ICD-10 code for each.",
+        "uk": "Без ШІ сторінка показує кожен висновок дослівно і лише ті коди, що надруковані в документах. ШІ розділяє висновок на окремі стани і пропонує для кожного код МКХ-10.",
+    },
+    "dx.scan.start": {"en": "Read my documents with AI", "uk": "Прочитати мої документи за допомогою ШІ"},
+    "dx.scan.sent": {
+        "en": "The text of these documents goes to the AI provider the administrator set up. Lines labelled as your personal details are removed first.",
+        "uk": "Текст цих документів надсилається постачальнику ШІ, якого налаштував адміністратор. Рядки, позначені як ваші особисті дані, спершу вилучаються.",
+    },
+    "dx.scan.progress": {
+        "en": "Reading: {done} of {total} documents. You can leave this page. What is found stays here.",
+        "uk": "Читаємо: {done} із {total} документів. Сторінку можна закрити. Знайдене залишиться тут.",
+    },
+    "dx.scan.starting": {"en": "Starting…", "uk": "Починаємо…"},
+    "dx.scan.failed": {
+        "en": "Some documents could not be read this time, because the AI's answer was cut short or unusable. Reload the page to see what was found, then press the button to try the rest again.",
+        "uk": "Деякі документи цього разу не вдалося прочитати: відповідь ШІ була обірвана або непридатна. Оновіть сторінку, щоб побачити знайдене, і натисніть кнопку ще раз, щоб спробувати решту.",
+    },
+    "dx.scan.error_disabled": {"en": "AI reading is switched off on this server.", "uk": "Читання ШІ на цьому сервері вимкнено."},
+    "dx.scan.error_budget": {"en": "The AI budget is used up, so the documents were not read.", "uk": "Бюджет ШІ вичерпано, тому документи не прочитано."},
+    "dx.scan.error_provider_error": {
+        "en": "The AI provider did not answer. Try again in a few minutes.",
+        "uk": "Постачальник ШІ не відповів. Спробуйте ще раз за кілька хвилин.",
+    },
+    "dx.scan.error_lost": {"en": "The reading was interrupted. Press the button to continue.", "uk": "Читання перервалося. Натисніть кнопку, щоб продовжити."},
+    # Past and hidden.
+    "dx.past.heading": {"en": "Past diagnoses", "uk": "Минулі діагнози"},
+    "dx.hidden.heading": {"en": "Hidden suggestions", "uk": "Приховані пропозиції"},
+    "dx.hidden.possible": {"en": "Possible diagnoses you hid", "uk": "Можливі діагнози, які ви приховали"},
+    "dx.hidden.show": {"en": "Show again", "uk": "Показати знову"},
+    "dx.hidden.found": {"en": "Found in documents, not offered", "uk": "Знайдено в документах, не пропонується"},
+    "dx.hidden.offer": {"en": "Offer again", "uk": "Пропонувати знову"},
+    # The explainer at the foot of the page.
+    "dx.about.heading": {"en": "About this page", "uk": "Про цю сторінку"},
+    "dx.about.icd_heading": {"en": "What an ICD-10 code is", "uk": "Що таке код МКХ-10"},
+    "dx.about.icd": {
+        "en": "ICD-10 is the International Statistical Classification of Diseases and Related Health Problems, tenth revision. Each condition has its own code, such as E78.2. In Ukrainian the same classification is called МКХ-10. Doctors and laboratories use the code to name a diagnosis.",
+        "uk": "МКХ-10: Міжнародна статистична класифікація хвороб і споріднених проблем охорони здоров’я, десятий перегляд. Кожне захворювання має свій код, наприклад E78.2. Лікарі та лабораторії називають діагноз саме цим кодом. В англомовному тексті та міжнародних документах ця класифікація називається ICD-10.",
+    },
+    "dx.about.sources_heading": {"en": "Where the titles come from", "uk": "Звідки взято назви"},
+    "dx.about.sources": {
+        "en": "The names of the codes come from these classifications and sources.",
+        "uk": "Назви кодів взято з цих класифікацій і джерел.",
+    },
+    "dx.about.found_heading": {"en": "How diagnoses are read from documents", "uk": "Як діагнози читаються з документів"},
+    "dx.about.found": {
+        "en": "Coded diagnoses and the conclusions of consultations and studies (MRI, ultrasound, X-ray, ECG, pathology) are read from the text of your documents. A statement that says nothing was found is left out. A diagnosis is added only when you tick it. Where AI read a diagnosis, the page says so and shows the quote from the document, so you can check it.",
+        "uk": "Діагнози з кодами та висновки консультацій і досліджень (МРТ, УЗД, рентген, ЕКГ, гістологія) читаються з тексту ваших документів. Твердження про те, що нічого не виявлено, пропускаються. Діагноз додається лише тоді, коли ви його позначите. Якщо діагноз прочитав ШІ, сторінка про це повідомляє і показує цитату з документа, щоб ви могли її перевірити.",
+    },
+    "dx.about.possible_heading": {"en": "How possible diagnoses are found", "uk": "Як знаходяться можливі діагнози"},
+    "dx.about.possible": {
+        "en": "The page compares your results of the last two years with the published reference bands of the sources above. When a published pattern matches, the possible diagnosis appears under To clarify with a doctor. A pattern is a reason to see a doctor. It is never a diagnosis.",
+        "uk": "Сторінка порівнює ваші результати за останні два роки з опублікованими референсними діапазонами джерел, наведених вище. Коли збігається опублікована закономірність, можливий діагноз з’являється в розділі «Варто з’ясувати з лікарем». Закономірність є приводом піти до лікаря. Це ніколи не діагноз.",
+    },
+    "dx.about.hide_heading": {"en": "How to hide one", "uk": "Як приховати пропозицію"},
+    "dx.about.hide": {
+        "en": "Press “Not relevant, do not show again” on a card. It moves to Hidden suggestions, and you can show it again from there.",
+        "uk": "Натисніть «Не стосується, більше не показувати» на картці. Вона перейде до розділу «Приховані пропозиції», звідки її можна знову показати.",
+    },
+    "dx.about.labels_heading": {"en": "What the labels mean", "uk": "Що означають позначки"},
+    "dx.about.certainty": {
+        "en": "Preliminary means a working diagnosis that a doctor has not confirmed yet. Resolved means the condition is over. “No longer applies” means the diagnosis was wrong or is no longer true.",
+        "uk": "Попередній діагноз: робочий діагноз, який лікар ще не підтвердив. «Вилікуваний» означає, що стан минув. «Більше не актуальний» означає, що діагноз був помилковим або більше не відповідає дійсності.",
+    },
+    # The detail page.
+    "dx.detail.classification": {"en": "In the classification", "uk": "У класифікації"},
+    "dx.detail.title_uk": {"en": "Ukrainian title", "uk": "Назва українською"},
+    "dx.detail.title_en": {"en": "English title", "uk": "Назва англійською"},
+    "dx.detail.category": {"en": "Category", "uk": "Категорія"},
+    "dx.detail.chapter": {"en": "Chapter", "uk": "Клас"},
+    "dx.detail.block": {"en": "Block", "uk": "Блок"},
+    "dx.detail.path_aria": {"en": "Place in the classification", "uk": "Місце в класифікації"},
+    "dx.detail.en_nearest": {
+        "en": "The English title is the WHO title of the nearest parent code, because the Ukrainian classification is more detailed here.",
+        "uk": "Англійською показано назву ВООЗ для найближчого ширшого коду, бо українська класифікація тут докладніша.",
+    },
+    "dx.detail.not_coded": {
+        "en": "This diagnosis has no ICD-10 code, so it has no classification entry.",
+        "uk": "Цей діагноз не має коду МКХ-10, тому в класифікації для нього немає запису.",
+    },
+    "dx.detail.add_code": {"en": "Add an ICD-10 code", "uk": "Додати код МКХ-10"},
+    "dx.detail.affects": {"en": "What it affects", "uk": "На що це впливає"},
+    "dx.detail.watch_help": {
+        "en": "Each result below is the latest value of a test this diagnosis is watched by. The verdict says which published reference band the value falls in.",
+        "uk": "Кожен показник нижче показує останнє значення аналізу, за яким стежать для цього діагнозу. Висновок показує, в який опублікований референсний діапазон потрапляє значення.",
+    },
+    "dx.detail.watch_none": {"en": "No result is linked to this diagnosis yet.", "uk": "Поки що жоден показник не пов’язано з цим діагнозом."},
+    "dx.detail.how": {"en": "How it appeared", "uk": "Як це з’явилося"},
+    "dx.detail.evidence": {"en": "Results that suggested it", "uk": "Результати, що навели на цю думку"},
+    "dx.detail.mentions": {"en": "Where it is written down", "uk": "Де це записано"},
+    "dx.detail.person_only": {
+        "en": "You added this diagnosis yourself. No document is linked to it.",
+        "uk": "Ви додали цей діагноз самі. Жоден документ із ним не пов’язано.",
+    },
+    "dx.detail.notes": {"en": "Notes", "uk": "Нотатки"},
+    "dx.detail.delete": {"en": "Delete", "uk": "Видалити"},
+    "dx.detail.delete_confirm": {
+        "en": "Delete this diagnosis? This cannot be undone. The documents it came from stay.",
+        "uk": "Видалити цей діагноз? Це не можна скасувати. Документи, з яких його взято, залишаються.",
+    },
+    # The form.
+    "dx.form.new_title": {"en": "New diagnosis", "uk": "Новий діагноз"},
+    "dx.form.edit_title": {"en": "Edit diagnosis", "uk": "Редагування діагнозу"},
+    "dx.form.from_suspicion": {
+        "en": "You are confirming a possible diagnosis. Check the code and the dates, then save.",
+        "uk": "Ви підтверджуєте можливий діагноз. Перевірте код і дати та збережіть.",
+    },
+    "dx.form.section_what": {"en": "What it is", "uk": "Що це за діагноз"},
+    "dx.form.section_state": {"en": "Certainty and status", "uk": "Певність і стан"},
+    "dx.form.section_when": {"en": "When", "uk": "Коли"},
+    "dx.form.section_more": {"en": "Details", "uk": "Подробиці"},
+    "dx.form.search_label": {"en": "Find in the classification", "uk": "Знайти в класифікації"},
+    "dx.form.search_help": {
+        "en": "Type a name in English or Ukrainian, or the start of a code such as E78. Choose a result to fill in the code.",
+        "uk": "Введіть назву англійською чи українською або початок коду, наприклад E78. Оберіть результат, щоб заповнити код.",
+    },
+    "dx.form.searching": {"en": "Searching…", "uk": "Шукаємо…"},
+    "dx.form.no_match": {
+        "en": "No code matches. Try another word, or type the code below.",
+        "uk": "Жоден код не підходить. Спробуйте інше слово або введіть код нижче.",
+    },
+    "dx.form.search_failed": {
+        "en": "The search is not available right now. Type the code below.",
+        "uk": "Пошук зараз недоступний. Введіть код нижче.",
+    },
+    "dx.form.results_aria": {"en": "Matching codes", "uk": "Знайдені коди"},
+    "dx.form.code": {"en": "ICD-10 code", "uk": "Код МКХ-10"},
+    "dx.form.code_help": {
+        "en": "For example E78.2. You can also choose it from the search above.",
+        "uk": "Наприклад, E78.2. Можна також обрати його в пошуку вище.",
+    },
+    "dx.form.name": {"en": "Name, as your doctor wrote it", "uk": "Назва, як її написав лікар"},
+    "dx.form.name_help": {"en": "The official title of the code is always shown. Write the doctor’s wording here when it says more, such as the stage or the side.", "uk": "Офіційна назва коду показується завжди. Запишіть тут формулювання лікаря, якщо воно каже більше, наприклад стадію чи бік."},
+    "dx.form.certainty": {"en": "How certain is it?", "uk": "Наскільки це певно?"},
+    "dx.form.certainty_help": {
+        "en": "Preliminary is a working diagnosis that a doctor has not confirmed yet.",
+        "uk": "Попередній діагноз: робочий діагноз, який лікар ще не підтвердив.",
+    },
+    "dx.form.status": {"en": "Where it stands", "uk": "Стан"},
+    "dx.form.diagnosed_on": {"en": "Diagnosed on", "uk": "Встановлено"},
+    "dx.form.diagnosed_on_help": {
+        "en": "The date of the consultation or the test. Leave it empty if you do not know it.",
+        "uk": "Дата консультації або аналізу. Залиште порожнім, якщо не знаєте.",
+    },
+    "dx.form.resolved_on": {"en": "Resolved on", "uk": "Коли минув"},
+    "dx.form.resolved_on_help": {
+        "en": "Only for a diagnosis that is over or no longer applies.",
+        "uk": "Лише для діагнозу, який минув або більше не актуальний.",
+    },
+    "dx.form.approximate": {"en": "The dates are approximate", "uk": "Дати приблизні"},
+    "dx.form.approximate_help": {
+        "en": "Tick this when you know only the year or the month.",
+        "uk": "Позначте, якщо знаєте лише рік або місяць.",
+    },
+    "dx.form.clinician": {"en": "Doctor", "uk": "Лікар"},
+    "dx.form.clinician_help": {
+        "en": "The doctor who made the diagnosis, if you know it.",
+        "uk": "Лікар, який встановив діагноз, якщо ви його знаєте.",
+    },
+    "dx.form.document": {"en": "From a document", "uk": "З документа"},
+    "dx.form.document_help": {
+        "en": "Optional. Link the diagnosis to the document where it is written.",
+        "uk": "Необов’язково. Пов’яжіть діагноз із документом, у якому його записано.",
+    },
+    "dx.form.document_none": {"en": "No document", "uk": "Без документа"},
+    "dx.form.notes": {"en": "Notes", "uk": "Нотатки"},
+    "dx.form.notes_help": {
+        "en": "What the doctor told you, or anything else you want to keep.",
+        "uk": "Що сказав лікар або що ще ви хочете зберегти.",
+    },
+}

@@ -17,21 +17,21 @@ completeness:
 * **Bulk telemetry is summarised, not truncated.**  Fifty-eight thousand daily
   wearable rows become monthly means with the row count beside them.  Sending
   the first thousand rows would be both larger and less true.
-* **The gaps are declared.**  Medication, symptoms, diagnoses and family
-  history are not in this database, so the export says so and tells the
-  assistant to ask rather than assume.
+* **The gaps are declared.**  Symptoms, family history and the diagnoses the
+  person has not recorded are not in this database, so the export says so and
+  tells the assistant to ask rather than assume.
 """
 
 from __future__ import annotations
 
 import math
 import re
-from collections.abc import Callable, Collection, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from datetime import date
 
-from .. import factors
+from .. import diagnoses, diagnosis_matrix, diagnosis_treatment, factors, icd10
 from ..devices.catalog import CORE_METRIC_KEYS
-from ..i18n import get_locale, t, t_plural
+from ..i18n import get_locale, t, t_plural, translate_phrase
 from ..panels import SAME_DEVICE_KEYS
 
 #: Optional sections, in the order they are offered, with their default state.
@@ -685,6 +685,98 @@ def _add_factors(out, connection, owner_user_id: str) -> None:
     out.append("")
 
 
+def diagnosis_line(row: Mapping[str, object], locale: str, *, plain: bool = False) -> str:
+    """``- E78.2 Mixed hyperlipidaemia (written as: ...); status: active; certainty: confirmed; since 2025-03-01``
+
+    The catalogue title is in ``locale``.  The name is shown only when it differs
+    from that title.  Dates are written as the record holds them, as in the
+    medicines lines.  ``plain`` keeps the stored status and certainty words,
+    which is what the assistant's tool prints; the export localizes them.
+    """
+    code, name = str(row.get("code") or ""), str(row.get("name") or "").strip()
+    if code:
+        title = icd10.name(code, locale)
+        head = f"- {code} {title}".rstrip()
+        if name and name != title:
+            head += " " + t("ai.dx_written_as", name=name)
+    else:
+        head = f"- {name}"
+    status, certainty = str(row["status"]), str(row["certainty"])
+    if not plain:
+        status, certainty = t(f"dx.status.{status}"), t(f"dx.certainty.{certainty}")
+    parts = [t("ai.dx_status", status=status), t("ai.dx_certainty", certainty=certainty)]
+    if row["diagnosed_on"]:
+        approximate = f" {t('ai.dx_approx')}" if row["dates_approximate"] else ""
+        parts.append(t("ai.dx_since", date=row["diagnosed_on"]) + approximate)
+    if row["resolved_on"]:
+        parts.append(t("ai.dx_until", date=row["resolved_on"]))
+    if row["clinician"]:
+        parts.append(t("ai.dx_clinician", name=row["clinician"]))
+    if row["notes"]:
+        parts.append(t("ai.dx_notes", text=str(row["notes"])[:300]))
+    return head + "; " + "; ".join(parts)
+
+
+def possible_line(item: Mapping[str, object], names: Mapping[str, str] | None = None,
+                  connection=None, locale: str | None = None) -> str:
+    """``- E78.2 Mixed hyperlipidaemia: LDL cholesterol 4.5 mmol/L on 2025-03-01 (above ...)``
+
+    ``names`` maps a card id to the metric's name in the reader's language; a
+    metric it does not hold keeps the English name the matrix stored.  The band
+    is the label the curated rule carries in ``locale``, read through
+    ``connection``; without a connection the band is translated as any phrase.
+    """
+    names = names or {}
+    evidence = []
+    for hit in item.get("evidence") or []:
+        metric = names.get(str(hit.get("metric_id") or "")) or translate_phrase(str(hit.get("metric") or ""))
+        measured = " ".join(str(part) for part in (metric, hit.get("value"), hit.get("unit")) if part)
+        if connection is None:
+            band = translate_phrase(str(hit.get("band") or ""))
+        else:
+            band = diagnosis_matrix.band_text(
+                connection, str(hit.get("metric") or ""), str(hit.get("band") or ""), locale or get_locale(),
+            )
+        evidence.append(f"{measured} {t('ai.dx_on', date=hit.get('date'))} ({band})")
+    code = str(item.get("code") or "")
+    head = f"- {code} {icd10.name(code, get_locale())}".rstrip() + ":"
+    return f"{head} {'; '.join(evidence)}".rstrip()
+
+
+def _add_diagnoses(out, connection, owner_user_id: str, catalog) -> bool:
+    """The diagnoses on the record, then the possible ones the application found.
+
+    Returns True when the record lists at least one diagnosis, which is when the
+    gap text stops saying they are missing.
+    """
+    rows = diagnoses.listing(connection, owner_user_id)
+    possible = diagnosis_matrix.listing(connection, owner_user_id)
+    out += [f"## {t('ai.dx_heading')}", ""]
+    if rows:
+        for row in rows:
+            line = diagnosis_line(row, get_locale())
+            meds = diagnosis_treatment.names(connection, owner_user_id, row, today=date.today())
+            if meds:
+                line += "; " + t("ai.dx_treated_with", names=", ".join(meds))
+            out.append(line)
+        out.append("")
+    else:
+        out += [t("ai.dx_none"), ""]
+    if possible:
+        names = {str(card["id"]): str(card["name"]) for card in catalog}
+        out += [t("ai.dx_possible_intro"), ""]
+        out += [possible_line(item, names, connection, get_locale()) for item in possible]
+    else:
+        out.append(t("ai.dx_possible_none"))
+    out.append("")
+    return bool(rows)
+
+
+def _gaps_body(recorded: bool) -> str:
+    """The gap text, which names diagnoses only when the list above does not hold them."""
+    return t("ai.gaps_body_diagnoses" if recorded else "ai.gaps_body")
+
+
 def _add_guidance(out, omissions, catalog, guidance) -> None:
     """Guidance and citations."""
     out += [f"## {t('ai.guidance_heading')}", "", t("ai.guidance_body"), ""]
@@ -765,9 +857,10 @@ def build_prompt(
     if "documents" in include:
         _add_documents(out, omissions, documents)
     _add_factors(out, connection, owner_user_id)
+    recorded = _add_diagnoses(out, connection, owner_user_id, catalog)
 
     # --- what is not here ---------------------------------------------------
-    out += [f"## {t('ai.gaps_heading')}", "", t("ai.gaps_body"), ""]
+    out += [f"## {t('ai.gaps_heading')}", "", _gaps_body(recorded), ""]
     for key, _default in SECTIONS:
         if key not in include:
             out.append(f"- {t(f'ai.section_{key}')} - {t('ai.gaps_excluded')}")
@@ -989,6 +1082,7 @@ def build_subject_prompt(
     _add_elsewhere(out, omissions, subject, related, attention, sources)
 
     _add_factors(out, connection, owner_user_id)
+    recorded = _add_diagnoses(out, connection, owner_user_id, catalog)
 
     # --- what an excerpt is not --------------------------------------------
     lab_cards = [card for card in catalog if not card.get("is_device")]
@@ -1003,7 +1097,7 @@ def build_subject_prompt(
             latest=str(counts.get("latest_result") or "-")[:10],
         ),
         "",
-        t("ai.gaps_body"),
+        _gaps_body(recorded),
         "",
     ]
     # Every switched-off section is named, never silently absent.

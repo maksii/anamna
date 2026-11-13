@@ -71,6 +71,8 @@ from .changes import register_changes_routes, verdict_state
 from .labsync_routes import register_routes as register_labsync_routes
 from .testplan_routes import register_routes as register_testplan_routes
 from .factors_routes import register_routes as register_factors_routes
+from .diagnoses_routes import register_routes as register_diagnoses_routes
+from . import diagnoses_job
 from .found_routes import register_routes as register_found_routes
 from .allergy_routes import register_routes as register_allergy_routes
 from .genetics_routes import register_routes as register_genetics_routes
@@ -101,7 +103,7 @@ from ..devices.timezone import timezone_choices, user_timezone, valid_timezone
 from .experience import build_overview, build_area_experience
 from . import search as record_search
 from .. import immunizations as immunization_records
-from .. import factors, drugref
+from .. import diagnoses, diagnosis_matrix, factors, drugref, icd10
 from . import factors_view
 from ..devices import queries as device_queries
 from ..locales.concepts_en import CONCEPT_NAMES_EN
@@ -448,6 +450,9 @@ GUEST_ALLOWED_PREFIXES = (
     # The medicines page is the record a doctor reads next to the results; its
     # writes stay refused to a guest by the routes themselves.
     "/medicines",
+    # The diagnoses page is read-only to a guest: its routes refuse writes to a
+    # viewer who is not the owner, and the guest POST rule below refuses the rest.
+    "/diagnoses",
 )
 #: The POSTs a guest may still make.  None of them touch the record: they end
 #: the visit, change how it is displayed, or sign the visitor in as themselves,
@@ -9103,6 +9108,49 @@ def _medicine_tile(connection, owner_user_id: str, *, owner: bool) -> dict[str, 
         "tone": "neutral",
     }
 
+def _matrix_cards(connection, owner_user_id: str) -> list[dict[str, object]]:
+    """Every metric card in English, built outside the request cache.
+
+    The possible-diagnosis matrix matches English metric names and band labels,
+    cards are localized, and the request cache is not keyed by locale.
+    """
+    locale_token = activate_locale("en")
+    cache_token = _request_cache.set(None)
+    try:
+        return _metric_catalog(connection, owner_user_id, include_suppressed=True)
+    finally:
+        _request_cache.reset(cache_token)
+        reset_locale(locale_token)
+
+
+def _display_cards(connection, owner_user_id: str) -> list[dict[str, object]]:
+    """Every metric card in the request's locale."""
+    return _metric_catalog(connection, owner_user_id, include_suppressed=True)
+
+
+def _diagnosis_tile(connection, owner_user_id: str, *, owner: bool) -> dict[str, object] | None:
+    """The dashboard tile for diagnoses: how many are current and how many wait for a doctor."""
+    rows = diagnoses.listing(connection, owner_user_id)
+    current = [row for row in rows if row["status"] == "active" and row["certainty"] == "confirmed"]
+    provisional = [row for row in rows if row["status"] == "active" and row["certainty"] == "provisional"]
+    possible = len(diagnosis_matrix.listing(connection, owner_user_id)) + len(provisional)
+    if not current and not possible and not owner:
+        return None
+    if possible:
+        note = t_plural("dx.tile.note_possible", possible)
+    elif current:
+        note = ", ".join(diagnoses.display_name(row, get_locale()) for row in current[:3])
+    else:
+        note = t("dx.tile.note_empty")
+    return {
+        "key": "diagnoses",
+        "label": t("dx.tile.label"),
+        "value": format_count(len(current)),
+        "note": note,
+        "href": "/diagnoses",
+        "tone": "due" if possible else "neutral",
+    }
+
 def _oldest_panels(panels) -> list[dict[str, object]]:
     """Panels with no published retest cadence, longest unrepeated first.
 
@@ -9159,6 +9207,10 @@ def dashboard(request: Request):
             connection, user["id"],
             owner=viewing_row(request) is None and current_user(request).get("token_kind") != "guest",
         )
+        diagnosis_tile = _diagnosis_tile(
+            connection, user["id"],
+            owner=viewing_row(request) is None and current_user(request).get("token_kind") != "guest",
+        )
     # What needs attention, first: the abnormal results and report
     # conclusions themselves, not a count of them.
     priorities = [
@@ -9182,6 +9234,7 @@ def dashboard(request: Request):
             tiles=[
                 *_tiles(len(attention) + len(attention_findings), len(_due_panels(panels)), panels, counts),
                 *([medicine_tile] if medicine_tile else []),
+                *([diagnosis_tile] if diagnosis_tile else []),
             ],
             recent_documents=recent_documents,
             active="dashboard",
@@ -13717,6 +13770,7 @@ _GROUP_HEADINGS = {
     "device_metrics": "metrics.group_devices",
     "vaccinations": "metrics.group_vaccinations",
     "medicines": "metrics.group_medicines",
+    "diagnoses": "dx.search.group",
     "findings": "metrics.group_findings",
     "documents": "metrics.group_documents",
     "panels": "metrics.group_panels",
@@ -13724,7 +13778,7 @@ _GROUP_HEADINGS = {
 }
 _GROUP_KINDS = {
     "metrics": "metric", "device_metrics": "metric", "panels": "panel",
-    "vaccinations": "row", "medicines": "row", "findings": "row", "documents": "row", "areas": "row",
+    "vaccinations": "row", "medicines": "row", "diagnoses": "row", "findings": "row", "documents": "row", "areas": "row",
 }
 
 def _group(key: str, rows: list, *, kind: str | None = None, page=None, fold: bool = False) -> dict[str, object]:
@@ -13859,6 +13913,23 @@ def _medicine_search_entries(connection, owner_user_id: str) -> list[tuple[recor
         ))
     return entries
 
+def _diagnosis_search_entries(connection, owner_user_id: str) -> list[tuple[record_search.Terms, dict[str, object]]]:
+    """One search result per diagnosis, found by its code, its written name and
+    the catalogue title in both languages; the status shows as its subtitle."""
+    entries = []
+    for row in diagnoses.listing(connection, owner_user_id):
+        code = row["code"] or ""
+        entries.append((
+            record_search.terms([
+                code, row["name"], icd10.name(code, "uk") if code else "", icd10.name(code, "en") if code else "",
+            ], [t(f"dx.status.{row['status']}")]),
+            {
+                "kind": "diagnosis", "title": diagnoses.display_name(row, get_locale()),
+                "subtitle": t(f"dx.status.{row['status']}"), "url": f"/diagnoses/{row['id']}",
+            },
+        ))
+    return entries
+
 def _record_search(connection, owner_user_id: str, q: str, offset: int) -> list[dict[str, object]]:
     """Every kind of thing the record holds, matched by word starts and
     case endings in both languages (`web/search.py` has the rules)."""
@@ -13893,6 +13964,7 @@ def _record_search(connection, owner_user_id: str, q: str, offset: int) -> list[
             for entry in vaccinations
         ],
         "medicines": _medicine_search_entries(connection, owner_user_id),
+        "diagnoses": _diagnosis_search_entries(connection, owner_user_id),
         "findings": [
             (
                 record_search.terms(
@@ -15517,6 +15589,8 @@ async def _lifespan(app: FastAPI):
     oura_stop, oura_thread = oura.start_scheduler(settings) if workers_enabled else (None, None)
     # Paperless: an upload stores only a task id; this links the finished ones.
     paperless_stop = paperless.start_scheduler(settings) if workers_enabled else None
+    # Possible diagnoses are re-checked when a record changes, whatever imported the change.
+    diagnoses_stop = diagnoses_job.start_scheduler(settings, _matrix_cards) if workers_enabled else None
     if workers_enabled:
         telegram_service.start()
     try:
@@ -15526,6 +15600,8 @@ async def _lifespan(app: FastAPI):
             garmin_stop.set()
         if paperless_stop:
             paperless_stop.set()
+        if diagnoses_stop:
+            diagnoses_stop.set()
         if oura_stop:
             oura_stop.set()
             await run_in_threadpool(oura_thread.join, 10)
@@ -15642,6 +15718,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app, settings, templates=templates, template_context=template_context, require_user=require_user,
         record_user=record_user, require_csrf=require_csrf, audit=partial(_audit, settings),
         document_row=_document_row,
+    )
+    register_diagnoses_routes(
+        app, settings, templates=templates, template_context=template_context, require_user=require_user,
+        record_user=record_user, require_csrf=require_csrf, audit=partial(_audit, settings),
+        document_row=_document_row, catalog=_display_cards, matrix_cards=_matrix_cards,
     )
     register_chat_routes(
         app, settings, templates=templates, template_context=template_context, require_user=require_user,

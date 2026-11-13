@@ -14,6 +14,7 @@ RUN uv sync --locked --no-install-project --no-dev
 # the curated (non-private) reference library.
 COPY migrations ./migrations
 COPY data/reference_library.json ./data/reference_library.json
+COPY data/icd10.json ./data/icd10.json
 COPY src ./src
 RUN uv sync --locked --no-dev
 
