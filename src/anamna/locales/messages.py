@@ -68,7 +68,6 @@ MESSAGES: dict[str, dict[str, str]] = {
     "nav.profile": {"en": "Profile", "uk": "Профіль"},
     "nav.skip": {"en": "Skip to content", "uk": "Перейти до вмісту"},
     "nav.overview": {"en": "Home", "uk": "Головна"},
-    "nav.metrics": {"en": "Find results", "uk": "Знайти результати"},
     "nav.documents": {"en": "Documents", "uk": "Документи"},
     "nav.chat": {"en": "Chat", "uk": "Чат"},
     "nav.upload": {"en": "Upload", "uk": "Завантажити"},
@@ -1323,21 +1322,16 @@ MESSAGES: dict[str, dict[str, str]] = {
     "area.table_none_attention": {"en": "No result in this area needs attention.", "uk": "У цьому напрямі немає результатів, що потребують уваги."},
 
     # Metrics
-    "metrics.title": {"en": "Find results · Anamna", "uk": "Пошук результатів · Anamna"},
     "metrics.eyebrow": {
         "en": "{count} searchable result types",
         "uk": "{count} типів результатів для пошуку",
     },
-    "metrics.heading": {"en": "Search your record", "uk": "Пошук у картці"},
     "metrics.lead": {"en": "Find any result, device measurement, vaccination, document or report conclusion, or filter by what needs you.", "uk": "Знайдіть будь-який результат, вимірювання пристрою, щеплення, документ чи висновок, або відфільтруйте те, що потребує уваги."},
     "metrics.search_span": {"en": "Name, abbreviation, vaccine, document or date", "uk": "Назва, скорочення, вакцина, документ або дата"},
     "metrics.placeholder": {"en": "ALT, HbA1c, steps, flu, ultrasound...", "uk": "АЛТ, HbA1c, кроки, грип, УЗД..."},
     "metrics.browse_aria": {"en": "Browse by health area", "uk": "Перегляд за сферою здоров’я"},
-    "metrics.status_aria": {"en": "Filter by status", "uk": "Фільтр за станом"},
-    "metrics.status_all": {"en": "All results", "uk": "Усі результати"},
     "metrics.status_unverified": {"en": "Not yet checked", "uk": "Ще не звірено"},
     "metrics.shortcut_hint": {"en": "Press / to search", "uk": "Натисніть /, щоб шукати"},
-    "metrics.open_area": {"en": "Open the {area} page > ", "uk": "Відкрити сторінку «{area}» > "},
     "metrics.live": {"en": "Live results", "uk": "Живі результати"},
     "metrics.matches_for": {"en": "Matches for \"{query}\"", "uk": "Результати за запитом «{query}»"},
     "metrics.recent": {"en": "Recent and frequently measured", "uk": "Останні та найчастіші показники"},
@@ -1345,15 +1339,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     "metrics.result_count_one": {"en": "{count} result", "uk": "{count} результат"},
     "metrics.result_count_few": {"en": "{count} results", "uk": "{count} результати"},
     "metrics.result_count_many": {"en": "{count} results", "uk": "{count} результатів"},
-    "metrics.count_lab_one": {"en": "{count} laboratory result", "uk": "{count} лабораторний показник"},
-    "metrics.count_lab_few": {"en": "{count} laboratory results", "uk": "{count} лабораторні показники"},
-    "metrics.count_lab_many": {"en": "{count} laboratory results", "uk": "{count} лабораторних показників"},
-    "metrics.count_device_one": {"en": "{count} device measurement", "uk": "{count} вимірювання з пристроїв"},
-    "metrics.count_device_few": {"en": "{count} device measurements", "uk": "{count} вимірювання з пристроїв"},
-    "metrics.count_device_many": {"en": "{count} device measurements", "uk": "{count} вимірювань з пристроїв"},
-    "metrics.overview_title": {"en": "Everything in your record, by body system", "uk": "Уся картка за системами організму"},
     "metrics.section_labs": {"en": "Laboratory results", "uk": "Результати аналізів"},
-    "metrics.section_other": {"en": "Other results", "uk": "Інші результати"},
     "metrics.section_flagged_one": {"en": "{count} needs attention", "uk": "{count} потребує уваги"},
     "metrics.section_flagged_few": {"en": "{count} need attention", "uk": "{count} потребують уваги"},
     "metrics.section_flagged_many": {"en": "{count} need attention", "uk": "{count} потребують уваги"},
@@ -1406,7 +1392,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     "metrics.search_retry": {"en": "Check your connection and type again.", "uk": "Перевірте з'єднання і введіть запит ще раз."},
 
     # Metric detail
-    "metric.back": {"en": "Find another metric", "uk": "Знайти інший показник"},
+    "metric.back": {"en": "All results", "uk": "Усі результати"},
     "metric.points_one": {"en": "{count} distinct point", "uk": "{count} результат"},
     "metric.points_many": {"en": "{count} distinct points", "uk": "{count} результатів"},
     "metric.aliases_note": {
@@ -2908,7 +2894,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     # Panel detail
     "panel.title": {"en": "{name} · Anamna", "uk": "{name} · Anamna"},
     "panel.eyebrow": {"en": "Panel", "uk": "Панель аналізів"},
-    "panel.back": {"en": "All panels", "uk": "Усі панелі"},
+    "panel.back": {"en": "All test groups", "uk": "Усі групи аналізів"},
     "panel.coverage": {
         "en": "{present} of {total} analytes in your record",
         "uk": "{present} з {total} показників у вашій картці",
@@ -3035,12 +3021,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
 
     # Panels index
-    "panels.title": {"en": "Panels · Anamna", "uk": "Панелі · Anamna"},
     "panels.eyebrow": {"en": "Results by test group", "uk": "Результати за групами аналізів"},
-    "panels.heading": {
-        "en": "Test groups",
-        "uk": "Групи аналізів",
-    },
     # --- Keys added during final verification, after the templates and routes
     # --- workstreams landed. t() echoes an unknown key straight into the page,
     # --- so each of these was visibly rendering as raw text.
@@ -3062,10 +3043,9 @@ MESSAGES: dict[str, dict[str, str]] = {
         "uk": "Визнані установи по-різному встановлюють межу для цього аналізу. Ми показуємо позиції кожної, щоб ви могли обговорити це з лікарем.",
     },
     "nav.insights": {"en": "Priorities", "uk": "Пріоритети"},
-    "nav.panels": {"en": "Test groups", "uk": "Групи аналізів"},
     "nav.allergy": {"en": "Allergy", "uk": "Алергія"},
     "nav.genetics": {"en": "Your DNA", "uk": "Ваша ДНК"},
-    "dashboard.all_panels": {"en": "All panels", "uk": "Усі панелі"},
+    "dashboard.all_panels": {"en": "All test groups", "uk": "Усі групи аналізів"},
     "dashboard.panel_board_eyebrow": {"en": "Grouped results", "uk": "Згруповані результати"},
     "dashboard.panel_board_heading": {"en": "Test groups", "uk": "Групи аналізів"},
     "dashboard.panel_board_note": {"en": "Open a group to see its results.", "uk": "Відкрийте групу, щоб переглянути результати."},
@@ -3076,12 +3056,6 @@ MESSAGES: dict[str, dict[str, str]] = {
     "metrics.group_findings": {"en": "Report conclusions", "uk": "Висновки обстежень"},
     "metrics.group_documents": {"en": "Documents", "uk": "Документи"},
     "metrics.group_areas": {"en": "Health areas", "uk": "Напрями здоров’я"},
-    "panels.group_count_one": {"en": "{count} panel", "uk": "{count} панель"},
-    "panels.group_count_few": {"en": "{count} panels", "uk": "{count} панелі"},
-    "panels.group_count_many": {"en": "{count} panels", "uk": "{count} панелей"},
-    "panels.group_flagged": {"en": "Panels needing attention: {count}", "uk": "Потребують уваги: {count}"},
-    "panels.group_overdue": {"en": "Panels overdue: {count}", "uk": "Прострочено повтор: {count}"},
-    "panels.open_area": {"en": "Open all {area} results", "uk": "Відкрити всі результати: {area}"},
     "devices.vendor_count_one": {"en": "{value} supported source", "uk": "{value} підтримуване джерело"},
     "devices.vendor_count_few": {"en": "{value} supported sources", "uk": "{value} підтримувані джерела"},
     "devices.vendor_count_many": {"en": "{value} supported sources", "uk": "{value} підтримуваних джерел"},
@@ -3235,110 +3209,18 @@ MESSAGES: dict[str, dict[str, str]] = {
     "sex.female": {"en": "Female", "uk": "Жіноча"},
     "sex.intersex": {"en": "Intersex", "uk": "Інтерсекс"},
     "sex.unknown": {"en": "Not recorded", "uk": "Не вказано"},
-    "panels.totals_line": {"en": "{with_data} of {total} panels have results.", "uk": "Результати є в {with_data} із {total} панелей."},
-    "panels.totals_flagged": {"en": "Panels needing attention", "uk": "Панелі, що потребують уваги"},
-    "panels.totals_overdue": {"en": "Panels overdue for retest", "uk": "Панелі з простроченим повтором"},
-    "panels.group_aria": {"en": "Panels in {area}", "uk": "Панелі: {area}"},
-    "panels.sort_aria": {"en": "Order of panels", "uk": "Порядок панелей"},
-    "panels.sort_area": {"en": "By health area", "uk": "За сферою здоров’я"},
-    "panels.sort_attention": {"en": "Needing attention first", "uk": "Спочатку ті, що потребують уваги"},
     "panels.open": {"en": "Open panel > ", "uk": "Відкрити панель > "},
-    "panels.member_count": {"en": "Analytes: {count}", "uk": "Показників: {count}"},
     "panels.no_data_note": {"en": "No results yet", "uk": "Результатів поки немає"},
-    "panels.empty_title": {"en": "No panels to show", "uk": "Панелей поки немає"},
-    "panels.empty_body": {
-        "en": "Import a laboratory report and its panels will appear here.",
-        "uk": "Імпортуйте результати аналізів із лабораторії, і панелі з’являться тут.",
-    },
 
     # Insights
-    "insights.title": {"en": "Priorities · Anamna", "uk": "Пріоритети · Anamna"},
-    "insights.eyebrow": {"en": "Checks based on your record", "uk": "На основі вашої картки"},
-    "insights.heading": {
-        "en": "Priorities",
-        "uk": "Пріоритети",
-    },
-    "insights.lead": {
-        "en": "Open a section to review results outside an interval, retests due, missing groups or unchecked extractions.",
-        "uk": "Відкрийте розділ, щоб переглянути результати поза інтервалом, аналізи, які час повторити, групи без даних або незвірені значення.",
-    },
-    "insights.attention_heading": {"en": "Needs attention", "uk": "Потребує уваги"},
-    "insights.attention_lead": {
-        "en": "Results outside the interval that judged them, newest first. This is not a diagnosis.",
-        "uk": "Результати поза інтервалом, за яким їх оцінено; спочатку найновіші. Це не діагноз.",
-    },
-    "insights.due_heading": {"en": "Due for retest", "uk": "Час повторити"},
-    "insights.due_lead": {
-        "en": "Panels that have passed a published retest interval, most overdue first. Only a handful of measurements have such an interval; the rest are under \"Oldest results\".",
-        "uk": "Панелі, для яких минув опублікований інтервал повторного аналізу; спочатку найбільш прострочені. Такий інтервал мають лише окремі показники, решту зібрано в розділі «Найдавніші результати».",
-    },
-    # The `no_interval` subgroup: shown by age, never described as late.
-    "insights.oldest_heading": {"en": "Oldest results", "uk": "Найдавніші результати"},
-    "insights.oldest_lead": {
-        "en": "No professional body publishes a screening interval for these, so nothing here is late. They are simply the results that have gone longest without an update.",
-        "uk": "Для цих аналізів жодна фахова організація не публікує інтервалу скринінгу, тож тут нічого не прострочено. Це просто результати, які найдовше не оновлювалися.",
-    },
-    "insights.no_interval_note": {
-        "en": "No published screening interval",
-        "uk": "Інтервал скринінгу не опубліковано",
-    },
-    "insights.gaps_heading": {"en": "Not yet tested", "uk": "Ще не здавали"},
-    "insights.gaps_lead": {
-        "en": "Test groups with no recorded result.",
-        "uk": "Групи аналізів, для яких ще немає жодного результату.",
-    },
-    "insights.unverified_heading": {"en": "Awaiting your check", "uk": "Чекає на вашу звірку"},
     "insights.unverified_lead": {
         "en": "Machine extraction stays provisional until you compare it with the source page.",
         "uk": "Автоматично зчитані значення залишаються попередніми, доки ви не звірите їх з оригіналом.",
     },
-    "insights.overdue_by": {"en": "Overdue by {months} months", "uk": "Прострочено на {months} міс."},
-    "insights.overdue_by_days": {"en": "Overdue by {days} days", "uk": "Прострочено на {days} дн."},
     "insights.last_tested": {"en": "Last tested {date}", "uk": "Останній аналіз: {date}"},
-    "insights.never_tested": {"en": "Never tested", "uk": "Ще не здавали"},
-    "insights.cadence": {
-        "en": "Recommended every {months} months",
-        "uk": "Рекомендовано раз на {months} міс.",
-    },
     "insights.outside_by": {"en": "{amount} outside the interval", "uk": "{amount} за межами інтервалу"},
     "insights.in_panel": {"en": "In {panel}", "uk": "У панелі «{panel}»"},
-    "insights.open_panel": {"en": "Open panel > ", "uk": "Відкрити панель > "},
-    "insights.attention_empty_title": {"en": "Nothing outside its interval", "uk": "Усі результати в межах інтервалу"},
-    "insights.attention_empty_body": {
-        "en": "Every judged result in your record currently sits inside the interval that judged it.",
-        "uk": "Усі оцінені результати у вашій картці зараз у межах інтервалу, за яким їх оцінено.",
-    },
-    "insights.due_empty_title": {"en": "Everything is current", "uk": "Усе актуальне"},
-    "insights.due_empty_body": {
-        "en": "No panel has passed its recommended retest interval.",
-        "uk": "Для жодної панелі ще не минув рекомендований інтервал повторного аналізу.",
-    },
-    "insights.gaps_empty_title": {"en": "Every panel has data", "uk": "У кожній панелі є дані"},
-    "insights.gaps_empty_body": {
-        "en": "Each panel in the catalogue has at least one recorded result.",
-        "uk": "Для кожної панелі каталогу є щонайменше один результат.",
-    },
-    "insights.oldest_empty_title": {"en": "Nothing waiting without an interval", "uk": "Немає результатів без інтервалу"},
-    "insights.oldest_empty_body": {"en": "Panels with results but no published retest interval would be listed here, oldest first.", "uk": "Тут з’являться панелі з результатами, для яких не опубліковано інтервалу повторного аналізу; спочатку найдавніші."},
-    "insights.unverified_empty_title": {"en": "No unchecked extractions", "uk": "Усе звірено"},
-    "insights.unverified_empty_body": {
-        "en": "Every extracted result has been checked against its source page.",
-        "uk": "Кожне зчитане значення звірено з оригіналом.",
-    },
-    "insights.unverified_observations": {
-        "en": "Extracted results",
-        "uk": "Зчитаних результатів",
-    },
-    "insights.unverified_tasks": {
-        "en": "Open review tasks",
-        "uk": "Відкритих завдань на звірку",
-    },
-    "insights.unverified_documents": {
-        "en": "Documents involved",
-        "uk": "Задіяних документів",
-    },
     "insights.open_review": {"en": "Show documents awaiting review > ", "uk": "Документи, що чекають на звірку > "},
-    "insights.upload_cta": {"en": "Upload a new result", "uk": "Завантажити новий результат"},
 
     # Verdicts — one label per `interpretation` value
     "verdict.low": {"en": "Below range", "uk": "Нижче норми"},
@@ -7376,9 +7258,42 @@ MESSAGES: dict[str, dict[str, str]] = {
     "export.values_count_many": {"en": "{count} values", "uk": "{count} значень"},
     # --- /changes: what changed between result dates ------------------------
     "changes.nav": {"en": "Changes", "uk": "Зміни"},
-    "changes.title": {"en": "What changed", "uk": "Що змінилося"},
-    "changes.heading": {"en": "What changed in your results", "uk": "Що змінилося у ваших результатах"},
-    "changes.document_heading": {"en": "What this document changed", "uk": "Що змінив цей документ"},
+    # The one Results page: it replaces the old metrics list, panels and changes pages.
+    "nav.results": {"en": "Results", "uk": "Результати"},
+    "results.title": {"en": "Results", "uk": "Результати"},
+    "results.heading": {"en": "Your results", "uk": "Ваші результати"},
+    "results.lead": {
+        "en": "Every laboratory result in your record, with how it moved since the test before.",
+        "uk": "Усі лабораторні результати з вашої картки і те, як кожен змінився порівняно з попереднім аналізом.",
+    },
+    "results.chips_aria": {"en": "Quick filters", "uk": "Швидкі фільтри"},
+    "results.chip_all": {"en": "All results", "uk": "Усі результати"},
+    "results.chip_attention": {"en": "Needs attention", "uk": "Потребує уваги"},
+    "results.chip_changed": {"en": "Changed in the latest tests", "uk": "Змінилося в останніх аналізах"},
+    "results.chip_unverified": {"en": "Not yet checked", "uk": "Ще не перевірено"},
+    "results.chip_due": {"en": "Retest due", "uk": "Час повторити"},
+    "results.period_all": {"en": "Latest result of every test", "uk": "Останній результат кожного показника"},
+    "results.sort_status": {"en": "What needs attention", "uk": "Тим, що потребує уваги"},
+    "results.sort_date": {"en": "Date", "uk": "Датою"},
+    "results.group_area": {"en": "Body system", "uk": "Системою організму"},
+    "results.filter_attention": {"en": "Need attention", "uk": "Потребують уваги"},
+    "results.filter_due": {"en": "Due for a retest", "uk": "Час повторити"},
+    "results.open_group": {"en": "Open this test group", "uk": "Відкрити цю групу аналізів"},
+    "results.open_area": {"en": "Open this body system", "uk": "Відкрити цю систему організму"},
+    "results.area_only": {"en": "Showing only: {area}.", "uk": "Показано лише: {area}."},
+    "results.area_clear": {"en": "Show every body system", "uk": "Показати всі системи організму"},
+    "results.findings_heading": {"en": "Conclusions that need attention", "uk": "Висновки, що потребують уваги"},
+    "results.devices_link": {"en": "Open the Devices page", "uk": "Відкрити сторінку «Пристрої»"},
+    "results.legend_heading": {"en": "What the marks and labels mean", "uk": "Що означають позначки й мітки"},
+    "results.legend_everything": {
+        "en": "Each row is the newest result of one test. The change beside it compares that result with the one from the test date before. Results taken within a few days of each other count as one test date.",
+        "uk": "Кожен рядок: найновіший результат одного показника. Зміна поруч порівнює його з результатом попередньої дати аналізів. Результати, отримані протягом кількох днів, вважаються однією датою.",
+    },
+    "results.legend_spark": {
+        "en": "The small line is the last few results of that test; the shaded band is its reference interval when one is known. On a phone the line is left out: open the test to see its full chart.",
+        "uk": "Маленька лінія показує кілька останніх результатів показника; затінена смуга позначає його референтний інтервал, якщо він відомий. На телефоні лінії немає: відкрийте показник, щоб побачити повний графік.",
+    },
+    "results.clear_search": {"en": "Clear the search", "uk": "Очистити пошук"},
     "changes.document_lead": {
         "en": "Only the results read from this document, each compared with the previous result of the same test:",
         "uk": "Тут лише результати, зчитані з цього документа; кожен порівняно з попереднім результатом того самого аналізу:",
@@ -7400,7 +7315,6 @@ MESSAGES: dict[str, dict[str, str]] = {
     "changes.order_reverse": {"en": "Reverse the order", "uk": "У зворотному порядку"},
     "changes.filter_label": {"en": "Show", "uk": "Показати"},
     "changes.filter_all": {"en": "All results", "uk": "Усі результати"},
-    "changes.filter_outside": {"en": "Outside the range now", "uk": "Зараз поза межами"},
     "changes.filter_changed": {"en": "Changed status", "uk": "Змінили статус"},
     "changes.filter_medicine": {"en": "May be affected by a medicine or other entry", "uk": "Можуть залежати від ліків чи іншого запису"},
     "changes.filter_unverified": {"en": "Not yet checked", "uk": "Ще не перевірені"},
@@ -7485,7 +7399,6 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "No reference interval applies to this result, many tests have no universal target, so it is shown without a verdict.",
         "uk": "Для цього результату немає відповідного референтного інтервалу (у багатьох аналізів універсальної норми просто немає), тож його показано без оцінки.",
     },
-    "changes.legend_heading": {"en": "What these labels mean", "uk": "Що означають ці позначки"},
     "changes.legend_source": {
         "en": "Verdicts are the same ones each test's own page shows, from the reference sources cited there. "
               "Open a test to see its interval and its sources.",
@@ -7501,10 +7414,6 @@ MESSAGES: dict[str, dict[str, str]] = {
         "uk": "Динаміка від найстарішого до найновішого: {values} {unit}",
     },
     "changes.was_on": {"en": "was {value} on {date}", "uk": "було {value} ({date})"},
-    "changes.legend_trend": {
-        "en": "Each chart shows this result and up to four readings before it, oldest on the left, with the value on every point. The filled dot is this result; the shaded strip is the range you should be in for this test, when one is known.",
-        "uk": "Кожен графік показує цей результат і до чотирьох попередніх вимірювань: найстаріше ліворуч, значення підписане біля кожної точки. Зафарбована точка означає цей результат, а затінена смуга показує референтний інтервал цього аналізу, якщо він відомий.",
-    },
     "changes.no_previous": {"en": "No earlier result", "uk": "Попереднього результату немає"},
     "changes.units_differ": {"en": "Not comparable: different units", "uk": "Не порівняти: різні одиниці"},
     "changes.no_change": {"en": "No change", "uk": "Без змін"},

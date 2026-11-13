@@ -177,7 +177,7 @@ def test_merged_page_shows_both_sources_with_labels(tmp_path: Path):
     assert {point["source"] for point in points} == {"clinic", "device"}
     assert all(point["document_url"].startswith("/devices/metrics/") for point in points if point["source"] == "device")
     # One card on the landing page, carrying both paths; no device card beside it.
-    landing = client.get("/metrics").text
+    landing = client.get("/results").text
     assert 'href="/metrics/body-weight"' in landing
     assert 'href="/devices/metrics/body_weight"' not in landing
     with connect(settings) as connection:

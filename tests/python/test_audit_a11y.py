@@ -81,10 +81,6 @@ def test_source_controls_meet_the_44px_target() -> None:
     assert "min-height: 44px" in _rule(_text(STATIC / "app.css"), ".an-source-controls button")
 
 
-def test_index_status_text_is_ink_on_sunken_surface() -> None:
-    assert "color: var(--ink)" in _rule(_text(STATIC / "app.css"), ".an-index-disclosure__status span")
-
-
 def test_scrollable_tables_show_a_focus_ring() -> None:
     css = _text(STATIC / "app.css")
     assert ".table-wrap:focus-visible, .area-result-table-wrap:focus-visible, .an-scroll-x:focus-visible" in css

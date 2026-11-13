@@ -1,4 +1,4 @@
-"""Word-start, bilingual matching for the record-wide search on /metrics.
+"""Word-start, bilingual matching for the record-wide search on /results.
 
 Substring matching is what made "ALT" find «heALTh», "AST" find
 «thromboplASTin», «кір» find «осоКІР» and «сон» find «ЦефтріакСОН».  Here a

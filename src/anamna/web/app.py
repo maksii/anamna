@@ -68,6 +68,7 @@ from .. import openwearables_webhooks as ow_hooks
 from ..telegram import TelegramService
 from .telegram_routes import register_telegram_routes
 from .changes import register_changes_routes, verdict_state
+from .results import register_results_routes
 from .labsync_routes import register_routes as register_labsync_routes
 from .testplan_routes import register_routes as register_testplan_routes
 from .factors_routes import register_routes as register_factors_routes
@@ -385,7 +386,7 @@ SHARE_SAVED = {"share_level": "profile.share_level_saved"}
 EMAIL_SAVED = {"email": "profile.email_saved"}
 #: Pages that show results, and so carry the "Ask an AI" button.
 AI_EXPORT_PAGES = frozenset(
-    {"dashboard", "panels", "metrics", "devices", "documents"}
+    {"dashboard", "panels", "metrics", "results", "devices", "documents"}
 )
 REVIEW_STATES = ("open", "resolved", "needs_correction")
 #: Refusals of /documents/{id}/duplicate, each `dup.error_<code>` in the catalogue.
@@ -427,7 +428,7 @@ PROFILE_CHOICES = {
 #: rather than a list of pages to forbid: a route added next month is refused
 #: by default, which is the direction an access check should fail in.
 GUEST_ALLOWED_PREFIXES = (
-    "/insights", "/changes", "/panels", "/metrics", _DEVICES_URL, _DOCUMENTS_URL,
+    "/results", "/insights", "/changes", "/panels", "/metrics", _DEVICES_URL, _DOCUMENTS_URL,
     "/privacy", "/terms",
     "/api/panels", "/api/metrics", "/api/documents", "/api/ai-export", "/static",
     # The correlation explorer is rendered on the metric pages a guest already
@@ -2148,7 +2149,7 @@ def _reading_verdict(
 ) -> tuple[str | None, dict[str, object]]:
     """One reading's unit and verdict -- the single path every lab page judges by.
 
-    `_lab_card` judges the latest day through here and /changes judges every
+    `_lab_card` judges the latest day through here and /results judges every
     day it compares, so the two can never disagree about the same number.
     """
     unit_source = (
@@ -3689,7 +3690,7 @@ def _chart_payload(
     """One point per day, each coloured by its own verdict.
 
     With a ``connection`` every point is judged by `_reading_verdict` at the
-    age the sample was taken -- the same path as the hero and /changes -- so a
+    age the sample was taken -- the same path as the hero and /results -- so a
     critically high 8.1 is never drawn grey because its report printed no
     flag (the old colour was the laboratory's flag alone).
     """
@@ -9056,21 +9057,21 @@ def _tiles(attention_count: int, due_count: int, panels, counts) -> list[dict[st
             "key": "attention",
             "label": t("tile.attention") if attention_count else t("tile.attention_zero"),
             "value": format_count(attention_count),
-            "href": "/metrics?status=attention",
+            "href": "/results?show=attention",
             "tone": "attention" if attention_count else "good",
         },
         {
             "key": "due",
             "label": t("tile.due") if due_count else t("tile.due_zero"),
             "value": format_count(due_count),
-            "href": "/metrics?status=due",
+            "href": "/results?show=due&group=panel",
             "tone": "due" if due_count else "good",
         },
         {
             "key": "panels",
             "label": t("tile.panels_covered"),
             "value": f"{format_count(with_data)}/{format_count(len(panels))}",
-            "href": "/panels",
+            "href": "/results?group=panel",
             "tone": "neutral",
         },
         {
@@ -9473,58 +9474,10 @@ def ai_export_prompt(
 
 # --- panels -------------------------------------------------------------
 
-@router.get("/panels", response_class=HTMLResponse, responses=_RESPONSES_401)
-def panels_page(request: Request, sort: str = ""):
-    settings = request.app.state.settings
-    user = require_user(request)
-    user = record_user(request, user)
-    with connect(settings) as connection:
-        panels = _panel_cards(connection, user["id"], member_limit=6)
-        # How many of each group's results a medicine or other entry may be moving.
-        catalog = _by_id(_metric_catalog(connection, user["id"]))
-        by_concept = factors.influences(connection, user["id"], today=date.today())
-        for panel in panels:
-            panel["medicines_count"] = sum(
-                1 for key in panel["present_ids"] if key in catalog and _card_influences(catalog[key], by_concept)
-            )
-    # One order for both views: the attention view is this list, flat; the
-    # area view stamps each card with its place in it, so the in-page
-    # toggle reorders without asking the server again.
-    ranked = sorted(panels, key=_panel_sort_key)
-    attention_order = {panel["id"]: index for index, panel in enumerate(ranked)}
-    groups = []
-    for definition in HEALTH_AREAS:
-        area_id = str(definition["id"])
-        area_panels = sorted(
-            [panel for panel in panels if panel["area_id"] == area_id], key=_panel_sort_key
-        )
-        if area_panels:
-            groups.append(
-                {
-                    "area_id": area_id,
-                    "area_name": translate_phrase(str(definition["name"])),
-                    "panels": area_panels,
-                    "flagged": sum(1 for panel in area_panels if panel["status"] == "attention"),
-                    "overdue": sum(
-                        1 for panel in area_panels if panel["staleness"]["state"] == "overdue"
-                    ),
-                }
-            )
-    totals = {
-        "panels": len(panels),
-        "with_data": sum(1 for panel in panels if panel["present_count"]),
-        "flagged": sum(1 for panel in panels if panel["status"] == "attention"),
-        "overdue": sum(1 for panel in panels if panel["staleness"]["state"] == "overdue"),
-    }
-    return templates.TemplateResponse(
-        request,
-        "panels.html",
-        template_context(
-            request, groups=groups, totals=totals, active="panels",
-            sort="attention" if sort == "attention" else "area",
-            ranked=ranked, attention_order=attention_order,
-        ),
-    )
+@router.get("/panels")
+def panels_page():
+    """Retired: the test groups are one way to group the list on /results."""
+    return RedirectResponse("/results?group=panel", status_code=301)
 
 # ------------------------------------------------------------ vaccinations
 
@@ -10460,11 +10413,11 @@ def panel_json(request: Request, panel_id: str):
 
 @router.get("/insights")
 def insights():
-    """Retired: every section it had is a status filter on /metrics now.
+    """Retired: every section it had is a filter on /results now.
 
     301 so bookmarks and a guest's old link land on the same list.
     """
-    return RedirectResponse("/metrics?status=attention", status_code=301)
+    return RedirectResponse("/results?show=attention", status_code=301)
 
 # --- areas --------------------------------------------------------------
 
@@ -13749,22 +13702,10 @@ def set_issue_state(
 
 # --- search -------------------------------------------------------------
 #
-# /metrics answers three questions on one page, through one renderer
-# (`_search_results.html`) shared by the page load and the live search:
-# "where is X?" (q), "what needs me?" (status) and "what is in this area?"
-# (area).  With none of them it lists every result compactly -- the panel
-# cards that used to follow the search box (56 000 px on a phone) are
-# /panels' job.
+# /results answers "where is X?" (q) through one renderer
+# (`_search_results.html`) shared by the page load and the live search.
+# Without a search the list itself is the page (`web/results.py`).
 
-METRIC_STATUSES = ("attention", "due", "oldest", "unverified")
-#: How each status chip is coloured; anything else is neutral.
-_STATUS_TONES = {"attention": "attention", "due": "due", "unverified": "due"}
-_STATUS_TEXT = {
-    "attention": ("insights.attention_heading", "insights.attention_lead"),
-    "due": ("insights.due_heading", "insights.due_lead"),
-    "oldest": ("insights.oldest_heading", "insights.oldest_lead"),
-    "unverified": ("metrics.status_unverified", "insights.unverified_lead"),
-}
 _GROUP_HEADINGS = {
     "metrics": "metrics.group_analytes",
     "device_metrics": "metrics.group_devices",
@@ -13994,7 +13935,7 @@ def _record_search(connection, owner_user_id: str, q: str, offset: int) -> list[
     for key in (key for key in candidates if ranked[key]):
         rows = [item for _, item in ranked[key]]
         if key == "metrics":
-            page = _pagination(len(rows), offset, PAGE_SIZE, f"/metrics?q={quote(q)}")
+            page = _pagination(len(rows), offset, PAGE_SIZE, f"/results?q={quote(q)}")
             groups.append(_group(key, rows, page=page))
         else:
             groups.append(_group(key, rows, fold=True))
@@ -14011,38 +13952,6 @@ def _search_texts(q: str, found: bool) -> tuple[str, dict[str, str] | None, tupl
     link = {"url": f"/documents?q={quote(q)}", "label": t("metrics.search_document_text")}
     return "", link, (t("metrics.empty_title"), t("metrics.empty_body"))
 
-def _status_groups(connection, owner_user_id: str, status: str, offset: int = 0) -> tuple[list[dict[str, object]], dict[str, object] | None]:
-    """One /insights section, as a filter: (groups, an optional note link)."""
-    if status == "attention":
-        catalog = _complete_days(connection, owner_user_id, _metric_catalog(connection, owner_user_id))
-        # Copies: the cards are the memoised catalog (see panel_json).
-        cards = [{**card, "outside_by_text": _outside_by_text(card)} for card in _attention_cards(catalog)]
-        findings = [_finding_result(row) for row in _attention_findings(_finding_catalog(connection, owner_user_id))]
-        return [
-            group for group in (
-                _group("metrics", [card for card in cards if not card["is_device"]], kind="attention"),
-                _group("findings", findings),
-                _group("device_metrics", [card for card in cards if card["is_device"]], kind="attention"),
-            ) if group["rows"]
-        ], None
-    if status in {"due", "oldest"}:
-        panels = _panel_cards(connection, owner_user_id, member_limit=6)
-        rows = _due_panels(panels) if status == "due" else _oldest_panels(panels)
-        link = {"url": _UPLOAD_URL, "label": t("insights.upload_cta")} if status == "due" else None
-        return ([_group("panels", rows)] if rows else []), link
-    cards = [
-        card for card in _metric_catalog(connection, owner_user_id)
-        if card["verification_status"] == "extracted"
-    ]
-    lab = [card for card in cards if not card["is_device"]]
-    groups = [
-        group for group in (
-            _group("metrics", lab, page=_pagination(len(lab), offset, PAGE_SIZE, "/metrics?status=unverified")),
-            _group("device_metrics", [card for card in cards if card["is_device"]]),
-        ) if group["rows"]
-    ]
-    return groups, {"url": "/documents?review_state=open", "label": t("insights.open_review")}
-
 def _status_counts(connection, owner_user_id: str) -> dict[str, int]:
     catalog = _complete_days(connection, owner_user_id, _metric_catalog(connection, owner_user_id))
     panels = _panel_cards(connection, owner_user_id, member_limit=6)
@@ -14056,148 +13965,54 @@ def _status_counts(connection, owner_user_id: str) -> dict[str, int]:
         ),
     }
 
-def _metrics_view(connection, owner_user_id: str, q: str = "", status: str = "", area: str = "", offset: int = 0) -> dict[str, object]:
-    """What /metrics shows for one combination of its three filters."""
+def _metrics_view(connection, owner_user_id: str, q: str = "", offset: int = 0) -> dict[str, object]:
+    """What /results shows for a search: every group of matches to `q`; nothing when `q` is empty."""
     q = q.strip()
     offset = max(0, offset)
-    note, link = "", None
+    groups: list[dict[str, object]] = []
+    title, note, link = "", "", None
     empty = (t("metrics.empty_title"), t("metrics.empty_body"))
     if q:
         groups = _record_search(connection, owner_user_id, q, offset)
         title = t("metrics.matches_for", query=q)
-        status = area = ""
         note, link, empty = _search_texts(q, bool(groups))
-    elif status in METRIC_STATUSES:
-        groups, link = _status_groups(connection, owner_user_id, status, offset)
-        heading, lead = _STATUS_TEXT[status]
-        title, note = t(heading), t(lead)
-        if status == "unverified":
-            counts = _counts(connection, owner_user_id)
-            if int(counts["unverified"]):
-                note = " ".join((
-                    t_plural("metrics.unverified_results", int(counts["unverified"])),
-                    t_plural("metrics.unverified_in_documents", int(counts["unverified_documents"])),
-                    note,
-                ))
-        empty = (t(f"insights.{status}_empty_title"), t(f"insights.{status}_empty_body"))
-        area = ""
-    elif area in AREA_BY_ID:
-        cards = [card for card in _metric_catalog(connection, owner_user_id) if area in card["area_ids"]]
-        lab = [card for card in cards if not card["is_device"]]
-        groups = [
-            group for group in (
-                _group("metrics", lab, page=_pagination(len(lab), offset, PAGE_SIZE, f"/metrics?area={area}")),
-                _group("device_metrics", [card for card in cards if card["is_device"]]),
-            ) if group["rows"]
-        ]
-        title = translate_phrase(str(AREA_BY_ID[area]["name"]))
-        link = {"url": f"/areas/{area}", "label": t("metrics.open_area", area=title)}
-        status = ""
-    else:
-        status = area = ""
-        cards = _metric_catalog(connection, owner_user_id)
-        lab = sum(1 for card in cards if not card["is_device"])
-        return {
-            "q": "", "status": "", "area": "",
-            "title": t("metrics.overview_title"), "note": "", "link": None,
-            "groups": [],
-            "sections": _landing_sections(cards),
-            # One count, the whole record: the old landing printed "113
-            # shown" beside a group headed "595".
-            "count_text": " · ".join(
-                text for text in (
-                    t_plural("metrics.count_lab", lab) if lab else "",
-                    t_plural("metrics.count_device", len(cards) - lab) if len(cards) > lab else "",
-                ) if text
-            ),
-            "empty_title": empty[0], "empty_body": empty[1],
-        }
     return {
-        "q": q, "status": status, "area": area,
+        "q": q, "status": "", "area": "",
         "title": title, "note": note, "link": link,
         "groups": groups,
         "sections": [],
         # Every match, not the slice on screen; the pager says which slice.
-        "count_text": t_plural("metrics.result_count", sum(int(group["total"]) for group in groups)),
+        "count_text": t_plural("metrics.result_count", sum(int(group["total"]) for group in groups)) if q else "",
         "empty_title": empty[0], "empty_body": empty[1],
     }
 
-def _landing_section(
-    device: bool, area_id: str, name: str, rows: list[dict[str, object]], known: set[str]
-) -> dict[str, object]:
-    return {
-        "key": f"{'device' if device else 'lab'}-{area_id}",
-        "area_id": area_id if area_id in known else "",
-        "title": name,
-        "device": device,
-        "rows": rows,
-        "total": len(rows),
-        "flagged": sum(1 for card in rows if _attention_rank(card) <= 3),
-    }
 
-def _landing_sections(cards: list[dict[str, object]]) -> list[dict[str, object]]:
-    """/metrics with nothing typed: every result, grouped by body system.
+#: What each retired /metrics?status= filter is on /results.
+_RETIRED_STATUS = {
+    "attention": [("show", "attention")],
+    "unverified": [("show", "unverified")],
+    "due": [("show", "due"), ("group", "panel")],
+    "oldest": [("group", "panel"), ("sort", "date"), ("reverse", "1")],
+}
 
-    Laboratory sections first, open; device measurements after, in their
-    own sections, closed.  Each keeps the catalog order -- what needs
-    attention, then what is recent -- so its first rows are the ones worth
-    reading.  A card sits in its primary area only, so the section counts
-    add up to the count line.
-    """
-    by_area: dict[tuple[bool, str], list[dict[str, object]]] = {}
-    for card in cards:
-        by_area.setdefault((bool(card["is_device"]), str(card["primary_area_id"])), []).append(card)
-    areas = localized_health_areas()
-    known = {str(area["id"]) for area in areas}
-    sections = []
-    for device in (False, True):
-        listed = [(str(area["id"]), str(area["name"])) for area in areas]
-        stray = sorted({key for is_device, key in by_area.keys() if is_device == device and key not in known})
-        listed += [(key, t("metrics.section_other")) for key in stray]
-        for area_id, name in listed:
-            rows = by_area.get((device, area_id))
-            if not rows:
-                continue
-            sections.append(_landing_section(device, area_id, name, rows, known))
-    return sections
 
-@router.get("/metrics", response_class=HTMLResponse, responses=_RESPONSES_401)
-def metrics(request: Request, q: str = "", status: str = "", area: str = "", offset: int = 0):
-    settings = request.app.state.settings
-    user = require_user(request)
-    user = record_user(request, user)
-    with connect(settings) as connection:
-        view = _metrics_view(connection, user["id"], q, status, area, offset)
-        everything = _metric_catalog(connection, user["id"])
-        status_counts = _status_counts(connection, user["id"])
-    statuses = [
-        {
-            "key": key,
-            "label": t(_STATUS_TEXT[key][0]),
-            "count": status_counts[key],
-            "tone": _STATUS_TONES.get(key, "neutral"),
-        }
-        for key in METRIC_STATUSES
-        # A chip that would open an empty list is noise; the active one
-        # stays so the reader can see what they are looking at.
-        if status_counts[key] or view["status"] == key
-    ]
-    return templates.TemplateResponse(
-        request,
-        "metrics.html",
-        template_context(
-            request,
-            view=view,
-            q=view["q"],
-            statuses=statuses,
-            total_metrics=len(everything),
-            active="metrics",
-        ),
-    )
+@router.get("/metrics")
+def metrics(q: str = "", status: str = "", area: str = "", offset: int = 0):
+    """Retired: the search, the filters and the lists this page had are on /results."""
+    pairs: list[tuple[str, str]] = []
+    if q.strip():
+        pairs.append(("q", q.strip()))
+    elif status in _RETIRED_STATUS:
+        pairs.extend(_RETIRED_STATUS[status])
+    elif area in AREA_BY_ID:
+        pairs.append(("area", area))
+    if offset > 0:
+        pairs.append(("offset", str(offset)))
+    return RedirectResponse("/results" + (f"?{urlencode(pairs)}" if pairs else ""), status_code=301)
 
 @router.get("/api/metrics/search", responses=_RESPONSES_401)
-def metric_search(request: Request, q: str = "", status: str = "", area: str = "", offset: int = 0):
-    """The /metrics result region, rendered by the template the page uses.
+def metric_search(request: Request, q: str = "", offset: int = 0):
+    """The /results search region, rendered by the template the page uses.
 
     One renderer, one truth: the type-ahead used to rebuild cards from JSON
     and left slots showing a blank seed card's text, so an out-of-range
@@ -14207,8 +14022,10 @@ def metric_search(request: Request, q: str = "", status: str = "", area: str = "
     settings = request.app.state.settings
     user = require_user(request)
     user = record_user(request, user)
+    from .results import search_view
+
     with connect(settings) as connection:
-        view = _metrics_view(connection, user["id"], q, status, area, offset)
+        view = search_view(connection, user["id"], q, offset)
     html = templates.get_template("_search_results.html").render(
         {**template_context(request), "view": view}
     )
@@ -15700,6 +15517,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app, settings, templates=templates, template_context=template_context,
         require_user=require_user, require_csrf=require_csrf,
         record_user=record_user, viewing_row=viewing_row,
+    )
+    register_results_routes(
+        app, settings, templates=templates, template_context=template_context,
+        require_user=require_user, record_user=record_user, viewing_row=viewing_row,
     )
     register_labsync_routes(
         app, settings, templates=templates, template_context=template_context, require_user=require_user,

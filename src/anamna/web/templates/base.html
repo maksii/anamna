@@ -78,9 +78,9 @@
       <nav class="nav-links" aria-label="{{ t('nav.primary') }}">
         <span class="nav-group">
           {{ nav_link('dashboard', '/', t('nav.overview')) }}
-          {{ nav_link('changes', '/changes', t('changes.nav')) }}
-          {{ nav_link('panels', '/panels', t('nav.panels')) }}
-          {{ nav_link('metrics', '/metrics', t('nav.metrics')) }}
+          {#- One destination for every list of results. The detail pages (a test, a test group)
+              still mark it, so the reader sees where they are. -#}
+          <a class="{{ 'active' if active in ('results', 'metrics', 'panels', 'changes') else '' }}" href="/results"{% if active == 'results' %} aria-current="page"{% endif %}>{{ t('nav.results') }}</a>
           {{ nav_link('devices', '/devices', t('nav.devices')) }}
           {{ nav_link('vaccinations', '/vaccinations', t('nav.vaccinations')) }}
           {{ nav_link('medicines', '/medicines', t('nav.medicines')) }}

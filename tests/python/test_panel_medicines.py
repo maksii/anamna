@@ -49,9 +49,20 @@ def test_an_entry_that_moves_a_result_shows_on_its_group_and_card(tmp_path: Path
     assert 'class="an-effect an-influence"' in detail.text
     assert "an-panel-member-row__influences" in detail.text
 
-    cards = client.get("/panels")
-    assert cards.status_code == 200
-    assert "an-panel-card__medicines" in cards.text
+    # The count the group card used to print is the filter: exactly the
+    # results a medicine may affect, each with its mark.
+    listing = client.get("/results?show=medicine")
+    assert listing.status_code == 200
+    assert listing.text.count('<li class="an-res"') == 1
+    assert f'href="/metrics/{LDL}"' in listing.text
+    assert 'class="an-effect an-influence"' in listing.text
+
+    # And the test group's section on the list shows the same mark on its row.
+    groups = client.get("/results?group=panel")
+    assert groups.status_code == 200
+    section = groups.text.split(f'data-section="panel-{PANEL_ID}"', 1)[1].split("</details>", 1)[0]
+    assert f'href="/medicines/{factor_id}"' in section
+    assert 'class="an-effect an-influence"' in section
 
 
 def test_without_entries_neither_page_marks_anything(tmp_path: Path):
@@ -62,9 +73,13 @@ def test_without_entries_neither_page_marks_anything(tmp_path: Path):
     assert "an-panel-medicines" not in detail.text
     assert "an-panel-member-row__influences" not in detail.text
 
-    cards = client.get("/panels")
-    assert cards.status_code == 200
-    assert "an-panel-card__medicines" not in cards.text
+    listing = client.get("/results?show=medicine")
+    assert listing.status_code == 200
+    assert '<li class="an-res"' not in listing.text
+
+    groups = client.get("/results?group=panel")
+    assert groups.status_code == 200
+    assert 'class="an-effect an-influence"' not in groups.text
 
 
 def test_a_prescribed_entry_that_has_not_started_marks_nothing(tmp_path: Path):
@@ -80,8 +95,10 @@ def test_a_prescribed_entry_that_has_not_started_marks_nothing(tmp_path: Path):
     assert "an-panel-medicines" not in detail.text
     assert "an-panel-member-row__influences" not in detail.text
 
-    cards = client.get("/panels")
-    assert "an-panel-card__medicines" not in cards.text
+    listing = client.get("/results?show=medicine")
+    assert '<li class="an-res"' not in listing.text
+    groups = client.get("/results?group=panel")
+    assert 'class="an-effect an-influence"' not in groups.text
 
 
 def test_the_shared_cards_are_not_mutated_by_the_group_page(tmp_path: Path):

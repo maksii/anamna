@@ -62,19 +62,19 @@ def test_default_search_leads_with_laboratory_results(tmp_path: Path):
     assert last_lab < first_device or first_device == len(cards)
     payload = client.get("/api/metrics/search?q=").json()
     assert {"html", "title", "count_text", "totals", "order"} <= set(payload)
-    # Nothing typed: body-system sections, laboratory ones before devices.
-    html = payload["html"]
-    assert 'data-section="lab-' in html
+    # Nothing typed: body-system sections on /results, laboratory ones before devices.
+    html = client.get("/results").text
+    assert 'data-section="area-' in html
     assert 'href="/metrics/ldl-cholesterol"' in html
-    if 'data-section="device-' in html:
-        assert html.index('data-section="lab-') < html.index('data-section="device-')
+    if 'data-section="devices"' in html:
+        assert html.index('data-section="area-') < html.index('data-section="devices"')
 
 
 def test_pagination_counts_are_honest():
-    page = web._pagination(total=295, offset=0, limit=40, base="/metrics?q=allergy")
+    page = web._pagination(total=295, offset=0, limit=40, base="/results?q=allergy")
     assert (page["total"], page["shown"], page["first"], page["last"]) == (295, 40, 1, 40)
     assert page["has_more"] is True
-    assert page["next_url"] == "/metrics?q=allergy&offset=40"
+    assert page["next_url"] == "/results?q=allergy&offset=40"
     assert page["prev_url"] is None
     last = web._pagination(total=295, offset=280, limit=40, base="/documents")
     assert (last["shown"], last["has_more"], last["next_url"]) == (15, False, None)
@@ -101,12 +101,12 @@ def test_insights_sections_are_data_driven(tmp_path: Path):
         panels = web._panel_cards(connection, user_id)
     gaps = [panel["id"] for panel in panels if not panel["present_count"]]
     assert "thyroid" in gaps and "lipids" not in gaps
-    # /insights is retired; its sections are status filters on /metrics.
+    # /insights is retired; its sections are filters on /results.
     moved = client.get("/insights", follow_redirects=False)
     assert moved.status_code == 301
-    assert moved.headers["location"] == "/metrics?status=attention"
-    page = client.get("/metrics?status=attention").text
-    assert 'data-chip="status:attention" data-tone="attention" aria-current="page"' in page
+    assert moved.headers["location"] == "/results?show=attention"
+    page = client.get("/results?show=attention").text
+    assert 'data-chip="attention" data-tone="attention" aria-current="page"' in page
     assert "ldl-cholesterol" in page, "the abnormal LDL is the attention list"
     assert "/insights" not in client.get("/").text, "no page links the retired route"
 

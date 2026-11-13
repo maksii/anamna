@@ -327,7 +327,7 @@ def suggestion_query(raw: str) -> str:
 
 # --- search: one matcher for both boxes ------------------------------------------
 #
-# Matching is /metrics' (web/search.py): whole words, case- and script-folded,
+# Matching is the /results search's (web/search.py): whole words, case- and script-folded,
 # its abbreviation table.  Two things are added on both sides here: apostrophes
 # are dropped («зв’язок», "зв'язок" and «звʼязок» are one word, not two), and a
 # Latin abbreviation spelled with Cyrillic lookalikes («МСН» for MCH, «LDLС»)

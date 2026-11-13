@@ -16,14 +16,14 @@ def test_new_keys_in_both_locales():
 
 
 def test_live_search_marks_input_busy_and_reports_failure():
-    html = _read("templates/metrics.html")
+    html = _read("templates/results.html")
     assert 'role="alert"' in html and "search_retry" in html
     assert "form.setAttribute('aria-busy', 'true')" in html
     assert "failure.hidden = false" in html
 
 
 def test_changes_ai_and_period_use_shared_busy_helper():
-    html = _read("templates/changes.html")
+    html = _read("templates/results.html")
     assert "anamnaBusy.track(button" in html
     assert "anamnaBusy?.navigating(period)" in html
 

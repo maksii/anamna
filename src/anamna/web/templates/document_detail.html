@@ -15,7 +15,7 @@
         the reader gave it. A filename is neither. -#}
     {% if document.source_title_key %}<p class="source-title"><span>{{ t(document.source_title_key) }}</span> {{ document.title }}</p>{% endif %}
     <p>{{ document.original_filename }} · {{ plural_t('area.pages', document.page_count) }} · {{ document.extraction_strategy|enumfmt }}</p>
-    {% if observations %}<p><a class="an-change-doc-link" href="/changes?document={{ document.id }}">{{ t('changes.document_link') }}</a></p>{% endif %}
+    {% if observations %}<p><a class="an-change-doc-link" href="/results?document={{ document.id }}">{{ t('changes.document_link') }}</a></p>{% endif %}
   </div>
   <div class="detail-date"><span>{{ t('doc.report_date') }}</span><strong>{{ document.report_date|datefmt }}</strong><small>{{ t('doc.imported', date=document.imported_at[:10]|datefmt) }}</small></div>
 </section>

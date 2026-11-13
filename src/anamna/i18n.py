@@ -270,7 +270,7 @@ JS_KEYS = (
     # The question before a destructive form is sent (busy.js).
     "confirm.cancel",
     "confirm.yes",
-    # /metrics type-ahead chrome (the results themselves arrive as HTML).
+    # /results type-ahead chrome (the results themselves arrive as HTML).
     "metrics.matches_for",
     "metrics.recent",
     "metrics.shown",

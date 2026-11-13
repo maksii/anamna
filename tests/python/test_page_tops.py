@@ -92,18 +92,23 @@ def test_home_area_cards_open_from_their_header(tmp_path: Path):
 
 
 def test_panels_open_on_counts_and_sort_in_one_row(tmp_path: Path):
+    """The test-group view of /results opens on its title, its lead and one row
+    of quick filters that carry the counts; the sort and grouping come before
+    the first test group."""
     _, _, client = build(tmp_path)
     for locale in LOCALES:
-        page = _get(client, "/panels", locale)
-        assert _h1s(page) == ['<h1 id="panels-heading" class="visually-hidden">'], locale
+        page = _get(client, "/results?group=panel", locale)
+        assert _h1s(page) == ["<h1>"], locale
         seen = _visible(page)
-        assert _msg("panels.heading", locale) not in seen.split("an-index-disclosures")[0]
+        assert _msg("results.heading", locale) in seen
+        assert _msg("results.lead", locale) in seen
         assert "Results by test group" not in page and "Результати за групами аналізів" not in page
-        head = page.split('<section class="an-panels-head"', 1)[1].split("</section>", 1)[0]
-        for key in ("panels.totals_flagged", "panels.totals_overdue", "panels.sort_area", "panels.sort_attention"):
+        head = page.split('<section class="metric-search-hero an-results-head"', 1)[1].split("</section>", 1)[0]
+        assert 'class="metric-chip-row"' in head
+        for key in ("results.chip_attention", "results.chip_unverified"):
             assert _msg(key, locale) in head, key
-        assert 'class="an-panels-head__count"' in head
-        assert page.index("an-panels-head") < page.index("an-index-disclosures")
+        assert page.index('class="metric-chip-row"') < page.index('id="changes-episode"')
+        assert page.index('id="changes-episode"') < page.index('class="an-change-view"') < page.index('data-section="panel-')
 
 
 def test_vaccinations_open_on_the_add_button(tmp_path: Path):
@@ -158,7 +163,7 @@ def test_devices_open_on_the_stat_band_and_cards(tmp_path: Path):
         assert 'class="an-device-stats"' in band and 'class="px-area-nav"' in band
         # «Find all device metrics» sits at the foot of the grid, not above it.
         latest = page.split('class="dashboard-section an-device-latest"', 1)[1].split("</section>", 1)[0]
-        assert latest.index("device-metric-grid") < latest.index('href="/metrics?q=device"')
+        assert latest.index("device-metric-grid") < latest.index('href="/results?q=device"')
         # The folded source explanation stays; the lead paragraph is gone.
         assert _msg("devices.lead_plain", locale) not in latest
         assert _msg("experience.source_policy_body", locale) in latest

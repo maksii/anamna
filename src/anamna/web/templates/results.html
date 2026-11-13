@@ -1,0 +1,310 @@
+{% extends "base.html" %}
+{% from "_results_rows.html" import ai_finding_body with context %}
+{% block title %}{{ t('results.title') }} · {{ t('brand.name') }}{% endblock %}
+{% block content %}
+<link rel="stylesheet" href="{{ asset('patient-experience.css') }}">
+
+{#- The AI summary: closed by default and placed after the newest date's
+    results. The values and verdicts are the record; the summary is advice
+    about them. -#}
+{%- macro ai_block() -%}
+<details class="panel an-change-ai" id="changes-ai"{% if ai_error %} open{% endif %}>
+  <summary class="an-change-ai__summary">
+    <span class="an-change-ai__title">
+      <span class="eyebrow">{{ t('changes.ai_eyebrow') }}</span>
+      <h2 id="changes-ai-heading">{{ t('changes.ai_heading') }}</h2>
+      {% if summary %}<span class="pill">{{ t('changes.ai_badge') }}</span>{% endif %}
+    </span>
+    <span class="an-change-ai__teaser">{{ summary.content.state if summary else t('changes.ai_teaser_empty') }}</span>
+  </summary>
+  <div class="an-change-ai__body">
+  {% if ai_error %}<div class="alert error" role="alert">{{ t('changes.ai_error_in_progress') if ai_error == 'in_progress' else t('aiassist.error_' ~ ai_error) }}</div>{% endif %}
+  {% if summary %}
+  {% if summary.stale %}<div class="alert warning">{{ t('changes.ai_stale') }}</div>{% endif %}
+  <p class="an-change-ai__state">{{ summary.content.state }}</p>
+  {% for finding in summary_findings %}
+  <article class="an-ai-finding" data-level="{{ finding.level }}">
+    <h3 class="an-ai-finding__head">{{ finding.test }}
+      <span class="pill an-ai-level" data-level="{{ finding.level }}" title="{{ t('changes.ai_level_' ~ finding.level ~ '_hint') }}">{{ t('changes.ai_level_' ~ finding.level) }}</span></h3>
+    {{ ai_finding_body(finding) }}
+  </article>
+  {% endfor %}
+  {% if summary.content.findings %}
+  <details class="an-ai-levels">
+    <summary>{{ t('changes.ai_levels_heading') }}</summary>
+    <dl>{% for level in ('slight', 'moderate', 'marked', 'urgent') %}
+      <div><dt><span class="pill an-ai-level" data-level="{{ level }}">{{ t('changes.ai_level_' ~ level) }}</span></dt><dd>{{ t('changes.ai_level_' ~ level ~ '_hint') }}</dd></div>
+    {% endfor %}</dl>
+  </details>
+  {% endif %}
+  {#- `attention` and `discuss` are the shape summaries had before findings;
+      a stored one still reads until it is regenerated. -#}
+  {% for key in ('improved', 'attention', 'discuss') %}{% if summary.content[key] %}
+  <h3>{{ t('changes.ai_' ~ key) }}</h3>
+  <ul class="an-change-ai__list">{% for item in summary.content[key] %}<li>{{ item }}</li>{% endfor %}</ul>
+  {% endif %}{% endfor %}
+  <p class="muted"><small>{{ t('changes.ai_meta', date='') }}<time datetime="{{ summary.created_iso }}" data-local>{{ summary.created_text }}</time></small></p>
+  {% endif %}
+  <p class="muted">{{ t('changes.ai_disclaimer') }}</p>
+  {% if ai_can_ask %}
+  <p class="muted"><small>{{ t('changes.ai_privacy') }}</small></p>
+  <form action="/changes/ai-summary" method="post" class="inline-form" id="changes-ai-form"
+        data-error-disabled="{{ t('aiassist.error_disabled') }}" data-error-budget="{{ t('aiassist.error_budget') }}"
+        data-error-provider-error="{{ t('aiassist.error_provider_error') }}" data-error-in-progress="{{ t('changes.ai_error_in_progress') }}"
+        data-error-network="{{ t('aiassist.error_network') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    {% if document_filter %}<input type="hidden" name="document" value="{{ document_filter }}">{% endif %}
+    {% if summary %}<input type="hidden" name="refresh" value="1">{% endif %}
+    <button class="secondary" type="submit" data-working="{{ t('aiassist.working') }}">{{ t('changes.ai_regenerate') if summary else t('changes.ai_generate') }}</button>
+  </form>
+  <p id="changes-ai-status" class="muted" role="status" aria-live="polite"></p>
+  {% endif %}
+  </div>
+</details>
+{%- endmacro -%}
+
+{#- The head: one search box and one row of quick filters. Every link here is
+    a normal page load; the box updates the list in place. -#}
+<section class="metric-search-hero an-results-head">
+  <h1>{{ t('results.heading') }}</h1>
+  <p class="an-results-head__lead">{{ t('results.lead') }}</p>
+  <form class="live-search" id="metric-search-form" action="/results" method="get" role="search">
+    <label for="metric-search">{{ t('metrics.search_span') }}</label>
+    <input id="metric-search" type="search" name="q" value="{{ q }}" placeholder="{{ t('metrics.placeholder') }}" autocomplete="off" enterkeyhint="search">
+    <kbd aria-hidden="true" title="{{ t('metrics.shortcut_hint') }}">/</kbd>
+  </form>
+  {% if chips %}
+  <div class="metric-chip-scroller" data-chip-scroller>
+    <nav class="metric-chip-row" aria-label="{{ t('results.chips_aria') }}">
+      {% for chip in chips %}<a href="{{ chip.href }}" data-chip="{{ chip.key }}" data-tone="{{ chip.tone }}"{% if chip.current %} aria-current="page"{% endif %}>{{ chip.label }} <span>{{ chip.count|countfmt }}</span></a>{% endfor %}
+    </nav>
+  </div>
+  {% endif %}
+</section>
+
+<section class="search-results-section" aria-busy="false">
+  <p id="search-status" class="visually-hidden" role="status" aria-live="polite"></p>
+  <span id="search-pending" class="an-search-pending" hidden>{{ t('metrics.searching') }}</span>
+  <p id="search-error" class="an-search-error" role="alert" hidden>{{ t('metrics.search_unavailable') }}. {{ t('metrics.search_retry') }}</p>
+  <div id="search-results">{% if q %}{% include "_search_results.html" %}{% else %}{% include "_results_list.html" %}{% endif %}</div>
+</section>
+
+{% if not q and data.report and data.scope and (summary or ai_can_ask) %}{{ ai_block() }}{% endif %}
+
+<script nonce="{{ csp_nonce }}">
+(() => {
+  const results = document.querySelector('#search-results');
+
+  // A closed disclosure's charts are stamped in the first time it opens.
+  document.addEventListener('toggle', event => {
+    const box = event.target;
+    if (!(box instanceof HTMLDetailsElement) || !box.open) return;
+    box.querySelectorAll('template.an-trend-lazy').forEach(node => node.replaceWith(node.content.cloneNode(true)));
+  }, true);
+
+  // A waiting chart is drawn when its row comes near the screen. Rows inside a
+  // closed disclosure are left alone: the toggle above draws them when opened.
+  const stamp = root => root.querySelectorAll('template.an-trend-lazy').forEach(node => node.replaceWith(node.content.cloneNode(true)));
+  const near = 'IntersectionObserver' in globalThis ? new IntersectionObserver(entries => entries.forEach(item => {
+    if (!item.isIntersecting) return;
+    near.unobserve(item.target);
+    stamp(item.target);
+  }), {rootMargin: '300px'}) : null;
+  const watchRows = () => {
+    results.querySelectorAll('.an-res').forEach(row => {
+      if (!row.querySelector('template.an-trend-lazy')) return;
+      if (near) near.observe(row);
+      else if (!row.closest('details:not([open])')) stamp(row);
+    });
+  };
+  // The controls are folded on a phone and open where there is room for them.
+  const openControls = () => {
+    if (!globalThis.matchMedia('(min-width: 721px)').matches) return;
+    document.querySelectorAll('[data-res-controls]').forEach((box) => { box.open = true; });
+  };
+
+  // The period picker and the view form answer on their own; the Show and Apply
+  // buttons are the no-script path and go once script runs. Both sit in the
+  // results region, which a search replaces, so the listener is on that region.
+  const removeNoScriptButtons = () => results.querySelectorAll('[data-js-hide]').forEach(button => button.remove());
+  results.addEventListener('change', event => {
+    if (!(event.target instanceof Element)) return;
+    const period = event.target.closest('#changes-episode');
+    if (period) {
+      const chosen = period.selectedOptions[0];
+      if (chosen && chosen.dataset.url) {
+        globalThis.anamnaBusy?.navigating(period);
+        location.assign(chosen.dataset.url);
+      }
+      return;
+    }
+    const view = event.target.closest('[data-change-view]');
+    if (view) {
+      globalThis.anamnaBusy?.navigating(event.target);
+      view.requestSubmit();
+    }
+  });
+
+  // Arriving at #changes-ai (after generating a summary) opens it.
+  const ai = document.querySelector('#changes-ai');
+  if (ai && location.hash === '#changes-ai') ai.open = true;
+
+  // Stored in UTC; restated on the reader's own clock, in the CLDR month
+  // forms the server prints, so a date never appears in two spellings.
+  const F = (globalThis.__HL_I18N__ || {})._formats || {};
+  document.querySelectorAll('time[data-local]').forEach(node => {
+    const when = new Date(node.getAttribute('datetime'));
+    if (Number.isNaN(when.getTime()) || !F.months_short) return;
+    const day = String(when.getDate()).padStart(2, '0');
+    const clock = when.toLocaleTimeString(globalThis.__HL_LOCALE__ || 'en', {hour: '2-digit', minute: '2-digit'});
+    node.textContent = `${day} ${F.months_short[when.getMonth()]} ${when.getFullYear()}, ${clock}`;
+  });
+
+  removeNoScriptButtons();
+  watchRows();
+  openControls();
+
+  // Live search. The list the server drew for an empty box is kept, so clearing
+  // the box puts it back without a round trip; a page opened on a search has no
+  // such list and clearing the box loads the plain page.
+  const form = document.querySelector('#metric-search-form');
+  const input = document.querySelector('#metric-search');
+  const section = document.querySelector('.search-results-section');
+  const announce = document.querySelector('#search-status');
+  const pending = document.querySelector('#search-pending');
+  const failure = document.querySelector('#search-error');
+  const i18n = globalThis.__HL_I18N__ || {};
+  const initial = {{ 'null' if q else 'results.innerHTML' }};
+  let searching = initial === null;
+  let controller;
+
+  const load = async (text) => {
+    controller?.abort();
+    const mine = new AbortController();
+    controller = mine;
+    searching = true;
+    history.replaceState(null, '', '/results?q=' + encodeURIComponent(text));
+    section.setAttribute('aria-busy', 'true');
+    section.classList.add('is-pending');
+    form.setAttribute('aria-busy', 'true');
+    pending.hidden = false;
+    failure.hidden = true;
+    try {
+      const response = await fetch(`/api/metrics/search?q=${encodeURIComponent(text)}`, {signal: mine.signal});
+      if (!response.ok) throw new Error(i18n['metrics.search_failed']);
+      const payload = await response.json();
+      results.innerHTML = payload.html;
+      watchRows();
+      openControls();
+      announce.textContent = `${payload.title}: ${payload.count_text}`;
+    } catch (error) {
+      if (error.name !== 'AbortError') {
+        announce.textContent = i18n['metrics.search_unavailable'];
+        failure.hidden = false;
+      }
+    } finally {
+      if (!mine.signal.aborted) {
+        section.setAttribute('aria-busy', 'false');
+        section.classList.remove('is-pending');
+        form.removeAttribute('aria-busy');
+        pending.hidden = true;
+      }
+    }
+  };
+
+  const restore = () => {
+    controller?.abort();
+    if (initial === null) {
+      location.assign('/results');
+      return;
+    }
+    searching = false;
+    results.innerHTML = initial;
+    history.replaceState(null, '', '/results');
+    section.setAttribute('aria-busy', 'false');
+    section.classList.remove('is-pending');
+    form.removeAttribute('aria-busy');
+    pending.hidden = true;
+    failure.hidden = true;
+    announce.textContent = '';
+    removeNoScriptButtons();
+    watchRows();
+    openControls();
+  };
+
+  const apply = () => {
+    const text = input.value.trim();
+    if (text) load(text);
+    else if (searching) restore();
+  };
+  input.addEventListener('input', apply);
+  form.addEventListener('submit', event => {
+    event.preventDefault();
+    apply();
+  });
+
+  // The chip row scrolls sideways on a phone; the fade on either edge shows
+  // only while there is more to scroll to in that direction.
+  document.querySelectorAll('[data-chip-scroller]').forEach((scroller) => {
+    const row = scroller.querySelector('.metric-chip-row');
+    const update = () => {
+      scroller.dataset.more = [
+        row.scrollLeft > 4 ? 'start' : '',
+        row.scrollLeft + row.clientWidth < row.scrollWidth - 4 ? 'end' : '',
+      ].join(' ').trim();
+    };
+    row.addEventListener('scroll', update, {passive: true});
+    globalThis.addEventListener('resize', update);
+    update();
+  });
+  // "/" jumps to the box - only where there is a keyboard to press it on.
+  if (globalThis.matchMedia('(hover: hover) and (pointer: fine)').matches) {
+    document.addEventListener('keydown', (event) => {
+      if (event.key !== '/' || event.target.closest('input, textarea, select, [contenteditable]')) return;
+      event.preventDefault();
+      input.focus();
+    });
+  }
+})();
+</script>
+
+{% if ai_can_ask %}
+<script nonce="{{ csp_nonce }}">
+(() => {
+  const form = document.querySelector('#changes-ai-form');
+  if (!form) return;
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (form.dataset.busy === '1') return;
+    form.dataset.busy = '1';
+    const button = form.querySelector('button[type="submit"]');
+    const status = document.querySelector('#changes-ai-status');
+    const original = button.textContent;
+    button.textContent = button.dataset.working;
+    status.textContent = button.dataset.working;
+    let leaving = false;
+    try {
+      const response = await globalThis.anamnaBusy.track(button, () => fetch(form.action, {method: 'POST', body: new FormData(form), headers: {'Accept': 'application/json'}}));
+      const result = await response.json();
+      if (!response.ok || !result.ok) {
+        status.textContent = form.dataset['error' + (result.reason || 'network').replace(/(^|_)(.)/g, (_, __, c) => c.toUpperCase())]
+          || form.dataset.errorNetwork;
+        return;
+      }
+      history.replaceState(null, '', result.location);
+      leaving = true;
+      globalThis.location.reload();
+    } catch (error_) {
+      console.error(error_);
+      status.textContent = form.dataset.errorNetwork;
+    } finally {
+      if (!leaving) {
+        delete form.dataset.busy;
+        button.textContent = original;
+      }
+    }
+  });
+})();
+</script>
+{% endif %}
+{% endblock %}

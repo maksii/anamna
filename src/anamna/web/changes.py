@@ -22,8 +22,8 @@ from datetime import date
 from typing import Annotated
 from urllib.parse import urlencode
 
-from fastapi import Form, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi import Form, HTTPException, Request
+from fastapi.responses import JSONResponse, RedirectResponse
 
 from .. import ai, factors
 from ..db import connect, utc_now
@@ -265,6 +265,10 @@ def _entry(web, connection, concept_id, row, previous, document_id, observation_
             str(area.get("name", "Other results"))
         ),
         "panel_url": f"/panels/{panel.id}" if panel else None,
+        "panel_id": panel.id if panel else None,
+        "area_id": area_ids[0] if area_ids else "other",
+        "area_name": web.translate_phrase(str(area.get("name", "Other results"))),
+        "date_text": web.format_date(row.get("observed_at")),
         "value_text": web.precise_at_edges(row["value_numeric"], web.format_reading(row, unit), verdict),
         "unit": unit,
         "verdict": verdict,
@@ -288,38 +292,63 @@ def _sort_key(entry: dict) -> tuple:
     return (BUCKETS.index(entry["bucket"]), _DIRECTION_RANK.get(entry["direction"], 1), entry["name"].casefold())
 
 
-SORTS = ("status", "name", "change")
-SHOWS = ("all", "outside", "changed", "medicine", "unverified")
-GROUPS = ("status", "panel", "none")
-_VIEW_DEFAULTS = (("sort", "status"), ("show", "all"), ("group", "status"))
-_SHOW_BUCKETS = {"outside": ("new", "still", "borderline"), "changed": ("new", "resolved")}
+SORTS = ("status", "name", "change", "date")
+SHOWS = ("all", "attention", "changed", "medicine", "unverified", "due")
+GROUPS = ("area", "panel", "status", "none")
+#: How many rows a body-system or test-group section shows before "Show all".
+SECTION_CAP = 5
 
 
-def view_options(sort: str = "", show: str = "", group: str = "", reverse: str = "") -> dict:
-    """The reader's sort, filter and grouping; anything unknown is the page's own default."""
+def view_options(sort: str = "", show: str = "", group: str = "", reverse: str = "", *, everything=False, area="") -> dict:
+    """The reader's sort, filter and grouping; anything unknown is the page's own default.
+
+    ``show="outside"`` is the name the page used before ``"attention"``, and
+    still means it.  ``everything`` groups by body system by default; ``area``
+    is a body-system id, validated by the caller."""
+    if show == "outside":
+        show = "attention"
+    default_group = "area" if everything else "status"
     return {
         "sort": sort if sort in SORTS else "status",
         "show": show if show in SHOWS else "all",
-        "group": group if group in GROUPS else "status",
+        "default_group": default_group,
+        "group": group if group in GROUPS else default_group,
         "reverse": reverse == "1",
+        "everything": bool(everything),
+        "area": area,
     }
 
 
 def view_query(options: dict) -> str:
     """The choices that differ from the default, as a query string: a link to
-    another period carries them, and the default page keeps a clean address."""
-    pairs = [(name, options[name]) for name, default in _VIEW_DEFAULTS if options[name] != default]
+    another period carries them, and the default page keeps a clean address.
+    The body-system filter is not part of it."""
+    pairs = []
+    if options["sort"] != "status":
+        pairs.append(("sort", options["sort"]))
+    if options["show"] != "all":
+        pairs.append(("show", options["show"]))
+    if options["group"] != options["default_group"]:
+        pairs.append(("group", options["group"]))
     if options["reverse"]:
         pairs.append(("reverse", "1"))
     return urlencode(pairs)
 
 
 def _kept(entry: dict, show: str) -> bool:
+    if show == "all":
+        return True
+    if show == "attention":
+        return bool(entry.get("attention"))
+    if show == "due":
+        return bool(entry.get("due"))
     if show == "medicine":
         return bool(entry.get("influences"))
     if show == "unverified":
         return bool(entry["unverified"])
-    return show == "all" or entry["bucket"] in _SHOW_BUCKETS[show]
+    if show == "changed":
+        return entry["bucket"] in ("new", "resolved")
+    return False
 
 
 def _change_size(entry: dict) -> tuple:
@@ -328,40 +357,119 @@ def _change_size(entry: dict) -> tuple:
     return (share is None, -(share or 0.0), entry["name"].casefold())
 
 
-def _order_key(sort: str):
+def _ordered(entries: list[dict], sort: str) -> list[dict]:
+    """Sorted for the reader: attention first under "status", then by the chosen key."""
     if sort == "name":
-        return lambda entry: entry["name"].casefold()
-    return _change_size if sort == "change" else _sort_key
+        return sorted(entries, key=lambda entry: entry["name"].casefold())
+    if sort == "change":
+        return sorted(entries, key=_change_size)
+    if sort == "date":
+        # Stable sorts: by name first, then newest day first with the undated last.
+        by_name = sorted(entries, key=lambda entry: entry["name"].casefold())
+        return sorted(by_name, key=lambda entry: (bool(entry["day"]), entry["day"]), reverse=True)
+    return sorted(entries, key=lambda entry: (0 if entry.get("attention") else 1, *_sort_key(entry)))
 
 
-def arrange(report: dict, options: dict) -> dict:
+def _section(found: list[dict], *, key: str, title: str, url, url_kind: str, more_url, capped: bool) -> dict:
+    """A body-system or test-group section: cut to SECTION_CAP when capped, open when it flags something."""
+    flagged = sum(1 for entry in found if entry.get("attention"))
+    over = capped and len(found) > SECTION_CAP
+    return {
+        "kind": "section",
+        "key": key,
+        "title": title,
+        "url": url,
+        "url_kind": url_kind,
+        "entries": found[:SECTION_CAP] if over else found,
+        "total": len(found),
+        "flagged": flagged,
+        "more_url": more_url if over else None,
+        "open": not capped or flagged > 0,
+    }
+
+
+def _plain(kind: str, found: list[dict], title: str, *, open_: bool) -> dict:
+    """A list or a fold: never cut, never linked."""
+    return {
+        "kind": kind,
+        "key": "",
+        "title": title,
+        "url": None,
+        "url_kind": "",
+        "entries": found,
+        "total": len(found),
+        "flagged": sum(1 for entry in found if entry.get("attention")),
+        "more_url": None,
+        "open": open_,
+    }
+
+
+def _group_sections(shown: list[dict], group: str, areas, capped: bool) -> list[dict]:
+    names = dict(areas)
+    grouped: dict = {}
+    for entry in shown:
+        grouped.setdefault(entry["area_id"] if group == "area" else (entry["context"], entry["panel_url"]), []).append(entry)
+    if group == "area":
+        # Known body systems in the order given; unknown ones after them, in order of first appearance.
+        position = {area_id: i for i, (area_id, _) in enumerate(areas)}
+        keys = sorted(grouped, key=lambda area_id: position.get(area_id, len(position)))
+    else:
+        keys = list(grouped)  # the sort decides the order of the groups
+    sections = []
+    for key in keys:
+        found = grouped[key]
+        if group == "area":
+            area_id = key
+            sections.append(_section(
+                found, key=f"area-{area_id}", title=names.get(area_id, found[0]["area_name"]),
+                url=f"/areas/{area_id}" if area_id in names else None, url_kind="area",
+                more_url=f"/results?area={area_id}", capped=capped,
+            ))
+        else:
+            first = found[0]
+            sections.append(_section(
+                found, key=f"panel-{first['panel_id'] or first['area_id']}", title=first["context"],
+                url=first["panel_url"], url_kind="panel",
+                more_url=first["panel_url"] or f"/results?area={first['area_id']}", capped=capped,
+            ))
+    return sections
+
+
+def arrange(report: dict, options: dict, *, areas=()) -> dict:
     """The report's entries as the sections the page prints.
 
-    With the default options this is the page's own layout: the results that
-    changed or are outside their range in one open list, then one fold per
-    quiet bucket.  ``kind`` is ``"list"`` (no heading), ``"fold"`` (a closed
-    disclosure with a count) or ``"group"`` (a heading, one per test group)."""
+    ``options`` is what ``view_options`` returned.  Entries are narrowed to one
+    body system when ``options["area"]`` is set, then kept by ``show``, sorted
+    and reversed when asked.  ``group`` decides the sections: ``"status"`` gives
+    the results that changed or are outside their range as one open list, then
+    one closed fold per quiet bucket; ``"area"`` (body system, ``areas`` is
+    ``(id, name)`` in display order) and ``"panel"`` (test group) give one
+    section per group in the order each first appears; ``"none"`` gives one list.
+    On the whole ``everything`` report with no filter, a body-system or
+    test-group section shows ``SECTION_CAP`` rows and links to the rest.
+    ``kind`` is ``"list"``, ``"fold"`` or ``"section"``."""
     entries = [*report["open"], *(entry for _, found in report["collapsed"] for entry in found)]
-    shown = sorted((entry for entry in entries if _kept(entry, options["show"])), key=_order_key(options["sort"]))
+    if options["area"]:
+        entries = [entry for entry in entries if entry["area_id"] == options["area"]]
+    shown = [entry for entry in _ordered(entries, options["sort"]) if _kept(entry, options["show"])]
     if options["reverse"]:
         shown.reverse()
-    if options["group"] == "none":
-        sections = [{"kind": "list", "title": "", "url": None, "entries": shown}] if shown else []
-    elif options["group"] == "panel":
-        grouped: dict[tuple[str, str | None], list[dict]] = {}
-        for entry in shown:
-            grouped.setdefault((entry["context"], entry["panel_url"]), []).append(entry)
-        sections = [
-            {"kind": "group", "title": title, "url": url, "entries": found}
-            for (title, url), found in sorted(grouped.items(), key=lambda item: item[0][0].casefold())
-        ]
-    else:
+        if options["sort"] == "date":
+            # Oldest first: a result with no date is not the oldest, it stays last.
+            shown.sort(key=lambda entry: not entry["day"])
+    group = options["group"]
+    if group == "none":
+        sections = [_plain("list", shown, "", open_=True)] if shown else []
+    elif group == "status":
         opened = [entry for entry in shown if entry["bucket"] in OPEN_BUCKETS]
-        sections = [{"kind": "list", "title": "", "url": None, "entries": opened}] if opened else []
+        sections = [_plain("list", opened, "", open_=True)] if opened else []
         for bucket in BUCKETS:
             found = [entry for entry in shown if entry["bucket"] == bucket]
             if bucket not in OPEN_BUCKETS and found:
-                sections.append({"kind": "fold", "title": t(f"changes.bucket_{bucket}"), "url": None, "entries": found})
+                sections.append(_plain("fold", found, t(f"changes.bucket_{bucket}"), open_=False))
+    else:
+        capped = options["everything"] and options["show"] == "all" and not options["area"] and group in ("area", "panel")
+        sections = _group_sections(shown, group, areas, capped)
     return {
         **options,
         "sections": sections,
@@ -436,6 +544,7 @@ def build_changes(
     episode: str | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
+    everything: bool = False,
 ) -> dict | None:
     """One report: the latest result episode, a chosen one, a date range or one document.
 
@@ -445,6 +554,10 @@ def build_changes(
     half of one order a change.  Other readings inside the selection are kept
     on the entry (``also``) rather than dropped.  None when ``document_id`` is
     not this owner's document.
+
+    ``everything`` (with no document, range or episode) gives the newest result
+    of every test, home-monitoring readings included, each compared with the
+    reading before its own newest episode.
     """
     from . import app as web  # the page helpers live there; imported late to avoid a cycle
 
@@ -455,17 +568,24 @@ def build_changes(
         if document_id not in documents:
             return None
         focus = _document_focus(connection, owner_user_id, document_id)
+    whole = everything and not document_id and not episode and not (_parse_day(date_from) or _parse_day(date_to))
     series = _displayable_series(web, connection, owner_user_id, home, document_id)
 
     concept_days, spans = _episode_spans(series, orders_of)
-    kind, index, lower, upper = _selection(focus, date_from, date_to, episode, spans)
+    kind, index, lower, upper = _selection(focus, date_from, date_to, episode, spans, whole)
+    if whole:
+        full = _displayable_series(web, connection, owner_user_id, set(), None)
+        full_spans = _episode_spans(full, orders_of)[1]
 
     def inside(concept_id: str, row: dict) -> bool:
         return _row_inside(focus, kind, lower, upper, bool(spans), concept_id, row)
 
     entries, document_ids, days_seen = [], [], set()
-    for concept_id, daily in series.items():
-        positions = [i for i, row in enumerate(daily) if inside(concept_id, row)]
+    for concept_id, daily in (full if whole else series).items():
+        if whole:
+            positions = _latest_positions(daily, full_spans)
+        else:
+            positions = [i for i, row in enumerate(daily) if inside(concept_id, row)]
         if not positions:
             continue
         entries.append(
@@ -502,6 +622,7 @@ def build_changes(
         "bounds": {"min": dated[0], "max": dated[-1]},
         "document": documents.get(document_id) if document_id else None,
         "scope": scope,
+        "everything": whole,
         "ai_payload": payload,
         "ai_factors": factor_items,
         # The medicines travel with the results, so a change in either makes a saved summary stale.
@@ -605,11 +726,13 @@ def _displayable_series(
     return series
 
 
-def _selection(focus, date_from, date_to, episode, spans) -> tuple[str, int, str, str]:
-    """What is selected: one document, a date range, an episode, or the latest episode."""
+def _selection(focus, date_from, date_to, episode, spans, whole: bool = False) -> tuple[str, int, str, str]:
+    """What is selected: one document, every test's newest result, a date range, an episode, or the latest episode."""
     kind, index, lower, upper = "latest", 0, "", ""
     if focus is not None:
         kind = "document"
+    elif whole:
+        kind = "everything"
     elif _parse_day(date_from) or _parse_day(date_to):
         kind = "range"
         lower, upper = _range_bounds(date_from, date_to)
@@ -633,6 +756,13 @@ def _episode_position(episode: str, spans) -> int:
     # growing when the rest of the order arrives.  Unknown: the latest.
     wanted = "" if episode == "undated" else str(_parse_day(episode) or "-")
     return next((i for i, (first, last) in enumerate(spans) if first <= wanted <= last), 0)
+
+
+def _latest_positions(daily: list[dict], spans: list[tuple[str, str]]) -> list[int]:
+    """The rows of a test's newest episode: its newest reading, and any other reading of the same episode."""
+    day = _day(daily[0])
+    lower, upper = next(((first, last) for first, last in spans if first <= day <= last), (day, day))
+    return [i for i, row in enumerate(daily) if lower <= _day(row) <= upper]
 
 
 def _selected_entry(web, connection, concept_id, daily, positions, focus, document_id, age, sex) -> dict:
@@ -696,7 +826,7 @@ def _episode_rows(spans, concept_days, kind: str, index: int) -> list[dict]:
             "value": first or "undated",
             "label": span_text(first, last),
             "count": tests_in(first, last),
-            "url": "/changes" if i == 0 else f"/changes?episode={first or 'undated'}",
+            "url": "/results?episode=latest" if i == 0 else f"/results?episode={first or 'undated'}",
             "current": kind in ("latest", "episode") and i == index,
         }
         for i, (first, last) in enumerate(spans)
@@ -1232,61 +1362,13 @@ def register_changes_routes(
             raise HTTPException(404)
         return view
 
-    @app.get("/changes", response_class=HTMLResponse)
-    def changes_page(
-        request: Request,
-        document: str = "",
-        episode: str = "",
-        date_from: Annotated[str, Query(alias="from")] = "",
-        date_to: Annotated[str, Query(alias="to")] = "",
-        sort: str = "",
-        show: str = "",
-        group: str = "",
-        reverse: str = "",
-    ):
-        user = require_user(request)
-        owner = record_user(request, user)
-        locale = get_locale()
-        with connect(settings) as connection:
-            view = build(connection, owner["id"], document, episode=episode, date_from=date_from, date_to=date_to)
-            summary = (
-                load_summary(connection, owner["id"], locale, view["scope"], view["fingerprint"])
-                if view["scope"] else None
-            )
-        options = view_options(sort, show, group, reverse)
-        arranged = arrange(view["report"], options) if view["report"] else None
-        # What is selected (a document, a period, a range) rides along with every view change.
-        selection_pairs = [
-            (name, request.query_params[name])
-            for name in ("document", "episode", "from", "to")
-            if request.query_params.get(name)
-        ]
-        unattached = attach_notes(view, summary)
-        can_ask = _can_ask(settings, request, user, view, viewing_row)
-        error = request.query_params.get("ai_error")
-        return templates.TemplateResponse(
-            request,
-            "changes.html",
-            template_context(
-                request,
-                view=view,
-                buckets=BUCKETS,
-                episode_gap_days=EPISODE_GAP_DAYS,
-                summary=summary,
-                summary_findings=unattached,
-                ai_can_ask=can_ask,
-                ai_error=error if error in AI_ERRORS else None,
-                document_filter=document,
-                arranged=arranged,
-                view_query=view_query(options),
-                selection_pairs=selection_pairs,
-                reset_url="/changes" + (("?" + urlencode(selection_pairs)) if selection_pairs else ""),
-                view_sorts=SORTS,
-                view_shows=SHOWS,
-                view_groups=GROUPS,
-                active="changes",
-            ),
-        )
+    @app.get("/changes")
+    def changes_page(request: Request):
+        """The Changes page is part of /results; an old link lands on the same selection there."""
+        query = request.url.query
+        if not any(request.query_params.get(name) for name in ("document", "episode", "from", "to")):
+            query = "episode=latest" + (f"&{query}" if query else "")
+        return RedirectResponse(f"/results?{query}", status_code=301)
 
     @app.post("/changes/ai-summary")
     def changes_ai_summary(
@@ -1301,6 +1383,6 @@ def register_changes_routes(
         # owner's AI budget nor sends the owner's results anywhere.
         if user.get("token_kind") == "guest" or viewing_row(request) is not None:
             raise HTTPException(403, t("changes.ai_forbidden"))
-        location = (f"/changes?document={document}" if document else "/changes") + "#changes-ai"
+        location = (f"/results?document={document}" if document else "/results?episode=latest") + "#changes-ai"
         wants_json = "application/json" in request.headers.get("accept", "")
         return _answer_ai_summary(settings, build, user["id"], document, refresh, location, wants_json)

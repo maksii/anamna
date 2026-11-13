@@ -1,4 +1,4 @@
-"""/changes: every result date set beside the previous result of the same test.
+"""The changes view (now /results?episode=latest): every result date set beside the previous result of the same test.
 
 The fixture adds a second report to the panel fixture, with analytes chosen so
 each bucket is reached through the real verdict engine (vendor intervals only,
@@ -153,7 +153,7 @@ def test_units_that_do_not_fold_together_are_not_compared(tmp_path: Path):
     nu = by_name(view_for(settings, user_id)["groups"][0])["Nu marker"]
     assert nu["change"] == {"comparable": False, "text": "Not comparable: different units"}
     assert nu["direction"] is None
-    page = client.get("/changes").text
+    page = client.get("/results?episode=latest").text
     assert "Not comparable: different units" in page
 
 
@@ -161,7 +161,7 @@ def test_rejected_rows_are_not_results(tmp_path: Path):
     settings, user_id, client, _ = build_changes_fixture(tmp_path)
     for group in view_for(settings, user_id)["groups"]:
         assert "Xi marker" not in by_name(group)
-    assert "Xi marker" not in client.get("/changes").text
+    assert "Xi marker" not in client.get("/results?episode=latest").text
 
 
 def test_document_filter_shows_exactly_what_one_upload_changed(tmp_path: Path):
@@ -176,25 +176,25 @@ def test_document_filter_shows_exactly_what_one_upload_changed(tmp_path: Path):
     # doc-1 carries the panel fixture's 2025-02-13 draw and its 2025-08-28 vitamin D: one report.
     assert [group["date"] for group in earlier["groups"]] == ["2025-02-13..2025-08-28"]
     assert all(e["document_id"] == "doc-1" for g in earlier["groups"] for e in by_name(g).values())
-    page = client.get("/changes?document=doc-2")
+    page = client.get("/results?document=doc-2")
     assert page.status_code == 200
-    assert "What this document changed" in page.text
-    assert client.get("/changes?document=nope").status_code == 404
+    assert "Only the results read from this document" in page.text
+    assert client.get("/results?document=nope").status_code == 404
     # The document page offers the link.
-    assert 'href="/changes?document=doc-2"' in client.get("/documents/doc-2").text
+    assert 'href="/results?document=doc-2"' in client.get("/documents/doc-2").text
 
 
 def test_page_is_reachable_and_renders_both_locales(tmp_path: Path):
     _, _, client, _ = build_changes_fixture(tmp_path)
     home = client.get("/").text
-    assert 'href="/changes"' in home
-    page = client.get("/changes").text
-    for text in ("What changed in your results", "New problem", "What these labels mean", "Stable in range"):
+    assert 'href="/results"' in home
+    page = client.get("/results?episode=latest").text
+    for text in ("Your results", "New problem", "What the marks and labels mean", "Stable in range"):
         assert text in page
     assert 'id="changes-ai-form"' not in page  # AI not configured: no button, nothing broken
     client.cookies.set("anamna_lang", "uk")
-    uk = client.get("/changes").text
-    assert "Нове відхилення" in uk and "Що змінилося у ваших результатах" in uk
+    uk = client.get("/results?episode=latest").text
+    assert "Нове відхилення" in uk and "Ваші результати" in uk
     assert "+0,5 ммоль/л (+17 %)" in uk
     assert "changes." not in uk.replace("/changes", "").replace("#changes", "").replace("changes-", "")
 
@@ -228,19 +228,19 @@ def test_ai_summary_generates_caches_and_reuses(tmp_path: Path, monkeypatch):
     ai.save_ai_settings(settings, {"ai_api_key": "sk-test"})
     stub = reply(SUMMARY)
     monkeypatch.setattr(ai, "complete", stub)
-    page = client.get("/changes").text
+    page = client.get("/results?episode=latest").text
     assert 'id="changes-ai-form"' in page
     csrf = csrf_for(settings, user_id)
     response = client.post("/changes/ai-summary", data={"csrf_token": csrf}, headers={"Accept": "application/json"})
     assert response.status_code == 200, response.text
-    assert response.json() == {"ok": True, "location": "/changes#changes-ai"}
+    assert response.json() == {"ok": True, "location": "/results?episode=latest#changes-ai"}
     assert stub.calls[0]["feature"] == "changes_summary"
     assert stub.calls[0]["response_format"]["type"] == "json_schema"
     sent = json.dumps(stub.calls[0]["messages"], ensure_ascii=False)
     assert "Zeta marker" in sent
     assert "Test Patient" not in sent and "1990-03-14" not in sent and user_id not in sent
 
-    page = client.get("/changes").text
+    page = client.get("/results?episode=latest").text
     # Badge once text exists; the model id is never printed.
     assert "AI-generated" in page and "stub/model" not in page
     assert "Zeta marker is now 7.0 mmol/L, above range." in page
@@ -263,7 +263,7 @@ def test_ai_summary_generates_caches_and_reuses(tmp_path: Path, monkeypatch):
     # New results make the stored state stale rather than silently current.
     with connect(settings) as connection:
         connection.execute("UPDATE observations SET value_numeric=4.0 WHERE id='chg-doc-2-0'")
-    assert "Your results changed after this summary was written" in client.get("/changes").text
+    assert "Your results changed after this summary was written" in client.get("/results?episode=latest").text
     with connect(settings) as connection:
         assert connection.execute("SELECT COUNT(*) FROM ai_change_summaries").fetchone()[0] == 1
 
@@ -277,7 +277,7 @@ def test_ai_summary_scopes_to_a_document(tmp_path: Path, monkeypatch):
         follow_redirects=False,
     )
     assert response.status_code == 303
-    assert response.headers["location"] == "/changes?document=doc-2#changes-ai"
+    assert response.headers["location"] == "/results?document=doc-2#changes-ai"
     with connect(settings) as connection:
         assert connection.execute("SELECT scope FROM ai_change_summaries").fetchone()[0] == "document:doc-2"
 
@@ -294,8 +294,8 @@ def test_ai_unavailable_degrades_with_a_reason(tmp_path: Path, monkeypatch):
     response = client.post("/changes/ai-summary", data={"csrf_token": csrf}, headers={"Accept": "application/json"})
     assert response.status_code == 503 and response.json() == {"ok": False, "reason": "budget"}
     fallback = client.post("/changes/ai-summary", data={"csrf_token": csrf}, follow_redirects=False)
-    assert fallback.headers["location"] == "/changes?ai_error=budget#changes-ai"
-    page = client.get("/changes?ai_error=budget").text
+    assert fallback.headers["location"] == "/results?episode=latest&ai_error=budget#changes-ai"
+    page = client.get("/results?episode=latest&ai_error=budget").text
     assert html.escape(i18n.t("aiassist.error_budget")) in page
     # An unusable reply is a provider error, not a 500.
     monkeypatch.setattr(ai, "complete", reply("not json at all"))
@@ -321,7 +321,7 @@ def test_a_guest_reads_the_page_but_cannot_ask_ai(tmp_path: Path, monkeypatch):
     _, secret = create_access_token(settings, user_id, "guest", "Dr Test", expires_at=expires)
     with TestClient(create_app(settings)) as guest:
         guest.get(f"/t/{secret}")
-        page = guest.get("/changes")
+        page = guest.get("/results?episode=latest")
         assert page.status_code == 200
         assert 'id="changes-ai-form"' not in page.text
         assert guest.post("/changes/ai-summary", data={"csrf_token": ""}).status_code == 403
@@ -340,9 +340,11 @@ def test_a_change_row_draws_its_trend_with_values_on_the_points(tmp_path: Path):
     # One reading is no trend; units that do not fold are never one line.
     assert entries["Lambda marker"]["trend"] is None
     assert entries["Nu marker"]["trend"] is None
-    page = client.get("/changes").text
-    assert 'class="an-trend"' in page and 'class="an-trend__value"' in page
-    uk = client.get("/changes?lang=uk").text
+    page = client.get("/results?episode=latest").text
+    # The small chart carries no text labels; its values are in its aria-label.
+    assert 'class="an-res-spark"' in page
+    assert 'aria-label="Trend, oldest to newest, 13 Feb 2025: 3, 01 Sep 2025: 3.5 mmol/L"' in page
+    uk = client.get("/results?episode=latest&lang=uk").text
     assert "лют. 2025" in uk and "Динаміка від найстарішого" in uk
 
 
@@ -350,14 +352,14 @@ def test_ai_summary_is_folded_after_the_changes_with_notes_in_their_rows(tmp_pat
     settings, user_id, client, _ = build_changes_fixture(tmp_path)
     ai.save_ai_settings(settings, {"ai_api_key": "sk-test"})
     monkeypatch.setattr(ai, "complete", reply(SUMMARY))
-    before = client.get("/changes").text
+    before = client.get("/results?episode=latest").text
     # Nothing written yet: a closed block with a teaser, and no AI badge.
     assert '<details class="panel an-change-ai" id="changes-ai">' in before
     assert "AI-generated" not in before
-    assert before.index('class="an-change-list"') < before.index('id="changes-ai"')
+    assert before.index('class="an-res-list"') < before.index('id="changes-ai"')
     csrf = csrf_for(settings, user_id)
     client.post("/changes/ai-summary", data={"csrf_token": csrf}, headers={"Accept": "application/json"})
-    page = client.get("/changes").text
+    page = client.get("/results?episode=latest").text
     block = page.split('id="changes-ai"', 1)[1].split("<script", 1)[0]
     # The per-test finding sits, folded, in the Theta marker change row.
     theta_row = page.split(">Theta marker</a>", 1)[1].split("</li>", 1)[0]
@@ -369,13 +371,27 @@ def test_ai_summary_is_folded_after_the_changes_with_notes_in_their_rows(tmp_pat
 
 def test_collapsed_buckets_defer_their_charts(tmp_path: Path):
     _, _, client, _ = build_changes_fixture(tmp_path)
-    page = client.get("/changes").text
+    page = client.get("/results?episode=latest").text
     head, more = page.split('class="an-change-more"', 1)
     # Kappa marker is stable: its chart waits in a <template> until opened.
     lazy = more.split('<template class="an-trend-lazy">', 1)
-    assert len(lazy) == 2 and lazy[1].lstrip().startswith('<svg class="an-trend"')
-    assert '<svg class="an-trend"' in head and "an-trend-lazy" not in head
+    assert len(lazy) == 2 and lazy[1].lstrip().startswith('<svg class="an-res-spark"')
+    assert '<svg class="an-res-spark"' in head and "an-trend-lazy" not in head
 
+
+def test_old_changes_addresses_answer_301_to_results(tmp_path: Path):
+    _, _, client, _ = build_changes_fixture(tmp_path)
+    bare = client.get("/changes", follow_redirects=False)
+    assert bare.status_code == 301 and bare.headers["location"] == "/results?episode=latest"
+    changed = client.get("/changes?episode=2025-02-13&show=changed", follow_redirects=False)
+    assert changed.status_code == 301
+    assert changed.headers["location"] == "/results?episode=2025-02-13&show=changed"
+
+
+def test_results_latest_shows_the_newest_test_date_heading(tmp_path: Path):
+    _, _, client, _ = build_changes_fixture(tmp_path)
+    page = client.get("/results?episode=latest").text
+    assert 'id="changes-report-heading">28 Aug - 01 Sep 2025 <span' in page
 
 def test_sparkline_axis_follows_the_readings_not_a_distant_band():
     from anamna.web import app as web
@@ -433,15 +449,15 @@ def test_default_shows_only_the_latest_episode(tmp_path: Path):
     view = view_for(settings, user_id)
     assert [e["value"] for e in view["episodes"]] == ["2025-08-28", "2025-02-13"]
     assert view["episodes"][0]["current"] and view["selection"]["kind"] == "latest"
-    assert view["nav"]["earlier"]["url"] == "/changes?episode=2025-02-13" and "newer" not in view["nav"]
+    assert view["nav"]["earlier"]["url"] == "/results?episode=2025-02-13" and "newer" not in view["nav"]
     names = set(by_name(view["report"]))
     # Tests measured only in the older episode are not in the latest report.
     older_only = set(by_name(view_for(settings, user_id, episode="2025-02-13")["report"])) - names
     assert older_only, "the fixture's February draw should hold tests the latest episode lacks"
-    page = client.get("/changes").text
+    page = client.get("/results?episode=latest").text
     assert page.count('class="panel an-change-group"') == 1
     assert '<select id="changes-episode" name="episode">' in page
-    assert 'href="/changes?episode=2025-02-13" rel="prev"' in page
+    assert 'href="/results?episode=2025-02-13" rel="prev"' in page
     assert "an-change-jump" not in page and "an-change-hero" not in page
     assert all(f">{html.escape(name)}</a>" not in page for name in older_only)
 
@@ -457,7 +473,7 @@ def test_previous_value_is_taken_from_before_the_episode(tmp_path: Path):
     assert kappa["previous"]["date_text"] == "13 Feb 2025" and kappa["bucket"] == "stable"
     assert kappa["value_text"] == "3.5"
     assert kappa["also"] == ["28 Aug 2025: 9 mmol/L"]
-    assert "Also measured in this period: 28 Aug 2025: 9 mmol/L" in client.get("/changes").text
+    assert "Also measured in this period: 28 Aug 2025: 9 mmol/L" in client.get("/results?episode=latest").text
 
 
 def test_custom_range_merges_into_one_report(tmp_path: Path):
@@ -478,33 +494,33 @@ def test_custom_range_merges_into_one_report(tmp_path: Path):
 
 def test_selection_round_trips_through_the_query_string(tmp_path: Path):
     _, _, client, _ = build_changes_fixture(tmp_path)
-    older = client.get("/changes?episode=2025-02-13").text
-    assert '<option value="2025-02-13" data-url="/changes?episode=2025-02-13" selected>' in older
-    assert 'href="/changes" rel="next"' in older
+    older = client.get("/results?episode=2025-02-13").text
+    assert '<option value="2025-02-13" data-url="/results?episode=2025-02-13" selected>' in older
+    assert 'href="/results?episode=latest" rel="next"' in older
     # Any date inside an episode finds it; a nonsense value falls back to the latest.
-    assert 'value="2025-08-28" data-url="/changes" selected' in client.get("/changes?episode=2025-09-01").text
-    assert 'value="2025-08-28" data-url="/changes" selected' in client.get("/changes?episode=nope").text
-    ranged = client.get("/changes?from=2025-02-01&to=2025-09-30").text
+    assert 'value="2025-08-28" data-url="/results?episode=latest" selected' in client.get("/results?episode=2025-09-01").text
+    assert 'value="2025-08-28" data-url="/results?episode=latest" selected' in client.get("/results?episode=nope").text
+    ranged = client.get("/results?from=2025-02-01&to=2025-09-30").text
     assert 'name="from" value="2025-02-01"' in ranged and 'name="to" value="2025-09-30"' in ranged
     assert '<details class="an-change-range" open>' in ranged
     assert "Chosen dates: 01 Feb - 30 Sep 2025" in ranged
-    empty = client.get("/changes?from=2030-01-01&to=2030-02-01")
+    empty = client.get("/results?from=2030-01-01&to=2030-02-01")
     assert empty.status_code == 200
-    assert "No results in 01 Jan - 01 Feb 2030" in empty.text and 'href="/changes"' in empty.text
+    assert "No results in 01 Jan - 01 Feb 2030" in empty.text and 'href="/results"' in empty.text
     # A one-test period says nothing extra: the count beside the heading does.
-    single = client.get("/changes?from=2025-08-28&to=2025-08-28").text
+    single = client.get("/results?from=2025-08-28&to=2025-08-28").text
     assert "Only one test was measured in this period." not in single
 
 
 def test_episode_and_range_pages_render_in_both_locales(tmp_path: Path):
     _, _, client, _ = build_changes_fixture(tmp_path)
     client.cookies.set("anamna_lang", "uk")
-    for url in ("/changes", "/changes?episode=2025-02-13", "/changes?from=2025-02-01&to=2025-09-30",
-                "/changes?from=2030-01-01&to=2030-02-01"):
+    for url in ("/results?episode=latest", "/results?episode=2025-02-13",
+                "/results?from=2025-02-01&to=2025-09-30", "/results?from=2030-01-01&to=2030-02-01"):
         page = client.get(url).text
         visible = page.replace("/changes", "").replace("#changes", "").replace("changes-", "")
         assert "changes." not in visible, url
-    uk = client.get("/changes").text
+    uk = client.get("/results?episode=latest").text
     assert "Результати за" in uk and "Раніше: 13 лют. 2025" in uk and "Свій період одним звітом" in uk
     assert "28 серп. - 01 вер. 2025" in uk
 

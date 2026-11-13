@@ -183,7 +183,7 @@
 <section class="area-section" id="area-panels">
   <header class="section-heading compact-heading">
     <div><span class="eyebrow">{{ t('panels.eyebrow') }}</span><h2>{{ t('area.panels_heading') }}</h2></div>
-    <a href="/panels">{{ t('dashboard.all_panels') }}</a>
+    <a href="/results?group=panel">{{ t('dashboard.all_panels') }}</a>
   </header>
   <div class="an-panel-grid">
     {% for panel in panels %}{{ panel_card(panel, 3) }}{% endfor %}

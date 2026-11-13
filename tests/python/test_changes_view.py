@@ -1,13 +1,12 @@
 """/changes: the reader's sort, filter and grouping, and the medicines that bear on each result.
 
-The pure tests build entries by hand; the page tests reuse the two-report
+The pure tests build entries by hand; the medicine test reuses the two-report
 fixture of ``test_web_changes`` so the verdict engine decides every bucket.
+The Changes page itself is a redirect into /results; its own tests live with /results.
 """
 
 from __future__ import annotations
 
-import html
-import re
 from pathlib import Path
 
 from anamna.db import connect, utc_now
@@ -17,15 +16,22 @@ from test_web_changes import build_changes_fixture, view_for
 
 
 def entry(name, bucket="stable", *, direction=None, context="Blood count", panel_url=None,
-          unverified=False, influences=(), share=None):
+          unverified=False, influences=(), share=None, attention=False, due=False,
+          area_id="other", area_name="Other results", panel_id=None, day=""):
     return {
         "name": name,
         "bucket": bucket,
         "direction": direction,
         "context": context,
         "panel_url": panel_url,
+        "panel_id": panel_id,
+        "area_id": area_id,
+        "area_name": area_name,
+        "day": day,
         "unverified": unverified,
         "influences": list(influences),
+        "attention": attention,
+        "due": due,
         "change": None if share is None else {"comparable": True, "share": share},
     }
 
@@ -52,12 +58,12 @@ def flat(report, **options):
 
 
 MIXED = [
-    entry("beta", "new", direction="worse"),
+    entry("beta", "new", direction="worse", attention=True),
     entry("Alpha", "still", direction="better", context="Liver", panel_url="/panels/liver"),
     entry("gamma", "stable", context="Blood count"),
     entry("delta", "resolved", influences=[{"id": "f1"}]),
     entry("Epsilon", "first", unverified=True),
-    entry("zeta", "borderline", context="Liver", panel_url="/panels/liver"),
+    entry("zeta", "borderline", context="Liver", panel_url="/panels/liver", due=True),
 ]
 
 
@@ -69,6 +75,7 @@ def test_default_options_keep_the_pages_own_layout():
     assert sections[0]["kind"] == "list" and sections[0]["entries"] == report["open"]
     folds = [section for section in sections if section["kind"] == "fold"]
     assert [section["entries"] for section in folds] == [entries for _, entries in report["collapsed"] if entries]
+    assert [section["open"] for section in sections] == [True] + [False] * len(folds)
     assert arranged["shown"] == arranged["total"] == len(MIXED)
     assert arranged["nothing_open"] is False
 
@@ -76,7 +83,7 @@ def test_default_options_keep_the_pages_own_layout():
 def test_nothing_open_only_when_no_open_result_and_nothing_filtered():
     quiet = report_of([entry("only stable", "stable")])
     assert flat(quiet)["nothing_open"] is True
-    assert flat(quiet, show="outside")["nothing_open"] is False
+    assert flat(quiet, show="attention")["nothing_open"] is False
     assert flat(quiet, group="none")["nothing_open"] is False
 
 
@@ -102,9 +109,9 @@ def test_change_sort_puts_the_biggest_share_first_and_no_comparison_last():
 
 def test_filters_keep_what_they_name():
     report = report_of(MIXED)
-    assert {e["bucket"] for e in flat(report, show="outside", group="none")["sections"][0]["entries"]} == {
-        "new", "still", "borderline"
-    }
+    assert names(flat(report, show="attention", group="none")) == ["beta"]
+    # The old name for the attention filter still works.
+    assert names(flat(report, show="outside", group="none")) == ["beta"]
     assert {e["bucket"] for e in flat(report, show="changed", group="none")["sections"][0]["entries"]} == {
         "new", "resolved"
     }
@@ -112,6 +119,7 @@ def test_filters_keep_what_they_name():
     assert names(medicine) == ["delta"]
     assert medicine["shown"] == 1 and medicine["total"] == len(MIXED)
     assert names(flat(report, show="unverified", group="none")) == ["Epsilon"]
+    assert names(flat(report, show="due", group="none")) == ["zeta"]
 
 
 def test_a_filter_with_no_match_has_no_sections():
@@ -119,13 +127,16 @@ def test_a_filter_with_no_match_has_no_sections():
     assert empty["sections"] == [] and empty["shown"] == 0
 
 
-def test_group_by_test_group_is_alphabetical_with_headings():
+def test_group_by_test_group_follows_the_sort_with_headings():
     arranged = flat(report_of(MIXED), group="panel")
-    assert [section["kind"] for section in arranged["sections"]] == ["group", "group"]
+    assert [section["kind"] for section in arranged["sections"]] == ["section", "section"]
+    # The attention result leads under the default status sort, so its group comes first.
     assert [section["title"] for section in arranged["sections"]] == ["Blood count", "Liver"]
     liver = arranged["sections"][1]
-    assert liver["url"] == "/panels/liver"
+    assert liver["url"] == "/panels/liver" and liver["url_kind"] == "panel"
     assert [e["name"] for e in liver["entries"]] == ["Alpha", "zeta"]
+    by_name = flat(report_of(MIXED), group="panel", sort="name")
+    assert [section["title"] for section in by_name["sections"]] == ["Liver", "Blood count"]
 
 
 def test_no_grouping_is_one_list_with_everything_shown():
@@ -137,10 +148,12 @@ def test_no_grouping_is_one_list_with_everything_shown():
 
 def test_unknown_choices_fall_back_to_the_page_defaults():
     assert changes.view_options("bogus", "bogus", "bogus", "2") == {
-        "sort": "status", "show": "all", "group": "status", "reverse": False,
+        "sort": "status", "show": "all", "default_group": "status", "group": "status",
+        "reverse": False, "everything": False, "area": "",
     }
     assert changes.view_options("name", "medicine", "none", "1") == {
-        "sort": "name", "show": "medicine", "group": "none", "reverse": True,
+        "sort": "name", "show": "medicine", "default_group": "status", "group": "none",
+        "reverse": True, "everything": False, "area": "",
     }
 
 
@@ -151,52 +164,22 @@ def test_view_query_names_only_what_differs_from_the_default():
     assert changes.view_query(changes.view_options("", "", "", "1")) == "reverse=1"
 
 
-def test_page_offers_the_view_controls_and_keeps_a_clean_default_address(tmp_path: Path):
+def test_changes_page_redirects_to_results_with_the_same_view(tmp_path: Path):
     _, _, client, _ = build_changes_fixture(tmp_path)
-    page = client.get("/changes").text
-    assert "data-change-view" in page
-    for control in ("sort", "show", "group"):
-        assert f'<select name="{control}">' in page
-    assert "an-change-more" in page
+    response = client.get("/changes?sort=name", follow_redirects=False)
+    assert response.status_code == 301
+    assert response.headers["location"] == "/results?episode=latest&sort=name"
 
 
-def test_page_sorts_by_name_without_grouping(tmp_path: Path):
+def test_changes_page_redirects_a_chosen_episode_unchanged(tmp_path: Path):
     _, _, client, _ = build_changes_fixture(tmp_path)
-    response = client.get("/changes?group=none&sort=name")
-    assert response.status_code == 200
-    page = response.text
-    assert "an-change-more" not in page
-    shown = [html.unescape(name) for name in re.findall(r'<a class="an-change__name" href="[^"]*">([^<]*)</a>', page)]
-    assert len(shown) >= 9 and "Zeta marker" in shown
-    assert shown == sorted(shown, key=str.casefold)
+    response = client.get("/changes?episode=2026-01-05&show=changed", follow_redirects=False)
+    assert response.status_code == 301
+    assert response.headers["location"] == "/results?episode=2026-01-05&show=changed"
 
 
-def test_page_reverse_and_grouping_render(tmp_path: Path):
-    _, _, client, _ = build_changes_fixture(tmp_path)
-    reversed_page = client.get("/changes?sort=name&reverse=1").text
-    assert 'name="reverse" value="1" checked>' in reversed_page
-    assert '<input type="hidden" name="sort" value="name">' in reversed_page
-    grouped = client.get("/changes?group=panel").text
-    assert "an-change-subhead" in grouped
-    assert client.get("/changes?group=bogus&sort=bogus&show=bogus").status_code == 200
-
-
-def test_page_keeps_the_view_when_another_period_is_chosen(tmp_path: Path):
-    _, _, client, _ = build_changes_fixture(tmp_path)
-    page = client.get("/changes?sort=name&show=outside").text
-    assert re.search(r'data-url="[^"]*sort=name', page)
-    assert re.search(r'<input type="hidden" name="show" value="outside">', page)
-
-
-def test_page_filter_with_no_match_says_so_and_offers_the_way_back(tmp_path: Path):
-    _, _, client, _ = build_changes_fixture(tmp_path)
-    page = client.get("/changes?show=medicine").text
-    assert "an-change-empty" in page
-    assert 'href="/changes"' in page
-
-
-def test_a_medicine_bears_on_its_result_and_is_marked_under_it(tmp_path: Path):
-    settings, user_id, client, ids = build_changes_fixture(tmp_path)
+def test_a_medicine_bears_on_its_result(tmp_path: Path):
+    settings, user_id, _, ids = build_changes_fixture(tmp_path)
     factor_id = "factor-changes-view"
     with connect(settings) as connection:
         connection.execute(
@@ -209,11 +192,5 @@ def test_a_medicine_bears_on_its_result_and_is_marked_under_it(tmp_path: Path):
                VALUES (?, ?, ?, ?, 'Zeta marker', 'raises', 'person', ?)""",
             (f"effect-{factor_id}", factor_id, user_id, ids["Zeta marker"], utc_now()),
         )
-    page = client.get("/changes").text
-    assert 'class="an-effect an-influence"' in page
-    assert f'href="/medicines/{factor_id}"' in page
-    medicine = client.get("/changes?show=medicine").text
-    assert f'href="/medicines/{factor_id}"' in medicine
-    assert "Zeta marker" in medicine
     entries = {e["name"]: e for e in view_for(settings, user_id)["groups"][0]["open"]}
     assert entries["Zeta marker"]["influences"][0]["url"] == f"/medicines/{factor_id}"

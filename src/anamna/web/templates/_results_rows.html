@@ -1,0 +1,64 @@
+{#
+  One result row for /results (`_results_list.html`). Macros only: nothing is
+  written at the top level of this file.
+#}
+{% from "_components.html" import status_chip with context %}
+{% from "_factors.html" import influence_chips with context %}
+
+{%- macro ai_finding_body(finding) -%}
+<p class="an-ai-finding__serious">{{ finding.how_serious }}</p>
+{% if finding.what_it_is %}<p><strong>{{ t('changes.ai_what_it_is') }}</strong> {{ finding.what_it_is }}</p>{% endif %}
+{% for key in ('possible_reasons', 'usually_next', 'ask') %}{% if finding[key] %}
+<h4>{{ t('changes.ai_' ~ key) }}</h4>
+<ul class="an-change-ai__list">{% for item in finding[key] %}<li>{{ item }}</li>{% endfor %}</ul>
+{% endif %}{% endfor %}
+{%- endmacro -%}
+
+{#- The same series as the full chart, without labels: the row's shape only.
+    The full chart is one tap away on the result's own page. -#}
+{%- macro spark(entry) -%}
+{% set tr = entry.trend %}
+<svg class="an-res-spark" viewBox="0 0 {{ tr.width }} {{ tr.height }}" role="img" aria-label="{{ tr.label }}">
+  {% if tr.band %}<rect class="an-trend__band" x="0" y="{{ tr.band.y }}" width="{{ tr.width }}" height="{{ tr.band.height }}"/>{% endif %}
+  <polyline class="an-trend__line" points="{{ tr.path }}"/>
+  {% for point in tr.points %}{% if point.current %}<circle class="an-res-spark__now" cx="{{ point.x }}" cy="{{ point.y }}" r="6"/>{% endif %}{% endfor %}
+</svg>
+{%- endmacro -%}
+
+{#- `lazy` rows keep their chart in a <template> until the row is scrolled to
+    or its disclosure is opened: see the script in `results.html`. -#}
+{%- macro result_row(entry, lazy=false) -%}
+<li class="an-res" data-bucket="{{ entry.bucket }}"{% if entry.attention %} data-attention="true"{% endif %}>
+  <div class="an-res__line">
+    <a class="an-res__name" href="{{ entry.url }}">{{ entry.name }}</a>
+    <span class="an-res__value"><strong>{{ entry.value_text }}</strong>{% if entry.unit %} <small>{{ entry.unit }}</small>{% endif %}</span>
+    {{ status_chip(entry.verdict.interpretation, entry.verdict.label, entry.verdict.conflicts_with_vendor) }}
+    {% if entry.trend %}<span class="an-res__spark">{% if lazy %}<template class="an-trend-lazy">{{ spark(entry) }}</template>{% else %}{{ spark(entry) }}{% endif %}</span>{% endif %}
+  </div>
+  <p class="an-res__change">
+    {% if entry.bucket in ('new', 'resolved', 'still', 'borderline') %}<span class="an-change-tag" data-bucket="{{ entry.bucket }}"{% if entry.direction %} data-direction="{{ entry.direction }}"{% endif %}>{{ entry.label }}</span>{% endif %}
+    {% if entry.change %}<span class="an-change__delta{% if not entry.change.comparable %} muted{% endif %}">{{ entry.change.text }}</span>{% endif %}
+    {% if entry.previous %}<span class="an-change__was">{{ t('changes.was_on', value=entry.previous.value_text ~ ((' ' ~ entry.previous.unit) if entry.previous.unit else ''), date=entry.previous.date_text) }}</span>
+    {% else %}<span class="an-change__was">{{ t('changes.no_previous') }}</span>{% endif %}
+    {% if entry.outside_by_text %}<span class="an-res__outside">{{ t('insights.outside_by', amount=entry.outside_by_text) }}</span>{% endif %}
+  </p>
+  {% if entry.also %}<p class="an-change__also">{{ t('changes.also_measured', items=entry.also|join('; ')) }}</p>{% endif %}
+  <p class="an-res__meta">
+    <span>{{ entry.date_text }}</span>
+    {% if entry.panel_url %}<a href="{{ entry.panel_url }}">{{ entry.context }}</a>{% else %}<span>{{ entry.context }}</span>{% endif %}
+    {% if entry.unverified %}<span class="an-change__unverified" title="{{ t('verify.provisional_body') }}">{{ entry.verification_label }}<span class="visually-hidden"> - {{ t('verify.provisional_body') }}</span></span>{% endif %}
+    {% if entry.historical %}<span class="an-historical-pill">{{ t('metrics.historical_chip') }}</span>{% endif %}
+    <a href="{{ entry.source_url }}">{{ t('changes.open_source') }}<span class="visually-hidden">: {{ entry.name }}</span></a>
+  </p>
+  {{ influence_chips(entry.influences) }}
+  {% if entry.ai_note %}{% set note = entry.ai_note %}
+  <details class="an-change-note" data-level="{{ note.level }}">
+    <summary><span>{{ t('changes.ai_note_summary') }}</span> <span class="pill an-ai-level" data-level="{{ note.level }}" title="{{ t('changes.ai_level_' ~ note.level ~ '_hint') }}">{{ t('changes.ai_level_' ~ note.level) }}</span></summary>
+    <div class="an-change-note__body">
+      {{ ai_finding_body(note) }}
+      <p class="muted"><small>{{ t('changes.ai_note_disclaimer') }}</small></p>
+    </div>
+  </details>
+  {% endif %}
+</li>
+{%- endmacro -%}
