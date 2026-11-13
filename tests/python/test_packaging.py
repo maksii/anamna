@@ -125,3 +125,27 @@ with TestClient(app) as client:
 print('Installed wheel: migrations, guidance, login and assets passed')
 """
     assert "Installed wheel:" in run([str(python), "-c", script], cwd=state, env=env)
+
+
+def test_every_file_the_dockerfile_copies_is_in_the_build_context():
+    """`.dockerignore` starts from `*`: a COPY source that is not re-included never reaches the builder."""
+    sources: list[str] = []
+    for line in (REPO / "Dockerfile").read_text(encoding="utf-8").splitlines():
+        words = line.split()
+        if not words or words[0].upper() != "COPY" or any(word.startswith("--from") for word in words):
+            continue
+        arguments = [word for word in words[1:] if not word.startswith("--")]
+        sources.extend(arguments[:-1])
+    reincluded: list[str] = []
+    for line in (REPO / ".dockerignore").read_text(encoding="utf-8").splitlines():
+        entry = line.strip()
+        if entry.startswith("!"):
+            reincluded.append(entry[1:].strip())
+    assert sources, "no COPY sources parsed from Dockerfile"
+    assert {"data/icd10.json", "data/reference_library.json"} <= set(sources)
+    missing = [
+        source
+        for source in sources
+        if not any(source == pattern or source.startswith(pattern + "/") for pattern in reincluded)
+    ]
+    assert not missing, f"COPY sources excluded from the build context by .dockerignore: {missing}"
