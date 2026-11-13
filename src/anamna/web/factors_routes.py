@@ -104,17 +104,30 @@ def _metric_ids(connection, owner_id: str) -> frozenset[str]:
     )
 
 
-def _concept_for_label(connection, label: str) -> str | None:
-    """The concept whose localized or English name equals ``label``, ignoring case."""
+def _concept_for_label(connection, label: str, owner_id: str | None = None) -> str | None:
+    """The concept whose localized or English name equals ``label``, ignoring case.
+
+    Several concepts can share a name: «Лейкоцити» is the blood count and also a
+    microbiology finding.  The one the person has results for wins, so the
+    effect links to the chart they can open.
+    """
     wanted = " ".join(label.split()).casefold()
     if not wanted:
         return None
+    matches = []
     for row in connection.execute("SELECT id, canonical_name FROM concepts ORDER BY id"):
         canonical = row["canonical_name"]
         names = (canonical, CONCEPT_NAMES_EN.get(canonical, canonical), CONCEPT_NAMES_UK.get(canonical, canonical))
         if any(" ".join(name.split()).casefold() == wanted for name in names):
-            return row["id"]
-    return None
+            matches.append(row["id"])
+    if len(matches) > 1 and owner_id:
+        marks = ",".join("?" * len(matches))
+        measured = {row[0] for row in connection.execute(
+            f"SELECT DISTINCT concept_id FROM observations WHERE owner_user_id = ? AND concept_id IN ({marks})",
+            (owner_id, *matches),
+        )}
+        matches.sort(key=lambda concept: concept not in measured)
+    return matches[0] if matches else None
 
 
 def _document_rows(connection, owner_id: str, document_id: str | None = None) -> list:
@@ -622,7 +635,7 @@ def _instruction_page(request: Request, w: _Wiring, factor_id: str):
 def _add_effect(connection, user_id: str, factor_id: str, form) -> RedirectResponse:
     base = f"/medicines/{factor_id}"
     label = " ".join(str(form.get("label") or "").split())[:200]
-    concept = _concept_for_label(connection, label)
+    concept = _concept_for_label(connection, label, user_id)
     added = factors.add_effect(
         connection, user_id, factor_id, concept_id=concept, label=label,
         direction=str(form.get("direction") or ""), note=str(form.get("note") or ""),

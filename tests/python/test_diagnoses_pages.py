@@ -706,3 +706,53 @@ def test_the_sources_are_named_in_the_reader_language(world, clients):
     assert str(escape("Ministry of Health of Ukraine / National Health Service of Ukraine")) in alpha.get("/diagnoses").text
     alpha.cookies.set("anamna_lang", "uk")
     assert str(escape("Всесвітня організація охорони здоров'я")) in alpha.get("/diagnoses").text
+
+
+def test_current_diagnoses_are_grouped_by_icd_chapter_with_the_uncoded_ones_last(world, clients):
+    alpha = clients("alpha@example.test")
+    alpha.cookies.set("anamna_lang", "en")
+    assert post_new(world, alpha, code="", name="Lipoma of the back", diagnosed_on="2025-02-01").status_code == 303
+    assert post_new(world, alpha, code="E78.2", diagnosed_on="2026-08-09").status_code == 303
+    assert post_new(world, alpha, code="I10", diagnosed_on="2024-01-10").status_code == 303
+
+    page = alpha.get("/diagnoses").text
+    titles = re.findall(r'<h3 class="dx-group__title"[^>]*>(.*?)<span', page, re.DOTALL)
+
+    assert [" ".join(title.split()) for title in titles] == [
+        "Endocrine, nutritional and metabolic diseases",
+        "Diseases of the circulatory system",
+        "Without an ICD-10 code",
+    ]
+    lipoma = page[page.index("Lipoma of the back") - 600: page.index("Lipoma of the back")]
+    assert 'data-dx-day="2025-02-01"' in lipoma and "data-dx-item" in lipoma
+
+
+def test_the_header_is_compact_and_the_filter_waits_for_the_script(world, clients):
+    alpha = clients("alpha@example.test")
+    assert post_new(world, alpha, code="E78.2").status_code == 303
+    alpha.cookies.set("anamna_lang", "uk")
+
+    page = alpha.get("/diagnoses").text
+
+    assert 'class="dx-lead"' not in page
+    head = page[page.index('<section class="dx-head"'): page.index("</section>", page.index('<section class="dx-head"'))]
+    assert 'class="dx-tiles"' in head and "/diagnoses/new" in head
+    assert re.search(r'<div class="dx-filter" role="search" data-dx-filter hidden', page)
+    assert 'data-shown="Показано: {shown} з {total}"' in page
+    assert '<label for="dx-filter-q">Знайти діагноз</label>' in page
+
+
+def test_a_card_folds_its_results_treatment_and_actions(world, clients):
+    alpha = clients("alpha@example.test")
+    add_factor(world)
+    assert post_new(world, alpha, code="I10").status_code == 303
+    alpha.cookies.set("anamna_lang", "en")
+
+    page = alpha.get("/diagnoses").text
+    start = page.index('class="dx-card ')
+    card = page[start: page.index("</details>", start)]
+
+    assert '<details class="dx-more">' in card and "<details class=\"dx-more\" open" not in card
+    summary = card[card.index("<summary>"): card.index("</summary>")]
+    assert "Treatment" in summary and "Actions" in summary
+    assert card.index("<summary>") < card.index("Valsartan 80 mg") < card.index("Mark as resolved")

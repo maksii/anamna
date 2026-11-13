@@ -253,6 +253,15 @@ def test_an_entry_already_in_the_record_marks_the_group_existing(db):
     }
 
 
+def test_a_trade_name_written_with_the_other_i_still_matches_the_entry(db):
+    entry(db, kind="medicine", name="Аторис таблетки, в/плів. обол. по 20 мг")
+    add(db, db.docs["jan"], name="аторіс")
+
+    [group] = factor_candidates.groups(db.connection, db.alpha, today=TODAY, locale="en")
+
+    assert group["existing"] is True
+
+
 def test_groups_are_ordered_and_count_leaves_out_existing(db):
     d = db.docs
     entry(db, kind="medicine", name="Known")

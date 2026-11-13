@@ -49,10 +49,17 @@
 {% endif %}
 {%- endmacro %}
 
+{#- What the page's filter and sort read from a diagnosis row. -#}
+{% macro filter_attrs(item) -%}
+data-dx-item data-dx-search="{{ item.search }}" data-dx-day="{{ item.day }}" data-dx-name="{{ item.name }}"
+{%- endmacro %}
+
 {#- A diagnosis in the record. A preliminary one asks the doctor's question
-    instead of offering the status actions. -#}
+    instead of offering the status actions. The results, the treatment and the
+    status actions fold into one disclosure, so a list of cards stays short;
+    the card's title opens the full page. -#}
 {% macro diag_card(item, provisional=false) -%}
-<li class="dx-card {{ 'dx-card--provisional' if (provisional or item.certainty == 'provisional') else 'dx-card--current' }}" data-status="{{ item.status }}">
+<li class="dx-card {{ 'dx-card--provisional' if (provisional or item.certainty == 'provisional') else 'dx-card--current' }}" data-status="{{ item.status }}" {{ filter_attrs(item) }}>
   <div class="dx-card__head">
     <p class="dx-card__tags">
       {{ code_chip(item.code) }}
@@ -68,33 +75,43 @@
     {% if item.document %}<span><span class="dx-label">{{ t('dx.card.source') }}</span> <a href="{{ item.document.url }}">{{ item.document.label }}</a></span>{% endif %}
   </p>
   {% endif %}
-  {% if item.area or item.chapter_text %}
-  <p class="dx-card__area">
-    {% if item.area %}<span><span class="dx-label">{{ t('dx.card.area') }}</span> <a href="{{ item.area.url }}">{{ item.area.name }}</a></span>{% endif %}
-    {% if item.chapter_text %}<span>{{ item.chapter_text }}</span>{% endif %}
-  </p>
+  {% if item.area %}
+  <p class="dx-card__area"><span><span class="dx-label">{{ t('dx.card.area') }}</span> <a href="{{ item.area.url }}">{{ item.area.name }}</a></span></p>
   {% endif %}
-  {{ watch_chips(item) }}
-  {% if item.medicines %}
-  <div class="dx-treat">
-    <p class="dx-kicker">{{ t('dx.treat.heading') }}</p>
-    <ul class="dx-treat__list">
-      {% for m in item.medicines %}
-      <li><a href="{{ m.url }}">{{ m.name }}</a>{% if m.regimen %} <span class="dx-treat__how">{{ m.regimen }}</span>{% endif %} <span class="dx-pill" data-med-status="{{ m.status }}">{{ m.status_label }}</span></li>
-      {% endfor %}
-    </ul>
-  </div>
+  {% set status_actions = writable and not provisional %}
+  {% if item.watch or item.medicines or status_actions %}
+  {% set parts = [] %}
+  {% if item.watch %}{% set _ = parts.append(t('dx.card.more_results', count=item.watch|length)) %}{% endif %}
+  {% if item.medicines %}{% set _ = parts.append(t('dx.card.more_treatment')) %}{% endif %}
+  {% if status_actions %}{% set _ = parts.append(t('dx.card.more_actions')) %}{% endif %}
+  <details class="dx-more">
+    <summary><span class="visually-hidden">{{ item.name }}: </span>{{ parts|join(' · ') }}</summary>
+    <div class="dx-more__body">
+      {{ watch_chips(item) }}
+      {% if item.medicines %}
+      <div class="dx-treat">
+        <p class="dx-kicker">{{ t('dx.treat.heading') }}</p>
+        <ul class="dx-treat__list">
+          {% for m in item.medicines %}
+          <li><a href="{{ m.url }}">{{ m.name }}</a>{% if m.regimen %} <span class="dx-treat__how">{{ m.regimen }}</span>{% endif %} <span class="dx-pill" data-med-status="{{ m.status }}">{{ m.status_label }}</span></li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% endif %}
+      {% if status_actions %}
+      <div class="dx-card__actions">
+        {{ post_button(item.url ~ '/status', [('status', 'resolved')], t('dx.card.resolve'), item.name) }}
+        {{ post_button(item.url ~ '/status', [('status', 'outdated')], t('dx.card.outdate'), item.name) }}
+        <a class="secondary" href="{{ item.url }}/edit" aria-label="{{ t('dx.card.action_aria', action=t('dx.card.edit'), name=item.name) }}">{{ t('dx.card.edit') }}</a>
+      </div>
+      {% endif %}
+    </div>
+  </details>
   {% endif %}
-  {% if writable %}
+  {% if writable and provisional %}
   <div class="dx-card__actions">
-    {% if provisional %}
     <a class="primary" href="{{ item.url }}/edit">{{ t('dx.possible.confirmed') }}</a>
     {{ post_button(item.url ~ '/status', [('status', 'outdated')], t('dx.provisional.not_confirmed'), item.name) }}
-    {% else %}
-    {{ post_button(item.url ~ '/status', [('status', 'resolved')], t('dx.card.resolve'), item.name) }}
-    {{ post_button(item.url ~ '/status', [('status', 'outdated')], t('dx.card.outdate'), item.name) }}
-    <a class="secondary" href="{{ item.url }}/edit" aria-label="{{ t('dx.card.action_aria', action=t('dx.card.edit'), name=item.name) }}">{{ t('dx.card.edit') }}</a>
-    {% endif %}
   </div>
   {% endif %}
 </li>
@@ -184,7 +201,7 @@
 
 {#- A finished or outdated diagnosis, in one compact row. -#}
 {% macro past_row(item) -%}
-<li class="dx-past">
+<li class="dx-past" {{ filter_attrs(item) }}>
   <p class="dx-past__head">{{ code_chip(item.code) }} <a href="{{ item.url }}">{{ item.name }}</a></p>
   <p class="dx-past__meta">
     <span class="dx-pill" data-status="{{ item.status }}">{{ item.status_label }}</span>
@@ -199,16 +216,8 @@
 {% set possible_note = plural_t('dx.tile.note_possible', summary.possible) %}
 
 <section class="dx-head" aria-labelledby="dx-heading">
-  <div>
-    <h1 id="dx-heading">{{ t('dx.title') }}</h1>
-    <p class="dx-lead">{{ t('dx.lead') }}</p>
-  </div>
+  <h1 id="dx-heading">{{ t('dx.title') }}</h1>
   {% if writable %}<a class="primary dx-add" href="/diagnoses/new">{{ t('dx.add') }}</a>{% endif %}
-</section>
-
-{% if error %}<div class="alert error" role="alert">{{ error }}</div>{% endif %}
-{% if saved %}<div class="alert" role="status">{{ saved }}</div>{% endif %}
-
 <nav class="dx-tiles" aria-label="{{ t('dx.tile.label') }}">
   <a class="dx-tile dx-tile--current" href="#dx-current">
     <span class="dx-tile__count">{{ summary.active }}</span>
@@ -224,14 +233,45 @@
     <span class="dx-tile__label">{{ t('dx.tile.found') }}</span>
   </a>
 </nav>
+</section>
+
+{% if error %}<div class="alert error" role="alert">{{ error }}</div>{% endif %}
+{% if saved %}<div class="alert" role="status">{{ saved }}</div>{% endif %}
+
+{#- The filter and the sort work in the browser over the diagnoses already on
+    the page, so the bar stays hidden until diagnoses.js shows it. -#}
+{% if current or provisional or past %}
+<div class="dx-filter" role="search" data-dx-filter hidden
+     data-shown="{{ t('dx.filter.shown') }}">
+  <div class="dx-filter__field">
+    <label for="dx-filter-q">{{ t('dx.filter.label') }}</label>
+    <input id="dx-filter-q" type="search" autocomplete="off" placeholder="{{ t('dx.filter.placeholder') }}" aria-describedby="dx-filter-status">
+  </div>
+  <div class="dx-filter__field">
+    <label for="dx-filter-sort">{{ t('dx.filter.sort') }}</label>
+    <select id="dx-filter-sort">
+      <option value="newest">{{ t('dx.filter.newest') }}</option>
+      <option value="oldest">{{ t('dx.filter.oldest') }}</option>
+      <option value="name">{{ t('dx.filter.name') }}</option>
+    </select>
+  </div>
+  <p class="dx-filter__status" id="dx-filter-status" role="status" aria-live="polite"></p>
+  <p class="dx-empty" data-dx-filter-empty hidden>{{ t('dx.filter.empty') }}</p>
+</div>
+{% endif %}
 
 <section class="dx-section" id="dx-current" aria-labelledby="dx-current-heading">
   <h2 id="dx-current-heading">{{ t('dx.tile.current') }}</h2>
   <p class="dx-section__lead">{{ t('dx.current.lead') }}</p>
   {% if current %}
-  <ul class="dx-cards">
-    {% for item in current %}{{ diag_card(item) }}{% endfor %}
-  </ul>
+  {% for group in current_groups %}
+  <section class="dx-group" data-dx-group aria-labelledby="dx-group-{{ group.key }}">
+    <h3 class="dx-group__title" id="dx-group-{{ group.key }}">{{ group.title }} <span class="dx-group__count">{{ group['items']|length }}</span></h3>
+    <ul class="dx-cards" data-dx-sortable>
+      {% for item in group['items'] %}{{ diag_card(item) }}{% endfor %}
+    </ul>
+  </section>
+  {% endfor %}
   {% else %}
   <p class="dx-empty">{{ t('dx.current.empty') }}</p>
   {% endif %}
@@ -242,7 +282,7 @@
   <p class="dx-section__lead">{{ t('dx.possible.lead') }}</p>
   {% if provisional %}
   <p class="dx-kicker">{{ t('dx.provisional.label') }}</p>
-  <ul class="dx-cards">
+  <ul class="dx-cards" data-dx-sortable>
     {% for item in provisional %}{{ diag_card(item, true) }}{% endfor %}
   </ul>
   {% endif %}
@@ -325,7 +365,7 @@
 <details class="dx-disclosure" id="dx-past">
   <summary><h2 class="dx-disclosure__title">{{ t('dx.past.heading') }}</h2></summary>
   <div class="dx-disclosure__body">
-    <ul class="dx-past-list">
+    <ul class="dx-past-list" data-dx-sortable>
       {% for item in past %}{{ past_row(item) }}{% endfor %}
     </ul>
   </div>

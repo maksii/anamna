@@ -16,7 +16,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from anamna import ai, i18n
+from anamna import ai, diagnoses, i18n
 from anamna.db import connect, utc_now
 from anamna.ingest.pipeline import ensure_concept, ensure_vendor
 from anamna.security import create_access_token
@@ -559,3 +559,27 @@ def test_home_monitoring_pdfs_never_make_an_episode(tmp_path: Path):
     assert [e["value"] for e in view_for(settings, user_id)["episodes"]] == before
     # The upload's own view still answers "what did this file change".
     assert view_for(settings, user_id, document_id="doc-bp")["report"]
+
+
+def test_ai_summary_receives_the_recorded_diagnoses_with_their_dates(tmp_path: Path, monkeypatch):
+    """A 2018 blood count with a raised white cell count was summarised without the sialadenitis
+    recorded that same day, so the model could not name the cause the record already held."""
+    settings, user_id, client, _ = build_changes_fixture(tmp_path)
+    ai.save_ai_settings(settings, {"ai_api_key": "sk-test"})
+    stub = reply(SUMMARY)
+    monkeypatch.setattr(ai, "complete", stub)
+    with connect(settings) as connection:
+        patient = connection.execute("SELECT id FROM patients WHERE owner_user_id=?", (user_id,)).fetchone()[0]
+        diagnoses.create(connection, user_id, patient, {
+            "code": "K76.0", "name": "", "status": "active", "certainty": "confirmed",
+            "diagnosed_on": "2025-02-09", "resolved_on": None, "dates_approximate": 0,
+            "clinician": "", "document_id": None, "notes": "",
+        })
+
+    client.post("/changes/ai-summary", data={"csrf_token": csrf_for(settings, user_id)},
+                headers={"Accept": "application/json"})
+
+    sent = json.loads(stub.calls[0]["messages"][1]["content"])["factors"]
+    assert {"name": "Fatty (change of) liver, not elsewhere classified", "kind": "diagnosis", "code": "K76.0",
+            "status": "active", "certainty": "confirmed", "since": "2025-02", "until": None} in sent
+    assert "kind `diagnosis`" in stub.calls[0]["messages"][0]["content"]

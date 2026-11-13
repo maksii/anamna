@@ -507,6 +507,24 @@ def test_effect_by_a_concept_name_links_to_its_chart_and_free_text_does_not(worl
     assert f'href="/metrics/{LDL_ID}"' in page
 
 
+def test_an_effect_named_like_two_concepts_links_to_the_one_with_results(world, clients):
+    # «Лейкоцити» is the blood count's Ukrainian name and also a microbiology concept with no
+    # results; the lookup took the first by id and linked a chart nobody has.
+    with connect(world.settings) as connection:
+        connection.execute(
+            "INSERT INTO concepts(id, canonical_name, category, value_type, created_at) "
+            "VALUES ('0-same-name', 'Холестерин ЛПНЩ', 'microbiology', 'text', ?)",
+            (utc_now(),),
+        )
+        connection.commit()
+    owner = clients("alpha@example.test")
+    factor_id = factor_id_of(create_entry(world, owner))
+
+    act(world, owner, factor_id, action="effect_add", label="Холестерин ЛПНЩ", direction="raises", note="")
+
+    assert [effect["concept_id"] for effect in effects_of(world, factor_id)] == [LDL_ID]
+
+
 def test_effect_remove_takes_the_effect_off(world, clients):
     owner = clients("alpha@example.test")
     factor_id = factor_id_of(create_entry(world, owner))

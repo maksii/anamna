@@ -1563,7 +1563,7 @@ def _structured_review(
     for image in (images or [])[:max_images]:
         parts.append({
             "type": "image_url",
-            "image_url": {"url": "data:image/png;base64," + base64.b64encode(image).decode("ascii")},
+            "image_url": {"url": f"data:{image_media_type(image)};base64," + base64.b64encode(image).decode("ascii")},
         })
     content: str | list[dict] = parts if len(parts) > 1 else parts[0]["text"]
     result = complete(
@@ -1776,6 +1776,64 @@ def _single_document_review(function):
     return wrapped
 
 
+# What a page image is turned into before it goes to a provider.  Anthropic scales anything with a
+# long side over about 1568 px down before the model sees it, and OpenAI's high-detail mode fits the
+# image into 2048 px, so a long side of 2000 px is the most either uses: it keeps small print legible
+# and costs nothing the model would read.  A scan or a photo re-encoded as JPEG at quality 85 is many
+# times smaller than the PNG it was rendered to, with no loss a reader notices; an image already
+# small enough is sent as it is, so a crisp screenshot stays lossless.  Anthropic refuses an image
+# over 10 MB once base64 has grown it by a third: a vaccination card rendered to 14 and 16 MB PNGs
+# failed every review.  The byte ceiling keeps far below that, and the quality and size steps only
+# run for an image that stays above it.
+AI_IMAGE_MAX_SIDE = 2000
+AI_IMAGE_QUALITY = 85
+AI_IMAGE_MIN_QUALITY = 70
+AI_IMAGE_MAX_BYTES = 3_500_000
+_AI_IMAGE_MIN_SIDE = 600
+
+
+def image_media_type(image: bytes) -> str:
+    """The media type of an image the provider is sent, read from its first bytes."""
+    return "image/jpeg" if image[:3] == bytes((0xFF, 0xD8, 0xFF)) else "image/png"
+
+
+def prepare_image(image: bytes) -> bytes:
+    """A page image as a provider should receive it: at most AI_IMAGE_MAX_SIDE on its long side
+    and AI_IMAGE_MAX_BYTES in size, as JPEG unless the original already fits as it is.
+
+    An image that cannot be read comes back unchanged.
+    """
+    from io import BytesIO
+
+    from PIL import Image, UnidentifiedImageError
+
+    try:
+        opened = Image.open(BytesIO(image))
+        opened.load()
+    except (UnidentifiedImageError, OSError):
+        return image
+    if max(opened.size) <= AI_IMAGE_MAX_SIDE and len(image) <= AI_IMAGE_MAX_BYTES:
+        return image
+    page = opened.convert("RGB")
+    if max(page.size) > AI_IMAGE_MAX_SIDE:
+        page.thumbnail((AI_IMAGE_MAX_SIDE, AI_IMAGE_MAX_SIDE), Image.LANCZOS)
+
+    def encode(picture, quality: int) -> bytes:
+        buffer = BytesIO()
+        picture.save(buffer, format="JPEG", quality=quality, optimize=True, progressive=True)
+        return buffer.getvalue()
+
+    quality = AI_IMAGE_QUALITY
+    prepared = encode(page, quality)
+    while len(prepared) > AI_IMAGE_MAX_BYTES and quality > AI_IMAGE_MIN_QUALITY:
+        quality -= 5
+        prepared = encode(page, quality)
+    while len(prepared) > AI_IMAGE_MAX_BYTES and min(page.size) > _AI_IMAGE_MIN_SIDE:
+        page = page.resize((int(page.width * 0.85), int(page.height * 0.85)), Image.LANCZOS)
+        prepared = encode(page, quality)
+    return prepared
+
+
 @_single_document_review
 def document_hints(
     settings: Settings,
@@ -1795,6 +1853,7 @@ def document_hints(
     IDs and page numbers are validated against this document.
     """
     limits = review_limits(settings)
+    images = [prepare_image(image) for image in images or []]
     review = _review_input(document, pages, observations, immunizations or [], images, limits, locale)
     extracted, doses = review.extracted, review.doses
     transcribe = bool(limits["paid"])

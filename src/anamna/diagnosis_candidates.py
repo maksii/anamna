@@ -1,14 +1,19 @@
 """Diagnoses a person's documents name, read without a model.
 
-A consultation's diagnosis text (``summary_uk``) and the coded lines of its
-text («Код МКХ Х: K11.2») print codes the document itself wrote.  The codes
-are checked against the catalogue; a code in the diagnosis text must also
+A consultation's diagnosis text (``summary_uk``), the lines of the document's
+own text that start with a code («I11.9 - Гіпертензивна хвороба») and its
+coded lines («Код МКХ Х: K11.2») print codes the document itself wrote.  The
+codes are checked against the catalogue; a code followed by a name must also
 share a word stem with its catalogue title, so an ICPC-2 reason-for-encounter
 code is not taken for a diagnosis.  The conclusion of a consultation or of a
 study (MRI, ultrasound, X-ray, ECG, pathology) is read statement by statement,
 word for word, into candidates without a code (method 'text'), unless the AI
-reader has read the document.  Candidates wait for the person: accepting one
-makes a diagnosis, dismissing one hides it.  Nothing here calls an AI.
+reader has read the document.  Those statements come only from the parts of
+the document's own text under a conclusion or diagnosis heading: the summary
+was written for the page, and read word for word it offered study titles,
+measurements, prescriptions and its own remarks as diagnoses.  Candidates wait
+for the person: accepting one makes a diagnosis, dismissing one hides it.
+Nothing here calls an AI.
 """
 
 from __future__ import annotations
@@ -23,7 +28,7 @@ from . import diagnoses, icd10
 from .db import utc_now
 
 # Raise when the reading rules change: the job's fingerprint holds it, so every record is read again.
-READER_VERSION = 2
+READER_VERSION = 3
 
 # A code is a letter, two digits and an optional decimal part.  Cyrillic
 # look-alikes are allowed; icd10.normalize folds them to Latin.
@@ -31,8 +36,42 @@ _CODE = r"[A-ZАВЕІКМНОРСТХ][0-9]{2}(?:[.,][0-9]{1,2})?"
 _CODE_IN_TEXT = re.compile(rf"(?<![^\W_])({_CODE})(?![^\W_])", re.IGNORECASE)
 _CODE_START = re.compile(rf"{_CODE}(?![^\W_])", re.IGNORECASE)
 _RANGE = re.compile(rf"{_CODE}\s*[-–]\s*{_CODE}", re.IGNORECASE)
-_LABEL = r"(?:Основний|Супутній|Клінічний діагноз)\s*:\s*"
+_LABEL = r"(?:(?:Основний|Супутній)(?:\s+діагноз)?|(?:Клінічний|Попередній|Заключний)\s+діагноз|Діагноз)\s*:\s*"
 _PIECE = re.compile(rf"^(?:{_LABEL})?({_CODE})(?![^\W_])(.*)$", re.IGNORECASE | re.DOTALL)
+# A summary that runs two diagnoses into one line («E09.9 … преддіабет? Клінічний діагноз: I11.9 …»)
+# is cut before the second label, so the first name does not swallow the second diagnosis.
+_INNER_LABEL = re.compile(r"\s+(?=(?:Клінічний|Попередній|Заключний|Основний|Супутній)\s+діагноз\s*:)", re.IGNORECASE)
+# The headings a doctor writes the conclusion or the diagnosis under.  The heading ends the line or
+# is followed by a colon, so «Висновок не є остаточним діагнозом» is not one.
+_HEADING = re.compile(
+    r"^(?:(?:клінічний|попередній|основний|супутній|заключний)\s+діагноз|діагноз|гістологічний\s+висновок|"
+    r"висновок|заключення|уз[- ]?ознаки|основний|супутній)\s*(?::|$)\s*",
+    re.IGNORECASE,
+)
+# A line that opens another part of the report ends the conclusion: a recommendation, a signature,
+# the next numbered part of a form, or any short label with a colon («Клінічні дані:»).
+_SECTION_END = re.compile(
+    r"^(?:[0-9]{1,2}\.\s*)?(?:рекоменд|призначен|план(?![^\W_])|до\s+відома|до\s+уваги|результат|дата(?![^\W_])|"
+    r"лікар|підпис|консультац|повторн|опис(?![^\W_])|короткий\s+анамнез|анамнез|скарги|огляд|обстеження|"
+    r"своїм|лабораторн|дані\s+лабораторн|сторінка|пацієнт|рентгенолаборант|медична\s+сестра|зображень)",
+    re.IGNORECASE,
+)
+_FIELD = re.compile(r"^[^\W\d_]+(?:[\s-]+[^\W\d_]+){0,3}\s*:")
+_BULLET = re.compile(r"^[-–—•*]+\s*")
+# A diagnosis written as its abbreviation alone («СПК», «ГЕРХ») has no long word, yet is one.
+_ABBREVIATION = re.compile(r"[А-ЯІЇЄҐ]{2,6}")
+# A label in front of a statement is not part of the condition's name («Супутній: Комбінований геморой»).
+_LEAD_LABEL = re.compile(
+    r"^(?:(?:основний|супутній|клінічний|попередній|заключний)\s+діагноз|діагноз(?:\s+попередній)?|"
+    r"висновок(?:\s+спеціаліста)?|заключення(?:\s+лікаря)?|основний|супутній|ds)\s*:\s*",
+    re.IGNORECASE,
+)
+# OCR reads a Cyrillic letter as its Latin twin («BMK» for «ВМК»); both sides are folded before a check.
+_LOOKALIKE = str.maketrans("ABCEHIKMOPTXaceiopxy", "АВСЕНІКМОРТХасеіорху")
+# A document whose pages carry at least this much native text is read from its own words; below it
+# the words are OCR, which garbles a conclusion, and the summary is the cleaner text.  The same
+# threshold decides in health._page_text whether OCR is added to a page.
+NATIVE_TEXT_CHARS = 400
 _CODED_LABEL = re.compile(r"(?:Код\s+)?МКХ(?:-10|\s?10|\s[ХX])?\s*:", re.IGNORECASE)
 _ISO_DAY = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 _WORD = re.compile(r"[^\W\d_]+")
@@ -54,6 +93,9 @@ _NOT_A_CONDITION = (
     "рекоменд", "необхідн", "доцільн", "показан", "контроль", "повторн", "консультація", "скарги",
     "огляд", "анамнез", "бакпосів", "копрограма", "антимікотикограма", "антибіотикограма",
     "чутливість до", "автоматична ідентифікація", "recommend", "follow-up", "follow up",
+    "досліджуваний матеріал", "призначен", "лікування", "щеплення", "патологоанатом", "файл містить",
+    "у висновку", "в описі", "додатковий коментар", "аналіз ", "цитологія", "дії:", "хворіє", "на прийомі",
+    "планується", "ступень", "квр ",
 )
 # A statement that carries a date refers to a study («Копрограма від 18.05.2026»), it does not name a condition.
 _DATED = re.compile(r"(?<![0-9])[0-9]{1,2}\.[0-9]{2}\.[0-9]{4}(?![0-9])")
@@ -100,11 +142,19 @@ def parse_summary(text: str) -> list[dict]:
     written name must share a stem with the catalogue's Ukrainian title of the code or of its
     category.  Stem = the first 5 letters (casefold) of any word of 5 letters or more.
     certainty 'provisional' when the piece holds '?', else 'confirmed'.  name is cut to 200.
-    quote is the piece as written, cut to 400."""
+    quote is the piece as written, cut to 400.  A piece is also cut before a second diagnosis label
+    inside it («… преддіабет? Клінічний діагноз: I11.9 …»)."""
     if text.lstrip().startswith("Скарги"):
         return []
+    return coded_lines(text)
+
+
+def coded_lines(text: str) -> list[dict]:
+    """``parse_summary`` without the complaints guard: the pieces of any text that start with a
+    code and a name, such as the diagnosis lines of a document («I11.9 - Гіпертензивна …»)."""
     items: list[dict] = []
-    for raw_piece in re.split(r"[;\r\n]+", text):
+    pieces = (part for raw in re.split(r"[;\r\n]+", text or "") for part in _INNER_LABEL.split(raw))
+    for raw_piece in pieces:
         piece = raw_piece.strip()
         match = _PIECE.match(piece)
         if match is None:
@@ -157,6 +207,36 @@ def _cut(name: str) -> str:
     return name[:stop].rstrip() + "…"
 
 
+def conclusion_text(text: str) -> str:
+    """The parts of a document's text under a conclusion or diagnosis heading, '' when it has none.
+
+    A part runs from its heading to the next heading, to a line that opens another part of the
+    report (``_SECTION_END``) or to a short label with a colon.  A wrapped line that goes on in a
+    small letter or a bracket is joined to the line before it, so a statement cut by the page width
+    stays one statement; a line that starts with a capital or a bullet starts a new one.
+    """
+    lines: list[str] = []
+    inside = False
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        heading = _HEADING.match(line)
+        if heading:
+            inside = True
+            line = line[heading.end():].strip()
+            if lines and lines[-1]:
+                lines.append("")
+        elif inside and (_SECTION_END.match(line) or _FIELD.match(line)):
+            inside = False
+            continue
+        if not inside or not line:
+            continue
+        if lines and lines[-1] and (line[0].islower() or line[0] in "(,;"):
+            lines[-1] = f"{lines[-1]} {line}"
+        else:
+            lines.append(line)
+    return "\n".join(line for line in lines if line)
+
+
 def parse_conclusion(text: str, skip_codes: Collection[str] = ()) -> list[dict]:
     """The statements of a document's conclusion that read as a condition, word for word.
 
@@ -176,13 +256,16 @@ def parse_conclusion(text: str, skip_codes: Collection[str] = ()) -> list[dict]:
     seen: set[str] = set()
     for raw_piece in re.split(r"[;\r\n]+", text):
         piece = raw_piece.strip()
-        if _PIECE.match(piece):
+        coded = _PIECE.match(piece)
+        # The code reader owns a piece whose code the catalogue knows; a code it does not know
+        # (an ICD-10-AM or ICD-10-CM extension) is offered here, as written.
+        if coded and icd10.entry(icd10.normalize(coded.group(1))) is not None:
             continue
         for statement in _SENTENCE_END.split(piece):
-            sentence = _ON_EXAM.sub("", _LIST_NUMBER.sub("", statement.strip()))
+            sentence = _ON_EXAM.sub("", _LEAD_LABEL.sub("", _LIST_NUMBER.sub("", _BULLET.sub("", statement.strip()))))
             provisional = "?" in sentence
             name = sentence.rstrip(" .;,?!").strip()
-            if not _stems(name) or _NOTHING_FOUND.search(name):
+            if not (_stems(name) or _ABBREVIATION.fullmatch(name)) or _NOTHING_FOUND.search(name):
                 continue
             if _AS_USUAL.search(name):
                 continue
@@ -207,6 +290,18 @@ def parse_conclusion(text: str, skip_codes: Collection[str] = ()) -> list[dict]:
 
 def _fold(name: str) -> str:
     return " ".join(name.casefold().split())
+
+
+def _plain(text: str) -> str:
+    """Text folded for a containment check: look-alike letters, case, apostrophes and spacing."""
+    text = text.translate(_LOOKALIKE).casefold().replace("’", "'").replace("ʼ", "'")
+    return " ".join(text.split())
+
+
+def in_document(name: str, document_text: str) -> bool:
+    """Whether the document's own text says ``name``, as ``_plain`` folds both."""
+    plain = _plain(name)
+    return bool(plain) and plain in document_text
 
 
 def key_of(code: str, name_key: str) -> str:
@@ -276,7 +371,9 @@ def collect(connection: sqlite3.Connection, owner_id: str) -> int:
     )
     rows = connection.execute(
         """SELECT f.document_id, f.summary_uk, f.summary_en, f.original_text, d.report_date,
-                  EXISTS(SELECT 1 FROM diagnosis_scans s WHERE s.document_id = d.id) AS ai_read
+                  EXISTS(SELECT 1 FROM diagnosis_scans s WHERE s.document_id = d.id) AS ai_read,
+                  (SELECT COALESCE(SUM(LENGTH(TRIM(p.native_text))), 0) FROM document_pages p
+                    WHERE p.document_id = d.id) AS native_chars
              FROM clinical_findings f
              JOIN documents d ON d.id = f.document_id
             WHERE f.owner_user_id = ?
@@ -292,19 +389,29 @@ def collect(connection: sqlite3.Connection, owner_id: str) -> int:
     for document_id, findings in by_document.items():
         event_date, date_exact = _day(findings[0]["report_date"])
         summaries = [row["summary_uk"] or row["summary_en"] or "" for row in findings]
+        texts = list(dict.fromkeys(row["original_text"] or "" for row in findings))
         coded: list[dict] = []
-        for row, summary in zip(findings, summaries):
-            coded.extend(parse_summary(summary) + parse_coded_line(row["original_text"] or ""))
+        for summary in summaries:
+            coded.extend(parse_summary(summary))
+        for text in texts:
+            coded.extend(coded_lines(text) + parse_coded_line(text))
         for item in coded:
             state = "dismissed" if key_of(item["code"], _fold(item["name"])) in dismissed else "new"
             inserted += _insert(connection, owner_id, document_id, "code", item, event_date, date_exact, state, now)
         if findings[0]["ai_read"]:
             continue
         skip_codes = {item["code"] for item in coded}
-        for summary in summaries:
-            for item in parse_conclusion(summary, skip_codes):
-                state = "dismissed" if key_of("", _fold(item["name"])) in dismissed else "new"
-                inserted += _insert(connection, owner_id, document_id, "text", item, event_date, date_exact, state, now)
+        statements = [item for summary in summaries for item in parse_conclusion(summary, skip_codes)]
+        if findings[0]["native_chars"] >= NATIVE_TEXT_CHARS:
+            # The summary was written for the page: a statement of it is offered only when the
+            # document's own text says it too.  The document's own conclusion is offered as written.
+            document_text = _plain("\n".join(texts))
+            statements = [item for item in statements if in_document(item["name"], document_text)]
+            for text in texts:
+                statements.extend(parse_conclusion(conclusion_text(text), skip_codes))
+        for item in statements:
+            state = "dismissed" if key_of("", _fold(item["name"])) in dismissed else "new"
+            inserted += _insert(connection, owner_id, document_id, "text", item, event_date, date_exact, state, now)
     return inserted
 
 

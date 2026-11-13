@@ -25,7 +25,7 @@ from urllib.parse import urlencode
 from fastapi import Form, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 
-from .. import ai, factors
+from .. import ai, diagnoses, factors
 from ..db import connect, utc_now
 from ..i18n import (
     EN_MONTHS_SHORT,
@@ -607,7 +607,10 @@ def build_changes(
     # The AI state is "where do I stand now": the latest episode or one document.
     scope = _ai_scope(document_id, focus, kind)
     payload = ai_payload([report]) if report and scope else []
-    factor_items = factors_payload(connection, owner_user_id, today=date.today()) if payload else []
+    factor_items = (
+        factors_payload(connection, owner_user_id, today=date.today()) + diagnoses_payload(connection, owner_user_id)
+        if payload else []
+    )
     return {
         "groups": [report] if report else [],
         "report": report,
@@ -899,6 +902,7 @@ def ai_payload(groups: list[dict]) -> list[dict]:
 #: Medicines and other factors sent with a change summary: the current ones, and those that started or ended within this many months.
 FACTOR_WINDOW_MONTHS = 18
 FACTOR_LIMIT = 20
+DIAGNOSIS_LIMIT = 40
 
 
 def _months_before(day: date, months: int) -> date:
@@ -949,6 +953,26 @@ def factors_payload(connection, owner_user_id: str, *, today: date) -> list[dict
             item["how_taken"] = how_taken
         payload.append(item)
     return payload
+
+
+def diagnoses_payload(connection, owner_user_id: str) -> list[dict]:
+    """The recorded diagnoses, as items of kind ``diagnosis`` beside the factors.
+
+    All of them, active and over: the summary of a 2018 report must see what was diagnosed
+    in 2018.  The model is told to connect a result only to a diagnosis whose dates cover it.
+    """
+    return [
+        {
+            "name": diagnoses.display_name(row, "en"),
+            "kind": "diagnosis",
+            "code": row["code"],
+            "status": row["status"],
+            "certainty": row["certainty"],
+            "since": _year_month(row["diagnosed_on"]),
+            "until": _year_month(row["resolved_on"]),
+        }
+        for row in diagnoses.listing(connection, owner_user_id)[:DIAGNOSIS_LIMIT]
+    ]
 
 
 def fingerprint(payload) -> str:
@@ -1132,6 +1156,11 @@ def messages_for(payload: list[dict], locale: str, factor_items=()) -> list[dict
         "change. When a change in a result follows the start, the stop or a change of one of them, or "
         "one of them is known to move that result, say so in `possible_reasons` and name it. Do not "
         "blame a factor the data does not connect to the result.\n"
+        "- Items of `factors` with kind `diagnosis` are the person's recorded diagnoses, with the month "
+        "each was made and, when it is over, resolved. When a result fits one whose dates cover the result "
+        "(for example raised liver enzymes with a recorded fatty liver, a raised white cell count during a "
+        "recorded infection), say so in `possible_reasons` and name it. A diagnosis made after the result, "
+        "or resolved before it, cannot explain it.\n"
         "- `findings`: up to five results that are new, still or newly outside range, most "
         "important first; skip stable and improved ones. `improved`: up to four short items that "
         "resolved or moved towards range. `state`: two or three sentences on the overall picture: "

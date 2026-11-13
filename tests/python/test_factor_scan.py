@@ -579,3 +579,11 @@ def test_budget_error_on_the_first_document_still_ends_the_scan(tmp_path: Path, 
         factor_scan.scan(settings, functools.partial(connect, settings), "u1", locale="uk")
     assert stopped.value.reason == "budget"
     assert not isinstance(stopped.value, factor_scan.UnreadableReply)
+
+
+def test_the_prompt_leaves_out_a_fever_contingency_and_the_care_around_an_operation():
+    # Read from five vaccination notes and two pre-operative notes, these came back as medicines,
+    # diets and procedures the person never took or underwent.
+    assert "antipyretic in case of a fever after a vaccination" in factor_scan.SYSTEM
+    assert "as needed for a complaint the person has" in factor_scan.SYSTEM
+    assert "preparation for an operation or its anaesthesia" in factor_scan.SYSTEM
