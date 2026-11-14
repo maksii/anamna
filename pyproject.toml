@@ -35,7 +35,7 @@ dependencies = [
   # exists at the same price and value (checked by brute force; it happens only
   # with a MIP start under full presolve). test_every_mode_equals_brute_force
   # fails on it; lift the cap once that test passes on a newer release.
-  "highspy>=1.15.1,<1.16",
+  "highspy>=1.15.1,<1.17",
 ]
 
 [project.optional-dependencies]
