@@ -131,7 +131,8 @@ def _excluded_calculation(connection):
     return excluded
 
 
-def _wanted(connection):
+def _wanted(connection, owner_user_id=None):
+    scope = (owner_user_id, owner_user_id)
     patients = {str(row["id"]): dict(row) for row in connection.execute("SELECT * FROM patients")}
     preferences = defaultdict(dict)
     for row in connection.execute("SELECT owner_user_id, preference_group, source_key FROM device_source_preferences"):
@@ -140,7 +141,8 @@ def _wanted(connection):
     device = [dict(row) for row in connection.execute(
         """SELECT m.* FROM device_metric_days m JOIN device_imports i ON i.id=m.import_id
            AND i.owner_user_id=m.owner_user_id AND i.patient_id=m.patient_id
-           WHERE m.metric_key IN ('body_weight', 'body_height', 'body_mass_index')"""
+           WHERE m.metric_key IN ('body_weight', 'body_height', 'body_mass_index')
+             AND (? IS NULL OR m.owner_user_id=?)""", scope
     )]
     printed = {
         (str(row["owner_user_id"]), str(row["patient_id"]), str(row["day"]))
@@ -157,11 +159,12 @@ def _wanted(connection):
                LEFT JOIN reports r ON r.id=o.report_id
                LEFT JOIN documents rd ON rd.id=r.document_id
                WHERE o.concept_id='body-mass-index' AND o.verification_status<>'rejected'
+                 AND (? IS NULL OR o.owner_user_id=?)
                  AND (substr(o.extraction_method, 1, 8)<>'derived_' OR o.extraction_method='derived_bmi')
                  AND (o.document_id IS NULL OR (d.owner_user_id=o.owner_user_id AND d.patient_id=o.patient_id))
                  AND (o.report_id IS NULL OR (r.owner_user_id=o.owner_user_id AND r.patient_id=o.patient_id
                       AND rd.owner_user_id=o.owner_user_id AND rd.patient_id=o.patient_id
-                      AND (o.document_id IS NULL OR r.document_id=o.document_id)))"""
+                      AND (o.document_id IS NULL OR r.document_id=o.document_id)))""", scope
         )
     )
     weights, device_heights = defaultdict(list), defaultdict(list)
@@ -187,14 +190,14 @@ def _wanted(connection):
            LEFT JOIN documents d ON d.id=o.document_id
            LEFT JOIN reports r ON r.id=o.report_id
            LEFT JOIN documents rd ON rd.id=r.document_id
-           WHERE o.concept_id='body-height'
+           WHERE o.concept_id='body-height' AND (? IS NULL OR o.owner_user_id=?)
            AND o.verification_status IN ('verified', 'corrected') AND o.value_numeric IS NOT NULL
            AND COALESCE(o.comparator, '')='' AND substr(o.extraction_method, 1, 8)<>'derived_'
            AND TRIM(COALESCE(NULLIF(o.report_id, ''), o.document_id, '')) <> ''
            AND (o.document_id IS NULL OR (d.owner_user_id=o.owner_user_id AND d.patient_id=o.patient_id))
            AND (o.report_id IS NULL OR (r.owner_user_id=o.owner_user_id AND r.patient_id=o.patient_id
                 AND rd.owner_user_id=o.owner_user_id AND rd.patient_id=o.patient_id
-                AND (o.document_id IS NULL OR r.document_id=o.document_id)))"""
+                AND (o.document_id IS NULL OR r.document_id=o.document_id)))""", scope
     ):
         height = _height_cm(row["value_numeric"], row["unit_raw"])
         height_day = _day(row["observed_at"], timestamp=True)
@@ -235,16 +238,20 @@ def _wanted(connection):
     return {key: item for key, item in wanted.items() if counts[(item[0][0], item[0][8])] == 1}
 
 
-def refresh_device_calculations(connection: sqlite3.Connection) -> dict[str, int]:
-    """Reconcile fallback BMI and dependency rows without committing the caller's transaction."""
+def refresh_device_calculations(connection: sqlite3.Connection, owner_user_id: str | None = None) -> dict[str, int]:
+    """Reconcile fallback BMI and dependency rows without committing the caller's transaction.
+
+    ``owner_user_id`` limits the work to one account's record; without it every record is reconciled.
+    """
     counts = {"added": 0, "updated": 0, "removed": 0}
     changed_owners = set()
     # Read-only tools can still open backups predating the provenance table.
     if not connection.execute("SELECT 1 FROM sqlite_master WHERE name='device_calculation_inputs'").fetchone():
         return counts
-    wanted = _wanted(connection)
+    wanted = _wanted(connection, owner_user_id)
     existing = {str(row["id"]): row for row in connection.execute(
-        "SELECT * FROM device_metric_days WHERE substr(id, 1, ?)=?", (len(BMI_ID_PREFIX), BMI_ID_PREFIX)
+        "SELECT * FROM device_metric_days WHERE substr(id, 1, ?)=? AND (? IS NULL OR owner_user_id=?)",
+        (len(BMI_ID_PREFIX), BMI_ID_PREFIX, owner_user_id, owner_user_id),
     )}
     # Remove obsolete selected-source rows first, since the natural key must
     # be free before the newly selected weight's calculation is inserted.

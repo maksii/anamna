@@ -95,3 +95,43 @@ def test_the_extensions_rebuild_the_published_library_from_the_previous_release(
         pytest.skip("the rebuild is defined against the 2026-08-07 release")
     review["extend_all"](library)
     assert json.dumps(library, ensure_ascii=False, indent=2) + "\n" == LIBRARY.read_text(encoding="utf-8")
+
+
+def test_an_analyte_without_a_ukrainian_source_says_what_was_searched():
+    searched = [entry for entry in _library()["analytes"] if "ua_search" in entry]
+    assert searched
+    for entry in searched:
+        record = entry["ua_search"]
+        assert "UA" not in entry["regions_covered"], entry["concept_id"]
+        assert record["result"] == "none_found" and record["searched_at"] == review["SEARCHED_AT"]
+        assert record["queries"] and all(query.strip() for query in record["queries"]), entry["concept_id"]
+        assert record["sites"], entry["concept_id"]
+        assert review["NOT_FOUND"] in entry["jurisdiction_note"], entry["concept_id"]
+        assert review["NOT_FOUND_UK"] in entry["uk"]["jurisdiction_note"], entry["concept_id"]
+        # Appended once, however often the extension runs.
+        assert entry["jurisdiction_note"].count(review["NOT_FOUND"]) == 1
+        assert entry["uk"]["jurisdiction_note"].count(review["NOT_FOUND_UK"]) == 1
+    for concept_ids, _queries, _sites, vendor in review["UA_SEARCHES"]:
+        for concept_id in concept_ids:
+            entry = next(item for item in searched if item["concept_id"] == concept_id)
+            assert (review["VENDOR"] in entry["jurisdiction_note"]) is vendor
+            assert (review["VENDOR_UK"] in entry["uk"]["jurisdiction_note"]) is vendor
+
+
+def test_every_analyte_this_release_added_cites_ukraine_or_records_the_search():
+    shown = subprocess.run(["git", "show", "origin/main:data/reference_library.json"],
+                           cwd=ROOT, capture_output=True)
+    if shown.returncode:
+        pytest.skip("origin/main is not available in this checkout")
+    previous = json.loads(shown.stdout.decode("utf-8"))
+    if previous["version"] != "2026-08-07":
+        pytest.skip("the additions are defined against the 2026-08-07 release")
+    before = {entry["concept_id"] for entry in previous["analytes"]}
+    # The scripts' own additions: what the pipeline adds to the previous release.
+    review["extend_all"](previous)
+    added = [entry for entry in previous["analytes"] if entry["concept_id"] not in before]
+    published = {entry["concept_id"]: entry for entry in _library()["analytes"]}
+    assert len(added) == 90
+    for entry in added:
+        current = published[entry["concept_id"]]
+        assert "UA" in current["regions_covered"] or current.get("ua_search"), entry["concept_id"]

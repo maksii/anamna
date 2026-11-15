@@ -2378,7 +2378,11 @@ def _trend(
     previous: float | None,
     unit: str | None,
     previous_date: str | None,
+    also: list[str] | None = None,
 ) -> dict[str, object] | None:
+    """``also`` holds the other results of the day compared with: two documents
+    can report one analyte on one day, and the sentence names the one it did
+    not use instead of passing one of them off as the day's only result."""
     if current is None or previous is None:
         return None
     delta = float(current) - float(previous)
@@ -2392,7 +2396,10 @@ def _trend(
     return {
         "direction": direction,
         "delta_text": f"{text} {unit}".strip() if unit else text,
-        "since_text": t("panel.delta_since", date=format_date(previous_date)),
+        "since_text": (
+            t("panel.delta_since_also", date=format_date(previous_date), also=", ".join(also))
+            if also else t("panel.delta_since", date=format_date(previous_date))
+        ),
         "meaningful": meaningful,
     }
 
@@ -2568,11 +2575,13 @@ def _lab_card(
     unit_source, verdict = _reading_verdict(connection, concept_id, latest, age, sex)
     unit = display_unit(unit_source)
 
-    # The series is in the unit of the newest result that can be plotted, not
-    # of the newest result: a mislabelled or a text result on top («хв» for a
-    # rate, "negative") once emptied a series of good numbers.
+    # The series is in the unit of the newest number, the rule the detail
+    # chart follows (`_chart_payload`), so the card and the chart always draw
+    # the same points.  A text result on top ("negative") does not empty a
+    # series of earlier numbers, and a number in a unit that cannot be
+    # converted carries its own unit instead of vanishing.
     plottable = [row for row in _latest_context_rows(daily) if row["value_numeric"] is not None and not row.get("is_profile")
-                 and not _comparator_of(row) and not row.get("unit_mismatch")]
+                 and not _comparator_of(row)]
     numeric_days = [row for row in plottable
                     if canonical_unit(_row_display_unit(row)) == canonical_unit(_row_display_unit(plottable[0]))]
     trend = None
@@ -2582,6 +2591,11 @@ def _lab_card(
             float(numeric_days[1]["value_numeric"]),
             unit,
             str(numeric_days[1]["observed_at"] or ""),
+            also=[
+                format_quantity(row["value_numeric"], unit) for row in numeric_days[2:]
+                if str(row["observed_at"] or "")[:10] == str(numeric_days[1]["observed_at"] or "")[:10]
+                and row["observed_at"] and row["value_numeric"] != numeric_days[1]["value_numeric"]
+            ],
         )
 
     entry = guidance_index.get(concept_id) or {}
@@ -6231,17 +6245,24 @@ async def derived_values(request: Request, call_next):
     changed their inputs -- a corrected creatinine, a verification, a new
     date of birth.  One hook here rather than one per route, so a route
     added later cannot leave a stale eGFR behind; it writes only when a
-    value actually moved."""
+    value actually moved.
+
+    A request writes to the record of the account that made it (a viewer of
+    a shared record cannot change it), so only that record is recalculated.
+    An administrator's request can reach any account, and gets them all."""
     settings = request.app.state.settings
     response = await call_next(request)
+    user = getattr(request.state, "anamna_user", None)
     if (
         request.method not in {"GET", "HEAD", "OPTIONS"}
         and response.status_code < 400
-        and getattr(request.state, "anamna_user", None)
+        and user
     ):
+        owner = None if request.url.path.startswith("/admin") else str(user["id"])
+
         def refresh() -> None:
             with connect(settings) as connection:
-                if any(refresh_derived_observations(connection).values()):
+                if any(refresh_derived_observations(connection, owner_user_id=owner).values()):
                     connection.commit()
                     invalidate_catalog()
 

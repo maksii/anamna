@@ -3018,6 +3018,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "uk": "Нічого з цієї панелі ще не імпортовано. Завантажте результати з цими показниками, і панель заповниться.",
     },
     "panel.delta_since": {"en": "vs {date}", "uk": "порівняно з {date}"},
+    "panel.delta_since_also": {
+        "en": "vs {date} ({also} also reported that day)",
+        "uk": "порівняно з {date} (того ж дня також отримано {also})",
+    },
     "panel.delta_first": {"en": "First recorded result", "uk": "Перший результат у картці"},
     "panel.trend_up": {"en": "Higher than the previous result", "uk": "Вище за попередній результат"},
     "panel.trend_down": {"en": "Lower than the previous result", "uk": "Нижче за попередній результат"},
@@ -7740,8 +7744,8 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
     "exclusions.why_summary": {"en": "Why did my values change?", "uk": "Чому змінилися мої значення?"},
     "exclusions.why_body": {
-        "en": "Daily values are rebuilt from the original readings without the excluded ones. A day's weight becomes your own last weigh-in of that day, an average or total is recalculated without the removed readings, and a day that had only excluded readings disappears from charts. The originals are kept, so nothing is lost.",
-        "uk": "Денні значення перебудовуються з оригінальних вимірювань без виключених. Вага за день стає вашим останнім зважуванням того дня, середнє чи сума перераховуються без прибраних вимірювань, а день, де були лише виключені вимірювання, зникає з графіків. Оригінали зберігаються, тож нічого не втрачено.",
+        "en": "Daily values are rebuilt from the original readings without the excluded ones. A day's weight becomes your own last weigh-in of that day, an average or total is recalculated without the removed readings, and a day that had only excluded readings disappears from charts. The originals are kept, so nothing is lost. If the original export file is no longer stored, a day cannot be rebuilt: that device's whole day is left out instead, and Undo puts it back.",
+        "uk": "Денні значення перебудовуються з оригінальних вимірювань без виключених. Вага за день стає вашим останнім зважуванням того дня, середнє чи сума перераховуються без прибраних вимірювань, а день, де були лише виключені вимірювання, зникає з графіків. Оригінали зберігаються, тож нічого не втрачено. Якщо файл оригінального експорту більше не зберігається, день неможливо перебудувати: тоді весь день цього пристрою прибирається, а «Скасувати» повертає його.",
     },
     "exclusions.scopes_body": {
         "en": "One reading: everything recorded at one moment. A period: chosen measurements of one source between two times. A device: everything one app on one device recorded.",

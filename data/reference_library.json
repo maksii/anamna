@@ -3512,6 +3512,18 @@
       "access_note": "Full text of the standard read from the harvested dec.gov.ua PDF (text extraction). It does not define S/I/R and sets no breakpoints. What it does establish: розділ ІІ п. 15 — «попередньо призначену антибіотикотерапію необхідно відкоригувати упродовж перших 12 годин, відповідно до встановленої чутливості мікроорганізмів до антибактеріального препарату. Якщо збудник бактеріальної інфекційної хвороби має чутливість до більш ніж одного МНН, лікуючий лікар призначає антибактеріальний препарат ... який належить до групи AWaRe WHO з нижчим рівнем ризику розвитку АМР (тобто доступу>спостереження>резерву)»; п. 13 — treatment of commensals that colonise the body without signs of infection «заборонено»; п. 14 — «Персистенція бактерій в кількості (10²-10³ КУО/мл) в нестерильному локусі або виділення із нестерильного локусу нового мікроорганізму без клінічних симптомів інфекційного захворювання у пацієнта не може бути обґрунтуванням для початку, продовження або корекції антибіотикотерапії». Додаток 3 lists every antibacterial in the WHO AWaRe 2021 groups доступу (A), спостереження (B), резерву (C). Drug-specific lines quoted in each analyte's jurisdiction_note. Note: in the extracted Додаток 3, цефтриаксон appears only under резерв (C) and левофлоксацин under резерв, which disagrees with WHO AWaRe 2021 (both Watch); this library therefore does not quote an AWaRe group for ceftriaxone. The standard states it was developed «на виконання наказу ... від 03 серпня 2021 року № 1614»."
     },
     {
+      "id": "moz-nakaz-152-2024-mma-pa",
+      "region": "UA",
+      "publisher": "Міністерство охорони здоров'я України",
+      "name": "Стандарт медичної допомоги «Діагностика та лікування метилмалонової та пропіонової ацидемій»",
+      "url": "https://moz.gov.ua/uploads/10/53105-dn_152_30012024_dod.pdf",
+      "identifier": "Наказ МОЗ України від 30.01.2024 № 152",
+      "reviewed_at": "2026-11-15",
+      "official": true,
+      "kind": "standard",
+      "access_note": "PDF read in Ukrainian. Annex 2: measuring amino acids in plasma shows a raised glycine level in methylmalonic and propionic acidaemia. Annex 5: quantitative plasma amino acids every 3 to 6 months, sampled after a 3 to 4 hour fast. The diet lowers the intake of the precursor amino acids methionine, threonine, valine and isoleucine. No interval is given. The PDF leaves the date and number blank; they are taken from the Ministry's page for the order."
+    },
+    {
       "id": "moz-nakaz-1635-2022",
       "region": "UA",
       "publisher": "Міністерство охорони здоров’я України / ДП «Державний експертний центр МОЗ України»",
@@ -3594,6 +3606,18 @@
       "official": true,
       "kind": "clinical_protocol",
       "note": "Розділ «Лабораторна діагностика» (таблиця 2, рядок «Норма») подає числові норми коагулограми: час згортання за Лі-Уайтом 6–9 хв, АЧТЧ 30–40 с, тромбоцити 150–300×10⁹/л, протромбіновий час 11–12 с, тромбіновий час 16–20 с, фібриноген 2,0–4,5 г/л. У суміжному тексті АЧТЧ наведено як 25–40 с, тобто документ сам собі суперечить у цьому одному показнику. / The «Лабораторна діагностика» section, table 2, row «Норма», states numeric coagulogram norms. Note that the same document gives APTT as 30-40 s in the table and 25-40 s in the prose immediately below it — an internal inconsistency that is recorded here rather than silently resolved. Verified in force on the state legal register (zakon.rada.gov.ua)."
+    },
+    {
+      "id": "moz-nakaz-2142-2021-neonatalnyj-skryninh",
+      "region": "UA",
+      "publisher": "Міністерство охорони здоров'я України",
+      "name": "Про забезпечення розширеного неонатального скринінгу в Україні",
+      "url": "https://zakon.rada.gov.ua/laws/show/z1403-21",
+      "identifier": "Наказ МОЗ України від 01.10.2021 № 2142, зареєстрований у Міністерстві юстиції України 29.10.2021 за № 1403/37025",
+      "reviewed_at": "2026-11-15",
+      "official": true,
+      "kind": "regulation",
+      "access_note": "Text read on the Verkhovna Rada site (edition amended by orders 2523, 991 and 1867). Section VIII: screening for inherited metabolic diseases rests on the quantitative measurement of amino acids and acylcarnitines in dried blood spots by tandem mass spectrometry. Annex 3 names the metabolites: leucine and valine for maple syrup urine disease, tyrosine for tyrosinaemia type I, phenylalanine for phenylketonuria. Its reference values are for newborn dried blood spots and are not imported."
     },
     {
       "id": "moz-nakaz-2415-2021",
@@ -34783,8 +34807,30 @@
         "name": "Антитіла IgG до Toxocara",
         "short_description": "Антитіла IgG до Toxocara, які оцінюють разом з історією контакту та клінічними даними.",
         "why_it_matters": "Виявлені антитіла можуть відображати перенесену інфекцію; результат сироватки сам по собі не доводить поточного захворювання. За ураження очей антитіл у сироватці може бути мало або не бути.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "токсокароз",
+          "токсокароз клінічний протокол наказ МОЗ ІФА антитіла IgG Toxocara canis",
+          "гельмінтози діагностика",
+          "ларвальні гельмінтози",
+          "паразитарні хвороби"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "giardia-total-antibodies",
@@ -34898,9 +34944,29 @@
         "short_description": "Результат алгоритму ризику злоякісності яєчників ROMA для пременопаузи, що поєднує HE4, CA 125 і менопаузальний статус.",
         "why_it_matters": "Допомагає оцінювати відоме утворення придатків у межах підготовки до операції, а не для популяційного скринінгу чи самостійного діагнозу. Шкали й межі залежать від методів; результат для пременопаузи зберігається окремо.",
         "band_labels": {},
-        "jurisdiction_note": "Схвалені FDA та описані NICE реалізації ROMA мають шкали й межі рішень, залежні від методу. Межі не переносять між ними."
+        "jurisdiction_note": "Схвалені FDA та описані NICE реалізації ROMA мають шкали й межі рішень, залежні від методу. Межі не переносять між ними. Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
       },
-      "jurisdiction_note": "FDA-cleared and NICE-described ROMA implementations use assay-specific scales and decision cutoffs. No cutoff is transferred between them."
+      "jurisdiction_note": "FDA-cleared and NICE-described ROMA implementations use assay-specific scales and decision cutoffs. No cutoff is transferred between them. No Ukrainian national document that discusses this test was found (searched 15 November 2026).",
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "рак яєчників",
+          "яєчник",
+          "пухлини яєчника CA-125 HE4 ROMA",
+          "онкомаркер НЕ4",
+          "індекс ROMA"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      }
     },
     {
       "concept_id": "roma-postmenopausal",
@@ -34927,9 +34993,29 @@
         "short_description": "Результат алгоритму ризику злоякісності яєчників ROMA для постменопаузи, що поєднує HE4, CA 125 і менопаузальний статус.",
         "why_it_matters": "Призначений для оцінки відомого утворення придатків разом із клінічними даними та візуалізацією. Формула для постменопаузи відрізняється від формули для пременопаузи; слід зберігати повідомлену шкалу методу.",
         "band_labels": {},
-        "jurisdiction_note": "Схвалені FDA та описані NICE реалізації ROMA мають шкали й межі рішень, залежні від методу. Межі не переносять між ними."
+        "jurisdiction_note": "Схвалені FDA та описані NICE реалізації ROMA мають шкали й межі рішень, залежні від методу. Межі не переносять між ними. Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
       },
-      "jurisdiction_note": "FDA-cleared and NICE-described ROMA implementations use assay-specific scales and decision cutoffs. No cutoff is transferred between them."
+      "jurisdiction_note": "FDA-cleared and NICE-described ROMA implementations use assay-specific scales and decision cutoffs. No cutoff is transferred between them. No Ukrainian national document that discusses this test was found (searched 15 November 2026).",
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "рак яєчників",
+          "яєчник",
+          "пухлини яєчника CA-125 HE4 ROMA",
+          "онкомаркер НЕ4",
+          "індекс ROMA"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      }
     },
     {
       "concept_id": "h-pylori-test-method-unspecified",
@@ -35101,8 +35187,37 @@
         "name": "Зниження навколишнього шуму",
         "short_description": "Зниження інтенсивності навколишнього звуку під час носіння підтримуваних навушників. Це зміна рівня звуку, а не залишковий вплив звуку на вухо.",
         "why_it_matters": "Розглядайте цей показник разом із джерелом, способом вимірювання та власною динамікою. Для цього зведення пристрою не встановлено клінічного референтного інтервалу.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Це величина, яку визначає виробник пристрою; національні настанови її не описують. Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "рекомендації фізична активність кроки сон якість сну",
+          "тривалість сну частота серцевих скорочень у спокої фітнес-трекер",
+          "варіабельність серцевого ритму",
+          "фази сну",
+          "стадії сну",
+          "частота серцевих скорочень уві сні",
+          "кількість кроків",
+          "фітнес-трекер",
+          "рівень шуму навушники",
+          "ожиріння",
+          "фізична активність"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua",
+          "phc.org.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "This is a value defined by the device maker; no national guideline covers it. No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "stair_ascent_speed",
@@ -35127,8 +35242,37 @@
         "name": "Швидкість підйому сходами",
         "short_description": "Швидкість підйому сходами, виміряна годинником. Швидкості підйому та спуску є окремими показниками.",
         "why_it_matters": "Розглядайте цей показник разом із джерелом, способом вимірювання та власною динамікою. Для цього зведення пристрою не встановлено клінічного референтного інтервалу.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Це величина, яку визначає виробник пристрою; національні настанови її не описують. Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "рекомендації фізична активність кроки сон якість сну",
+          "тривалість сну частота серцевих скорочень у спокої фітнес-трекер",
+          "варіабельність серцевого ритму",
+          "фази сну",
+          "стадії сну",
+          "частота серцевих скорочень уві сні",
+          "кількість кроків",
+          "фітнес-трекер",
+          "рівень шуму навушники",
+          "ожиріння",
+          "фізична активність"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua",
+          "phc.org.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "This is a value defined by the device maker; no national guideline covers it. No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "stair_descent_speed",
@@ -35153,8 +35297,37 @@
         "name": "Швидкість спуску сходами",
         "short_description": "Швидкість спуску сходами, виміряна годинником. Її зберігають окремо від швидкості підйому.",
         "why_it_matters": "Розглядайте цей показник разом із джерелом, способом вимірювання та власною динамікою. Для цього зведення пристрою не встановлено клінічного референтного інтервалу.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Це величина, яку визначає виробник пристрою; національні настанови її не описують. Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "рекомендації фізична активність кроки сон якість сну",
+          "тривалість сну частота серцевих скорочень у спокої фітнес-трекер",
+          "варіабельність серцевого ритму",
+          "фази сну",
+          "стадії сну",
+          "частота серцевих скорочень уві сні",
+          "кількість кроків",
+          "фітнес-трекер",
+          "рівень шуму навушники",
+          "ожиріння",
+          "фізична активність"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua",
+          "phc.org.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "This is a value defined by the device maker; no national guideline covers it. No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "swimming_distance",
@@ -35179,8 +35352,37 @@
         "name": "Відстань плавання",
         "short_description": "Відстань, зареєстрована під час плавання та підсумована за день. Сама відстань не визначає інтенсивності чи тривалості навантаження.",
         "why_it_matters": "Розглядайте цей показник разом із джерелом, способом вимірювання та власною динамікою. Для цього зведення пристрою не встановлено клінічного референтного інтервалу.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Це величина, яку визначає виробник пристрою; національні настанови її не описують. Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "рекомендації фізична активність кроки сон якість сну",
+          "тривалість сну частота серцевих скорочень у спокої фітнес-трекер",
+          "варіабельність серцевого ритму",
+          "фази сну",
+          "стадії сну",
+          "частота серцевих скорочень уві сні",
+          "кількість кроків",
+          "фітнес-трекер",
+          "рівень шуму навушники",
+          "ожиріння",
+          "фізична активність"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua",
+          "phc.org.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "This is a value defined by the device maker; no national guideline covers it. No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "stand_hours",
@@ -35205,8 +35407,37 @@
         "name": "Години з рухом стоячи",
         "short_description": "Кількість годин, у яких Apple Health зареєстрував вставання та рух. Зарахована година не означає цілу годину перебування стоячи.",
         "why_it_matters": "Розглядайте цей показник разом із джерелом, способом вимірювання та власною динамікою. Для цього зведення пристрою не встановлено клінічного референтного інтервалу.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Це величина, яку визначає виробник пристрою; національні настанови її не описують. Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "рекомендації фізична активність кроки сон якість сну",
+          "тривалість сну частота серцевих скорочень у спокої фітнес-трекер",
+          "варіабельність серцевого ритму",
+          "фази сну",
+          "стадії сну",
+          "частота серцевих скорочень уві сні",
+          "кількість кроків",
+          "фітнес-трекер",
+          "рівень шуму навушники",
+          "ожиріння",
+          "фізична активність"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua",
+          "phc.org.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "This is a value defined by the device maker; no national guideline covers it. No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "lowest_sleeping_heart_rate",
@@ -35231,8 +35462,37 @@
         "name": "Найнижчий пульс під час сну",
         "short_description": "Найнижчий пульс, зареєстрований під час сну. Oura порівнює нічний мінімум з особистою тривалою динамікою; це окремий показник від середнього пульсу уві сні чи пульсу спокою вдень.",
         "why_it_matters": "Розглядайте цей показник разом із джерелом, способом вимірювання та власною динамікою. Для цього зведення пристрою не встановлено клінічного референтного інтервалу.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Це величина, яку визначає виробник пристрою; національні настанови її не описують. Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "рекомендації фізична активність кроки сон якість сну",
+          "тривалість сну частота серцевих скорочень у спокої фітнес-трекер",
+          "варіабельність серцевого ритму",
+          "фази сну",
+          "стадії сну",
+          "частота серцевих скорочень уві сні",
+          "кількість кроків",
+          "фітнес-трекер",
+          "рівень шуму навушники",
+          "ожиріння",
+          "фізична активність"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua",
+          "phc.org.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "This is a value defined by the device maker; no national guideline covers it. No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "sleep_interruptions",
@@ -35257,8 +35517,37 @@
         "name": "Переривання сну",
         "short_description": "Кількість значущих пробуджень в основних періодах сну за зведенням джерела. Виявлення залежить від наявної послідовності стадій сну та реалізації системи-джерела.",
         "why_it_matters": "Розглядайте цей показник разом із джерелом, способом вимірювання та власною динамікою. Для цього зведення пристрою не встановлено клінічного референтного інтервалу.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Це величина, яку визначає виробник пристрою; національні настанови її не описують. Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "рекомендації фізична активність кроки сон якість сну",
+          "тривалість сну частота серцевих скорочень у спокої фітнес-трекер",
+          "варіабельність серцевого ритму",
+          "фази сну",
+          "стадії сну",
+          "частота серцевих скорочень уві сні",
+          "кількість кроків",
+          "фітнес-трекер",
+          "рівень шуму навушники",
+          "ожиріння",
+          "фізична активність"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua",
+          "phc.org.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "This is a value defined by the device maker; no national guideline covers it. No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "body_battery_score",
@@ -35283,8 +35572,37 @@
         "name": "Оцінка Body Battery",
         "short_description": "Оцінка, повідомлена джерелом: «Оцінка Body Battery». Методика й числова шкала залежать від постачальника та категорії оцінки; імпортоване число зберігається без перетворення на оцінку іншого постачальника.",
         "why_it_matters": "Розглядайте цей показник разом із джерелом, способом вимірювання та власною динамікою. Для цього зведення пристрою не встановлено клінічного референтного інтервалу.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Це величина, яку визначає виробник пристрою; національні настанови її не описують. Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "рекомендації фізична активність кроки сон якість сну",
+          "тривалість сну частота серцевих скорочень у спокої фітнес-трекер",
+          "варіабельність серцевого ритму",
+          "фази сну",
+          "стадії сну",
+          "частота серцевих скорочень уві сні",
+          "кількість кроків",
+          "фітнес-трекер",
+          "рівень шуму навушники",
+          "ожиріння",
+          "фізична активність"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua",
+          "phc.org.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "This is a value defined by the device maker; no national guideline covers it. No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "health_recovery_score",
@@ -35309,8 +35627,37 @@
         "name": "Оцінка відновлення у зведенні здоров’я",
         "short_description": "Оцінка, повідомлена джерелом: «Оцінка відновлення у зведенні здоров’я». Методика й числова шкала залежать від постачальника та категорії оцінки; імпортоване число зберігається без перетворення на оцінку іншого постачальника.",
         "why_it_matters": "Розглядайте цей показник разом із джерелом, способом вимірювання та власною динамікою. Для цього зведення пристрою не встановлено клінічного референтного інтервалу.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Це величина, яку визначає виробник пристрою; національні настанови її не описують. Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "рекомендації фізична активність кроки сон якість сну",
+          "тривалість сну частота серцевих скорочень у спокої фітнес-трекер",
+          "варіабельність серцевого ритму",
+          "фази сну",
+          "стадії сну",
+          "частота серцевих скорочень уві сні",
+          "кількість кроків",
+          "фітнес-трекер",
+          "рівень шуму навушники",
+          "ожиріння",
+          "фізична активність"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua",
+          "phc.org.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "This is a value defined by the device maker; no national guideline covers it. No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "recovery_score",
@@ -35335,8 +35682,37 @@
         "name": "Оцінка відновлення",
         "short_description": "Оцінка, повідомлена джерелом: «Оцінка відновлення». Методика й числова шкала залежать від постачальника та категорії оцінки; імпортоване число зберігається без перетворення на оцінку іншого постачальника.",
         "why_it_matters": "Розглядайте цей показник разом із джерелом, способом вимірювання та власною динамікою. Для цього зведення пристрою не встановлено клінічного референтного інтервалу.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Це величина, яку визначає виробник пристрою; національні настанови її не описують. Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "рекомендації фізична активність кроки сон якість сну",
+          "тривалість сну частота серцевих скорочень у спокої фітнес-трекер",
+          "варіабельність серцевого ритму",
+          "фази сну",
+          "стадії сну",
+          "частота серцевих скорочень уві сні",
+          "кількість кроків",
+          "фітнес-трекер",
+          "рівень шуму навушники",
+          "ожиріння",
+          "фізична активність"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua",
+          "phc.org.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "This is a value defined by the device maker; no national guideline covers it. No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "resilience_score",
@@ -35361,8 +35737,37 @@
         "name": "Оцінка стійкості",
         "short_description": "Оцінка, повідомлена джерелом: «Оцінка стійкості». Методика й числова шкала залежать від постачальника та категорії оцінки; імпортоване число зберігається без перетворення на оцінку іншого постачальника.",
         "why_it_matters": "Розглядайте цей показник разом із джерелом, способом вимірювання та власною динамікою. Для цього зведення пристрою не встановлено клінічного референтного інтервалу.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Це величина, яку визначає виробник пристрою; національні настанови її не описують. Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "рекомендації фізична активність кроки сон якість сну",
+          "тривалість сну частота серцевих скорочень у спокої фітнес-трекер",
+          "варіабельність серцевого ритму",
+          "фази сну",
+          "стадії сну",
+          "частота серцевих скорочень уві сні",
+          "кількість кроків",
+          "фітнес-трекер",
+          "рівень шуму навушники",
+          "ожиріння",
+          "фізична активність"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua",
+          "phc.org.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "This is a value defined by the device maker; no national guideline covers it. No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "strain_score",
@@ -35387,8 +35792,37 @@
         "name": "Оцінка навантаження",
         "short_description": "Оцінка, повідомлена джерелом: «Оцінка навантаження». Методика й числова шкала залежать від постачальника та категорії оцінки; імпортоване число зберігається без перетворення на оцінку іншого постачальника.",
         "why_it_matters": "Розглядайте цей показник разом із джерелом, способом вимірювання та власною динамікою. Для цього зведення пристрою не встановлено клінічного референтного інтервалу.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Це величина, яку визначає виробник пристрою; національні настанови її не описують. Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "рекомендації фізична активність кроки сон якість сну",
+          "тривалість сну частота серцевих скорочень у спокої фітнес-трекер",
+          "варіабельність серцевого ритму",
+          "фази сну",
+          "стадії сну",
+          "частота серцевих скорочень уві сні",
+          "кількість кроків",
+          "фітнес-трекер",
+          "рівень шуму навушники",
+          "ожиріння",
+          "фізична активність"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua",
+          "phc.org.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "This is a value defined by the device maker; no national guideline covers it. No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "stress_score",
@@ -35413,8 +35847,37 @@
         "name": "Оцінка стресу",
         "short_description": "Оцінка, повідомлена джерелом: «Оцінка стресу». Методика й числова шкала залежать від постачальника та категорії оцінки; імпортоване число зберігається без перетворення на оцінку іншого постачальника.",
         "why_it_matters": "Розглядайте цей показник разом із джерелом, способом вимірювання та власною динамікою. Для цього зведення пристрою не встановлено клінічного референтного інтервалу.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Це величина, яку визначає виробник пристрою; національні настанови її не описують. Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "рекомендації фізична активність кроки сон якість сну",
+          "тривалість сну частота серцевих скорочень у спокої фітнес-трекер",
+          "варіабельність серцевого ритму",
+          "фази сну",
+          "стадії сну",
+          "частота серцевих скорочень уві сні",
+          "кількість кроків",
+          "фітнес-трекер",
+          "рівень шуму навушники",
+          "ожиріння",
+          "фізична активність"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua",
+          "phc.org.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "This is a value defined by the device maker; no national guideline covers it. No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "alanine-serum-or-plasma",
@@ -35441,8 +35904,33 @@
         "short_description": "Концентрація речовини «Аланін» у сироватці або плазмі, визначена в профілі амінокислот і споріднених метаболітів.",
         "why_it_matters": "Оцінюйте показник разом з іншими складовими профілю, біоматеріалом, методом і референтним інтервалом лабораторії. Окремий компонент не встановлює метаболічного діагнозу.",
         "no_universal_target_reason": "Референтний інтервал залежить від методу лабораторії, вікової групи, біоматеріалу й умов забору. Опубліковані Mayo інтервали для плазми встановлені цією лабораторією для проб натще; це не універсальна норма для сироватки чи плазми.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "амінокислоти плазми",
+          "тандемна мас-спектрометрія",
+          "розширений неонатальний скринінг",
+          "спадкові хвороби обміну амінокислот гомоцистинурія цитрулінемія",
+          "орфанні захворювання",
+          "тирозинемія",
+          "лейциноз",
+          "метилмалонова та пропіонова ацидемії"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "arginine-serum-or-plasma",
@@ -35469,8 +35957,33 @@
         "short_description": "Концентрація речовини «Аргінін» у сироватці або плазмі, визначена в профілі амінокислот і споріднених метаболітів.",
         "why_it_matters": "Оцінюйте показник разом з іншими складовими профілю, біоматеріалом, методом і референтним інтервалом лабораторії. Окремий компонент не встановлює метаболічного діагнозу.",
         "no_universal_target_reason": "Референтний інтервал залежить від методу лабораторії, вікової групи, біоматеріалу й умов забору. Опубліковані Mayo інтервали для плазми встановлені цією лабораторією для проб натще; це не універсальна норма для сироватки чи плазми.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "амінокислоти плазми",
+          "тандемна мас-спектрометрія",
+          "розширений неонатальний скринінг",
+          "спадкові хвороби обміну амінокислот гомоцистинурія цитрулінемія",
+          "орфанні захворювання",
+          "тирозинемія",
+          "лейциноз",
+          "метилмалонова та пропіонова ацидемії"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "asparagine-serum-or-plasma",
@@ -35497,8 +36010,33 @@
         "short_description": "Концентрація речовини «Аспарагін» у сироватці або плазмі, визначена в профілі амінокислот і споріднених метаболітів.",
         "why_it_matters": "Оцінюйте показник разом з іншими складовими профілю, біоматеріалом, методом і референтним інтервалом лабораторії. Окремий компонент не встановлює метаболічного діагнозу.",
         "no_universal_target_reason": "Референтний інтервал залежить від методу лабораторії, вікової групи, біоматеріалу й умов забору. Опубліковані Mayo інтервали для плазми встановлені цією лабораторією для проб натще; це не універсальна норма для сироватки чи плазми.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "амінокислоти плазми",
+          "тандемна мас-спектрометрія",
+          "розширений неонатальний скринінг",
+          "спадкові хвороби обміну амінокислот гомоцистинурія цитрулінемія",
+          "орфанні захворювання",
+          "тирозинемія",
+          "лейциноз",
+          "метилмалонова та пропіонова ацидемії"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "aspartic-acid-serum-or-plasma",
@@ -35525,8 +36063,33 @@
         "short_description": "Концентрація речовини «Аспарагінова кислота» у сироватці або плазмі, визначена в профілі амінокислот і споріднених метаболітів.",
         "why_it_matters": "Оцінюйте показник разом з іншими складовими профілю, біоматеріалом, методом і референтним інтервалом лабораторії. Окремий компонент не встановлює метаболічного діагнозу.",
         "no_universal_target_reason": "Референтний інтервал залежить від методу лабораторії, вікової групи, біоматеріалу й умов забору. Опубліковані Mayo інтервали для плазми встановлені цією лабораторією для проб натще; це не універсальна норма для сироватки чи плазми.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "амінокислоти плазми",
+          "тандемна мас-спектрометрія",
+          "розширений неонатальний скринінг",
+          "спадкові хвороби обміну амінокислот гомоцистинурія цитрулінемія",
+          "орфанні захворювання",
+          "тирозинемія",
+          "лейциноз",
+          "метилмалонова та пропіонова ацидемії"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "valine-serum-or-plasma",
@@ -35537,10 +36100,13 @@
       "source_id": "loinc-amino-acids-serum-plasma-35083-5",
       "source_ids": [
         "loinc-amino-acids-serum-plasma-35083-5",
-        "mayo-amino-acids-plasma-aaqp"
+        "mayo-amino-acids-plasma-aaqp",
+        "moz-nakaz-2142-2021-neonatalnyj-skryninh",
+        "moz-nakaz-152-2024-mma-pa"
       ],
       "regions_covered": [
-        "US"
+        "US",
+        "UA"
       ],
       "agreement": "concordant",
       "short_description": "The concentration of valine in serum or plasma, reported as part of an amino-acid and related-metabolite profile.",
@@ -35553,8 +36119,10 @@
         "short_description": "Концентрація речовини «Валін» у сироватці або плазмі, визначена в профілі амінокислот і споріднених метаболітів.",
         "why_it_matters": "Оцінюйте показник разом з іншими складовими профілю, біоматеріалом, методом і референтним інтервалом лабораторії. Окремий компонент не встановлює метаболічного діагнозу.",
         "no_universal_target_reason": "Референтний інтервал залежить від методу лабораторії, вікової групи, біоматеріалу й умов забору. Опубліковані Mayo інтервали для плазми встановлені цією лабораторією для проб натще; це не універсальна норма для сироватки чи плазми.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Наказ МОЗ від 01.10.2021 № 2142 про розширений неонатальний скринінг передбачає кількісне визначення амінокислот та ацилкарнітинів у сухих краплях крові методом тандемної мас-спектрометрії. Додаток 3 називає валін разом із лейцином метаболітом, який визначають для виявлення лейцинозу (хвороби «кленового сиропу»). Його референсні значення стосуються сухих крапель крові новонароджених і не перенесені на результат у сироватці чи плазмі. Стандарт медичної допомоги «Діагностика та лікування метилмалонової та пропіонової ацидемій» (наказ МОЗ від 30.01.2024 № 152) називає валін серед амінокислот-попередників, споживання яких знижують дієтою за цих двох хвороб, і передбачає кількісне визначення амінокислот плазми кожні 3–6 місяців, після 3–4 годин голодування. Інтервалу він не наводить."
+      },
+      "jurisdiction_note": "In Ukraine, МОЗ order 2142 of 01.10.2021 on expanded newborn screening measures amino acids and acylcarnitines in dried blood spots by tandem mass spectrometry. Annex 3 names valine, with leucine, as the metabolite measured for maple syrup urine disease. Its reference values are for newborn dried blood spots; they are not carried over to a serum or plasma result. The Ukrainian standard «Діагностика та лікування метилмалонової та пропіонової ацидемій» (МОЗ order 152 of 30.01.2024) names valine among the precursor amino acids whose intake the diet lowers in these two diseases, and asks for quantitative plasma amino acids every 3 to 6 months, sampled after a 3 to 4 hour fast. It gives no interval."
     },
     {
       "concept_id": "histidine-serum-or-plasma",
@@ -35581,8 +36149,33 @@
         "short_description": "Концентрація речовини «Гістидин» у сироватці або плазмі, визначена в профілі амінокислот і споріднених метаболітів.",
         "why_it_matters": "Оцінюйте показник разом з іншими складовими профілю, біоматеріалом, методом і референтним інтервалом лабораторії. Окремий компонент не встановлює метаболічного діагнозу.",
         "no_universal_target_reason": "Референтний інтервал залежить від методу лабораторії, вікової групи, біоматеріалу й умов забору. Опубліковані Mayo інтервали для плазми встановлені цією лабораторією для проб натще; це не універсальна норма для сироватки чи плазми.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "амінокислоти плазми",
+          "тандемна мас-спектрометрія",
+          "розширений неонатальний скринінг",
+          "спадкові хвороби обміну амінокислот гомоцистинурія цитрулінемія",
+          "орфанні захворювання",
+          "тирозинемія",
+          "лейциноз",
+          "метилмалонова та пропіонова ацидемії"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "glycine-serum-or-plasma",
@@ -35593,10 +36186,12 @@
       "source_id": "loinc-amino-acids-serum-plasma-35083-5",
       "source_ids": [
         "loinc-amino-acids-serum-plasma-35083-5",
-        "mayo-amino-acids-plasma-aaqp"
+        "mayo-amino-acids-plasma-aaqp",
+        "moz-nakaz-152-2024-mma-pa"
       ],
       "regions_covered": [
-        "US"
+        "US",
+        "UA"
       ],
       "agreement": "concordant",
       "short_description": "The concentration of glycine in serum or plasma, reported as part of an amino-acid and related-metabolite profile.",
@@ -35609,8 +36204,10 @@
         "short_description": "Концентрація речовини «Гліцин» у сироватці або плазмі, визначена в профілі амінокислот і споріднених метаболітів.",
         "why_it_matters": "Оцінюйте показник разом з іншими складовими профілю, біоматеріалом, методом і референтним інтервалом лабораторії. Окремий компонент не встановлює метаболічного діагнозу.",
         "no_universal_target_reason": "Референтний інтервал залежить від методу лабораторії, вікової групи, біоматеріалу й умов забору. Опубліковані Mayo інтервали для плазми встановлені цією лабораторією для проб натще; це не універсальна норма для сироватки чи плазми.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Стандарт медичної допомоги «Діагностика та лікування метилмалонової та пропіонової ацидемій» (наказ МОЗ від 30.01.2024 № 152) зазначає, що вимірювання амінокислот у плазмі показує підвищений рівень гліцину за цих двох хвороб, і передбачає кількісне визначення амінокислот плазми кожні 3–6 місяців у людей, які їх мають. Інтервалу він не наводить."
+      },
+      "jurisdiction_note": "The Ukrainian standard «Діагностика та лікування метилмалонової та пропіонової ацидемій» (МОЗ order 152 of 30.01.2024) notes that measuring amino acids in plasma shows a raised glycine level in these two diseases, and asks for quantitative plasma amino acids every 3 to 6 months in people who have them. It gives no interval."
     },
     {
       "concept_id": "glutamine-serum-or-plasma",
@@ -35637,8 +36234,33 @@
         "short_description": "Концентрація речовини «Глутамін» у сироватці або плазмі, визначена в профілі амінокислот і споріднених метаболітів.",
         "why_it_matters": "Оцінюйте показник разом з іншими складовими профілю, біоматеріалом, методом і референтним інтервалом лабораторії. Окремий компонент не встановлює метаболічного діагнозу.",
         "no_universal_target_reason": "Референтний інтервал залежить від методу лабораторії, вікової групи, біоматеріалу й умов забору. Опубліковані Mayo інтервали для плазми встановлені цією лабораторією для проб натще; це не універсальна норма для сироватки чи плазми.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "амінокислоти плазми",
+          "тандемна мас-спектрометрія",
+          "розширений неонатальний скринінг",
+          "спадкові хвороби обміну амінокислот гомоцистинурія цитрулінемія",
+          "орфанні захворювання",
+          "тирозинемія",
+          "лейциноз",
+          "метилмалонова та пропіонова ацидемії"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "glutamic-acid-serum-or-plasma",
@@ -35665,8 +36287,33 @@
         "short_description": "Концентрація речовини «Глутамінова кислота» у сироватці або плазмі, визначена в профілі амінокислот і споріднених метаболітів.",
         "why_it_matters": "Оцінюйте показник разом з іншими складовими профілю, біоматеріалом, методом і референтним інтервалом лабораторії. Окремий компонент не встановлює метаболічного діагнозу.",
         "no_universal_target_reason": "Референтний інтервал залежить від методу лабораторії, вікової групи, біоматеріалу й умов забору. Опубліковані Mayo інтервали для плазми встановлені цією лабораторією для проб натще; це не універсальна норма для сироватки чи плазми.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "амінокислоти плазми",
+          "тандемна мас-спектрометрія",
+          "розширений неонатальний скринінг",
+          "спадкові хвороби обміну амінокислот гомоцистинурія цитрулінемія",
+          "орфанні захворювання",
+          "тирозинемія",
+          "лейциноз",
+          "метилмалонова та пропіонова ацидемії"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "homocitrulline-serum-or-plasma",
@@ -35693,8 +36340,33 @@
         "short_description": "Концентрація речовини «Гомоцитрулін» у сироватці або плазмі, визначена в профілі амінокислот і споріднених метаболітів.",
         "why_it_matters": "Оцінюйте показник разом з іншими складовими профілю, біоматеріалом, методом і референтним інтервалом лабораторії. Окремий компонент не встановлює метаболічного діагнозу.",
         "no_universal_target_reason": "Референтний інтервал залежить від методу лабораторії, вікової групи, біоматеріалу й умов забору. Опубліковані Mayo інтервали для плазми встановлені цією лабораторією для проб натще; це не універсальна норма для сироватки чи плазми.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "амінокислоти плазми",
+          "тандемна мас-спектрометрія",
+          "розширений неонатальний скринінг",
+          "спадкові хвороби обміну амінокислот гомоцистинурія цитрулінемія",
+          "орфанні захворювання",
+          "тирозинемія",
+          "лейциноз",
+          "метилмалонова та пропіонова ацидемії"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "hydroxylysine-serum-or-plasma",
@@ -35721,8 +36393,33 @@
         "short_description": "Концентрація речовини «Гідроксилізин» у сироватці або плазмі, визначена в профілі амінокислот і споріднених метаболітів.",
         "why_it_matters": "Оцінюйте показник разом з іншими складовими профілю, біоматеріалом, методом і референтним інтервалом лабораторії. Окремий компонент не встановлює метаболічного діагнозу.",
         "no_universal_target_reason": "Референтний інтервал залежить від методу лабораторії, вікової групи, біоматеріалу й умов забору. Опубліковані Mayo інтервали для плазми встановлені цією лабораторією для проб натще; це не універсальна норма для сироватки чи плазми.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "амінокислоти плазми",
+          "тандемна мас-спектрометрія",
+          "розширений неонатальний скринінг",
+          "спадкові хвороби обміну амінокислот гомоцистинурія цитрулінемія",
+          "орфанні захворювання",
+          "тирозинемія",
+          "лейциноз",
+          "метилмалонова та пропіонова ацидемії"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "hydroxyproline-serum-or-plasma",
@@ -35749,8 +36446,33 @@
         "short_description": "Концентрація речовини «Гідроксипролін» у сироватці або плазмі, визначена в профілі амінокислот і споріднених метаболітів.",
         "why_it_matters": "Оцінюйте показник разом з іншими складовими профілю, біоматеріалом, методом і референтним інтервалом лабораторії. Окремий компонент не встановлює метаболічного діагнозу.",
         "no_universal_target_reason": "Референтний інтервал залежить від методу лабораторії, вікової групи, біоматеріалу й умов забору. Опубліковані Mayo інтервали для плазми встановлені цією лабораторією для проб натще; це не універсальна норма для сироватки чи плазми.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "амінокислоти плазми",
+          "тандемна мас-спектрометрія",
+          "розширений неонатальний скринінг",
+          "спадкові хвороби обміну амінокислот гомоцистинурія цитрулінемія",
+          "орфанні захворювання",
+          "тирозинемія",
+          "лейциноз",
+          "метилмалонова та пропіонова ацидемії"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "isoleucine-serum-or-plasma",
@@ -35761,10 +36483,12 @@
       "source_id": "loinc-amino-acids-serum-plasma-35083-5",
       "source_ids": [
         "loinc-amino-acids-serum-plasma-35083-5",
-        "mayo-amino-acids-plasma-aaqp"
+        "mayo-amino-acids-plasma-aaqp",
+        "moz-nakaz-152-2024-mma-pa"
       ],
       "regions_covered": [
-        "US"
+        "US",
+        "UA"
       ],
       "agreement": "concordant",
       "short_description": "The concentration of isoleucine in serum or plasma, reported as part of an amino-acid and related-metabolite profile.",
@@ -35777,8 +36501,10 @@
         "short_description": "Концентрація речовини «Ізолейцин» у сироватці або плазмі, визначена в профілі амінокислот і споріднених метаболітів.",
         "why_it_matters": "Оцінюйте показник разом з іншими складовими профілю, біоматеріалом, методом і референтним інтервалом лабораторії. Окремий компонент не встановлює метаболічного діагнозу.",
         "no_universal_target_reason": "Референтний інтервал залежить від методу лабораторії, вікової групи, біоматеріалу й умов забору. Опубліковані Mayo інтервали для плазми встановлені цією лабораторією для проб натще; це не універсальна норма для сироватки чи плазми.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Стандарт медичної допомоги «Діагностика та лікування метилмалонової та пропіонової ацидемій» (наказ МОЗ від 30.01.2024 № 152) називає ізолейцин серед амінокислот-попередників, споживання яких знижують дієтою за цих двох хвороб, і передбачає кількісне визначення амінокислот плазми кожні 3–6 місяців, після 3–4 годин голодування. Інтервалу він не наводить."
+      },
+      "jurisdiction_note": "The Ukrainian standard «Діагностика та лікування метилмалонової та пропіонової ацидемій» (МОЗ order 152 of 30.01.2024) names isoleucine among the precursor amino acids whose intake the diet lowers in these two diseases, and asks for quantitative plasma amino acids every 3 to 6 months, sampled after a 3 to 4 hour fast. It gives no interval."
     },
     {
       "concept_id": "carnosine-serum-or-plasma",
@@ -35804,8 +36530,33 @@
         "short_description": "Концентрація речовини «Карнозин» у сироватці або плазмі, визначена в профілі амінокислот і споріднених метаболітів.",
         "why_it_matters": "Оцінюйте показник разом з іншими складовими профілю, біоматеріалом, методом і референтним інтервалом лабораторії. Окремий компонент не встановлює метаболічного діагнозу.",
         "no_universal_target_reason": "Референтний інтервал залежить від методу лабораторії, вікової групи, біоматеріалу й умов забору. Опубліковані Mayo інтервали для плазми встановлені цією лабораторією для проб натще; це не універсальна норма для сироватки чи плазми.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "амінокислоти плазми",
+          "тандемна мас-спектрометрія",
+          "розширений неонатальний скринінг",
+          "спадкові хвороби обміну амінокислот гомоцистинурія цитрулінемія",
+          "орфанні захворювання",
+          "тирозинемія",
+          "лейциноз",
+          "метилмалонова та пропіонова ацидемії"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "leucine-serum-or-plasma",
@@ -35816,10 +36567,12 @@
       "source_id": "loinc-amino-acids-serum-plasma-35083-5",
       "source_ids": [
         "loinc-amino-acids-serum-plasma-35083-5",
-        "mayo-amino-acids-plasma-aaqp"
+        "mayo-amino-acids-plasma-aaqp",
+        "moz-nakaz-2142-2021-neonatalnyj-skryninh"
       ],
       "regions_covered": [
-        "US"
+        "US",
+        "UA"
       ],
       "agreement": "concordant",
       "short_description": "The concentration of leucine in serum or plasma, reported as part of an amino-acid and related-metabolite profile.",
@@ -35832,8 +36585,10 @@
         "short_description": "Концентрація речовини «Лейцин» у сироватці або плазмі, визначена в профілі амінокислот і споріднених метаболітів.",
         "why_it_matters": "Оцінюйте показник разом з іншими складовими профілю, біоматеріалом, методом і референтним інтервалом лабораторії. Окремий компонент не встановлює метаболічного діагнозу.",
         "no_universal_target_reason": "Референтний інтервал залежить від методу лабораторії, вікової групи, біоматеріалу й умов забору. Опубліковані Mayo інтервали для плазми встановлені цією лабораторією для проб натще; це не універсальна норма для сироватки чи плазми.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Наказ МОЗ від 01.10.2021 № 2142 про розширений неонатальний скринінг передбачає кількісне визначення амінокислот та ацилкарнітинів у сухих краплях крові методом тандемної мас-спектрометрії. Додаток 3 називає лейцин разом із валіном метаболітом, який визначають для виявлення лейцинозу (хвороби «кленового сиропу»). Його референсні значення стосуються сухих крапель крові новонароджених і не перенесені на результат у сироватці чи плазмі."
+      },
+      "jurisdiction_note": "In Ukraine, МОЗ order 2142 of 01.10.2021 on expanded newborn screening measures amino acids and acylcarnitines in dried blood spots by tandem mass spectrometry. Annex 3 names leucine, with valine, as the metabolite measured for maple syrup urine disease. Its reference values are for newborn dried blood spots; they are not carried over to a serum or plasma result."
     },
     {
       "concept_id": "lysine-serum-or-plasma",
@@ -35860,8 +36615,33 @@
         "short_description": "Концентрація речовини «Лізин» у сироватці або плазмі, визначена в профілі амінокислот і споріднених метаболітів.",
         "why_it_matters": "Оцінюйте показник разом з іншими складовими профілю, біоматеріалом, методом і референтним інтервалом лабораторії. Окремий компонент не встановлює метаболічного діагнозу.",
         "no_universal_target_reason": "Референтний інтервал залежить від методу лабораторії, вікової групи, біоматеріалу й умов забору. Опубліковані Mayo інтервали для плазми встановлені цією лабораторією для проб натще; це не універсальна норма для сироватки чи плазми.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "амінокислоти плазми",
+          "тандемна мас-спектрометрія",
+          "розширений неонатальний скринінг",
+          "спадкові хвороби обміну амінокислот гомоцистинурія цитрулінемія",
+          "орфанні захворювання",
+          "тирозинемія",
+          "лейциноз",
+          "метилмалонова та пропіонова ацидемії"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "methionine-serum-or-plasma",
@@ -35872,10 +36652,12 @@
       "source_id": "loinc-amino-acids-serum-plasma-35083-5",
       "source_ids": [
         "loinc-amino-acids-serum-plasma-35083-5",
-        "mayo-amino-acids-plasma-aaqp"
+        "mayo-amino-acids-plasma-aaqp",
+        "moz-nakaz-152-2024-mma-pa"
       ],
       "regions_covered": [
-        "US"
+        "US",
+        "UA"
       ],
       "agreement": "concordant",
       "short_description": "The concentration of methionine in serum or plasma, reported as part of an amino-acid and related-metabolite profile.",
@@ -35888,8 +36670,10 @@
         "short_description": "Концентрація речовини «Метіонін» у сироватці або плазмі, визначена в профілі амінокислот і споріднених метаболітів.",
         "why_it_matters": "Оцінюйте показник разом з іншими складовими профілю, біоматеріалом, методом і референтним інтервалом лабораторії. Окремий компонент не встановлює метаболічного діагнозу.",
         "no_universal_target_reason": "Референтний інтервал залежить від методу лабораторії, вікової групи, біоматеріалу й умов забору. Опубліковані Mayo інтервали для плазми встановлені цією лабораторією для проб натще; це не універсальна норма для сироватки чи плазми.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Стандарт медичної допомоги «Діагностика та лікування метилмалонової та пропіонової ацидемій» (наказ МОЗ від 30.01.2024 № 152) називає метіонін серед амінокислот-попередників, споживання яких знижують дієтою за цих двох хвороб, і передбачає кількісне визначення амінокислот плазми кожні 3–6 місяців, після 3–4 годин голодування. Інтервалу він не наводить."
+      },
+      "jurisdiction_note": "The Ukrainian standard «Діагностика та лікування метилмалонової та пропіонової ацидемій» (МОЗ order 152 of 30.01.2024) names methionine among the precursor amino acids whose intake the diet lowers in these two diseases, and asks for quantitative plasma amino acids every 3 to 6 months, sampled after a 3 to 4 hour fast. It gives no interval."
     },
     {
       "concept_id": "ornithine-serum-or-plasma",
@@ -35916,8 +36700,33 @@
         "short_description": "Концентрація речовини «Орнітин» у сироватці або плазмі, визначена в профілі амінокислот і споріднених метаболітів.",
         "why_it_matters": "Оцінюйте показник разом з іншими складовими профілю, біоматеріалом, методом і референтним інтервалом лабораторії. Окремий компонент не встановлює метаболічного діагнозу.",
         "no_universal_target_reason": "Референтний інтервал залежить від методу лабораторії, вікової групи, біоматеріалу й умов забору. Опубліковані Mayo інтервали для плазми встановлені цією лабораторією для проб натще; це не універсальна норма для сироватки чи плазми.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "амінокислоти плазми",
+          "тандемна мас-спектрометрія",
+          "розширений неонатальний скринінг",
+          "спадкові хвороби обміну амінокислот гомоцистинурія цитрулінемія",
+          "орфанні захворювання",
+          "тирозинемія",
+          "лейциноз",
+          "метилмалонова та пропіонова ацидемії"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "proline-serum-or-plasma",
@@ -35944,8 +36753,33 @@
         "short_description": "Концентрація речовини «Пролін» у сироватці або плазмі, визначена в профілі амінокислот і споріднених метаболітів.",
         "why_it_matters": "Оцінюйте показник разом з іншими складовими профілю, біоматеріалом, методом і референтним інтервалом лабораторії. Окремий компонент не встановлює метаболічного діагнозу.",
         "no_universal_target_reason": "Референтний інтервал залежить від методу лабораторії, вікової групи, біоматеріалу й умов забору. Опубліковані Mayo інтервали для плазми встановлені цією лабораторією для проб натще; це не універсальна норма для сироватки чи плазми.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "амінокислоти плазми",
+          "тандемна мас-спектрометрія",
+          "розширений неонатальний скринінг",
+          "спадкові хвороби обміну амінокислот гомоцистинурія цитрулінемія",
+          "орфанні захворювання",
+          "тирозинемія",
+          "лейциноз",
+          "метилмалонова та пропіонова ацидемії"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "sarcosine-serum-or-plasma",
@@ -35972,8 +36806,33 @@
         "short_description": "Концентрація речовини «Саркозин» у сироватці або плазмі, визначена в профілі амінокислот і споріднених метаболітів.",
         "why_it_matters": "Оцінюйте показник разом з іншими складовими профілю, біоматеріалом, методом і референтним інтервалом лабораторії. Окремий компонент не встановлює метаболічного діагнозу.",
         "no_universal_target_reason": "Референтний інтервал залежить від методу лабораторії, вікової групи, біоматеріалу й умов забору. Опубліковані Mayo інтервали для плазми встановлені цією лабораторією для проб натще; це не універсальна норма для сироватки чи плазми.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "амінокислоти плазми",
+          "тандемна мас-спектрометрія",
+          "розширений неонатальний скринінг",
+          "спадкові хвороби обміну амінокислот гомоцистинурія цитрулінемія",
+          "орфанні захворювання",
+          "тирозинемія",
+          "лейциноз",
+          "метилмалонова та пропіонова ацидемії"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "serine-serum-or-plasma",
@@ -36000,8 +36859,33 @@
         "short_description": "Концентрація речовини «Серин» у сироватці або плазмі, визначена в профілі амінокислот і споріднених метаболітів.",
         "why_it_matters": "Оцінюйте показник разом з іншими складовими профілю, біоматеріалом, методом і референтним інтервалом лабораторії. Окремий компонент не встановлює метаболічного діагнозу.",
         "no_universal_target_reason": "Референтний інтервал залежить від методу лабораторії, вікової групи, біоматеріалу й умов забору. Опубліковані Mayo інтервали для плазми встановлені цією лабораторією для проб натще; це не універсальна норма для сироватки чи плазми.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "амінокислоти плазми",
+          "тандемна мас-спектрометрія",
+          "розширений неонатальний скринінг",
+          "спадкові хвороби обміну амінокислот гомоцистинурія цитрулінемія",
+          "орфанні захворювання",
+          "тирозинемія",
+          "лейциноз",
+          "метилмалонова та пропіонова ацидемії"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "taurine-serum-or-plasma",
@@ -36028,8 +36912,33 @@
         "short_description": "Концентрація речовини «Таурин» у сироватці або плазмі, визначена в профілі амінокислот і споріднених метаболітів.",
         "why_it_matters": "Оцінюйте показник разом з іншими складовими профілю, біоматеріалом, методом і референтним інтервалом лабораторії. Окремий компонент не встановлює метаболічного діагнозу.",
         "no_universal_target_reason": "Референтний інтервал залежить від методу лабораторії, вікової групи, біоматеріалу й умов забору. Опубліковані Mayo інтервали для плазми встановлені цією лабораторією для проб натще; це не універсальна норма для сироватки чи плазми.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "амінокислоти плазми",
+          "тандемна мас-спектрометрія",
+          "розширений неонатальний скринінг",
+          "спадкові хвороби обміну амінокислот гомоцистинурія цитрулінемія",
+          "орфанні захворювання",
+          "тирозинемія",
+          "лейциноз",
+          "метилмалонова та пропіонова ацидемії"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "threonine-serum-or-plasma",
@@ -36040,10 +36949,12 @@
       "source_id": "loinc-amino-acids-serum-plasma-35083-5",
       "source_ids": [
         "loinc-amino-acids-serum-plasma-35083-5",
-        "mayo-amino-acids-plasma-aaqp"
+        "mayo-amino-acids-plasma-aaqp",
+        "moz-nakaz-152-2024-mma-pa"
       ],
       "regions_covered": [
-        "US"
+        "US",
+        "UA"
       ],
       "agreement": "concordant",
       "short_description": "The concentration of threonine in serum or plasma, reported as part of an amino-acid and related-metabolite profile.",
@@ -36056,8 +36967,10 @@
         "short_description": "Концентрація речовини «Треонін» у сироватці або плазмі, визначена в профілі амінокислот і споріднених метаболітів.",
         "why_it_matters": "Оцінюйте показник разом з іншими складовими профілю, біоматеріалом, методом і референтним інтервалом лабораторії. Окремий компонент не встановлює метаболічного діагнозу.",
         "no_universal_target_reason": "Референтний інтервал залежить від методу лабораторії, вікової групи, біоматеріалу й умов забору. Опубліковані Mayo інтервали для плазми встановлені цією лабораторією для проб натще; це не універсальна норма для сироватки чи плазми.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Стандарт медичної допомоги «Діагностика та лікування метилмалонової та пропіонової ацидемій» (наказ МОЗ від 30.01.2024 № 152) називає треонін серед амінокислот-попередників, споживання яких знижують дієтою за цих двох хвороб, і передбачає кількісне визначення амінокислот плазми кожні 3–6 місяців, після 3–4 годин голодування. Інтервалу він не наводить."
+      },
+      "jurisdiction_note": "The Ukrainian standard «Діагностика та лікування метилмалонової та пропіонової ацидемій» (МОЗ order 152 of 30.01.2024) names threonine among the precursor amino acids whose intake the diet lowers in these two diseases, and asks for quantitative plasma amino acids every 3 to 6 months, sampled after a 3 to 4 hour fast. It gives no interval."
     },
     {
       "concept_id": "tryptophan-serum-or-plasma",
@@ -36084,8 +36997,33 @@
         "short_description": "Концентрація речовини «Триптофан» у сироватці або плазмі, визначена в профілі амінокислот і споріднених метаболітів.",
         "why_it_matters": "Оцінюйте показник разом з іншими складовими профілю, біоматеріалом, методом і референтним інтервалом лабораторії. Окремий компонент не встановлює метаболічного діагнозу.",
         "no_universal_target_reason": "Референтний інтервал залежить від методу лабораторії, вікової групи, біоматеріалу й умов забору. Опубліковані Mayo інтервали для плазми встановлені цією лабораторією для проб натще; це не універсальна норма для сироватки чи плазми.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "амінокислоти плазми",
+          "тандемна мас-спектрометрія",
+          "розширений неонатальний скринінг",
+          "спадкові хвороби обміну амінокислот гомоцистинурія цитрулінемія",
+          "орфанні захворювання",
+          "тирозинемія",
+          "лейциноз",
+          "метилмалонова та пропіонова ацидемії"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "tyrosine-serum-or-plasma",
@@ -36175,8 +37113,33 @@
         "short_description": "Концентрація речовини «Фосфоетаноламін» у сироватці або плазмі, визначена в профілі амінокислот і споріднених метаболітів.",
         "why_it_matters": "Оцінюйте показник разом з іншими складовими профілю, біоматеріалом, методом і референтним інтервалом лабораторії. Окремий компонент не встановлює метаболічного діагнозу.",
         "no_universal_target_reason": "Референтний інтервал залежить від методу лабораторії, вікової групи, біоматеріалу й умов забору. Опубліковані Mayo інтервали для плазми встановлені цією лабораторією для проб натще; це не універсальна норма для сироватки чи плазми.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "амінокислоти плазми",
+          "тандемна мас-спектрометрія",
+          "розширений неонатальний скринінг",
+          "спадкові хвороби обміну амінокислот гомоцистинурія цитрулінемія",
+          "орфанні захворювання",
+          "тирозинемія",
+          "лейциноз",
+          "метилмалонова та пропіонова ацидемії"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "phosphoserine-serum-or-plasma",
@@ -36202,8 +37165,33 @@
         "short_description": "Концентрація речовини «Фосфосерин» у сироватці або плазмі, визначена в профілі амінокислот і споріднених метаболітів.",
         "why_it_matters": "Оцінюйте показник разом з іншими складовими профілю, біоматеріалом, методом і референтним інтервалом лабораторії. Окремий компонент не встановлює метаболічного діагнозу.",
         "no_universal_target_reason": "Референтний інтервал залежить від методу лабораторії, вікової групи, біоматеріалу й умов забору. Опубліковані Mayo інтервали для плазми встановлені цією лабораторією для проб натще; це не універсальна норма для сироватки чи плазми.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "амінокислоти плазми",
+          "тандемна мас-спектрометрія",
+          "розширений неонатальний скринінг",
+          "спадкові хвороби обміну амінокислот гомоцистинурія цитрулінемія",
+          "орфанні захворювання",
+          "тирозинемія",
+          "лейциноз",
+          "метилмалонова та пропіонова ацидемії"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "cystathionine-serum-or-plasma",
@@ -36230,8 +37218,33 @@
         "short_description": "Концентрація речовини «Цистатіонін» у сироватці або плазмі, визначена в профілі амінокислот і споріднених метаболітів.",
         "why_it_matters": "Оцінюйте показник разом з іншими складовими профілю, біоматеріалом, методом і референтним інтервалом лабораторії. Окремий компонент не встановлює метаболічного діагнозу.",
         "no_universal_target_reason": "Референтний інтервал залежить від методу лабораторії, вікової групи, біоматеріалу й умов забору. Опубліковані Mayo інтервали для плазми встановлені цією лабораторією для проб натще; це не універсальна норма для сироватки чи плазми.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "амінокислоти плазми",
+          "тандемна мас-спектрометрія",
+          "розширений неонатальний скринінг",
+          "спадкові хвороби обміну амінокислот гомоцистинурія цитрулінемія",
+          "орфанні захворювання",
+          "тирозинемія",
+          "лейциноз",
+          "метилмалонова та пропіонова ацидемії"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "cystine-serum-or-plasma",
@@ -36258,8 +37271,33 @@
         "short_description": "Концентрація речовини «Цистин» у сироватці або плазмі, визначена в профілі амінокислот і споріднених метаболітів.",
         "why_it_matters": "Оцінюйте показник разом з іншими складовими профілю, біоматеріалом, методом і референтним інтервалом лабораторії. Окремий компонент не встановлює метаболічного діагнозу.",
         "no_universal_target_reason": "Референтний інтервал залежить від методу лабораторії, вікової групи, біоматеріалу й умов забору. Опубліковані Mayo інтервали для плазми встановлені цією лабораторією для проб натще; це не універсальна норма для сироватки чи плазми.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "амінокислоти плазми",
+          "тандемна мас-спектрометрія",
+          "розширений неонатальний скринінг",
+          "спадкові хвороби обміну амінокислот гомоцистинурія цитрулінемія",
+          "орфанні захворювання",
+          "тирозинемія",
+          "лейциноз",
+          "метилмалонова та пропіонова ацидемії"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "citrulline-serum-or-plasma",
@@ -36286,8 +37324,33 @@
         "short_description": "Концентрація речовини «Цитрулін» у сироватці або плазмі, визначена в профілі амінокислот і споріднених метаболітів.",
         "why_it_matters": "Оцінюйте показник разом з іншими складовими профілю, біоматеріалом, методом і референтним інтервалом лабораторії. Окремий компонент не встановлює метаболічного діагнозу.",
         "no_universal_target_reason": "Референтний інтервал залежить від методу лабораторії, вікової групи, біоматеріалу й умов забору. Опубліковані Mayo інтервали для плазми встановлені цією лабораторією для проб натще; це не універсальна норма для сироватки чи плазми.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "амінокислоти плазми",
+          "тандемна мас-спектрометрія",
+          "розширений неонатальний скринінг",
+          "спадкові хвороби обміну амінокислот гомоцистинурія цитрулінемія",
+          "орфанні захворювання",
+          "тирозинемія",
+          "лейциноз",
+          "метилмалонова та пропіонова ацидемії"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "1-methylhistidine-serum-or-plasma",
@@ -36314,8 +37377,33 @@
         "short_description": "Концентрація речовини «1-Метилгістидин» у сироватці або плазмі, визначена в профілі амінокислот і споріднених метаболітів.",
         "why_it_matters": "Оцінюйте показник разом з іншими складовими профілю, біоматеріалом, методом і референтним інтервалом лабораторії. Окремий компонент не встановлює метаболічного діагнозу.",
         "no_universal_target_reason": "Референтний інтервал залежить від методу лабораторії, вікової групи, біоматеріалу й умов забору. Опубліковані Mayo інтервали для плазми встановлені цією лабораторією для проб натще; це не універсальна норма для сироватки чи плазми.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "амінокислоти плазми",
+          "тандемна мас-спектрометрія",
+          "розширений неонатальний скринінг",
+          "спадкові хвороби обміну амінокислот гомоцистинурія цитрулінемія",
+          "орфанні захворювання",
+          "тирозинемія",
+          "лейциноз",
+          "метилмалонова та пропіонова ацидемії"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "3-methylhistidine-serum-or-plasma",
@@ -36342,8 +37430,33 @@
         "short_description": "Концентрація речовини «3-Метилгістидин» у сироватці або плазмі, визначена в профілі амінокислот і споріднених метаболітів.",
         "why_it_matters": "Оцінюйте показник разом з іншими складовими профілю, біоматеріалом, методом і референтним інтервалом лабораторії. Окремий компонент не встановлює метаболічного діагнозу.",
         "no_universal_target_reason": "Референтний інтервал залежить від методу лабораторії, вікової групи, біоматеріалу й умов забору. Опубліковані Mayo інтервали для плазми встановлені цією лабораторією для проб натще; це не універсальна норма для сироватки чи плазми.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "амінокислоти плазми",
+          "тандемна мас-спектрометрія",
+          "розширений неонатальний скринінг",
+          "спадкові хвороби обміну амінокислот гомоцистинурія цитрулінемія",
+          "орфанні захворювання",
+          "тирозинемія",
+          "лейциноз",
+          "метилмалонова та пропіонова ацидемії"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "alpha-aminoadipic-acid-serum-or-plasma",
@@ -36370,8 +37483,33 @@
         "short_description": "Концентрація речовини «α-Аміноадипінова кислота» у сироватці або плазмі, визначена в профілі амінокислот і споріднених метаболітів.",
         "why_it_matters": "Оцінюйте показник разом з іншими складовими профілю, біоматеріалом, методом і референтним інтервалом лабораторії. Окремий компонент не встановлює метаболічного діагнозу.",
         "no_universal_target_reason": "Референтний інтервал залежить від методу лабораторії, вікової групи, біоматеріалу й умов забору. Опубліковані Mayo інтервали для плазми встановлені цією лабораторією для проб натще; це не універсальна норма для сироватки чи плазми.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "амінокислоти плазми",
+          "тандемна мас-спектрометрія",
+          "розширений неонатальний скринінг",
+          "спадкові хвороби обміну амінокислот гомоцистинурія цитрулінемія",
+          "орфанні захворювання",
+          "тирозинемія",
+          "лейциноз",
+          "метилмалонова та пропіонова ацидемії"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "alpha-aminobutyric-acid-serum-or-plasma",
@@ -36398,8 +37536,33 @@
         "short_description": "Концентрація речовини «α-Аміномасляна кислота» у сироватці або плазмі, визначена в профілі амінокислот і споріднених метаболітів.",
         "why_it_matters": "Оцінюйте показник разом з іншими складовими профілю, біоматеріалом, методом і референтним інтервалом лабораторії. Окремий компонент не встановлює метаболічного діагнозу.",
         "no_universal_target_reason": "Референтний інтервал залежить від методу лабораторії, вікової групи, біоматеріалу й умов забору. Опубліковані Mayo інтервали для плазми встановлені цією лабораторією для проб натще; це не універсальна норма для сироватки чи плазми.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "амінокислоти плазми",
+          "тандемна мас-спектрометрія",
+          "розширений неонатальний скринінг",
+          "спадкові хвороби обміну амінокислот гомоцистинурія цитрулінемія",
+          "орфанні захворювання",
+          "тирозинемія",
+          "лейциноз",
+          "метилмалонова та пропіонова ацидемії"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "beta-alanine-serum-or-plasma",
@@ -36426,8 +37589,33 @@
         "short_description": "Концентрація речовини «β-Аланін» у сироватці або плазмі, визначена в профілі амінокислот і споріднених метаболітів.",
         "why_it_matters": "Оцінюйте показник разом з іншими складовими профілю, біоматеріалом, методом і референтним інтервалом лабораторії. Окремий компонент не встановлює метаболічного діагнозу.",
         "no_universal_target_reason": "Референтний інтервал залежить від методу лабораторії, вікової групи, біоматеріалу й умов забору. Опубліковані Mayo інтервали для плазми встановлені цією лабораторією для проб натще; це не універсальна норма для сироватки чи плазми.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "амінокислоти плазми",
+          "тандемна мас-спектрометрія",
+          "розширений неонатальний скринінг",
+          "спадкові хвороби обміну амінокислот гомоцистинурія цитрулінемія",
+          "орфанні захворювання",
+          "тирозинемія",
+          "лейциноз",
+          "метилмалонова та пропіонова ацидемії"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "beta-aminoisobutyric-acid-serum-or-plasma",
@@ -36454,8 +37642,33 @@
         "short_description": "Концентрація речовини «β-Аміноізомасляна кислота» у сироватці або плазмі, визначена в профілі амінокислот і споріднених метаболітів.",
         "why_it_matters": "Оцінюйте показник разом з іншими складовими профілю, біоматеріалом, методом і референтним інтервалом лабораторії. Окремий компонент не встановлює метаболічного діагнозу.",
         "no_universal_target_reason": "Референтний інтервал залежить від методу лабораторії, вікової групи, біоматеріалу й умов забору. Опубліковані Mayo інтервали для плазми встановлені цією лабораторією для проб натще; це не універсальна норма для сироватки чи плазми.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "амінокислоти плазми",
+          "тандемна мас-спектрометрія",
+          "розширений неонатальний скринінг",
+          "спадкові хвороби обміну амінокислот гомоцистинурія цитрулінемія",
+          "орфанні захворювання",
+          "тирозинемія",
+          "лейциноз",
+          "метилмалонова та пропіонова ацидемії"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "gamma-aminobutyric-acid-serum-or-plasma",
@@ -36482,8 +37695,33 @@
         "short_description": "Концентрація речовини «γ-Аміномасляна кислота» у сироватці або плазмі, визначена в профілі амінокислот і споріднених метаболітів.",
         "why_it_matters": "Оцінюйте показник разом з іншими складовими профілю, біоматеріалом, методом і референтним інтервалом лабораторії. Окремий компонент не встановлює метаболічного діагнозу.",
         "no_universal_target_reason": "Референтний інтервал залежить від методу лабораторії, вікової групи, біоматеріалу й умов забору. Опубліковані Mayo інтервали для плазми встановлені цією лабораторією для проб натще; це не універсальна норма для сироватки чи плазми.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "амінокислоти плазми",
+          "тандемна мас-спектрометрія",
+          "розширений неонатальний скринінг",
+          "спадкові хвороби обміну амінокислот гомоцистинурія цитрулінемія",
+          "орфанні захворювання",
+          "тирозинемія",
+          "лейциноз",
+          "метилмалонова та пропіонова ацидемії"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "ethanolamine-serum-or-plasma",
@@ -36510,8 +37748,33 @@
         "short_description": "Концентрація речовини «Етаноламін» у сироватці або плазмі, визначена в профілі амінокислот і споріднених метаболітів.",
         "why_it_matters": "Оцінюйте показник разом з іншими складовими профілю, біоматеріалом, методом і референтним інтервалом лабораторії. Окремий компонент не встановлює метаболічного діагнозу.",
         "no_universal_target_reason": "Референтний інтервал залежить від методу лабораторії, вікової групи, біоматеріалу й умов забору. Опубліковані Mayo інтервали для плазми встановлені цією лабораторією для проб натще; це не універсальна норма для сироватки чи плазми.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "амінокислоти плазми",
+          "тандемна мас-спектрометрія",
+          "розширений неонатальний скринінг",
+          "спадкові хвороби обміну амінокислот гомоцистинурія цитрулінемія",
+          "орфанні захворювання",
+          "тирозинемія",
+          "лейциноз",
+          "метилмалонова та пропіонова ацидемії"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "reticulocytes",
@@ -36631,8 +37894,32 @@
         "short_description": "Ретикулоцитарний індекс, повідомлений лабораторією. Перш ніж прирівнювати його до скоригованого відсотка ретикулоцитів чи індексу їх продукції, треба знати використаний метод корекції.",
         "why_it_matters": "Розглядайте разом із загальним аналізом крові, щоб оцінити відповідь кісткового мозку на потребу в еритроцитах.",
         "no_universal_target_reason": "Оцінка залежить від методу лабораторії, віку та супутніх значень гемоглобіну й гематокриту. Відсоток, абсолютна кількість і скоригований індекс — різні показники; спільного інтервалу для них немає.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "ретикулоцити",
+          "ретикулоцитарний індекс",
+          "індекс продукції ретикулоцитів",
+          "фракція незрілих ретикулоцитів",
+          "гемолітична анемія ретикулоцити",
+          "апластична анемія",
+          "анемія"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "immature-reticulocyte-fraction",
@@ -36660,7 +37947,8 @@
         "short_description": "Частка ретикулоцитів із середньою та високою флуоресценцією на аналізаторі. Ці групи відповідають менш зрілим клітинам.",
         "why_it_matters": "Ці фракції аналізатора характеризують утворення еритроцитів; їх оцінюють разом із кількістю ретикулоцитів і рештою показників крові.",
         "no_universal_target_reason": "Визначення популяцій та інтервали залежать від методики аналізатора й перевірки в лабораторії. Опис виробника не встановлює універсальної клінічної норми.",
-        "band_labels": {}
+        "band_labels": {},
+        "jurisdiction_note": "Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
       },
       "calculation": {
         "method": "derived_immature_reticulocyte_fraction",
@@ -36673,7 +37961,30 @@
         "requires_confirmed_inputs": true,
         "output_provisional": true,
         "automatic_enabled": true
-      }
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "ретикулоцити",
+          "ретикулоцитарний індекс",
+          "індекс продукції ретикулоцитів",
+          "фракція незрілих ретикулоцитів",
+          "гемолітична анемія ретикулоцити",
+          "апластична анемія",
+          "анемія"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "reticulocytes-low-fluorescence-fraction",
@@ -36700,8 +38011,32 @@
         "short_description": "Частка ретикулоцитів із низькою флуоресценцією — більш зрілої популяції ретикулоцитів за класифікацією аналізатора.",
         "why_it_matters": "Ці фракції аналізатора характеризують утворення еритроцитів; їх оцінюють разом із кількістю ретикулоцитів і рештою показників крові.",
         "no_universal_target_reason": "Визначення популяцій та інтервали залежать від методики аналізатора й перевірки в лабораторії. Опис виробника не встановлює універсальної клінічної норми.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "ретикулоцити",
+          "ретикулоцитарний індекс",
+          "індекс продукції ретикулоцитів",
+          "фракція незрілих ретикулоцитів",
+          "гемолітична анемія ретикулоцити",
+          "апластична анемія",
+          "анемія"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "reticulocytes-medium-fluorescence-fraction",
@@ -36728,8 +38063,32 @@
         "short_description": "Частка ретикулоцитів із середньою флуоресценцією — одна зі складових фракції незрілих ретикулоцитів на аналізаторі.",
         "why_it_matters": "Ці фракції аналізатора характеризують утворення еритроцитів; їх оцінюють разом із кількістю ретикулоцитів і рештою показників крові.",
         "no_universal_target_reason": "Визначення популяцій та інтервали залежать від методики аналізатора й перевірки в лабораторії. Опис виробника не встановлює універсальної клінічної норми.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "ретикулоцити",
+          "ретикулоцитарний індекс",
+          "індекс продукції ретикулоцитів",
+          "фракція незрілих ретикулоцитів",
+          "гемолітична анемія ретикулоцити",
+          "апластична анемія",
+          "анемія"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "reticulocytes-high-fluorescence-fraction",
@@ -36756,8 +38115,32 @@
         "short_description": "Частка ретикулоцитів із високою флуоресценцією — найменш зрілої групи ретикулоцитів за класифікацією аналізатора.",
         "why_it_matters": "Ці фракції аналізатора характеризують утворення еритроцитів; їх оцінюють разом із кількістю ретикулоцитів і рештою показників крові.",
         "no_universal_target_reason": "Визначення популяцій та інтервали залежать від методики аналізатора й перевірки в лабораторії. Опис виробника не встановлює універсальної клінічної норми.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "ретикулоцити",
+          "ретикулоцитарний індекс",
+          "індекс продукції ретикулоцитів",
+          "фракція незрілих ретикулоцитів",
+          "гемолітична анемія ретикулоцити",
+          "апластична анемія",
+          "анемія"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "lupus-anticoagulant-screening-time",
@@ -36915,11 +38298,29 @@
         "short_description": "Коментар лабораторії до загального аналізу крові, збережений у первісному формулюванні. Це текст до звіту, а не числовий показник клітин крові.",
         "why_it_matters": "Читайте разом із первинним звітом і виміряними показниками загального аналізу крові.",
         "no_universal_target_reason": "Текстовий коментар до звіту не має числового референтного інтервалу й не повинен отримувати оцінку як підвищений, знижений чи патологічний показник.",
-        "band_labels": {}
+        "band_labels": {},
+        "jurisdiction_note": "Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
       },
       "never_verdict": true,
       "render_as": "fact",
-      "value_type": "text"
+      "value_type": "text",
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "гемограма",
+          "загальний аналіз крові"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "globulin-calculated",
@@ -36946,7 +38347,8 @@
         "short_description": "Масова концентрація глобулінів у сироватці або плазмі, розрахована як загальний білок мінус альбумін. Це окремий показник від відсотків окремих фракцій електрофорезу білків.",
         "why_it_matters": "Оцінюйте разом із загальним білком, альбуміном, співвідношенням альбумін/глобуліни та методами лабораторії. Розрахунок не визначає окремий імуноглобулін і не замінює електрофорез білків.",
         "no_universal_target_reason": "Застосовуються біоматеріал, методи та референтний інтервал лабораторії. Числовий інтервал окремої лабораторії не приймається як універсальна норма.",
-        "band_labels": {}
+        "band_labels": {},
+        "jurisdiction_note": "Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
       },
       "calculation": {
         "method": "derived_globulin",
@@ -36959,7 +38361,28 @@
         "requires_confirmed_inputs": true,
         "output_provisional": true,
         "automatic_enabled": true
-      }
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "глобуліни розрахункові",
+          "альбумін-глобуліновий",
+          "диспротеїнемія загальний білок альбумін глобуліни",
+          "множинна мієлома",
+          "цироз печінки"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "dec.gov.ua",
+          "moz.gov.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "weather_temperature",
@@ -36986,8 +38409,27 @@
         "short_description": "Температура в погодному контексті, надана джерелом. Це показник середовища, а не температура тіла чи шкіри.",
         "why_it_matters": "Зберігайте разом зі значенням його джерело й контекст збору. Клінічний референтний інтервал і плановий термін повторної перевірки не призначаються.",
         "no_universal_target_reason": "Погодне поле джерела є контекстом середовища, а не клінічною ціллю.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Це величина, яку визначає виробник пристрою; національні настанови її не описують. Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "погодні умови температура вологість здоров'я",
+          "рекомендації температура повітря вологість спека здоров'я"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "moz.gov.ua",
+          "phc.org.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "This is a value defined by the device maker; no national guideline covers it. No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "weather_humidity",
@@ -37014,8 +38456,27 @@
         "short_description": "Відносна вологість у погодному контексті джерела. Це не вимірювання води в організмі.",
         "why_it_matters": "Зберігайте разом зі значенням його джерело й контекст збору. Клінічний референтний інтервал і плановий термін повторної перевірки не призначаються.",
         "no_universal_target_reason": "Погодне поле джерела є контекстом середовища, а не клінічною ціллю.",
-        "band_labels": {}
-      }
+        "band_labels": {},
+        "jurisdiction_note": "Це величина, яку визначає виробник пристрою; національні настанови її не описують. Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+      },
+      "ua_search": {
+        "searched_at": "2026-11-15",
+        "result": "none_found",
+        "queries": [
+          "погодні умови температура вологість здоров'я",
+          "рекомендації температура повітря вологість спека здоров'я"
+        ],
+        "sites": [
+          "zakon.rada.gov.ua",
+          "moz.gov.ua",
+          "phc.org.ua"
+        ],
+        "unreachable_sites": [
+          "guidelines.moz.gov.ua"
+        ],
+        "method": "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua registry of medical-technological documents (its own search was rate-limited); web search for pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+      },
+      "jurisdiction_note": "This is a value defined by the device maker; no national guideline covers it. No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
     },
     {
       "concept_id": "estimated-glomerular-filtration-rate-reported",

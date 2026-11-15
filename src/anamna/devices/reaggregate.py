@@ -178,7 +178,10 @@ def reimport_files(settings: Settings, user_id: str, *, adapters: set[str] | Non
     with connect(settings) as db:
         imports = db.execute(
             """SELECT di.id, di.adapter_key, di.source_path, di.patient_id, di.metadata_json,
-                      (SELECT COUNT(*) FROM device_metric_days d WHERE d.import_id=di.id) rows_owned
+                      (SELECT COUNT(*) FROM device_metric_days d
+                        WHERE d.import_id=di.id AND d.id NOT LIKE 'derived-bmi-%')
+                      + (SELECT COUNT(*) FROM device_workouts w WHERE w.import_id=di.id)
+                      + (SELECT COUNT(*) FROM device_events e WHERE e.import_id=di.id) rows_owned
                FROM device_imports di
                WHERE di.owner_user_id=? AND di.adapter_key IN ('apple_health', 'oura', 'garmin', 'kardia')
                ORDER BY COALESCE(di.export_ended_at, di.imported_at) DESC, di.imported_at DESC, di.id""",

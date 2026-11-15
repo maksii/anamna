@@ -134,12 +134,14 @@ def test_missing_export_settles_the_exclusion_after_applying_what_can_be_reread(
         assert _weight(db, owner) == [81, 80]
     rule = exclusions.create(settings, owner, owner, provider="apple_health", source="Synthetic scale", scope="origin")
     lost.unlink()  # This synthetic arrival belongs only to this test.
-    # The file will not come back: the rule is applied to the export that can
-    # still be read and settles, rather than reading "applying" for good.
+    # The file will not come back: the rule settles rather than reading
+    # "applying" for good, and it holds for both exports. The one that can be
+    # read is re-read under it; the stored reading of the lost one is held.
     assert exclusions.run_pending(settings, owner) == 1
     with connect(settings) as db:
         assert db.execute("SELECT applied_at FROM device_exclusions WHERE id=?", (rule,)).fetchone()[0] is not None
-        assert _weight(db, owner) == [80]
+        assert _weight(db, owner) == []
+        assert [json.loads(row[0])["value"] for row in db.execute("SELECT row_json FROM device_exclusion_held")] == [80]
     assert sum("has no kept copy to re-read" in record.getMessage() for record in caplog.records) == 1
     assert exclusions.run_pending(settings, owner) == 0
 

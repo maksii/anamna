@@ -311,6 +311,6 @@ def refresh_derived_observations(
         counts["added"] += inserted
     # A confirmed same-sample clinical BMI outranks a device fallback. Reconcile
     # device calculations last so either path produces just one derived BMI.
-    for key, value in refresh_device_calculations(connection).items():
+    for key, value in refresh_device_calculations(connection, owner_user_id).items():
         counts[key] += value
     return counts

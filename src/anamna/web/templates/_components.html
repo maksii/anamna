@@ -674,7 +674,7 @@
         <label>{{ t('doc.unit') }}<input name="unit_raw" value="{{ item.unit_raw or '' }}"></label>
         <label>{{ t('doc.vendor_ref') }}<input name="vendor_reference_text" value="{{ item.vendor_reference_text or '' }}"></label>
         <label>{{ t('obs.observed_at') }}<input name="observed_at" type="date" value="{{ item.observed_at[:10] if item.observed_at else '' }}"></label>
-        <label>{{ t('obs.evidence') }}<textarea name="evidence_text" rows="2">{{ item.evidence_text or '' }}</textarea></label>
+        <label>{{ t('obs.evidence') }}<textarea name="evidence_text" rows="2">{{ evidence or '' }}</textarea></label>
         <button class="secondary" type="submit">{{ t('doc.save') }}</button>
       </form>
     </details>

@@ -4,6 +4,8 @@ Run last, after the other ``extend_*`` scripts and ``catalog_audit_blood_referen
 Every document below was retrieved and read on 2026-11-15; ``access_note`` says
 what was read. No reference band is added: a figure quoted in a note is the
 document's own wording about a diagnosis, never a target for the result.
+An analyte this release added that no Ukrainian document discusses says so:
+``ua_search`` holds the queries and the sites, and both notes carry the sentence.
 Sources the library already holds (``iusti-syphilis-2020`` and the Ukrainian
 guidelines) are cited by id and were read again for the analyte they now support.
 ``--all`` applies the whole sequence, which is how the library is rebuilt from
@@ -75,6 +77,15 @@ SOURCES = (
             DEC + "6ihPPqdsFR/protokol-covid2023.pdf", "Наказ МОЗ України від 02.04.2020 № 762, у редакції 2023 року",
             "clinical_protocol",
             "PDF read in Ukrainian. Routinely adjusting anticoagulation by D-dimer levels is not recommended; a marked rise may indicate a high risk of venous thromboembolism and inform the decision to image. No cutoff is given."),
+    _source("moz-nakaz-2142-2021-neonatalnyj-skryninh", "UA", MOZ, "Про забезпечення розширеного неонатального скринінгу в Україні",
+            "https://zakon.rada.gov.ua/laws/show/z1403-21",
+            "Наказ МОЗ України від 01.10.2021 № 2142, зареєстрований у Міністерстві юстиції України 29.10.2021 за № 1403/37025",
+            "regulation",
+            "Text read on the Verkhovna Rada site (edition amended by orders 2523, 991 and 1867). Section VIII: screening for inherited metabolic diseases rests on the quantitative measurement of amino acids and acylcarnitines in dried blood spots by tandem mass spectrometry. Annex 3 names the metabolites: leucine and valine for maple syrup urine disease, tyrosine for tyrosinaemia type I, phenylalanine for phenylketonuria. Its reference values are for newborn dried blood spots and are not imported."),
+    _source("moz-nakaz-152-2024-mma-pa", "UA", MOZ,
+            "Стандарт медичної допомоги «Діагностика та лікування метилмалонової та пропіонової ацидемій»",
+            "https://moz.gov.ua/uploads/10/53105-dn_152_30012024_dod.pdf", "Наказ МОЗ України від 30.01.2024 № 152", "standard",
+            "PDF read in Ukrainian. Annex 2: measuring amino acids in plasma shows a raised glycine level in methylmalonic and propionic acidaemia. Annex 5: quantitative plasma amino acids every 3 to 6 months, sampled after a 3 to 4 hour fast. The diet lowers the intake of the precursor amino acids methionine, threonine, valine and isoleucine. No interval is given. The PDF leaves the date and number blank; they are taken from the Ministry's page for the order."),
     _source("nice-ng20-coeliac", "EU", NICE, "Coeliac disease: recognition, assessment and management",
             "https://www.nice.org.uk/guidance/ng20/chapter/Recommendations",
             "NICE guideline NG20, recommendations 1.2.2 to 1.2.4; published 2 September 2015", "guideline",
@@ -108,6 +119,26 @@ MTHFR = (
     "The Ukrainian guideline «Спонтанний викидень. Звичне невиношування вагітності» (2025) does not recommend routine testing for the MTHFR mutation in recurrent pregnancy loss.",
     "Українська клінічна настанова «Спонтанний викидень. Звичне невиношування вагітності» (2025) не рекомендує рутинного аналізу на мутацію MTHFR у разі звичного невиношування.",
 )
+
+SCREENING = "moz-nakaz-2142-2021-neonatalnyj-skryninh"
+MMA = "moz-nakaz-152-2024-mma-pa"
+SCREENING_EN = "In Ukraine, МОЗ order 2142 of 01.10.2021 on expanded newborn screening measures amino acids and acylcarnitines in dried blood spots by tandem mass spectrometry."
+SCREENING_UK = "Наказ МОЗ від 01.10.2021 № 2142 про розширений неонатальний скринінг передбачає кількісне визначення амінокислот та ацилкарнітинів у сухих краплях крові методом тандемної мас-спектрометрії."
+SCREENING_TAIL_EN = "Its reference values are for newborn dried blood spots; they are not carried over to a serum or plasma result."
+SCREENING_TAIL_UK = "Його референсні значення стосуються сухих крапель крові новонароджених і не перенесені на результат у сироватці чи плазмі."
+
+
+def _precursor_en(name: str) -> str:
+    return ("The Ukrainian standard «Діагностика та лікування метилмалонової та пропіонової ацидемій» (МОЗ order 152 of 30.01.2024) "
+            f"names {name} among the precursor amino acids whose intake the diet lowers in these two diseases, "
+            "and asks for quantitative plasma amino acids every 3 to 6 months, sampled after a 3 to 4 hour fast. It gives no interval.")
+
+
+def _precursor_uk(name: str) -> str:
+    return ("Стандарт медичної допомоги «Діагностика та лікування метилмалонової та пропіонової ацидемій» (наказ МОЗ від 30.01.2024 № 152) "
+            f"називає {name} серед амінокислот-попередників, споживання яких знижують дієтою за цих двох хвороб, "
+            "і передбачає кількісне визначення амінокислот плазми кожні 3–6 місяців, після 3–4 годин голодування. Інтервалу він не наводить.")
+
 
 # Analyte: (sources it is now also cited from, note, Ukrainian note).
 ATTACH = {
@@ -196,6 +227,24 @@ ATTACH = {
         "The Ukrainian protocol «Фенілкетонурія та інші гіперфенілаланінемії» (МОЗ order 760 of 19.11.2015) asks for a quantitative amino-acid test in newborns with confirmed hyperphenylalaninaemia, to measure tyrosine and the phenylalanine-to-tyrosine ratio. It gives no interval for tyrosine.",
         "Український протокол «Фенілкетонурія та інші гіперфенілаланінемії» (наказ МОЗ від 19.11.2015 № 760) передбачає кількісне дослідження амінокислот у новонароджених із підтвердженою гіперфенілаланінемією, щоб визначити рівень тирозину та співвідношення фенілаланіну до тирозину. Інтервалу для тирозину він не наводить.",
     ),
+    "leucine-serum-or-plasma": (
+        (SCREENING,),
+        SCREENING_EN + " Annex 3 names leucine, with valine, as the metabolite measured for maple syrup urine disease. " + SCREENING_TAIL_EN,
+        SCREENING_UK + " Додаток 3 називає лейцин разом із валіном метаболітом, який визначають для виявлення лейцинозу (хвороби «кленового сиропу»). " + SCREENING_TAIL_UK,
+    ),
+    "valine-serum-or-plasma": (
+        (SCREENING, MMA),
+        SCREENING_EN + " Annex 3 names valine, with leucine, as the metabolite measured for maple syrup urine disease. " + SCREENING_TAIL_EN + " " + _precursor_en("valine"),
+        SCREENING_UK + " Додаток 3 називає валін разом із лейцином метаболітом, який визначають для виявлення лейцинозу (хвороби «кленового сиропу»). " + SCREENING_TAIL_UK + " " + _precursor_uk("валін"),
+    ),
+    "isoleucine-serum-or-plasma": ((MMA,), _precursor_en("isoleucine"), _precursor_uk("ізолейцин")),
+    "methionine-serum-or-plasma": ((MMA,), _precursor_en("methionine"), _precursor_uk("метіонін")),
+    "threonine-serum-or-plasma": ((MMA,), _precursor_en("threonine"), _precursor_uk("треонін")),
+    "glycine-serum-or-plasma": (
+        (MMA,),
+        "The Ukrainian standard «Діагностика та лікування метилмалонової та пропіонової ацидемій» (МОЗ order 152 of 30.01.2024) notes that measuring amino acids in plasma shows a raised glycine level in these two diseases, and asks for quantitative plasma amino acids every 3 to 6 months in people who have them. It gives no interval.",
+        "Стандарт медичної допомоги «Діагностика та лікування метилмалонової та пропіонової ацидемій» (наказ МОЗ від 30.01.2024 № 152) зазначає, що вимірювання амінокислот у плазмі показує підвищений рівень гліцину за цих двох хвороб, і передбачає кількісне визначення амінокислот плазми кожні 3–6 місяців у людей, які їх мають. Інтервалу він не наводить.",
+    ),
     "lupus-anticoagulant-screening-time": LUPUS,
     "lupus-anticoagulant-confirmation-time": LUPUS,
     "lupus-anticoagulant-index": LUPUS,
@@ -205,6 +254,87 @@ ATTACH = {
 
 # Where the attached Ukrainian document states a threshold that another source rejects.
 DIVERGENT = {"homa-index-reported-model-unspecified"}
+
+
+# What was searched, in Ukrainian, for the analytes this release added and no Ukrainian
+# document discusses. guidelines.moz.gov.ua answered HTTP 503 throughout and is listed apart.
+SEARCHED_AT = "2026-11-15"
+RADA, DEC, MOZ_SITE, PHC = "zakon.rada.gov.ua", "dec.gov.ua", "moz.gov.ua", "phc.org.ua"
+UNREACHABLE = ["guidelines.moz.gov.ua"]
+#: How the terms were used, so the record does not claim more than was done.
+SEARCH_METHOD = (
+    "Full-text search on zakon.rada.gov.ua; the terms matched against the titles in the dec.gov.ua "
+    "registry of medical-technological documents (its own search was rate-limited); web search for "
+    "pages on moz.gov.ua and phc.org.ua. guidelines.moz.gov.ua answered 503 and was not read."
+)
+NOT_FOUND = "No Ukrainian national document that discusses this test was found (searched 15 November 2026)."
+NOT_FOUND_UK = "Українського національного документа, який описує цей показник, не знайдено (пошук 15 листопада 2026 року)."
+VENDOR = "This is a value defined by the device maker; no national guideline covers it."
+VENDOR_UK = "Це величина, яку визначає виробник пристрою; національні настанови її не описують."
+AMINO_QUERIES = ["амінокислоти плазми", "тандемна мас-спектрометрія", "розширений неонатальний скринінг",
+                 "спадкові хвороби обміну амінокислот гомоцистинурія цитрулінемія", "орфанні захворювання",
+                 "тирозинемія", "лейциноз", "метилмалонова та пропіонова ацидемії"]
+RETICULOCYTE_QUERIES = ["ретикулоцити", "ретикулоцитарний індекс", "індекс продукції ретикулоцитів",
+                        "фракція незрілих ретикулоцитів", "гемолітична анемія ретикулоцити", "апластична анемія", "анемія"]
+DEVICE_QUERIES = ["рекомендації фізична активність кроки сон якість сну",
+                  "тривалість сну частота серцевих скорочень у спокої фітнес-трекер",
+                  "варіабельність серцевого ритму", "фази сну", "стадії сну", "частота серцевих скорочень уві сні",
+                  "кількість кроків", "фітнес-трекер", "рівень шуму навушники", "ожиріння", "фізична активність"]
+# (analytes, queries run, sites searched, defined by a device maker)
+UA_SEARCHES = (
+    (("toxocara-igg-antibodies",),
+     ["токсокароз", "токсокароз клінічний протокол наказ МОЗ ІФА антитіла IgG Toxocara canis", "гельмінтози діагностика",
+      "ларвальні гельмінтози", "паразитарні хвороби"], [RADA, DEC, MOZ_SITE], False),
+    (("roma-premenopausal", "roma-postmenopausal"),
+     ["рак яєчників", "яєчник", "пухлини яєчника CA-125 HE4 ROMA", "онкомаркер НЕ4", "індекс ROMA"], [RADA, DEC, MOZ_SITE], False),
+    (("reticulocyte-index", "immature-reticulocyte-fraction", "reticulocytes-low-fluorescence-fraction",
+      "reticulocytes-medium-fluorescence-fraction", "reticulocytes-high-fluorescence-fraction"),
+     RETICULOCYTE_QUERIES, [RADA, DEC, MOZ_SITE], False),
+    (("globulin-calculated",),
+     ["глобуліни розрахункові", "альбумін-глобуліновий", "диспротеїнемія загальний білок альбумін глобуліни",
+      "множинна мієлома", "цироз печінки"], [RADA, DEC, MOZ_SITE], False),
+    (("blood-count-comment",), ["гемограма", "загальний аналіз крові"], [RADA, DEC], False),
+    (("alanine-serum-or-plasma", "arginine-serum-or-plasma", "asparagine-serum-or-plasma", "aspartic-acid-serum-or-plasma",
+      "histidine-serum-or-plasma", "glutamine-serum-or-plasma", "glutamic-acid-serum-or-plasma",
+      "homocitrulline-serum-or-plasma", "hydroxylysine-serum-or-plasma", "hydroxyproline-serum-or-plasma",
+      "carnosine-serum-or-plasma", "lysine-serum-or-plasma", "ornithine-serum-or-plasma", "proline-serum-or-plasma",
+      "sarcosine-serum-or-plasma", "serine-serum-or-plasma", "taurine-serum-or-plasma", "tryptophan-serum-or-plasma",
+      "phosphoethanolamine-serum-or-plasma", "phosphoserine-serum-or-plasma", "cystathionine-serum-or-plasma",
+      "cystine-serum-or-plasma", "citrulline-serum-or-plasma", "1-methylhistidine-serum-or-plasma",
+      "3-methylhistidine-serum-or-plasma", "alpha-aminoadipic-acid-serum-or-plasma",
+      "alpha-aminobutyric-acid-serum-or-plasma", "beta-alanine-serum-or-plasma",
+      "beta-aminoisobutyric-acid-serum-or-plasma", "gamma-aminobutyric-acid-serum-or-plasma",
+      "ethanolamine-serum-or-plasma"),
+     AMINO_QUERIES, [RADA, DEC, MOZ_SITE], False),
+    (("environmental_sound_reduction", "stair_ascent_speed", "stair_descent_speed", "swimming_distance", "stand_hours",
+      "lowest_sleeping_heart_rate", "sleep_interruptions", "body_battery_score", "health_recovery_score",
+      "recovery_score", "resilience_score", "strain_score", "stress_score"),
+     DEVICE_QUERIES, [RADA, DEC, MOZ_SITE, PHC], True),
+    (("weather_temperature", "weather_humidity"),
+     ["погодні умови температура вологість здоров'я", "рекомендації температура повітря вологість спека здоров'я"],
+     [RADA, MOZ_SITE, PHC], True),
+)
+
+
+def _record_searches(analytes: dict) -> int:
+    """Say on the analyte itself that Ukrainian sources were searched and none discusses it."""
+    recorded = 0
+    for concept_ids, queries, sites, vendor in UA_SEARCHES:
+        for concept_id in concept_ids:
+            entry = analytes.get(concept_id)
+            if entry is None or "UA" in entry["regions_covered"]:
+                continue
+            entry["ua_search"] = {"searched_at": SEARCHED_AT, "result": "none_found", "queries": list(queries),
+                                  "sites": list(sites), "unreachable_sites": list(UNREACHABLE),
+                                  "method": SEARCH_METHOD}
+            recorded += 1
+            notes = ((VENDOR, NOT_FOUND), (VENDOR_UK, NOT_FOUND_UK)) if vendor else ((NOT_FOUND,), (NOT_FOUND_UK,))
+            for container, texts in zip((entry, entry.setdefault("uk", {})), notes):
+                for text in texts:
+                    existing = str(container.get("jurisdiction_note") or "")
+                    if text not in existing:
+                        container["jurisdiction_note"] = (existing + " " + text).strip()
+    return recorded
 
 
 def extend(library: dict) -> dict[str, int]:
@@ -240,7 +370,7 @@ def extend(library: dict) -> dict[str, int]:
             entry["divergence_note"] = note
         elif entry.get("agreement") == "single_source" and len(entry["source_ids"]) > 1:
             entry["agreement"] = "concordant"
-    return {"sources_added": added, "citations_added": attached}
+    return {"sources_added": added, "citations_added": attached, "searches_recorded": _record_searches(analytes)}
 
 
 def extend_all(library: dict) -> dict[str, int]:

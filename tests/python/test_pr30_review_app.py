@@ -153,11 +153,12 @@ def test_two_verified_heights_that_disagree_on_one_day_do_not_lock_the_field(tmp
     assert 'name="height_cm"' in client.get("/profile").text
 
 
-# --- 6: the series is anchored on the newest result that can be plotted --------
+# --- 6: the card's series follows the newest number, as the chart does ----------
 
-def test_a_mislabelled_newest_result_does_not_empty_the_series(monkeypatch):
-    """Five respiratory rates under a newest one read with a unit that is not a
-    rate: the card's series is the five, and no trend is drawn from the bad one."""
+def test_a_newest_number_in_another_unit_carries_the_series_as_on_the_chart(monkeypatch):
+    """Five respiratory rates under a newest one in a unit that cannot be
+    converted: the card draws what the detail chart draws, the newest reading
+    in its own unit, never an empty series and never a trend across two units."""
     monkeypatch.setattr(web, "_reading_verdict", lambda *args: ("min", {"interpretation": "unjudged", "label": "Unjudged"}))
     good = {
         "concept_id": "resting-respiratory-rate", "canonical_name": "Resting respiratory rate",
@@ -171,8 +172,9 @@ def test_a_mislabelled_newest_result_does_not_empty_the_series(monkeypatch):
     rows += [{**good, "id": f"rr-{index}", "observed_at": f"2026-0{5 - index}-01", "value_numeric": 14.0 + index}
              for index in range(5)]
     card = web._lab_card(None, "resting-respiratory-rate", rows, {}, None, None, {})
-    assert [point["value"] for point in card["series"]] == [18.0, 17.0, 16.0, 15.0, 14.0]
+    assert [point["value"] for point in card["series"]] == [16.0]
     assert card["trend"] is None
+    # The chart's side of the same rule: test_web_panels.py::test_an_unconvertible_reading_keeps_its_printed_unit.
 
 
 def test_a_text_newest_result_keeps_the_earlier_numbers(tmp_path: Path):

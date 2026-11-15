@@ -336,12 +336,12 @@ across all three jurisdictions.
   favourite.
 - Ukrainian sources must be found in Ukrainian (MOZ orders, national protocols) and mapped, not
   back-translated from an American guideline.
-- Current coverage (`data/reference_library.json`, version 2026-11-15), as a baseline to improve rather than a target already met: 564 sources
-  (UA 163, US 172, EU 129, INT 100) across 568 analytes. 424 analytes cite a UA source, 82 carry
+- Current coverage (`data/reference_library.json`, version 2026-11-15), as a baseline to improve rather than a target already met: 566 sources
+  (UA 165, US 172, EU 129, INT 100) across 568 analytes. 430 analytes cite a UA source, 82 carry
   numeric bands, and 464 are `no_universal_target`. Every band's `source_id` appears in its
   analyte's `source_ids`, and every source carries an `identifier`
   (`tests/python/test_audit_reference.py` guards both).
-- The file is generated: change `scripts/extend_*_reference_library.py` and run `scripts/extend_review_reference_library.py --all`, which rebuilds it from the scripts in order. A laboratory's catalogue page is `official: false`, `kind: "laboratory_catalogue"`. A source is cited only after its page was read (`tests/python/test_pr30_review_reference.py`).
+- The file is generated: change `scripts/extend_*_reference_library.py` and run `scripts/extend_review_reference_library.py --all`, which rebuilds it from the scripts in order. A laboratory's catalogue page is `official: false`, `kind: "laboratory_catalogue"`. A source is cited only after its page was read (`tests/python/test_pr30_review_reference.py`). An analyte with no Ukrainian document says so: `ua_search` records the date, the terms, the sites and how they were searched, and both jurisdiction notes carry the sentence. guidelines.moz.gov.ua answered 503 on 2026-11-15: read documents 2948, 3010, 3085 and 3141 there when it returns.
 
 ## Repo-specific traps
 
@@ -513,6 +513,10 @@ Each of these has already produced a confident, wrong, or silently missing clini
 - **A series separates on two different stated specimens, not on a missing one.** `_latest_context_rows` in `web/app.py` keeps a result with no printed specimen in the series, and `_specimen_key` reads every spelling of a blood sample as one. Counting "not printed" as its own context cut hemoglobin's history from eleven results to two. Left and right stay apart.
 - **A scale capture the account does not hold is not the person's.** A Garmin scale's FIT archive keeps weigh-ins of other people and ones the person deleted. `GarminAdapter.parse` matches each FIT capture to the JSON by UTC instant and counts the rest (`withheld_unmatched_records`); it never imports them. Garmin's FIT SDK is not a dependency: its licence forbids redistribution, so `structured._fit_weight_scale_rows` reads the weight-scale message itself.
 - **A preferred device never hides another device's full day.** `reconcile._rank` and `_cohort_rank` put low coverage before the person's preference: a preferred watch that counted 12 steps on its charger does not replace the phone's 8,000, and a 0.2 h fragment does not replace a night.
+- **An exclusion holds even when the export file is gone.** A rule is applied by re-reading the source. For an export whose kept copy no longer exists, `exclusions._apply_without_source` moves the matching rows to `device_exclusion_held` (migration 077) and undo moves them back. A stored day cannot be rebuilt in part, so that source's whole day goes, and the page says so (`exclusions.why_body`).
+- **A write recalculates the writer's record.** The `derived_values` middleware passes the signed-in account to `refresh_derived_observations`: a viewer of a shared record cannot change it. A request under `/admin` recalculates every record. A new route that writes to another account's record outside `/admin` must refresh that account itself.
+- **Two results of one analyte on one day are two results.** `_same_day_key` keeps results from different documents apart, with equal values or not: a date does not prove one draw. The change sentence names the same-day result it did not compare with (`panel.delta_since_also`).
+- **The card and the chart follow the newest number's unit.** `_lab_card` and `_chart_payload` both draw the readings that share the newest numeric result's unit. A reading that cannot be converted keeps its printed unit and is never drawn under another one.
 - **A trigger's `BEGIN` goes at the end of the `CREATE TRIGGER` line.** At the start of a line it matches `_SELF_MANAGED` in `db.py` and the whole migration runs outside a transaction (`tests/python/test_pr30_review_app.py`).
 
 ## Definition of done
