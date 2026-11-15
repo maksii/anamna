@@ -43,7 +43,7 @@ def test_old_rows_move_to_the_new_concepts_keep_their_value_and_verification(tmp
         _insert(connection, user_id, "abs", "Нейтрофіли (абс.)", "granulocytes-absolute", value=3.08,
                 unit="10^9", canonical="10^9")
         _insert(connection, user_id, "pct", "Тромбокрит (PCT)", "plateletcrit", value=0.3,
-                unit="х 10*9/л", canonical="%")
+                unit="х 10*9/л", canonical="х 10*9/л")
         # The concept the HCV split left behind; no definition names it any more.
         connection.execute("INSERT OR IGNORE INTO concepts(id, canonical_name, category, value_type, created_at) "
                            "VALUES ('hepatitis-c-antibodies', 'Hepatitis C antibodies', 'infection', 'numeric', ?)",
@@ -64,7 +64,7 @@ def test_old_rows_move_to_the_new_concepts_keep_their_value_and_verification(tmp
         assert rows["smear"]["concept_id"] == "lymphocytes-manual-differential"
         assert rows["abs"]["concept_id"] == "neutrophils-absolute"
         assert rows["hcv"]["concept_id"] == "hepatitis-c-total-antibodies"
-        assert rows["pct"]["unit_canonical"] == "х 10*9/л"
+        assert rows["pct"]["unit_canonical"] == "%"
         for row_id, value in (("smear", 36.0), ("abs", 3.08), ("pct", 0.3), ("hcv", 0.12)):
             assert rows[row_id]["value_numeric"] == value
             assert rows[row_id]["verification_status"] == "verified"
@@ -75,7 +75,7 @@ def test_old_rows_move_to_the_new_concepts_keep_their_value_and_verification(tmp
         assert moved[("observation_concept_remapped", "smear")]["to"] == "lymphocytes-manual-differential"
         assert moved[("observation_concept_remapped", "smear")]["verification_status"] == "verified"
         folded = moved[("observation_unit_folded", "pct")]
-        assert (folded["from"], folded["to"], folded["value_numeric"]) == ("%", "х 10*9/л", 0.3)
+        assert (folded["from"], folded["to"], folded["value_numeric"]) == ("х 10*9/л", "%", 0.3)
         assert all(a["actor_user_id"] is None for a in audits)
 
         # Idempotent: nothing to move, nothing written.

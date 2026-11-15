@@ -11,6 +11,7 @@ import hashlib
 import json
 import sqlite3
 from collections import Counter
+from datetime import date
 from pathlib import Path
 
 from anamna.config import Settings
@@ -65,8 +66,10 @@ def main():
             root = Path(__file__).resolve().parents[1]
             if not path.is_relative_to(root / "work") or path.is_relative_to(root / "work/db-archive"):
                 raise SystemExit("--refresh requires a working copy under work/, outside db-archive")
-            args.backup_dir.mkdir(parents=True, exist_ok=True)
-            backup = args.backup_dir / "device-audit-before-refresh.sqlite3"
+            # A relative directory means the repository's, whatever the caller's cwd is.
+            backup_dir = root / args.backup_dir
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            backup = backup_dir / "device-audit-before-refresh.sqlite3"
             if backup.exists():
                 with sqlite3.connect(backup) as target:
                     if (_content(target), _content(target, True)) != source_content:
@@ -74,8 +77,13 @@ def main():
             else:
                 with sqlite3.connect(backup) as target:
                     db.backup(target)
-            with (args.backup_dir / "README.md").open("a", encoding="utf-8") as f:
-                f.write("\n- 2026-11-15: device-audit-before-refresh.sqlite3 backs up the hosted-sandbox working copy before metric repair/backfill; removable after audit acceptance. Private health data.\n")
+            # One line per backup file, however often the audit is repeated.
+            readme = backup_dir / "README.md"
+            line = (f"- {date.today().isoformat()}: {backup.name} is a backup of {path.relative_to(root).as_posix()} "
+                    "taken before metric repair/backfill; removable after audit acceptance. Private health data.")
+            if backup.name not in (readme.read_text(encoding="utf-8") if readme.exists() else ""):
+                with readme.open("a", encoding="utf-8") as f:
+                    f.write("\n" + line + "\n")
     result = {"before": before}
     if args.refresh:
         settings = Settings(database_path=path, source_dir=path.parent / "sources", secret_key="isolated-audit-copy")

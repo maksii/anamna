@@ -4,6 +4,7 @@ No patient records or reference bands are added or changed. Idempotent.
 """
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 
@@ -14,13 +15,13 @@ INCOMPATIBLE_BILIRUBIN_SOURCE = "https://pch-pathlab.com/cms/?q=test-rep-dbil"
 
 SOURCES = {
     INCOMPATIBLE_BILIRUBIN_SOURCE: (
-        "north-west-anglia-direct-bilirubin-methods", "EU", "North West Anglia NHS Foundation Trust Pathology Services", "Direct bilirubin: assay compatibility", "Direct bilirubin test directory: calculated indirect bilirubin is not appropriate with this laboratory's methods", True),
+        "north-west-anglia-direct-bilirubin-methods", "EU", "North West Anglia NHS Foundation Trust Pathology Services", "Direct bilirubin: assay compatibility", "Direct bilirubin test directory: calculated indirect bilirubin is not appropriate with this laboratory's methods", False),
     "https://www.sysmex.gr/academy/kentro-gnoseon/technologies/reticulocyte-count-application-ret/": (
         "sysmex-reticulocyte-application", "EU", "Sysmex Europe", "Reticulocyte count application (RET)", "Sysmex RET application documentation", False),
     "https://www.sysmex.de/fileadmin/media/f101/Xtra/Themenblaetter/Sysmex-White-Paper-Retikulozyt.pdf": (
         "sysmex-reticulocyte-whitepaper-2022", "EU", "Sysmex Deutschland", "Retikulozyten: White Paper", "White Paper 2022, page 4: IRF = MFR + HFR", False),
     "https://webpath.med.utah.edu/EXAM/LabMedCurric/LabMed04_01.html": (
-        "utah-laboratory-hematology", "US", "University of Utah", "Laboratory Medicine Curriculum: Hematology", "WebPath LabMed04_01", True),
+        "utah-laboratory-hematology", "US", "University of Utah", "Laboratory Medicine Curriculum: Hematology", "WebPath LabMed04_01", False),
     "https://www.nhs.uk/conditions/high-cholesterol/cholesterol-levels/": (
         "nhs-cholesterol-levels", "EU", "NHS", "High cholesterol: Cholesterol levels", "NHS cholesterol levels publication", True),
     "https://www.sysmex-europe.com/academy/library/glossary/": (
@@ -28,11 +29,23 @@ SOURCES = {
     "https://biolincc.nhlbi.nih.gov/media/studies/heirs/Laboratory%20Test%20Descriptions.pdf": (
         "nhlbi-heirs-laboratory-tests", "US", "National Heart, Lung, and Blood Institute", "HEIRS Laboratory Test Descriptions", "HEIRS Laboratory Test Descriptions, page 3", True),
     "https://www.beaumontlaboratory.com/lab-test-directory/detail?URL=albumin-globulin-ratio&itemID=1": (
-        "corewell-albumin-globulin-ratio", "US", "Corewell Health Laboratory", "Albumin/Globulin Ratio", "Laboratory Test Directory: Albumin/Globulin Ratio", True),
+        "corewell-albumin-globulin-ratio", "US", "Corewell Health Laboratory", "Albumin/Globulin Ratio", "Laboratory Test Directory: Albumin/Globulin Ratio", False),
     BMI_SOURCE_URL: (
         "cdc-bmi-calculation", "US", "Centers for Disease Control and Prevention", "Calculating BMI", "Growth Chart Training: Calculating BMI", True),
     "https://pmc.ncbi.nlm.nih.gov/articles/PMC9812546/": (
         "atherogenic-indices-2022", "INT", "Cureus", "A Descriptive Study of Atherogenic Indices in Patients Admitted to a Tertiary Care Hospital", "Dharmaraj S, Rajaragupathy S, Denishya S. Cureus 2022;14(12):e32231. doi:10.7759/cureus.32231; PMCID: PMC9812546", False),
+}
+
+# What a source that is not an official body's publication is. A laboratory's
+# test directory and a teaching page are neither guidance nor research.
+KINDS = {
+    "north-west-anglia-direct-bilirubin-methods": "laboratory_catalogue",
+    "corewell-albumin-globulin-ratio": "laboratory_catalogue",
+    "utah-laboratory-hematology": "teaching_material",
+    "sysmex-reticulocyte-application": "manufacturer_documentation",
+    "sysmex-reticulocyte-whitepaper-2022": "manufacturer_documentation",
+    "sysmex-hematology-glossary": "manufacturer_documentation",
+    "atherogenic-indices-2022": "primary_research",
 }
 
 
@@ -43,7 +56,7 @@ def _calculated_globulin() -> dict:
         "unit": "g/L", "kind": "no_universal_target", "bands": [], "panel": "liver",
         "source_id": "corewell-albumin-globulin-ratio",
         "source_ids": ["corewell-albumin-globulin-ratio"], "regions_covered": ["US"],
-        "agreement": "no_universal_target",
+        "agreement": "single_source",
         "short_description": "The serum or plasma globulin mass concentration calculated as total protein minus albumin. This is separate from the percentages of individual protein-electrophoresis fractions.",
         "why_it_matters": "Read with total protein, albumin, the albumin/globulin ratio and the performing laboratory's methods. This calculation does not identify a particular immunoglobulin or replace protein electrophoresis.",
         "no_universal_target_reason": "The performing laboratory's specimen, methods and reference interval apply. A numerical interval from one laboratory is not adopted as a universal target.",
@@ -70,7 +83,8 @@ def _clarify_bmi_age_scope(entry: dict) -> None:
         "CDC застосовує дорослі категорії ІМТ від 20 років, а у віці від 2 до 19 років використовує вікові перцентилі ІМТ. "
         "Тому числові пороги збігаються там, де дорослі групи перекриваються, але вікова застосовність відрізняється; "
         "оцінка за дорослими інтервалами у 18 або 19 років не є оцінкою вікового ІМТ за CDC.")
-    entry["agreement"] = "conditional"
+    # The cut-points agree; the age from which they apply does not.
+    entry["agreement"] = "divergent"
     entry["divergence_note"] = age_note
     for container, note in ((entry, age_note), (entry.setdefault("uk", {}), age_note_uk)):
         existing = str(container.get("jurisdiction_note") or "")
@@ -114,7 +128,7 @@ def extend(library: dict) -> dict[str, int]:
         record = dict(id=source_id, region=region, publisher=publisher, name=name,
                       url=url, identifier=identifier, official=official, reviewed_at="2026-11-15")
         if not official:
-            record["kind"] = "manufacturer_documentation" if "sysmex" in url else "primary_research"
+            record["kind"] = KINDS[source_id]
         library["sources"].append(record)
         by_url[url] = record
         added += 1
@@ -145,14 +159,20 @@ def extend(library: dict) -> dict[str, int]:
     if "EU" not in indirect["regions_covered"]:
         indirect["regions_covered"].append("EU")
     indirect["calculation"]["requires_compatible_assays"] = True
-    indirect["jurisdiction_note"] = (
-        "The NHLBI HEIRS protocol calculates indirect bilirubin as total minus direct bilirubin. "
-        "North West Anglia NHS Pathology states that its total and direct assay methods do not correlate sufficiently for this calculation. "
-        "Compatibility of the performing laboratory's methods must therefore be established; automatic reconstruction is disabled when this evidence is absent.")
-    indirect.setdefault("uk", {})["jurisdiction_note"] = (
-        "Протокол NHLBI HEIRS розраховує непрямий білірубін як загальний мінус прямий. "
-        "Патологічна служба NHS North West Anglia зазначає, що її методи визначення загального та прямого білірубіну недостатньо узгоджені для цього розрахунку. "
-        "Тому потрібне підтвердження сумісності методів лабораторії; без цих даних автоматичне відновлення вимкнено.")
+    # Appended: the note already there quotes МОЗ настанови 00212 and 00214.
+    for container, note in (
+        (indirect,
+         "The NHLBI HEIRS protocol calculates indirect bilirubin as total minus direct bilirubin. "
+         "North West Anglia NHS Pathology states that its total and direct assay methods do not correlate sufficiently for this calculation. "
+         "Compatibility of the performing laboratory's methods must therefore be established; automatic reconstruction is disabled when this evidence is absent."),
+        (indirect.setdefault("uk", {}),
+         "Протокол NHLBI HEIRS розраховує непрямий білірубін як загальний мінус прямий. "
+         "Патологічна служба NHS North West Anglia зазначає, що її методи визначення загального та прямого білірубіну недостатньо узгоджені для цього розрахунку. "
+         "Тому потрібне підтвердження сумісності методів лабораторії; без цих даних автоматичне відновлення вимкнено."),
+    ):
+        existing = str(container.get("jurisdiction_note") or "")
+        if note not in existing:
+            container["jurisdiction_note"] = (existing + " " + note).strip()
     entry = analytes["body-mass-index"]
     _clarify_bmi_age_scope(entry)
     source = by_url[BMI_SOURCE_URL]
@@ -164,22 +184,23 @@ def extend(library: dict) -> dict[str, int]:
         "output_provisional": True,
     }
     coefficient = analytes["atherogenic-coefficient"]
+    # The Castelli indices are different ratios; only that label is removed.
     coefficient["short_description"] = coefficient["short_description"].replace(
-        ", also called the Castelli index,", ",")
+        ", also called the Castelli index,", "")
     if "uk" in coefficient:
-        coefficient["uk"]["short_description"] = (
-            "Коефіцієнт атерогенності — це (загальний холестерин − холестерин ЛПВЩ) / холестерин ЛПВЩ. "
-            "Це окремий показник від індексу Кастеллі та логарифмічного атерогенного індексу плазми. "
-            "Універсальної цілі для цього співвідношення немає; оцінка ризику спирається на чинні клінічні настанови.")
+        coefficient["uk"]["short_description"] = coefficient["uk"]["short_description"].replace(
+            "Коефіцієнт атерогенності (індекс Кастеллі) лабораторія", "Коефіцієнт атерогенності лабораторія")
     library["sources"].sort(key=lambda item: item["id"])
     return {"sources_added": added, "calculations_documented": count}
 
 
 def main():
-    path = Path(__file__).resolve().parents[1] / "data/reference_library.json"
-    library = json.loads(path.read_text(encoding="utf-8"))
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--library", type=Path, default=Path("data/reference_library.json"))
+    args = parser.parse_args()
+    library = json.loads(args.library.read_text(encoding="utf-8"))
     print(json.dumps(extend(library)))
-    path.write_text(json.dumps(library, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    args.library.write_text(json.dumps(library, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
 
 
 if __name__ == "__main__":

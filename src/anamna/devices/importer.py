@@ -178,8 +178,12 @@ def _import_once(
         }
         previous_rows: set[tuple[str, str]] = set()
         for table in ("device_metric_days", "device_workouts", "device_events"):
+            # A calculated BMI carries its weight's import_id but is not this
+            # export's row: refresh_device_calculations below keeps or removes
+            # it. Deleting it here re-created it on every re-read.
             previous = connection.execute(
-                f"SELECT id, {key_columns[table]} FROM {table} WHERE import_id=?", (import_id,)
+                f"SELECT id, {key_columns[table]} FROM {table} WHERE import_id=? AND id NOT LIKE 'derived-bmi-%'",
+                (import_id,),
             ).fetchall()
             previous_rows.update((table, row["id"]) for row in previous)
             connection.executemany(

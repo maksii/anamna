@@ -15,54 +15,60 @@ from anamna.ingest.concepts import CONCEPT_DEFINITIONS, stable_concept_id
 REVIEWED_AT = "2026-11-15"
 
 
-def _source(key, region, publisher, name, url, identifier, *, official=True, note=None):
+def _source(key, region, publisher, name, url, identifier, *, official=True,
+            kind="clinical_publication", note=None):
     result = dict(id=key, region=region, publisher=publisher, name=name, url=url,
-                  identifier=identifier, reviewed_at=REVIEWED_AT, official=official,
-                  kind="laboratory_catalog" if "Mayo" in publisher or "Сінево" in publisher or "МедЛаб" in publisher else "clinical_publication")
+                  identifier=identifier, reviewed_at=REVIEWED_AT, official=official, kind=kind)
     if note:
         result["access_note"] = note
     return result
 
 
+def _catalogue(key, region, publisher, name, url, identifier, *, note=None):
+    """A laboratory's own test catalogue or sample form: never an official body's publication."""
+    return _source(key, region, publisher, name, url, identifier,
+                   official=False, kind="laboratory_catalogue", note=note)
+
+
 SOURCES = [
-    _source("mayo-amh1-2026", "US", "Mayo Clinic Laboratories", "Antimullerian Hormone, Serum",
+    _catalogue("mayo-amh1-2026", "US", "Mayo Clinic Laboratories", "Antimullerian Hormone, Serum",
             "https://www.mayocliniclabs.com/test-catalog/Overview/608824", "AMH1; test 608824"),
-    _source("mayo-eest-2026", "US", "Mayo Clinic Laboratories", "Estradiol, Serum",
-            "https://www.mayocliniclabs.com/api/sitecore/TestCatalog/DownloadTestCatalog?testId=81816", "EEST; test 81816"),
-    _source("mayo-prl-2026", "US", "Mayo Clinic Laboratories", "Prolactin, Serum",
+    _catalogue("mayo-eest-2026", "US", "Mayo Clinic Laboratories", "Estradiol, Serum",
+            "https://www.mayocliniclabs.com/test-catalog/overview/81816", "EEST; test 81816"),
+    _catalogue("mayo-prl-2026", "US", "Mayo Clinic Laboratories", "Prolactin, Serum",
             "https://www.mayocliniclabs.com/test-catalog/Overview/85670", "PRL; test 85670"),
-    _source("mayo-cort-2026", "US", "Mayo Clinic Laboratories", "Cortisol, Serum",
+    _catalogue("mayo-cort-2026", "US", "Mayo Clinic Laboratories", "Cortisol, Serum",
             "https://www.mayocliniclabs.com/test-catalog/overview/8545", "CORT; test 8545"),
-    _source("mayo-amiso-2026", "US", "Mayo Clinic Laboratories", "Amylase, Isoenzymes, Serum",
-            "https://www.mayocliniclabs.com/api/sitecore/TestCatalog/DownloadTestCatalog?testId=604930", "AMISO; test 604930"),
-    _source("mayo-iga-2026", "US", "Mayo Clinic Laboratories", "Immunoglobulin A (IgA), Serum",
-            "https://prd1.mayocliniclabs.com/test-catalog/overview/8157", "IGA; test 8157"),
-    _source("mayo-ttgg-2026", "US", "Mayo Clinic Laboratories", "Tissue Transglutaminase Antibody, IgG, Serum",
-            "https://www.mayocliniclabs.com/api/sitecore/TestCatalog/DownloadTestCatalog?testId=800355", "TTGG; test 800355"),
-    _source("mayo-ema-2026", "US", "Mayo Clinic Laboratories", "Endomysial Antibodies, IgA, Serum",
+    _catalogue("mayo-amiso-2026", "US", "Mayo Clinic Laboratories", "Amylase, Isoenzymes, Serum",
+            "https://www.mayocliniclabs.com/test-catalog/overview/604930", "AMISO; test 604930"),
+    _catalogue("mayo-iga-2026", "US", "Mayo Clinic Laboratories", "Immunoglobulin A (IgA), Serum",
+            "https://www.mayocliniclabs.com/test-catalog/overview/8157", "IGA; test 8157"),
+    _catalogue("mayo-ttgg-2026", "US", "Mayo Clinic Laboratories", "Tissue Transglutaminase Antibody, IgG, Serum",
+            "https://www.mayocliniclabs.com/test-catalog/overview/800355", "TTGG; test 800355"),
+    _catalogue("mayo-ema-2026", "US", "Mayo Clinic Laboratories", "Endomysial Antibodies, IgA, Serum",
             "https://www.mayocliniclabs.com/test-catalog/Overview/9360", "EMA; test 9360"),
-    _source("synevo-gliadin-igg-9169", "UA", "Сінево Україна", "Гліадин, антитіла IgG",
+    _catalogue("synevo-gliadin-igg-9169", "UA", "Сінево Україна", "Гліадин, антитіла IgG",
             "https://www.synevo.ua/tests/9169", "Дослідження 9169",
             note="Used to identify the reported native/unspecified gliadin IgG assay, not to substitute it for deamidated gliadin peptide IgG or endorse screening claims."),
-    _source("synevo-ascaris-igg-2058", "UA", "Сінево Україна", "Ascaris lumbricoides, антитіла IgG",
+    _catalogue("synevo-ascaris-igg-2058", "UA", "Сінево Україна", "Ascaris lumbricoides, антитіла IgG",
             "https://www.synevo.ua/tests/2058", "Дослідження 2058"),
     _source("cdc-toxocariasis-2026", "US", "Centers for Disease Control and Prevention", "Clinical Overview of Toxocariasis",
             "https://www.cdc.gov/toxocariasis/hcp/clinical-overview/index.html", "CDC clinical overview: toxocariasis"),
-    _source("synevo-giardia-total-2056", "UA", "Сінево Україна", "Giardia (лямблії), антитіла сумарні",
+    _catalogue("synevo-giardia-total-2056", "UA", "Сінево Україна", "Giardia (лямблії), антитіла сумарні",
             "https://www.synevo.ua/tests/2056", "Дослідження 2056"),
-    _source("dila-giardia-total-2026", "UA", "Медична лабораторія ДІЛА", "Антитіла до Giardia lamblia сумарні: зразок результату",
+    _catalogue("dila-giardia-total-2026", "UA", "Медична лабораторія ДІЛА", "Антитіла до Giardia lamblia сумарні: зразок результату",
             "https://dila.ua/labdir/get-file-example/10749.html", "ДІЛА дослідження 10749; published sample report",
             note="Public laboratory sample, not a patient record. Notes low serological specificity and possible cross-reactions."),
     _source("cdc-syphilis-laboratory-2024", "US", "Centers for Disease Control and Prevention", "CDC Laboratory Recommendations for Syphilis Testing, United States, 2024",
             "https://www.cdc.gov/mmwr/volumes/73/rr/rr7301a1.htm", "MMWR 2024;73(RR-1):1-32"),
-    _source("medlab-folate-genotypes-6111", "UA", "МедЛаб", "Генетика метаболізму фолатів, методом ПЛР",
+    _catalogue("medlab-folate-genotypes-6111", "UA", "МедЛаб", "Генетика метаболізму фолатів, методом ПЛР",
             "https://medlabtest.ua/uk/patients/analizy/genetika-metabolizma-folatov-plazma-edta-metodom-pcr", "Дослідження 6111",
             note="Used only for names and identities of MTHFR C677T/A1298C, MTR A2756G and MTRR A66G. The provider's broad disease-risk claims and numerical enzyme-activity estimates are not adopted."),
     _source("cdc-mthfr-facts-2026", "US", "Centers for Disease Control and Prevention", "MTHFR Gene Variant and Folic Acid Facts",
             "https://www.cdc.gov/folic-acid/data-research/mthfr/index.html", "CDC MTHFR gene-variant facts, 16 July 2026"),
     _source("oxford-homa-faq-2026", "EU", "University of Oxford Diabetes Trials Unit", "HOMA Calculator: Frequently Asked Questions",
-            "https://www.rdm.ox.ac.uk/about/our-facilities-and-units/DTU/software/homa/faq", "HOMA Calculator FAQ",
-            note="Official search-indexed FAQ reviewed. Full-page retrieval returned 403. The indexed statement specifies that HOMA is a steady-state fasting-subject model; no numerical cutoff or unsupported model conversion is adopted."),
+            "https://www.rdm.ox.ac.uk/about/our-facilities-and-units/DTU/software/homa/faq", "HOMA Calculator FAQ, questions 3 and 10",
+            note="Page read in full on 2026-11-15. Question 3: HOMA is a steady-state model, so only values seen in a fasting subject should be used. Question 10: there are no defined thresholds for normal and abnormal HOMA values, because they depend on the glucose, insulin and C-peptide assays. No numerical cutoff or model conversion is adopted."),
     _source("fda-roma-k103358", "US", "US Food and Drug Administration", "ROMA: Indications for Use",
             "https://www.accessdata.fda.gov/cdrh_docs/pdf10/k103358.pdf", "510(k) K103358"),
     _source("nice-roma-htg453", "EU", "National Institute for Health and Care Excellence", "Tests in secondary care to identify people at high risk of ovarian cancer: diagnostic tests",
@@ -194,7 +200,8 @@ def additions() -> list[dict]:
                      unit=definitions[name]["unit"], kind="no_universal_target", bands=[],
                      source_ids=list(ids), source_id=ids[0],
                      regions_covered=sorted({sources[key]["region"] for key in ids}),
-                     agreement="assay_specific" if name.startswith("ROMA") else "no_universal_target",
+                     # One source, or several that agree no universal target exists.
+                     agreement="single_source" if len(ids) == 1 else "concordant",
                      short_description=description, why_it_matters=context,
                      retest_interval_months=None, retest_rationale=None,
                      uk=dict(name=uk_name, short_description=uk_description,
@@ -226,7 +233,7 @@ def main():
     args = parser.parse_args()
     library = json.loads(args.library.read_text(encoding="utf-8"))
     counts = extend(library)
-    args.library.write_text(json.dumps(library, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    args.library.write_text(json.dumps(library, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
     print(json.dumps(counts))
 
 

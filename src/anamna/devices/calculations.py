@@ -24,6 +24,8 @@ from .units import convert_quantity, finite_number
 
 BMI_ID_PREFIX = "derived-bmi-"
 BMI_SOURCE = "Calculated BMI"
+#: Two heights of one day within this distance are one height, not a disagreement.
+HEIGHT_AGREEMENT_CM = 0.5
 _COLUMNS = (
     "owner_user_id", "patient_id", "import_id", "source_name", "source_vendor",
     "metric_key", "metric_name", "category", "day", "aggregation", "unit",
@@ -60,26 +62,27 @@ def _height_for(patient, day, heights):
         born = date.fromisoformat(str(patient["date_of_birth"])).isoformat()
     except ValueError:
         born = None
-    eligible = []
+    adult = (age_on(born, day) or 0) >= 20
+    eligible = defaultdict(list)
     for item in heights:
         height_day = item[2]
         if height_day > day:
             continue
-        if height_day != day and (
-            (age_on(born, day) or 0) < 20
-            or (age_on(born, height_day) or 0) < 20
-        ):
+        if height_day != day and not (adult and (age_on(born, height_day) or 0) >= 20):
             continue
-        eligible.append(item)
-    if eligible:
-        latest = max(item[2] for item in eligible)
-        choices = [item for item in eligible if item[2] == latest]
-        # Two independently recorded heights on that day may disagree; do not
-        # choose a clinical interpretation by database insertion order.
-        if len({item[3] for item in choices}) != 1:
-            return None
-        return min(choices)
-    if not heights and (age_on(born, day) or 0) >= 20:
+        eligible[height_day].append(item)
+    for height_day in sorted(eligible, reverse=True):
+        choices = eligible[height_day]
+        values = [item[3] for item in choices]
+        # Two heights recorded that day agree when they are the same height
+        # written twice (170 and 170.2). When they genuinely disagree, do not
+        # choose a clinical interpretation by database insertion order: the
+        # previous eligible day speaks instead.
+        if max(values) - min(values) <= HEIGHT_AGREEMENT_CM:
+            return min(choices, key=lambda item: (item[0] != "observation_height", item))
+    # The profile height covers an adult weight no dated height is eligible
+    # for, including every weight older than the first measured height.
+    if adult:
         height = _height_cm(patient["height_cm"], "cm")
         if height is not None:
             return ("profile_height", str(patient["id"]), None, height, "cm")

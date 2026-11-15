@@ -50,14 +50,14 @@ def test_a_learned_urine_alias_does_not_claim_the_seeded_serum_amino_acid(connec
     assert again == "taurine-serum-or-plasma" and again != first
     assert category(connection, again) == "metabolic"
     assert category(connection, first) == "urinalysis"
-    # A bare chemistry name under a urine title cannot establish blood:
-    # urea can also be measured in urine, and those results stay distinct.
+    # A defined concept keeps the catalogue's category whatever the title
+    # says: an order titled as a urinalysis carries its chemistry rows too.
     urea = filed(connection, "Сечовина", unit_raw="ммоль/л", context="Аналіз сечі загальний")
-    assert category(connection, urea) == "urinalysis" and urea != "urea"
-    serum_urea = filed(connection, "Сечовина", unit_raw="ммоль/л", context="Аналіз сечі загальний",
-                       specimen="сироватка")
-    assert serum_urea == "urea" and category(connection, serum_urea) == "renal"
-    assert category(connection, urea) == "urinalysis"
+    assert urea == "urea" and category(connection, urea) == "renal"
+    # The row's own material is what binds: urea measured in urine is another result.
+    urine_urea = filed(connection, "Сечовина", unit_raw="ммоль/л", context="Аналіз сечі загальний",
+                       specimen="сеча")
+    assert urine_urea != "urea" and category(connection, urine_urea) == "urinalysis"
 
 
 # --- 3: a re-read that only renamed a row reports nothing vanished ------------------

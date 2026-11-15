@@ -206,8 +206,10 @@ def _check_garmin_scale(
     """Account for exact UTC captures using the CRC-validated SDK reader.
 
     A different capture on a day already present in JSON is still distinct.
-    Product-bound rejections are explicit input policy, not evidence that a
-    person deleted a record or that its value is physiologically impossible.
+    A capture with no JSON record at its instant is counted, never imported:
+    it is not attributable to the account (the archive keeps other users'
+    weigh-ins and deleted ones). Product-bound rejections are explicit input
+    policy, not evidence that a value is physiologically impossible.
     """
     metadata = garmin.get("metadata", {})
     coverage = metadata.get("fit_scale_coverage", {})
@@ -228,10 +230,10 @@ def _check_garmin_scale(
     if total < archive_count or total != accounted:
         errors.append("garmin: FIT scale messages are not fully accounted by exact UTC capture")
     if count("unmatched_json_records") != sum(count(key) for key in (
-        "accepted_unmatched_records", "product_weight_bounds_rejected", "missing_weight",
+        "withheld_unmatched_records", "product_weight_bounds_rejected", "missing_weight",
     )):
         errors.append("garmin: unmatched FIT scale captures are not fully accounted")
-    for key in ("decode_errors", "unreadable_archives", "skipped_large", "invalid_timestamps",
+    for key in ("decode_errors", "skipped_large", "invalid_timestamps",
                 "conflicting_fit_records", "missing_weight"):
         if count(key):
             errors.append(f"garmin: FIT scale validation reported {key}")
@@ -250,7 +252,7 @@ def _check_garmin(
     fit_counts = metadata.get("fit_archive_counts", {})
     excluded = metadata.get("excluded_implausible_values", [])
     # Every FIT capture must match JSON by UTC instant or be explicitly
-    # accepted/rejected by the SDK import path, including captures on one day.
+    # counted as withheld or rejected, including captures on one day.
     if not reconciliation.get("blood_pressure_matches"):
         errors.append("garmin: FIT blood-pressure records do not reconcile with the JSON side")
     _check_garmin_scale(garmin, reconciliation, pairs, errors)

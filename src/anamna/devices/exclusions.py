@@ -553,15 +553,16 @@ def _rebuild_providers(settings, owner_user_id: str, adapters: set[str], first: 
     return complete
 
 
-def _reimport_files(settings, owner_user_id: str, adapters: set[str]) -> bool:
+def _reimport_files(settings, owner_user_id: str, adapters: set[str]) -> int:
+    """Re-read the kept exports; returns how many had no kept copy to re-read."""
     from .reaggregate import reimport_files
 
-    complete = True
+    missing = 0
     for result in reimport_files(settings, owner_user_id, adapters=adapters):
         if result["status"] == "skipped_source_missing":
             logger.warning("exclusions: export %s has no kept copy to re-read", result["import_id"])
-            complete = False
-    return complete
+            missing += 1
+    return missing
 
 
 def run_pending(settings, owner_user_id: str) -> int:
@@ -581,9 +582,12 @@ def run_pending(settings, owner_user_id: str) -> int:
         rebuild_openwearables(settings, owner_user_id, first, last)
         complete = _rebuild_providers(settings, owner_user_id, adapters, first, last) and complete
     if adapters & set(FILE_ADAPTERS):
-        complete = _reimport_files(settings, owner_user_id, adapters) and complete
+        # A missing kept copy is permanent: waiting never brings the file back,
+        # and a rule left pending for it reads as "applying" for good. What
+        # can be re-read has been; the rule settles, and the count is logged.
+        _reimport_files(settings, owner_user_id, adapters)
     if not complete:
-        return 0  # Retain the pending state; an unavailable source is not success.
+        return 0  # Retain the pending state; a provider that did not answer is asked again.
     with transaction(settings, immediate=True) as db:
         settled = 0
         for row in rows:

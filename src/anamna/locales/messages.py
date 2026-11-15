@@ -2,7 +2,7 @@ from __future__ import annotations
 
 # UI chrome strings. Keys are stable; values are locale maps.
 MESSAGES: dict[str, dict[str, str]] = {
-    "panel.context_coverage": {"en": "{present} recorded quantities in this collection", "uk": "У цій групі записано показників: {present}"},
+    "panel.context_coverage": {"en": "Recorded quantities in this collection: {present}", "uk": "У цій групі записано показників: {present}"},
     "panel.context_not_recorded": {"en": "Other catalogued quantities", "uk": "Інші показники каталогу"},
     "panel.context_optional": {"en": "A report may contain only a subset of these quantities. This list is not a checklist of required tests or measurements.", "uk": "Документ може містити лише частину цих показників. Цей перелік не є списком обов’язкових аналізів чи вимірювань."},
     "metric.report_context": {"en": "Context from the report", "uk": "Контекст із документа"},
@@ -1862,17 +1862,16 @@ MESSAGES: dict[str, dict[str, str]] = {
     # A derived eGFR row: say it was calculated, from what, and how.
     "doc.derived_from": {"en": "Calculated from", "uk": "Розраховано за"},
     "calc.provisional": {"en": "Calculated result; check the inputs and calculation before confirming it.", "uk": "Розрахований результат; перед підтвердженням перевірте вихідні дані та розрахунок."},
+    "calc.provisional_auto": {"en": "Calculated result, not a measurement. It follows its inputs and updates when they change.", "uk": "Розрахований результат, а не вимірювання. Він залежить від вихідних даних і оновлюється разом із ними."},
     "calc.source": {"en": "Calculation source", "uk": "Джерело формули"},
     "calc.status": {"en": "Calculated · provisional", "uk": "Розраховано · не підтверджено"},
     "calc.checked_status": {"en": "Calculated · {status}", "uk": "Розраховано · {status}"},
     "device.source_calculated": {"en": "Calculated value", "uk": "Розраховане значення"},
     "exclusions.exclude_calculated_source": {"en": "Exclude calculated source", "uk": "Виключити джерело розрахунку"},
     "profile.from_record": {"en": "Confirmed in the record on {date}; {source}.", "uk": "Підтверджено в записі за {date}; {source}."},
-    "profile.height_conflict": {"en": "Conflicting height measurements", "uk": "Суперечливі вимірювання зросту"},
-    "profile.height_conflict_detail": {"en": "Different heights were recorded on the latest day. Check the source measurements; no profile BMI is calculated from them.", "uk": "За останній день записано різні значення зросту. Перевірте вихідні вимірювання; ІМТ із профілю за ними не розраховується."},
     "calc.height_carried": {"en": "This calculation assumes the earlier measured height still applies; the height was not measured with this weight.", "uk": "У цьому розрахунку припускається, що раніше виміряний зріст досі актуальний; його не вимірювали одночасно з цією вагою."},
     "metric.unit_mismatch": {"en": "The reported unit cannot be converted to {unit} for this metric. Check the source before using this value.", "uk": "Зазначену одиницю неможливо перерахувати в {unit} для цього показника. Перш ніж використовувати значення, перевірте джерело."},
-    "ai.calculated_days": {"en": "{count} calculated days; provisional", "uk": "Розрахованих днів: {count}; не підтверджено"},
+    "ai.calculated_days": {"en": "Calculated days: {count}; provisional", "uk": "Розрахованих днів: {count}; не підтверджено"},
     "ai.calculation_inputs": {"en": "Calculation inputs", "uk": "Вихідні дані розрахунку"},
     "doc.derived_globulin": {"en": "Globulin calculated as total protein minus albumin in the same blood sample. This is a mass concentration, distinct from electrophoresis fractions.", "uk": "Глобулін розраховано як різницю загального білка та альбуміну в одному зразку крові. Це масова концентрація, окрема від фракцій електрофорезу."},
     "calc.profile_source": {"en": "Undated profile estimate", "uk": "Оцінка з профілю без дати"},
@@ -1900,9 +1899,9 @@ MESSAGES: dict[str, dict[str, str]] = {
     "doc.derived_differential_percentage": {"en": "Percentage calculated from the automated absolute count and white blood cell count in the same sample. Manual differential results are kept separate.", "uk": "Відсоток розраховано з абсолютної кількості автоматичної лейкоцитарної формули та кількості лейкоцитів в одному зразку. Ручна лейкоцитарна формула зберігається окремо."},
     "doc.derived_albumin_globulin_ratio": {"en": "Albumin to globulin ratio calculated as albumin divided by total protein minus albumin, using the same sample. This is not an electrophoresis fraction.", "uk": "Альбумін-глобулінове співвідношення розраховано як альбумін, поділений на різницю загального білка й альбуміну в одному зразку. Це не фракція електрофорезу."},
     "doc.derived_atherogenic_coefficient": {"en": "Atherogenic coefficient calculated as total cholesterol minus HDL cholesterol, divided by HDL cholesterol in the same sample. This is distinct from the logarithmic atherogenic index of plasma.", "uk": "Коефіцієнт атерогенності розраховано як різницю загального холестерину та холестерину ЛПВЩ, поділену на холестерин ЛПВЩ в одному зразку. Це окремий показник від логарифмічного атерогенного індексу плазми."},
-    "doc.derived_egfr": {
-        "en": "Not printed on the report: calculated by this record from the creatinine on this page with the CKD-EPI 2021 equation (no race coefficient), using your age and sex on the day of the test.",
-        "uk": "У документі цього показника немає: Anamna розрахувала його з креатиніну на цій сторінці за формулою CKD-EPI 2021 (без расового коефіцієнта), з урахуванням вашого віку та статі на день аналізу.",
+    "doc.derived_ckd_epi_2021": {
+        "en": "eGFR calculated from the creatinine in the same sample with the CKD-EPI 2021 equation (no race coefficient), using age and sex on the day of the test.",
+        "uk": "рШКФ розраховано з креатиніну того самого зразка за формулою CKD-EPI 2021 (без расового коефіцієнта), з урахуванням віку та статі на день аналізу.",
     },
     "doc.file_type": {"en": "File format", "uk": "Формат файлу"},
     # Rule 5: two raw technical labels sat unexplained on the details panel.

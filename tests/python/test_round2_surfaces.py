@@ -133,12 +133,13 @@ def test_conflicting_same_day_confirmed_heights_do_not_choose_a_profile_bmi_by_i
     with connect(settings) as db:
         db.execute("UPDATE patients SET weight_kg=80, height_cm=190 WHERE owner_user_id=?", (owner,))
         db.execute("UPDATE observations SET raw_name='Body height', verification_status='verified' WHERE concept_id='body-height'")
-        measured = web._measured_body(db, owner)
-        assert measured["height_cm"]["ambiguous"] is True
-        assert web._profile_bmi_reading(db, owner) is None
+        # Neither measured height is chosen: the typed one stands, its field
+        # stays on the page, and the estimate is worked out from it.
+        assert "height_cm" not in web._measured_body(db, owner)
+        assert web._profile_bmi_reading(db, owner)["value_numeric"] == round(80 / 1.9 ** 2, 2)
         web._profile_store(
             db, owner, "Test Patient", None, "1990-03-14", "male", None,
-            {"height_cm": None, "weight_kg": 80}, {}, "",
+            {"height_cm": 190, "weight_kg": 80}, {}, "",
         )
         assert db.execute("SELECT height_cm FROM patients WHERE owner_user_id=?", (owner,)).fetchone()[0] == 190
 

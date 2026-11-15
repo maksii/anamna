@@ -10,7 +10,7 @@ surfaces. The orchestrator reviewed the changes, ran the full suite and checked
 the rendered bilingual interfaces. This report supersedes conflicting claims
 in the first-round report; the earlier report remains a historical receipt.
 
-Only aggregate corpus evidence and public vocabulary appear here. All new
+Only public vocabulary and method appear here. All new
 regressions and browser records are synthetic. No source record was committed,
 and no hosted database was rewritten.
 
@@ -95,44 +95,34 @@ The second-round working database is
 `work/metric-audit-round2/anamna.sqlite3`; its aggregate receipt is
 `work/metric-audit-round2/receipt.json`. Retention notes are in the archive README.
 
-| Check | First-round result | Second-round result |
-| --- | ---: | ---: |
-| Documents | 300 | 300 |
-| Observations | 3,124 | 3,126 |
-| Active unmapped observations | 0 | 0 |
-| Device-day rows | 184,643 | 184,643 |
-| Distinct device metrics | 75 | 75 |
-| Observed device metrics without a panel/twin connection | 0 | 0 |
-| Calculated device BMI rows | 13 | 13 |
-| Calculated globulin rows | 0 | 3 |
-| Automatically reconstructed indirect-bilirubin rows | 1 | 0 |
-| Clinical calculations with structured dependencies | 0 | 32 |
-| Foreign-key errors | 0 | 0 |
+After this round the audited copy has the same documents and device rows, no
+active unmapped observation, no observed device metric without a panel/twin
+connection, no automatically reconstructed indirect bilirubin, and no
+foreign-key errors. Every clinical calculation, the existing eGFR results
+included, now carries structured dependencies.
 
-The 32 structured clinical results consist of 24 results from the new
-laboratory registry and eight existing eGFR results. The registry now contains
-30 named targets, of which 29 are automatic; indirect bilirubin remains a
-recognized legacy method solely for provenance and retraction.
+The registry now contains 30 named targets, of which 29 are automatic;
+indirect bilirubin remains a recognized legacy method solely for provenance
+and retraction.
 
-Eight reported rows had unsupported canonical-unit relabels repaired: five
-plateletcrit, one INR and two respiratory-rate rows. Their reported numbers,
-raw units and verification states did not change. The native source text
-itself contains the six plateletcrit/INR unit inconsistencies; this is not proof
-of a parser defect or permission to invent corrected units. They are now
+Reported rows with unsupported canonical-unit relabels were repaired. Their
+reported numbers, raw units and verification states did not change. Where the
+native source text itself contains a unit inconsistency, this is not proof
+of a parser defect or permission to invent corrected units. Such rows are now
 visible as incompatible comparisons for source review.
 
 Original reported observation values/text, raw units, dates, ownership and
 review states remained unchanged by content fingerprint. Original device
 values remained unchanged. Final semantic repair and the subsequent refresh
 were idempotent; additions, updates and removals were all zero. Integrity was
-`ok`. The four weight-days without eligible height evidence remain uncalculated.
+`ok`. Weight-days without eligible height evidence remain uncalculated.
 
 ## Verification and limits
 
 - Full Python suite: **5,545 passed, one skipped**. Focused rendering and
   regression checks were rerun after final wording and profile-spacing edits.
 - JavaScript suite: **38 passed**. Ruff, compilation and whitespace checks passed.
-- Source validator: **zero errors**, six warnings; device validator: **zero
+- Source validator: **zero errors**, warnings retained; device validator: **zero
   errors**. Both reported intact SQLite/FK checks. These validators use the
   existing local source-file corpus; the hosted snapshot was audited using its
   retained database/page evidence.
@@ -146,9 +136,8 @@ were idempotent; additions, updates and removals were all zero. Integrity was
   retained.
 - Calculations and human source verification remain separate. A passing audit
   does not verify a patient measurement or resolve an inconsistent source unit.
-- This qualifies the current implementation and copied corpus. It does not
+- This qualifies the current implementation and the audited copy. It does not
   claim universal coverage of future device schemas, every assay or every
   possible medical equation.
 
-All changes remain uncommitted and undeployed. The hosted sandbox database
-was not modified.
+The hosted sandbox database was not modified.

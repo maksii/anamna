@@ -59,7 +59,7 @@ def test_a_blood_count_unit_outranks_a_urinalysis_title(connection):
                  unit_raw="10^9 клітин/л") == "white-blood-cell-count"
     # The same order's urine rows keep their urine concepts.
     assert filed(connection, "Лейкоцити", title=URINALYSIS_TITLE, unit_raw="Leu/µL",
-                 value_text="не виявлені") == "urine-leukocytes"
+                 value_text="не виявлені") == "urine-leukocyte-esterase"
     assert filed(connection, "Лейкоцити", title=URINALYSIS_TITLE, unit_raw="Leu/µL",
                  value_text="не виявлені", reference_text="Активність лейкоцитарної естерази") == "urine-leukocyte-esterase"
     assert filed(connection, "Лейкоцити в мкл (WBC)", value_type="numeric", title=URINALYSIS_TITLE,
@@ -211,9 +211,10 @@ def test_free_t3_in_pg_per_ml_and_total_ige_in_iu_per_ml_convert():
 
 def test_stored_rows_move_on_start(tmp_path: Path):
     """The start-up repair reads the stored unit, specimen and title, so the
-    white-cell count, the analyser count, the explicitly serum IgE and a
-    coprogram row whose stool specimen was stored move without a re-read.
-    A bare IgE under a urine title still lacks evidence of a blood sample.
+    white-cell count, the analyser count, the IgE and a coprogram row whose
+    stool specimen was stored move without a re-read.  The IgE moves with
+    its serum specimen and without one: a urine title is a preference, and
+    total IgE is the label's only definition.
     """
     settings, user_id, _client = build(tmp_path)
     with connect(settings) as connection:
@@ -236,20 +237,15 @@ def test_stored_rows_move_on_start(tmp_path: Path):
             )
         repair_observation_semantics(connection)
         moved = dict(connection.execute(
-            "SELECT id, concept_id FROM observations WHERE id IN ('wbc', 'nl', 'ige', 'copro')"
+            "SELECT id, concept_id FROM observations WHERE id IN ('wbc', 'nl', 'ige', 'ige-unknown', 'copro')"
         ).fetchall())
         assert moved == {
             "wbc": "white-blood-cell-count",
             "nl": "urine-erythrocytes-unchanged-per-microlitre",
             "ige": "total-immunoglobulin-e",
+            "ige-unknown": "total-immunoglobulin-e",
             "copro": "stool-ph",
         }
-        unknown = connection.execute(
-            "SELECT o.concept_id,c.category FROM observations o JOIN concepts c ON c.id=o.concept_id "
-            "WHERE o.id='ige-unknown'"
-        ).fetchone()
-        assert unknown["concept_id"] != "total-immunoglobulin-e"
-        assert unknown["category"] == "urinalysis"
         # Idempotent: a second start finds nothing to move.
         assert repair_observation_semantics(connection) == 0
 

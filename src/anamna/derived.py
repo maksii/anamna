@@ -13,6 +13,7 @@ import sqlite3
 import uuid
 import math
 import json
+import re
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta
 
@@ -64,13 +65,17 @@ def _creatinine_mg_dl(value: float, unit: str | None) -> float | None:
     return None
 
 
-def _wanted(connection: sqlite3.Connection) -> dict[str, tuple]:
-    """Every eGFR the current record supports, keyed by its derived row id."""
+def _wanted(connection: sqlite3.Connection, owner_user_id: str | None = None) -> dict[str, tuple]:
+    """Every eGFR the current record supports, keyed by its derived row id.
+
+    ``owner_user_id`` limits it to one account's record."""
     from .devices.units import finite_number
     from .lab_calculations import _sample_may_match
 
+    # A plain equality, so the (owner, concept, date) index serves it.
+    mine, owner = (" AND o.owner_user_id = ?", (owner_user_id,)) if owner_user_id else ("", ())
     rows = connection.execute(
-        """SELECT o.*, p.date_of_birth, p.sex_at_birth, p.pregnancy_due_date
+        f"""SELECT o.*, p.date_of_birth, p.sex_at_birth, p.pregnancy_due_date
              FROM observations o JOIN patients p ON p.id = o.patient_id AND p.owner_user_id=o.owner_user_id
              LEFT JOIN documents d ON d.id=o.document_id
              LEFT JOIN reports r ON r.id=o.report_id
@@ -83,8 +88,8 @@ def _wanted(connection: sqlite3.Connection) -> dict[str, tuple]:
               AND (o.report_id IS NULL OR (r.owner_user_id=o.owner_user_id AND r.patient_id=o.patient_id
                    AND rd.owner_user_id=o.owner_user_id AND rd.patient_id=o.patient_id
                    AND (o.document_id IS NULL OR r.document_id=o.document_id)))
-              AND p.sex_at_birth IN ('female', 'male') AND p.date_of_birth IS NOT NULL""",
-        (CREATININE_CONCEPT_ID,),
+              AND p.sex_at_birth IN ('female', 'male') AND p.date_of_birth IS NOT NULL{mine}""",
+        (CREATININE_CONCEPT_ID, *owner),
     ).fetchall()
     # A report that printed its own eGFR keeps it; a second, calculated one
     # beside it would be the same measurement twice.
@@ -93,7 +98,7 @@ def _wanted(connection: sqlite3.Connection) -> dict[str, tuple]:
          ("report", row["report_id"]) if row["report_id"] else ("document", row["document_id"]),
          row["observed_at"], (row["specimen"] or "").strip().casefold(), row["sample_condition"])
         for row in connection.execute(
-            """SELECT o.owner_user_id, o.patient_id, o.report_id, o.document_id, o.observed_at,
+            f"""SELECT o.owner_user_id, o.patient_id, o.report_id, o.document_id, o.observed_at,
                       o.specimen, o.sample_condition FROM observations o
                 JOIN patients p ON p.id=o.patient_id AND p.owner_user_id=o.owner_user_id
                 LEFT JOIN documents d ON d.id=o.document_id
@@ -104,8 +109,8 @@ def _wanted(connection: sqlite3.Connection) -> dict[str, tuple]:
                   AND (o.document_id IS NULL OR (d.owner_user_id=o.owner_user_id AND d.patient_id=o.patient_id))
                   AND (o.report_id IS NULL OR (r.owner_user_id=o.owner_user_id AND r.patient_id=o.patient_id
                        AND rd.owner_user_id=o.owner_user_id AND rd.patient_id=o.patient_id
-                       AND (o.document_id IS NULL OR r.document_id=o.document_id)))""",
-            (EGFR_CONCEPT_ID, EGFR_REPORTED_CONCEPT_ID, DERIVED_EGFR_METHOD),
+                       AND (o.document_id IS NULL OR r.document_id=o.document_id))){mine}""",
+            (EGFR_CONCEPT_ID, EGFR_REPORTED_CONCEPT_ID, DERIVED_EGFR_METHOD, *owner),
         )
     ]
     printed_by_source = defaultdict(list)
@@ -190,7 +195,63 @@ _COLUMNS = (
 )
 
 
-def refresh_derived_observations(connection: sqlite3.Connection) -> dict[str, int]:
+#: What a person checked when they reviewed a calculation: whose sample, the
+#: method, the number and its unit.  With the inputs (:func:`_inputs`) and the
+#: person's facts the equation used (:func:`_facts`), this is the calculation.
+_REVIEWED = (
+    "owner_user_id", "patient_id", "document_id", "report_id", "concept_id", "value_numeric",
+    "unit_raw", "unit_canonical", "observed_at", "extraction_method",
+)
+#: The input's sample context, copied onto the result.
+_SAMPLE = ("specimen", "sample_condition")
+#: The head of an eGFR's evidence: creatinine in mg/dL, age, sex, date of birth.
+_EGFR_FACTS = re.compile(r"^CKD-EPI 2021: [^\n]*?; date_of_birth=[^;\n]*")
+
+
+def _inputs(row) -> list[tuple] | None:
+    """Id, value, unit and date of each input; None for a row stored before
+    inputs were recorded, whose id still names them (it is a hash of theirs)."""
+    try:
+        items = json.loads(row["calculation_inputs_json"] or "null")
+    except ValueError:
+        return None
+    if not isinstance(items, list):
+        return None
+    return sorted(
+        (str(item.get("input_id")), item.get("input_value"), item.get("input_unit"), item.get("input_day"))
+        for item in items if isinstance(item, dict)
+    )
+
+
+def _facts(row) -> str | None:
+    found = _EGFR_FACTS.match(row["evidence_text"] or "")
+    return found.group() if found else None
+
+
+def _same_calculation(current, wanted: dict) -> bool:
+    """Whether a stored derived row is still the calculation ``wanted`` is.
+
+    Decided from the substance, never from the evidence text as a whole: that
+    text also quotes each input's source line and folded unit, and when its
+    wording changed, five eGFR results a person had checked went back to
+    review with the same number, input and method.  What an older row never
+    recorded cannot have changed: its inputs, the person's facts, and the
+    sample context it left empty."""
+    if any(current[column] != wanted[column] for column in _REVIEWED):
+        return False
+    older = _inputs(current) is None
+    if any(current[column] != wanted[column] and not (older and current[column] is None) for column in _SAMPLE):
+        return False
+    for read in (_inputs, _facts):
+        before = read(current)
+        if before is not None and before != read(wanted):
+            return False
+    return True
+
+
+def refresh_derived_observations(
+    connection: sqlite3.Connection, *, owner_user_id: str | None = None,
+) -> dict[str, int]:
     """Bring every derived row in line with its inputs; idempotent.
 
     Runs after ingest, re-read, on start-up and after any request that changes
@@ -198,6 +259,11 @@ def refresh_derived_observations(connection: sqlite3.Connection) -> dict[str, in
     verification is reflected without anyone remembering to recalculate.  A
     derived row a person has since corrected (its method is no longer this
     one) is theirs and is left alone.
+
+    ``owner_user_id`` limits the laboratory calculations and the eGFR to one
+    account's record: a request changes one record, and reading everyone's
+    after each is work for nothing.  Without it the whole database is
+    refreshed, as start-up and the command line need.
     """
     counts = {"added": 0, "updated": 0, "removed": 0}
     from .devices.calculations import refresh_device_calculations
@@ -206,12 +272,14 @@ def refresh_derived_observations(connection: sqlite3.Connection) -> dict[str, in
         return counts  # catalogue not seeded yet; start-up seeds it, then calls this again
     from .lab_calculations import DERIVED_LAB_METHODS, wanted_lab_observations
 
-    wanted = {**_wanted(connection), **wanted_lab_observations(connection)}
+    wanted = {**_wanted(connection, owner_user_id), **wanted_lab_observations(connection, owner_user_id)}
     methods = (DERIVED_EGFR_METHOD, *sorted(DERIVED_LAB_METHODS))
     existing = {
         str(row["id"]): row
         for row in connection.execute(
-            f"SELECT * FROM observations WHERE extraction_method IN ({','.join('?' for _ in methods)})", methods
+            f"""SELECT * FROM observations WHERE extraction_method IN ({','.join('?' for _ in methods)})
+                {'AND owner_user_id = ?' if owner_user_id else ''}""",
+            (*methods, *((owner_user_id,) if owner_user_id else ())),
         )
     }
     for row_id in existing.keys() - wanted.keys():
@@ -220,21 +288,18 @@ def refresh_derived_observations(connection: sqlite3.Connection) -> dict[str, in
     for row_id, values in wanted.items():
         current = existing.get(row_id)
         if current is not None:
-            # A person's decision survives an unchanged calculation. Changing
-            # any input/evidence makes the new result provisional again.
-            # A global PDF-parser release is bookkeeping, not a changed
-            # equation or input. It must not undo a person's calculation review.
-            review_neutral = {"verification_status", "parser_version"}
-            unchanged = all(
-                current[column] == values[index]
-                for index, column in enumerate(_COLUMNS) if column not in review_neutral
-            )
-            if unchanged:
-                continue
-            if tuple(current[column] for column in _COLUMNS) != values:
+            fresh = dict(zip(_COLUMNS, values, strict=True))
+            if _same_calculation(current, fresh):
+                # A person's decision survives an unchanged calculation: only
+                # how its evidence is written is brought up to date.  A global
+                # PDF-parser release is bookkeeping and rewrites nothing.  A
+                # changed value or input makes the result provisional again.
+                fresh["verification_status"] = current["verification_status"]
+                fresh["parser_version"] = current["parser_version"]
+            if any(current[column] != fresh[column] for column in _COLUMNS):
                 connection.execute(
                     f"UPDATE observations SET {', '.join(f'{c}=?' for c in _COLUMNS)} WHERE id = ?",
-                    (*values, row_id),
+                    (*fresh.values(), row_id),
                 )
                 counts["updated"] += 1
             continue

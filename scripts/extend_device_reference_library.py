@@ -12,7 +12,9 @@ from pathlib import Path
 
 REVIEWED_AT = "2026-11-15"
 APPLE_BASE = "https://developer.apple.com/documentation/healthkit/"
-OW_BASE = "https://github.com/the-momentum/open-wearables/blob/main/backend/app/"
+# Pinned to the commit that was read, so the cited lines cannot move.
+OW_COMMIT = "7ca121dd4e483ec2f397f141a326e2bc81a960bd"
+OW_BASE = "https://github.com/the-momentum/open-wearables/blob/" + OW_COMMIT + "/backend/app/"
 
 
 def _source(key: str, publisher: str, name: str, url: str, identifier: str) -> dict:
@@ -42,11 +44,11 @@ SOURCES = [
     _source("oura-lowest-resting-heart-rate", "Oura Health Oy", "Readiness Contributors: Resting Heart Rate",
             "https://support.ouraring.com/hc/en-us/articles/360057791533-Readiness-Contributors", "Oura Member Care article 360057791533"),
     _source("openwearables-score-schema-2026", "Open Wearables / Momentum", "Health score categories and provider-specific numeric values",
-            OW_BASE + "schemas/model_crud/activities/health_score.py", "HealthScoreBase.value; HealthScoreCategory enum; reviewed 2026-11-15"),
+            OW_BASE + "schemas/model_crud/activities/health_score.py", "HealthScoreBase.value and .category (HealthScoreCategory); commit " + OW_COMMIT[:12]),
     _source("openwearables-sleep-interruptions-2026", "Open Wearables / Momentum", "Daily sleep summary: significant awakenings",
-            OW_BASE + "services/summaries_service.py", "SummariesService; _interruptions_count; SleepSummary.interruptions_count; reviewed 2026-11-15"),
+            OW_BASE + "services/summaries_service.py", "_interruptions_count; SleepSummary.interruptions_count; commit " + OW_COMMIT[:12]),
     _source("openwearables-recovery-summary-2026", "Open Wearables / Momentum", "Daily recovery summary: source-reported recovery score",
-            OW_BASE + "services/summaries_service.py", "SummariesService.get_recovery_summaries; RecoverySummary.recovery_score; reviewed 2026-11-15"),
+            OW_BASE + "services/summaries_service.py", "SummariesService.get_recovery_summaries; recovery_score; commit " + OW_COMMIT[:12]),
 ]
 
 
@@ -140,7 +142,7 @@ def main() -> None:
     args = parser.parse_args()
     library = json.loads(args.library.read_text(encoding="utf-8"))
     counts = extend(library)
-    args.library.write_text(json.dumps(library, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    args.library.write_text(json.dumps(library, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
     print(json.dumps(counts))
 
 

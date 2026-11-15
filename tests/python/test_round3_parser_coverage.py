@@ -121,12 +121,12 @@ def _breast_rows(text):
 
 def test_separately_labelled_breast_assessments_keep_both_values_and_sides():
     rows = _breast_rows("Права грудна залоза. BI-RADS 2.\nЛіва грудна залоза. BI-RADS 3.")
-    assert [(row.value_numeric, row.specimen) for row in rows] == [(2, "права грудна залоза"), (3, "ліва грудна залоза")]
+    assert [(row.value_numeric, row.specimen) for row in rows] == [(2, "права"), (3, "ліва")]
 
 
 def test_equal_bilateral_categories_are_still_two_separately_labelled_assessments():
     rows = _breast_rows("Права грудна залоза. BI-RADS 2.\nЛіва грудна залоза. BI-RADS 2.")
-    assert [(row.value_numeric, row.specimen) for row in rows] == [(2, "права грудна залоза"), (2, "ліва грудна залоза")]
+    assert [(row.value_numeric, row.specimen) for row in rows] == [(2, "права"), (2, "ліва")]
 
 
 def test_single_overall_breast_category_does_not_acquire_the_last_breasts_side():
@@ -136,7 +136,7 @@ def test_single_overall_breast_category_does_not_acquire_the_last_breasts_side()
 
 def test_bilateral_categories_do_not_consume_an_additional_overall_assessment():
     rows = _breast_rows("Права грудна залоза. BI-RADS 2.\nЛіва грудна залоза. BI-RADS 3.\nВисновок: BI-RADS 3.")
-    assert [(row.value_numeric, row.specimen) for row in rows] == [(2, "права грудна залоза"), (3, "ліва грудна залоза"), (3, None)]
+    assert [(row.value_numeric, row.specimen) for row in rows] == [(2, "права"), (3, "ліва"), (3, None)]
 
 
 def test_an_unsided_breast_heading_ends_the_previous_side_scope():

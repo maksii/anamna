@@ -2077,7 +2077,11 @@ img.viewer-media { object-fit: contain; padding: 16px; background: var(--surface
 
 .evidence-links { display: flex; gap: 10px; margin-top: 7px; font-size: 10px; font-weight: 750; }
 
-.evidence-links a, .chart-tooltip a { display: inline-flex; align-items: center; min-height: 44px; min-width: 44px; }
+/* The same touch target for the links of a calculated result (its source,
+   its inputs) and the sources under "what this measures". */
+.evidence-links a, .chart-tooltip a, .an-calculation-note a, .an-calculation-input a, .an-about-sources a { display: inline-flex; align-items: center; min-height: 44px; min-width: 44px; }
+.an-calculation-note a { margin-inline-start: var(--space-2); }
+.an-about-sources { display: grid; gap: var(--space-1); margin: 0; padding-inline-start: var(--space-4); }
 
 
 

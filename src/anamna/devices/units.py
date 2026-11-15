@@ -48,6 +48,11 @@ PLAUSIBLE_RANGES: dict[str, tuple[float, float]] = {
 NONNEGATIVE_SLEEP_KEYS = frozenset({
     "sleep_duration", "time_in_bed", "sleep_core", "sleep_deep", "sleep_rem", "sleep_awake",
 })
+#: A day holds 24 hours. This is the only upper bound on a night: a manual
+#: entry spanning a week is not sleep, a 20-hour one may be.
+MAX_SLEEP_HOURS = 24.0
+
+
 def plausible_value(metric_key: str, value: float | None) -> float | None:
     """The value to store, or None when it fails the existing input bounds.
 
@@ -57,7 +62,7 @@ def plausible_value(metric_key: str, value: float | None) -> float | None:
     if value is None:
         return None
     if metric_key in NONNEGATIVE_SLEEP_KEYS:
-        return value if math.isfinite(value) and value >= 0 else None
+        return value if 0 <= value <= MAX_SLEEP_HOURS else None
     bounds = PLAUSIBLE_RANGES.get(metric_key)
     if bounds is None:
         return value
@@ -73,7 +78,7 @@ def is_plausible(metric_key: str, value: object) -> bool:
     if number is None:
         return False
     if metric_key in NONNEGATIVE_SLEEP_KEYS:
-        return number >= 0
+        return 0 <= number <= MAX_SLEEP_HOURS
     return bounds is None or bounds[0] < number < bounds[1]
 
 

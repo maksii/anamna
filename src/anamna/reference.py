@@ -1054,11 +1054,20 @@ def evaluate(
     if concept_id in NOT_A_MEASUREMENT:
         return _verdict("not_a_measurement", "none")
     if concept_id in {"estimated-glomerular-filtration-rate-ckd-epi-2021", "estimated-glomerular-filtration-rate-reported"} and (clinical_context or {}).get("pregnant"):
-        verdict = _verdict("unjudged", "none", reason="pregnancy_egfr", value=value_numeric, unit=unit,
-                           source_id="nice-ng3-egfr-pregnancy",
-                           source_name="NICE NG3, recommendation 1.3.30",
-                           source_url="https://www.nice.org.uk/guidance/ng3/chapter/Recommendations",
-                           official=True)
+        # eGFR is not staged in pregnancy, so no curated band judges and a
+        # laboratory's "within range" reassures nobody.  What the laboratory
+        # itself flagged still speaks, as under every other blocked rule:
+        # dropping it turned a flagged eGFR of 45 into "No comparison available".
+        verdict = _vendor_verdict(
+            value_numeric, unit, vendor_low, vendor_high, vendor_interpretation,
+            comparator=comparator,
+        )
+        if verdict["interpretation"] == "unjudged" or verdict["interpretation"] in BENIGN_INTERPRETATIONS:
+            verdict = _verdict("unjudged", "none", reason="pregnancy_egfr", value=value_numeric, unit=unit,
+                               source_id="nice-ng3-egfr-pregnancy",
+                               source_name="NICE NG3, recommendation 1.3.30",
+                               source_url="https://www.nice.org.uk/guidance/ng3/chapter/Recommendations",
+                               official=True)
         verdict["curated_blocked"] = "pregnancy_egfr"
         _record_vendor_claim(verdict, value_numeric, unit, vendor_low, vendor_high, vendor_interpretation, comparator)
         return verdict

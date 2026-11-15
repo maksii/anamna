@@ -39,6 +39,7 @@ from .concepts import (
     clean_label,
     concept_for_alias,
     foreign_categories,
+    names_serum_or_plasma,
     refine_definition,
     specimen_family,
     stable_concept_id,
@@ -887,13 +888,28 @@ def ensure_vendor(connection: sqlite3.Connection, name: str, website: str | None
     return vendor_id
 
 
-def _row_family(specimen: str | None, unit_raw: str | None, context: str | None) -> str | None:
+def _row_family(specimen: str | None, unit_raw: str | None, context: str | None, raw_name: str = "") -> str | None:
     titled = specimen_family(context)
     return (
         specimen_family(specimen)
         or ("hematology" if blood_count_unit(unit_raw) else None)
         or (titled if titled in {"stool", "smear"} else None)
+        or _own_title_family(raw_name, context)
     )
+
+
+def _own_title_family(raw_name: str, context: str | None) -> str | None:
+    """The material of the title part that names this very row: «Кортизол
+    вільний у добовій сечі» for the row «Кортизол».  That is the row's own
+    specimen, unlike a title that names urine beside other tests.  Blood is
+    not taken this way: it is what a row is without any of this."""
+    key = normalized_key(raw_name)
+    if not key or not context:
+        return None
+    named = re.compile(rf"(?<!\w){re.escape(key)}(?!\w)")
+    families = {specimen_family(part) for part in context.split(" · ") if named.search(normalized_key(part))}
+    family = families.pop() if len(families) == 1 else None
+    return None if family == "hematology" else family
 
 
 def _learned_alias_row(
@@ -956,11 +972,15 @@ def ensure_concept(
     (``concept_for_alias``): «Лейкоцити (WBC) 6.84 10^9 клітин/л» in an order
     titled as a urinalysis is the white cell count, and a smear's «Слиз» is
     not urine mucus.  A urinalysis or blood title stays a preference only:
-    such orders routinely carry the other specimen's rows too.
+    such orders routinely carry the other specimen's rows too.  It chooses
+    between two definitions one label has (blood and urine glucose) and never
+    refuses a label's only one -- except through the title part that names
+    the row itself (``_own_title_family``), and for a definition named for
+    serum or plasma (``concept_for_alias``, ``category_binds``).
     """
     raw_name = clean_label(raw_name)
     normalized = normalized_key(raw_name)
-    family = _row_family(specimen, unit_raw, context)
+    family = _row_family(specimen, unit_raw, context, raw_name)
     inferred_category = _inferred_category(normalized, clinical_type, context, family)
     search_category = None if inferred_category == "unmapped" else inferred_category
     # Canonical definitions are resolved before learned vendor aliases because
@@ -971,6 +991,7 @@ def ensure_concept(
         value_type,
         category=search_category,
         specimen=family,
+        category_binds=False,
     )
     definition = refine_definition(
         by_label, unit=unit_raw, value_text=value_text, reference=reference_text,
@@ -981,7 +1002,7 @@ def ensure_concept(
         # «Кристали» is stool because of its section, and learned as a bare
         # alias it would file the next unsectioned «Кристали» as stool too.
         label_decided = family is None or by_label is concept_for_alias(
-            raw_name, value_type, category=search_category
+            raw_name, value_type, category=search_category, category_binds=False
         )
         return _store_defined_concept(
             connection, definition, by_label if label_decided else None, vendor_id, raw_name, normalized
@@ -993,13 +1014,15 @@ def ensure_concept(
     raw_name = _specimen_qualified(raw_name, family, specimen)
     normalized = normalized_key(raw_name)
     alias_row = _learned_alias_row(connection, normalized, vendor_id, value_type, excluded)
-    bound_family = family or (
-        "urinalysis" if inferred_category == "urinalysis" and specimen_family(raw_name) != "hematology" else None
-    )
-    if alias_row and bound_family:
-        definition = _DEFINED_CONCEPTS_BY_ID.get(alias_row["id"])
-        if definition and definition.get("specimen_family") not in (None, bound_family):
-            alias_row = None
+    # The row's own material binds a learned alias as it binds the catalogue;
+    # a urine title does not (``concept_for_alias``, ``category_binds``).
+    bound_family = family or specimen_family(raw_name)
+    definition = _DEFINED_CONCEPTS_BY_ID.get(alias_row["id"]) if alias_row else None
+    if definition and (
+        definition.get("specimen_family") not in (None, bound_family) if bound_family
+        else inferred_category == "urinalysis" and names_serum_or_plasma(definition)
+    ):
+        alias_row = None
     if alias_row:
         return _reuse_alias_concept(connection, alias_row, inferred_category)
     concept_id, preferred_unit = _store_unmapped_concept(
@@ -2855,7 +2878,8 @@ def _shared_result_relations(
     connection, owner_user_id: str, document, document_id: str, by_id: dict, relations: dict
 ) -> None:
     mine = _result_fingerprints(connection, document_id)
-    dates = sorted({key[4] for key in mine if key[4]})
+    # The fingerprint holds the whole timestamp; the query below asks by day.
+    dates = sorted({key[4][:10] for key in mine if key[4]})
     if not (mine and dates):
         return
     sharing = connection.execute(
@@ -3491,13 +3515,21 @@ def _copy_rows_held_by_primary(connection: sqlite3.Connection, copy_id: str, pri
     # cannot justify discarding a source document's independently reported test.
     kept_rows = [row for row in connection.execute(observation_sql, (primary_id,))
                  if not is_derived(row["extraction_method"])]
-    held_any = {_result_fingerprint(row) for row in kept_rows}
-    held = {_result_fingerprint(row) for row in kept_rows if row["verification_status"] != "rejected"}
+
+    def reading(row) -> tuple[object, ...]:
+        # Analyte, value, unit, comparator and day.  A photo and the PDF it
+        # copies differ in a note, a time of day or a specimen's spelling,
+        # and the ruling is on the reading, which the kept document holds.
+        concept, number, text, unit, moment, sign = _result_fingerprint(row)[:6]
+        return concept, number, text, unit, moment[:10], sign
+
+    held_any = {reading(row) for row in kept_rows}
+    held = {reading(row) for row in kept_rows if row["verification_status"] != "rejected"}
     copy_rows = connection.execute(observation_sql, (copy_id,)).fetchall()
     unheld = [
         row for row in copy_rows
         if _is_ruled(row)
-        and _result_fingerprint(row) not in (held_any if row["verification_status"] == "rejected" else held)
+        and reading(row) not in (held_any if row["verification_status"] == "rejected" else held)
     ]
     # A test the kept document does not hold at all is lost with the copy's
     # rows: a Synevo lab record was set aside as a copy of its PDF, whose

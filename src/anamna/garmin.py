@@ -529,9 +529,12 @@ def replace_metric_days(db, user_id: str, import_id: str, keys: Iterable[str], d
     now = utc_now()
     # An aggregate with no samples had every reading excluded as not the person's.
     wanted = [a for a in aggregates if a.day in set(days) and a.definition.key in set(keys) and a.sample_count]
+    # A calculated BMI carries its weight's import_id; the refresh below
+    # keeps or removes it, so it is not re-created on every delivery.
     db.execute(
         f"""DELETE FROM device_metric_days WHERE owner_user_id=? AND import_id=?
-             AND metric_key IN ({_marks(keys)}) AND day IN ({_marks(days)})""",
+             AND metric_key IN ({_marks(keys)}) AND day IN ({_marks(days)})
+             AND id NOT LIKE 'derived-bmi-%'""",
         (user_id, import_id, *keys, *days),
     )
     db.executemany(
@@ -647,7 +650,8 @@ def purge_envelope(db, user_id: str, adapter_key: str, keys: Iterable[str] = (),
     keys, event_types = sorted(set(keys)), sorted(set(event_types))
     if keys:
         removed += db.execute(
-            f"DELETE FROM device_metric_days WHERE import_id=? AND metric_key IN ({_marks(keys)})",
+            f"""DELETE FROM device_metric_days WHERE import_id=? AND metric_key IN ({_marks(keys)})
+                 AND id NOT LIKE 'derived-bmi-%'""",
             (import_id, *keys),
         ).rowcount
     if workouts:

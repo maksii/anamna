@@ -439,10 +439,13 @@ CONCEPT_DEFINITIONS: list[dict[str, object]] = [
     {"name": "La/SS-B antibodies", "category": "autoimmune", "unit": "kU/L", "aliases": ["la/ss-b"]},
     {"name": "CENP-B antibodies", "category": "autoimmune", "unit": "kU/L", "aliases": ["cenp-b"]},
     {"name": "Scl-70 antibodies", "category": "autoimmune", "unit": "kU/L", "aliases": ["scl-70"]},
-    {"name": "Double-stranded DNA antibodies", "category": "autoimmune", "unit": "kU/L", "aliases": ["dsdna"]},
+    {"name": "Double-stranded DNA antibodies", "category": "autoimmune", "unit": "kU/L", "aliases": [
+        "dsdna", "днк двоспіральна (dsdna), антитіла igg", "ana. днк двоспіральна (dsdna), антитіла igg", "днк двоспіральна, антитіла igg"]},
     {"name": "Jo-1 antibodies", "category": "autoimmune", "unit": "kU/L", "aliases": ["jo-1"]},
-    {"name": "Myeloperoxidase antibodies", "category": "autoimmune", "unit": "kU/L", "aliases": ["mpo"]},
-    {"name": "Proteinase 3 antibodies", "category": "autoimmune", "unit": "kU/L", "aliases": ["pr3"]},
+    {"name": "Myeloperoxidase antibodies", "category": "autoimmune", "unit": "kU/L", "aliases": [
+        "mpo", "мієлопероксидаза (mpo), антитіла igg", "мієлопероксидаза (mpo), антитіла igg_anca"]},
+    {"name": "Proteinase 3 antibodies", "category": "autoimmune", "unit": "kU/L", "aliases": [
+        "pr3", "протеїназа 3 (pr3), антитіла igg", "протеїназа 3 (pr3), антитіла igg_anca", "антитіла igg до протеїнази (pr3, с-anca) elia"]},
     {"name": "AMA-M2 antibodies", "category": "autoimmune", "unit": "kU/L", "aliases": ["ama m2"]},
     {"name": "LC1 antibodies", "category": "autoimmune", "unit": "kU/L", "aliases": ["lc 1"]},
     {"name": "LKM1 antibodies", "category": "autoimmune", "unit": "kU/L", "aliases": ["lkm 1"]},
@@ -864,12 +867,21 @@ _CONTEXTUAL_SPECIMEN_ALIASES = {
 #: препараті»), only the slide, and without it the row joined the analyser's
 #: per-microlitre series.
 _PER_FIELD = re.compile(r"п\s*/\s*з|п\.\s*з|полі\s+зору|hpf|в\s+препараті", re.IGNORECASE)
+#: Synevo's strip unit, «Leu/µL» and «Ery/µL»: leukocyte esterase and
+#: peroxidase activity graded 25 = +, 100 = ++, 500 = +++.  The unit is the
+#: method; the microscopy row under the same word prints «в п/з».
+_STRIP_UNIT = re.compile(r"^\s*(leu|ery)\s*/", re.IGNORECASE)
 _URINE_STRIP_METHOD = re.compile(r"dipstick|(?:test|reagent)[ -]?strip|тест[ -]?смуж|реагентн\w*\s+смуж", re.IGNORECASE)
 _URINE_MICROSCOPY_METHOD = re.compile(r"мікроскоп|microscop|цитометр|cytometr", re.IGNORECASE)
 _LEUKOCYTE_ESTERASE_METHOD = re.compile(r"естераз|esteras", re.IGNORECASE)
 _ERYTHROCYTE_PEROXIDASE_METHOD = re.compile(r"пероксидаз|peroxidas", re.IGNORECASE)
 _RISK_TIERS = re.compile(r"ризик|risk", re.IGNORECASE)
 _PER_MICROLITRE = re.compile(r"мкл|[µμu]l\b", re.IGNORECASE)
+
+#: Urine by its Ukrainian stem.  «Сечовина» (urea) and «сечова кислота» (uric
+#: acid) are blood chemistry, not the specimen; «сечового міхура» and the
+#: sediment's «кристали сечової кислоти» are urine.
+_URINE = r"(?:сеч(?!овин|ов\w*\s+кислот)|кристал\w*\s+сечов)"
 
 #: The material a row was measured in, by the words that name it, mapped to
 #: the category of the concepts measured in it.  Word starts, so «калій»
@@ -878,7 +890,7 @@ _SPECIMEN_FAMILIES = (
     ("saliva", re.compile(r"\bслин|\bsaliva", re.IGNORECASE)),
     ("csf", re.compile(r"\bліквор|\bcsf\b|\bcerebrospinal", re.IGNORECASE)),
     ("stool", re.compile(r"\bкал(?:у|ом|і|ов\w*)?\b|копрограм|фекал|\bstool|\bfa?eces", re.IGNORECASE)),
-    ("urinalysis", re.compile(r"\bсеч(?!ов)|\burine|\burinalysis\b", re.IGNORECASE)),
+    ("urinalysis", re.compile(rf"\b{_URINE}|\burine|\burinalysis\b", re.IGNORECASE)),
     ("smear", re.compile(r"мазк|мазок|цитолог|пап[\s-]*тест|зішкріб|урогеніт|піхв|цервік|уретр|\bvagin|\bcervi|\bsmear", re.IGNORECASE)),
     ("hematology", re.compile(r"\bкров|сироват|плазм|\bblood|\bserum|\bplasma", re.IGNORECASE)),
 )
@@ -911,13 +923,14 @@ def blood_count_unit(unit: str | None) -> bool:
 
 
 def _urine_strip_method(row: dict, enzyme: re.Pattern) -> bool:
-    """A concentration unit alone cannot establish chemical strip testing."""
+    """The strip's own unit, or a reference that names the strip or its enzyme.
+    A concentration unit («кл/мкл») alone does not establish the strip."""
     reference = row["reference"]
-    return bool(
+    return bool(_STRIP_UNIT.search(row["unit"]) or (
         not _PER_FIELD.search(row["unit"])
         and not _URINE_MICROSCOPY_METHOD.search(reference)
         and (enzyme.search(reference) or _URINE_STRIP_METHOD.search(reference))
-    )
+    ))
 
 #: (definition the label resolved to, test on the row, definition it belongs to).
 #: For labels that do not name their method: the unit, the report or the
@@ -937,6 +950,20 @@ _REFINEMENTS = (
     ("Pulse rate", lambda row: row["clinical_type"] == "electrocardiogram", "ECG heart rate"),
     ("C-reactive protein", lambda row: _RISK_TIERS.search(row["reference"]), "High-sensitivity C-reactive protein"),
 )
+
+#: A method variant -> the bare-label analyte it is refined from.  The
+#: reticulocyte pair is left out: a fraction and a concentration are two
+#: quantities one report prints side by side, not one reading told two ways.
+_METHOD_BASE = {target: source for source, _test, target in _REFINEMENTS if not source.startswith("Reticulocytes")}
+
+
+def same_method_family(left: str, right: str) -> bool:
+    """Whether two definition names can be one reading: the same definition,
+    or a bare-label analyte and one of its method variants («Urine
+    leukocytes» and its dipstick or per-field reading).  Two different
+    variants are two methods, each stated, and never one reading."""
+    return left == right or _METHOD_BASE.get(left) == right or _METHOD_BASE.get(right) == left
+
 
 # The analyser may print the population name without a percent/hash suffix.
 # Its explicit unit distinguishes a concentration from a relative fraction.
@@ -976,6 +1003,12 @@ def refine_definition(
     return definition
 
 
+def names_serum_or_plasma(definition: dict[str, object]) -> bool:
+    """A definition whose own name states its blood specimen («Taurine, serum
+    or plasma»): the one kind a urine title alone refuses."""
+    return str(definition["name"]).endswith(", serum or plasma")
+
+
 def foreign_categories(alias: str, specimen: str | None) -> frozenset[str]:
     """The specimen-bound categories a label may not resolve into, measured
     in ``specimen``: none when the label names its own specimen
@@ -986,7 +1019,8 @@ def foreign_categories(alias: str, specimen: str | None) -> frozenset[str]:
 
 
 def concept_for_alias(
-    alias: str, value_type: str | None = None, category: str | None = None, specimen: str | None = None
+    alias: str, value_type: str | None = None, category: str | None = None, specimen: str | None = None,
+    *, category_binds: bool = True,
 ) -> dict[str, object] | None:
     """Resolve a printed label to a definition.
 
@@ -1002,16 +1036,29 @@ def concept_for_alias(
     alias table says, so urine concepts are not candidates there.  In stool the
     Esculab «… (кал)» spelling of the label is tried first, which is how
     Synevo's bare «Форма» or «Слиз» reaches the stool concept.
+
+    ``category_binds`` says the category is the material itself (a lab
+    catalogue's, an API's), so "urinalysis" refuses a blood definition as a
+    specimen would.  ``ensure_concept`` passes False: its category comes from
+    the report's title, and an order titled «Загальний аналіз сечі ·
+    Біохімічний аналіз» carries creatinine, haemoglobin and TSH rows too.
+    There it only chooses between two definitions the label has -- with one
+    exception, a definition whose own name states serum or plasma.
     """
     excluded = foreign_categories(alias, specimen)
     preferred = specimen if specimen in _SPECIMEN_BOUND else category
-    bound_specimen = specimen or specimen_family(alias) or (
-        "urinalysis" if category == "urinalysis" and specimen_family(alias) != "hematology" else None
-    )
-    if not specimen and normalized_key(alias) in _CONTEXTUAL_SPECIMEN_ALIASES.get(category, {}):
-        # "White blood cells" names a cell population, not a blood specimen.
-        # A material-specific API context can disambiguate that generic name.
-        bound_specimen = category
+    bound_specimen = specimen or specimen_family(alias)
+    # ponytail: by the catalogue's «…, serum or plasma» naming (the amino
+    # acids, which have no urine definition to prefer); give the definitions
+    # a flag if another group needs the same refusal under a urine title.
+    titled_urine = category == "urinalysis" and not category_binds and not bound_specimen
+    if category_binds and not specimen:
+        if category == "urinalysis" and not bound_specimen:
+            bound_specimen = category
+        elif normalized_key(alias) in _CONTEXTUAL_SPECIMEN_ALIASES.get(category, {}):
+            # "White blood cells" names a cell population, not a blood specimen.
+            # A material-specific API context can disambiguate that generic name.
+            bound_specimen = category
 
     def choose(matches: list[dict[str, object]], printed: str = alias) -> dict[str, object] | None:
         matches = [
@@ -1021,6 +1068,7 @@ def concept_for_alias(
             and definition["category"] not in excluded
             and (not bound_specimen or not definition.get("specimen_family")
                  or definition["specimen_family"] == bound_specimen)
+            and not (titled_urine and names_serum_or_plasma(definition))
         ]
         if not matches:
             return None
@@ -1079,10 +1127,32 @@ def concept_for_alias(
         found = choose(code_matches, code.group(1))
         # The code alone cannot carry «в сечі», «добової» or «прямий»: a
         # definition that does not carry the same word is refused, not guessed.
-        if found and _fallback_blocked(alias[: code.start()] + alias[code.end():], found):
+        outside = alias[: code.start()] + alias[code.end():]
+        if found and (_fallback_blocked(outside, found) or _names_something_else(code.group(1), outside, found)):
             return None
         return found
     return None
+
+
+#: Bracket codes that other things are written with too: «Простагландин
+#: (E2)» is not estradiol.  ponytail: a list, not a rule -- applied to every
+#: code, a stem test refuses "Leukocytes (WBC)", whose definition spells the
+#: cell in Ukrainian only.  Add a short code here when it becomes an alias.
+_AMBIGUOUS_CODES = frozenset(label_key(code) for code in ("e2", "hb", "irf", "lfr", "mfr", "hfr", "amh"))
+
+
+def _stems(text: str) -> set[str]:
+    return {word[:4] for word in re.findall(r"[^\W\d_]{4,}", label_key(text))}
+
+
+def _names_something_else(code: str, outside: str, definition: dict[str, object]) -> bool:
+    """True when an ambiguous code stands beside words that share no stem
+    with any name of the definition it would select."""
+    if label_key(code) not in _AMBIGUOUS_CODES:
+        return False
+    printed = _stems(outside)
+    own = _stems(" ".join([str(definition["name"]), *(str(item) for item in definition["aliases"])]))
+    return bool(printed) and not printed & own
 
 
 #: Words in the text before a bracketed code that the code alone would drop
@@ -1090,7 +1160,7 @@ def concept_for_alias(
 _FALLBACK_DISCRIMINATORS = tuple(
     (name, re.compile(pattern))
     for name, pattern in (
-        ("urine", r"сеч(?!ов)|\burine"),
+        ("urine", rf"{_URINE}|\burine"),
         ("stool", r"\bкал\b|у калі|в калі|\bstool|\bfa?eces"),
         ("24-hour", r"добов|24[ -]?h(?:our)?"),
         ("free", r"вільн|free"),
@@ -1121,4 +1191,11 @@ def _fallback_blocked(prefix: str, definition: dict[str, object]) -> bool:
     creatinine, but «Білірубін прямий (DBIL)» still resolves to direct bilirubin."""
     text = prefix.casefold()
     own = " ".join([str(definition["name"]), *(str(item) for item in definition.get("aliases", []))]).casefold()
-    return any(pattern.search(text) and not pattern.search(own) for _, pattern in _FALLBACK_DISCRIMINATORS)
+    # «Лейкоцити (WBC)-абс.»: "absolute" contradicts a percentage, not a
+    # definition that already is the count per litre.
+    counted = blood_count_unit(str(definition.get("unit") or ""))
+    return any(
+        pattern.search(text) and not pattern.search(own)
+        for name, pattern in _FALLBACK_DISCRIMINATORS
+        if not (counted and name == "absolute")
+    )

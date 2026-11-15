@@ -553,12 +553,16 @@
   handler did not run. It points at something on both pages now, and
   `data-page` is what the handler reads.
 #}
-{% macro calculation_details(item) -%}
+{#- `auto` is a device day or a profile estimate: arithmetic that follows its
+    inputs, with no review step, so "check before confirming" would ask for an
+    action that does not exist. -#}
+{% macro calculation_details(item, auto=false) -%}
 {% if calculation_source(item.extraction_method) %}
-<small class="an-calculation-note">{{ t('doc.derived_egfr') if item.extraction_method == 'derived_ckd_epi_2021' else t('doc.' ~ item.extraction_method) }}
-{{ calculation_status(item) if item.verification_status in ('verified', 'corrected') else t('calc.provisional') }} <a href="{{ calculation_source(item.extraction_method) }}" target="_blank" rel="noreferrer">{{ t('calc.source') }}</a></small>
+{% set auto = auto or item.is_device or item.is_profile or item.extraction_method == 'derived_profile_bmi' %}
+<small class="an-calculation-note">{{ t('doc.' ~ item.extraction_method) }}
+{{ calculation_status(item) if item.verification_status in ('verified', 'corrected') else t('calc.provisional_auto') if auto else t('calc.provisional') }} <a href="{{ calculation_source(item.extraction_method) }}" target="_blank" rel="noreferrer">{{ t('calc.source') }}</a></small>
 {% for input in item.calculation_inputs|default([]) %}
-<small>{% if input.input_kind == 'observation' and input.document_id %}<a href="/documents/{{ input.document_id }}#observation-{{ input.input_id }}">{{ input.input_name|conceptfmt }}</a>{% else %}{{ input.input_name|conceptfmt if input.input_kind == 'observation' else t('calc.input_' ~ input.input_kind) }}{% endif %}: {{ input.input_value|numfmt }} {{ input.input_unit|unitfmt }} · {{ input.input_day|datefmt if input.input_day else t('calc.undated_input') if item.extraction_method == 'derived_profile_bmi' else t('calc.undated_profile') }}</small>
+<small class="an-calculation-input">{% if input.input_kind == 'observation' and input.document_id %}<a href="/documents/{{ input.document_id }}#observation-{{ input.input_id }}">{{ input.input_name|conceptfmt }}</a>{% else %}{{ input.input_name|conceptfmt if input.input_kind == 'observation' else t('calc.input_' ~ input.input_kind) }}{% endif %}: {{ input.input_value|numfmt }} {{ input.input_unit|unitfmt }} · {{ input.input_day|datefmt if input.input_day else t('calc.undated_input') if item.extraction_method == 'derived_profile_bmi' else t('calc.undated_profile') }}</small>
 {% if input.input_kind in ('device_height', 'observation_height') and input.input_day and (item.extraction_method == 'derived_profile_bmi' or (item.day|default(item.observed_at, true)|default('', true)|string)[:10] > input.input_day[:10]) %}<small>{{ t('calc.height_carried') }}</small>{% endif %}
 {% endfor %}
 {% endif %}
@@ -621,8 +625,13 @@
   {#- The exact line the parser read, on the row. The page image is a scroll
       away on a phone, so without this the reviewer is asked to certify a
       number against evidence that is not on the screen. -#}
-  {% if item.evidence_text %}
-  <p class="obs-evidence-line"><b>{{ t('doc.derived_from') if (item.extraction_method or '').startswith('derived_') else t('doc.evidence_line') }}:</b> <q>{{ item.evidence_text }}</q></p>
+  {#- A calculated row stores its formula first and then a machine record of
+      every input (row ids, raw fields): only the formula is for a reader, and
+      the inputs are already linked above by `calculation_details`. -#}
+  {% set derived = (item.extraction_method or '').startswith('derived_') %}
+  {% set evidence = ((item.evidence_text or '').splitlines() or [''])[0].split(';')[0]|trim if derived else item.evidence_text %}
+  {% if evidence %}
+  <p class="obs-evidence-line"><b>{{ t('doc.derived_from') if derived else t('doc.evidence_line') }}:</b> <q>{{ evidence }}</q></p>
   {% endif %}
   {#- What the report or the lab wrote about this result, in their words: a
       culture's organism called a contaminant, a natural resistance. -#}

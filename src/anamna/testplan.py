@@ -127,9 +127,18 @@ def _defined_concepts() -> dict[str, dict]:
 
 
 def _matches_specimen(concept_id: str, label: str, context: str, material: str | None = None) -> bool:
+    """Whether a concept bound to one specimen can be measured in this one.
+
+    ``material`` is the item's specimens joined with " + ".  A package drawn
+    on several («сеча + зішкріб + цільна кров») says nothing about which one
+    a parameter is measured in, so nothing is refused; reading the specimen
+    off the package's title instead («… зішкріб із урогенітального тракту»)
+    took a blood count out of a package that includes one."""
     from .ingest.concepts import specimen_family
 
     definition = _defined_concepts().get(concept_id)
+    if len({specimen_family(part) for part in (material or "").split(" + ")} - {None}) > 1:
+        return True
     family = specimen_family(material, label, context)
     return (definition is None or not family or not definition.get("specimen_family")
             or definition["specimen_family"] == family)
@@ -240,10 +249,23 @@ _OTHER_SPECIMEN = re.compile(
     r"|волосс|нігт|амніот|навколоплідн|молок|цільн\w* кров|добов", re.IGNORECASE)
 
 
+#: An immunoglobulin class with a Cyrillic letter: Esculab prints «Ig М»,
+#: identical on paper and invisible to every Latin pattern.
+_CYRILLIC_IG = re.compile(r"\b[IІ]g\s?[МАЕ]\b", re.IGNORECASE)
+_LATIN_IG = str.maketrans("ІіМмАаЕе", "IiMmAaEe")
+_IG_CLASS = re.compile(r"\big\s?[gmae]\d?\b", re.IGNORECASE)
+#: «IgG_ANCA» too: an underscore is a word character, so no ``\b`` follows it.
+_IGG = re.compile(r"\big\s?g(?![^\W_])", re.IGNORECASE)
+
+
+def _latin_ig(label: str) -> str:
+    return _CYRILLIC_IG.sub(lambda match: match.group().translate(_LATIN_IG), label)
+
+
 def _fits(definition: dict, label: str) -> bool:
     """A resolution that does not contradict the label: an antibody name is
     an antibody concept."""
-    if not _ANTIBODY.search(label):
+    if not _ANTIBODY.search(_latin_ig(label)):
         return True
     name = str(definition["name"]).casefold()
     return definition["category"] in _ANTIBODY_CATEGORIES or "antibod" in name or "anti-" in name
@@ -274,13 +296,30 @@ def _initialism(part: str, base: str) -> bool:
     return True
 
 
+def _contradicts(label: str, definition: dict) -> bool:
+    """The label names a specimen, fraction, method or antibody class the
+    definition does not: «Ig G до Хелікобактер пілорі (Helicobacter Pylori)»
+    is not the H. pylori test of unstated method its bracket spells.  One
+    exception: an antibody concept that names no class at all is the IgG
+    assay («ДНК двоспіральна (dsDNA), антитіла IgG», MPO, PR3 -- the class
+    those autoantibodies are measured in), so «IgG» alone does not rule it
+    out; IgM or IgA still does."""
+    from .ingest.concepts import _fallback_blocked
+
+    label = _latin_ig(label)
+    own = " ".join([str(definition["name"]), *(str(alias) for alias in definition.get("aliases", []))])
+    if re.search(r"antibod|антитіл", own, re.IGNORECASE) and not _IG_CLASS.search(own):
+        label = _IGG.sub(" ", label)
+    return _fallback_blocked(label, definition)
+
+
 def _look(text: str, label: str, urine: bool) -> dict | None:
-    from .ingest.concepts import _fallback_blocked, concept_for_alias
+    from .ingest.concepts import concept_for_alias
 
     category = "urinalysis" if urine else None
     definition = concept_for_alias(text, None, category=category) if text else None
     if (definition is None or not _fits(definition, label)
-            or _fallback_blocked(label, definition)
+            or _contradicts(label, definition)
             or (definition["category"] == "urinalysis") != urine):
         return None
     return definition
@@ -314,7 +353,9 @@ def _by_parts(label: str, urine: bool, context: str) -> dict | None:
     Protein, High Sensitivity)») name none.  Never for a specimen other than
     blood and urine or a genetic test, and a urine label only ever finds a
     urine concept."""
-    if _OTHER_SPECIMEN.search(f"{label} {context}") or _GENETIC.search(label) or _DERIVED.search(label):
+    # Antibodies to DNA are serology: «ДНК двоспіральна (dsDNA), антитіла IgG».
+    genetic = _GENETIC.search(label) and not _ANTIBODY.search(_latin_ig(label))
+    if _OTHER_SPECIMEN.search(f"{label} {context}") or genetic or _DERIVED.search(label):
         return None
     bare = " ".join(_SERUM.sub(" ", label).split())
     if bare != label and (definition := _look(bare, label, urine)):
@@ -474,12 +515,66 @@ def _ambiguous_smallest_specimens(items: list[dict], smallest: dict[str, dict]) 
     return {key for key, choices in families.items() if len(choices) > 1}
 
 
-# A catalogue wrapper can name a result for an empty/generic parameter, but
-# cannot turn a specific unresolved RET-He, antibody or specimen into the
-# different analyte named by its generic order title.
+# A catalogue wrapper names the result of an empty or generic parameter
+# outright.  Any other parameter takes the title only through
+# :func:`_title_key`: an unresolved RET-He, antibody or specimen is not the
+# different analyte its generic order title names.
 _GENERIC_PARAMETER_NAMES = frozenset({
     "", "результат", "результат дослідження", "показник", "значення", "result", "value",
 })
+
+
+def _names_another(label: str, concept_id: str) -> bool:
+    """A part of the label, inside or outside its brackets, that is another
+    analyte's name: «Гемоглобін (RET-He)» under the title «Ретикулоцити»."""
+    from .ingest.concepts import concept_for_alias, stable_concept_id
+
+    pieces = [" ".join(_BRACKET.sub(" ", label).split())]
+    pieces += [part.strip() for group in _BRACKET.findall(label) for part in re.split(r"[,;/]", group)]
+    return any(stable_concept_id(str(found["name"])) != concept_id
+               for piece in pieces if piece and (found := concept_for_alias(piece, None)))
+
+
+_WORD = re.compile(r"[^\W_]+")
+
+
+def _words(text: str) -> str:
+    return f" {' '.join(_WORD.findall(text.casefold()))} "
+
+
+def _says(label: str, definition: dict) -> bool:
+    """One of the definition's names stands in the label as whole words:
+    «HLA-B27» in «Виявлення носійства HLA-B27-антигену», and no name of the
+    HOMA index in «Індекс HOMA2».  A name under four characters says too
+    little («ret» is not the reticulocyte count)."""
+    spoken = _words(label)
+    return any(len(name) > 5 and name in spoken
+               for name in map(_words, (str(definition["name"]), *map(str, definition.get("aliases", [])))))
+
+
+def _title_key(parameter_name: str, own: dict, context: str, vendor: str, aliases: dict,
+               learned: dict | None) -> str | None:
+    """What the title of a test of one parameter names, for a parameter whose
+    own name resolved to nothing: «Виявлення носійства гену HLA B-27» for
+    «Виявлення носійства HLA-B27-антигену (ПЛР) (якісне визначення)».  The
+    parameter has to say the titled concept's name itself (:func:`_says`),
+    and not when it says something that concept does not (a specimen, a
+    class, a method: :func:`_contradicts`) or names another analyte.  A
+    placeholder («Результат») says nothing at all and takes the title."""
+    from .ingest.concepts import clean_label
+    from .ingest.text import normalized_key
+
+    key = resolve(own["name"], context, vendor, aliases, learned)
+    if not key or normalized_key(parameter_name) in _GENERIC_PARAMETER_NAMES:
+        return key
+    definition = _defined_concepts().get(key)
+    label = clean_label(parameter_name)
+    if (definition is None or not _says(label, definition)
+            or not _fits(definition, label) or _contradicts(label, definition)
+            or (_OTHER_SPECIMEN.search(label) and not _OTHER_SPECIMEN.search(str(own["name"])))
+            or _names_another(label, key)):
+        return None
+    return key
 
 
 def _parameter_keys(parameter: dict, own: dict, lab: str, vendor: str, aliases: dict,
@@ -509,8 +604,8 @@ def _parameter_keys(parameter: dict, own: dict, lab: str, vendor: str, aliases: 
     if key and not compatible(key):
         key = None
     key = key or resolve(parameter["name"], context, vendor, aliases, learned)
-    if not key and single and normalized_key(parameter["name"]) in _GENERIC_PARAMETER_NAMES:
-        key = resolve(own["name"], context, vendor, aliases, learned)
+    if not key and single:
+        key = _title_key(parameter["name"], own, context, vendor, aliases, learned)
     if key and not compatible(key):
         key = None
     key = key or f"{lab}:{parameter['id']}"
@@ -533,7 +628,10 @@ def _item_keys(item: dict, daily: bool, by_id: dict[object, list[str]], analyte,
             by_id[bank_key] = analyte(parameter, item)
         found = by_id[bank_key]
         material = " + ".join(str(value) for value in item.get("material") or [])
-        if not all(_matches_specimen(key, parameter["name"], item["name"], material) for key in found):
+        # A package's title names what it is sold for, not the specimen of
+        # each parameter; only a test of one parameter is named after it.
+        title = item["name"] if len(item["parameters"]) == 1 else ""
+        if not all(_matches_specimen(key, parameter["name"], title, material) for key in found):
             found = [f"{lab}:{parameter['id']}"]
         if daily:
             found = [f"{lab}:24h:{parameter['id']}" if key in spot_urine else key for key in found]
@@ -559,8 +657,8 @@ def keyed(items: list[dict], lab: str, vendor: str, aliases: dict, learned: dict
     6. its name (:func:`resolve`), with the specimen of the lab's smallest
        item carrying it: «глюкоза» in a package is urine glucose when a
        urinalysis is the smallest item that lists it;
-    7. when that smallest item reports nothing else and its parameter name is
-       empty or a generic result placeholder, the item's own name;
+    7. when that smallest item reports nothing else, the item's own name,
+       unless the parameter's name contradicts it (:func:`_title_key`);
     8. ``"<lab>:<parameter id>"``.
 
     A parameter id gets the same keys in every item that lists it, and a

@@ -13,9 +13,9 @@ from anamna.reference import canonical_unit, convert_value
 @pytest.mark.parametrize(
     "concept_id, printed, preferred, expected",
     [
-        # A suspected misprint is source evidence, not an exact conversion.
-        ("plateletcrit", "х 10*9/л", "%", "х 10*9/л"),
-        ("inr", "%", "ratio", "%"),
+        # Expert Hospital heads the column wrong; the value is the % / ratio.
+        ("plateletcrit", "х 10*9/л", "%", "%"),
+        ("inr", "%", "ratio", "ratio"),
         # Synevo's «Од» on the atherogenic ratio is the same dimensionless number.
         ("atherogenic-coefficient", "Од", "ratio", "ratio"),
         # Density and relative density require a reference fluid/temperature.
@@ -55,10 +55,21 @@ def test_every_concept_alias_converts_at_factor_one():
 
 
 @pytest.mark.parametrize("concept,printed,target", [
-    ("plateletcrit", "10^9/L", "%"), ("inr", "%", "ratio"),
-    ("resting-respiratory-rate", "min", "breaths/min"),
+    ("plateletcrit", "х 10*9/л", "%"), ("inr", "%", "ratio"),
+    ("resting-respiratory-rate", "хв", "breaths/min"),
 ])
-def test_incompatible_dimensions_never_become_factor_one_aliases(concept, printed, target):
+def test_a_mislabelled_column_keeps_its_analyte_in_one_series(concept, printed, target):
+    """Stored rows carry these three labels: unfolded, each analyte gets a
+    second unit, its trend splits and every curated rule skips the value."""
+    assert canonical_unit(stored_unit(printed, target, concept)) == canonical_unit(target)
+    assert convert_value(1, printed, target, concept) == 1
+
+
+@pytest.mark.parametrize("concept,printed,target", [
+    ("platelet-count", "%", "10^9/L"), ("prothrombin-time", "%", "ratio"),
+    ("pulse-rate", "min", "breaths/min"),
+])
+def test_the_relabels_stay_inside_their_own_concept(concept, printed, target):
     assert convert_value(1, printed, target, concept) is None
 
 

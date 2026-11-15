@@ -1120,11 +1120,13 @@ def _write_days(settings: Settings, user_id: str, import_id: str,
         # their upstream provider, and retaining a day just because another
         # source still reports it would strand the vanished source too.
         removed = 0
+        # A calculated BMI carries its weight's import_id; the refresh below
+        # keeps or removes it, so it is not re-created on every sync.
         for key in owned_keys:
             removed += db.execute(
                 """DELETE FROM device_metric_days
                    WHERE owner_user_id=? AND import_id=? AND metric_key=?
-                     AND day BETWEEN ? AND ?""",
+                     AND day BETWEEN ? AND ? AND id NOT LIKE 'derived-bmi-%'""",
                 (user_id, import_id, key, start, end),
             ).rowcount
         db.executemany(

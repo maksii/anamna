@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.14"
 
 [[package]]
@@ -9,7 +9,6 @@ source = { editable = "." }
 dependencies = [
     { name = "anthropic" },
     { name = "fastapi" },
-    { name = "garmin-fit-sdk" },
     { name = "highspy" },
     { name = "jinja2" },
     { name = "numpy" },
@@ -38,7 +37,6 @@ requires-dist = [
     { name = "anthropic", specifier = ">=2.8.0" },
     { name = "debugpy", marker = "extra == 'dev'", specifier = ">=1.8.22" },
     { name = "fastapi", specifier = ">=0.162.7" },
-    { name = "garmin-fit-sdk", specifier = "==21.221.0" },
     { name = "hatchling", marker = "extra == 'dev'", specifier = ">=1.33.0" },
     { name = "highspy", specifier = ">=1.15.1,<1.16" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.28.1" },
@@ -402,15 +400,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/ea/82/6b9764e52f89a8aaf68a5005093bcb8fdcadcb6ba30571def786c0d3bfc0/fastapi-0.162.7.tar.gz", hash = "sha256:b7503029c8ef2d2d5fea9049294cf8d0f2805c6621f4677ede269fce19f01efb", size = 535511, upload-time = "2026-11-13T17:47:18.517Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a0/49/2d76050f652082f1435f34a8ac9af6207b9aed8b81cde42e0bb121fa7c5a/fastapi-0.162.7-py3-none-any.whl", hash = "sha256:fa3be857122ec8d91d4d234e86ac19acf4ef23f5c6c3dfcce78ec0c27c0c5ab4", size = 152411, upload-time = "2026-11-13T17:47:16.598Z" },
-]
-
-[[package]]
-name = "garmin-fit-sdk"
-version = "21.221.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/4b/f0/550ad8a2de0c6c324596d421c31b4d141157fa2281ca982b513bf74a4f5b/garmin_fit_sdk-21.221.0.tar.gz", hash = "sha256:2e9cf380176be6cdae25185eea279b43919f592799fd9cd5fe14cd59e151b6e4", size = 219010, upload-time = "2026-11-03T21:03:31.358Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/b6/ed/8bdda9d17b416757ae4707f8b66631d55f75bc60a6cfcdb471883364742c/garmin_fit_sdk-21.221.0-py3-none-any.whl", hash = "sha256:7918af718bc350951e9ca7f1fa9f03aa8b2e8b756d0a3fa57920538b5a78cb79", size = 240881, upload-time = "2026-11-03T21:03:29.844Z" },
 ]
 
 [[package]]

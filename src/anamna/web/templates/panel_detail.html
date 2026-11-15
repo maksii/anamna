@@ -309,6 +309,9 @@
   {% else %}
   <p>{{ t('panel.guidance_empty') }}</p>
   {% endif %}
+  {#- The authority badge explains itself in a `title`, which a touch screen
+      never shows: the same sentence in the open, once, beside the sources. -#}
+  <p class="an-authority-explainer">{{ t('authority.explainer') }}</p>
   <p class="an-authority-explainer">{{ t('panel.provenance_explainer') }}</p>
   </div>
 </details>

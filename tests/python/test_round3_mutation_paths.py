@@ -122,14 +122,26 @@ def test_same_second_provider_replacement_changes_the_device_fingerprint(tmp_pat
     assert before != after
 
 
-def test_missing_export_does_not_report_an_unapplied_exclusion_as_settled(tmp_path):
+def test_missing_export_settles_the_exclusion_after_applying_what_can_be_reread(tmp_path, caplog):
     settings, owner, _ = _build(tmp_path)
-    source, _ = _export(settings, owner)
-    rule = exclusions.create(settings, owner, owner, provider="apple_health", source="Synthetic scale", scope="origin")
-    source.unlink()  # This synthetic arrival belongs only to this test.
-    assert exclusions.run_pending(settings, owner) == 0
+    lost, _ = _export(settings, owner, name="lost", value=80)
+    kept = settings.source_dir / "kept" / "export.xml"
+    kept.parent.mkdir()
+    kept.write_text(lost.read_text(encoding="utf-8").replace("2025-01-01", "2025-01-02").replace('"80"', '"81"'), encoding="utf-8")
+    import_device_export(settings, owner_user_id=owner, patient_id="patient-" + owner, vendor_key="apple_health",
+                         source=kept, preserve_other_imports=True)
     with connect(settings) as db:
-        assert db.execute("SELECT applied_at FROM device_exclusions WHERE id=?", (rule,)).fetchone()[0] is None
+        assert _weight(db, owner) == [81, 80]
+    rule = exclusions.create(settings, owner, owner, provider="apple_health", source="Synthetic scale", scope="origin")
+    lost.unlink()  # This synthetic arrival belongs only to this test.
+    # The file will not come back: the rule is applied to the export that can
+    # still be read and settles, rather than reading "applying" for good.
+    assert exclusions.run_pending(settings, owner) == 1
+    with connect(settings) as db:
+        assert db.execute("SELECT applied_at FROM device_exclusions WHERE id=?", (rule,)).fetchone()[0] is not None
+        assert _weight(db, owner) == [80]
+    assert sum("has no kept copy to re-read" in record.getMessage() for record in caplog.records) == 1
+    assert exclusions.run_pending(settings, owner) == 0
 
 
 @pytest.mark.parametrize("key,unit,primary,other,area", [
@@ -190,34 +202,49 @@ def test_failed_provider_rebuild_remains_pending_for_retry(tmp_path, monkeypatch
 
 
 @pytest.mark.parametrize("key,unit,category", [("steps", "steps", "device_activity"), ("sleep_duration", "hours", "device_sleep")])
-def test_saved_preferred_source_keeps_its_explicit_zero_and_clearing_restores_automatic_selection(tmp_path, key, unit, category):
+def test_saved_preferred_source_wins_a_comparable_day_but_its_zero_never_hides_another_source(tmp_path, key, unit, category):
     settings, owner, client = _build(tmp_path)
-    rows = []
-    for name, value in (("Synthetic preferred", 0), ("Synthetic alternative", 8)):
-        item = Aggregate(metric(key, key, category, unit, "sum"), "2025-01-01", name, "Garmin")
-        item.add(value, "2025-01-01T08:00:00Z")
-        rows.append(item)
-    with connect(settings) as db:
-        garmin.replace_metric_days(db, owner, "imp-1", [key], ["2025-01-01"], rows)
-        assert device_metric_values(db, owner, key)[0]["value"] == 8
-        preferred = dict(db.execute("SELECT * FROM device_metric_days WHERE source_name='Synthetic preferred'").fetchone())
-        evidence = [tuple(row) for row in db.execute("SELECT * FROM device_metric_days ORDER BY id")]
+
+    def store(preferred_value):
+        rows = []
+        for name, value in (("Synthetic preferred", preferred_value), ("Synthetic alternative", 8)):
+            item = Aggregate(metric(key, key, category, unit, "sum"), "2025-01-01", name, "Garmin")
+            item.add(value, "2025-01-01T08:00:00Z")
+            rows.append(item)
+        with connect(settings) as db:
+            garmin.replace_metric_days(db, owner, "imp-1", [key], ["2025-01-01"], rows)
+            assert device_metric_values(db, owner, key)[0]["value"] == 8
+            preferred = dict(db.execute("SELECT * FROM device_metric_days WHERE source_name='Synthetic preferred'").fetchone())
+            return preferred, [tuple(row) for row in db.execute("SELECT * FROM device_metric_days ORDER BY id")]
+
+    def prefer(source):
+        response = client.post('/devices/source-preference', data={"metric_key": key, "source_key": source, "csrf_token": csrf}, follow_redirects=False)
+        assert response.status_code == 303
+
+    preferred, evidence = store(0)
     csrf = csrf_for(settings, client)
-    response = client.post('/devices/source-preference', data={"metric_key": key, "source_key": source_key(preferred), "csrf_token": csrf}, follow_redirects=False)
-    assert response.status_code == 303
+    prefer(source_key(preferred))
     with connect(settings) as db:
-        assert device_metric_values(db, owner, key)[0]["value"] == 0
-        assert device_metric_comparison(db, owner, key)["preferred"][0]["value"] == 0
+        # Preference is per metric, not per day: a day the preferred device
+        # did not cover keeps the source that did.
+        assert device_metric_values(db, owner, key)[0]["value"] == 8
+        assert device_metric_comparison(db, owner, key)["preferred"][0]["value"] == 8
         assert [tuple(row) for row in db.execute("SELECT * FROM device_metric_days ORDER BY id")] == evidence
-    response = client.post('/devices/source-preference', data={"metric_key": key, "source_key": "", "csrf_token": csrf}, follow_redirects=False)
-    assert response.status_code == 303
+    prefer("")
+    preferred, evidence = store(7)
+    prefer(source_key(preferred))
+    with connect(settings) as db:
+        assert device_metric_values(db, owner, key)[0]["value"] == 7
+        assert device_metric_comparison(db, owner, key)["preferred"][0]["value"] == 7
+        assert [tuple(row) for row in db.execute("SELECT * FROM device_metric_days ORDER BY id")] == evidence
+    prefer("")
     with connect(settings) as db:
         assert device_metric_values(db, owner, key)[0]["value"] == 8
 
 
 @pytest.mark.parametrize("scope", ["origin", "reading", "window"])
 @pytest.mark.parametrize("series", [None, ["body_weight"], ["body_mass_index"]])
-def test_new_fit_channel_cannot_recreate_excluded_scale_weight_or_bmi(tmp_path, scope, series):
+def test_reimport_cannot_recreate_excluded_scale_weight_or_bmi(tmp_path, scope, series):
     settings, owner, _ = _build(tmp_path)
     _device_day(settings, owner, "body_weight", "2025-01-01", 80, "kg")
     with connect(settings) as db:
@@ -227,14 +254,25 @@ def test_new_fit_channel_cannot_recreate_excluded_scale_weight_or_bmi(tmp_path, 
                              until_text="2025-01-01T13:00:00+00:00")
     with connect(settings) as db:
         db.execute("DELETE FROM device_metric_days WHERE source_name='Garmin Index Scale'")
-    source = settings.source_dir / "synthetic-fit"
+    source = settings.source_dir / "synthetic-scale"
     source.mkdir()
-    _fit_weight_archive(source, [{"timestamp": datetime(2025, 1, 1, 12, tzinfo=UTC), "weight": 80, "percent_fat": 20}])
+    (source / "synthetic_userBioMetrics.json").write_text(json.dumps([
+        {"metaData": {"calendarDate": "2025-01-01T12:00:00+00:00"}, "weight": {
+            "sourceType": "INDEX_SCALE", "timestampGMT": "2025-01-01T12:00:00", "weight": 80000, "bodyFat": 20}},
+    ]), encoding="utf-8")
+    # The scale's FIT archive holds the same capture and one the account's JSON
+    # does not: neither may bring back what the rule removed, and the second
+    # is never imported at all.
+    _fit_weight_archive(source, [
+        {"timestamp": datetime(2025, 1, 1, 12, tzinfo=UTC), "weight": 80, "percent_fat": 20},
+        {"timestamp": datetime(2025, 1, 1, 12, 30, tzinfo=UTC), "weight": 57.2, "percent_fat": 56.8},
+    ])
     def reimport():
         import_device_export(settings, owner_user_id=owner, patient_id="patient-" + owner,
                              vendor_key="garmin", source=source)
         with connect(settings) as db:
             refresh_device_calculations(db)
+            assert not db.execute("SELECT 1 FROM device_metric_days WHERE source_name=?", (FIT_SCALE_SOURCE,)).fetchone()
             return {row["metric_key"]: row["value"] for row in db.execute("SELECT metric_key,value FROM device_metric_days")}
     values = reimport()
     assert "body_mass_index" not in values

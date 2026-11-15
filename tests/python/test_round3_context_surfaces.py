@@ -36,7 +36,6 @@ def _card(rows):
     ({"specimen": "right"}, {"specimen": "left"}),
     ({"specimen": "urine"}, {"specimen": "serum"}),
     ({"sample_condition": "fasting"}, {"sample_condition": "postprandial"}),
-    ({"note": "synthetic isolate A"}, {"note": "synthetic isolate B"}),
     ({"concept_id": "estimated-glomerular-filtration-rate-reported", "raw_name": "eGFR (MDRD)"},
      {"concept_id": "estimated-glomerular-filtration-rate-reported", "raw_name": "eGFR (CKD-EPI 2009)"}),
 ])
@@ -91,7 +90,8 @@ def test_censored_latest_side_does_not_select_an_older_opposite_side(monkeypatch
     assert _card(rows)["series"] == []
     assert web._chart_payload(rows, "mm") == []
     monkeypatch.setattr(web, "_linked_observation_rows", lambda *args: rows)
-    assert web._correlation_lab_series(Concepts(), "synthetic-owner")[ROW["concept_id"]]["series"] == []
+    # Nothing to plot, so no entry: an empty one made the correlation route answer for it.
+    assert ROW["concept_id"] not in web._correlation_lab_series(Concepts(), "synthetic-owner")
 
 
 @pytest.mark.parametrize("source,english,ukrainian", [

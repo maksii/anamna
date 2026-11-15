@@ -8,18 +8,22 @@ manufacturer's parameter documentation is not presented as clinical guidance.
 
 from __future__ import annotations
 
+import argparse
+import json
+from pathlib import Path
+
 from anamna.ingest.concepts import stable_concept_id
 
 
 REVIEWED_AT = "2026-11-15"
 
 
-def _source(key, region, publisher, name, url, identifier, *, official=True, note=None):
+def _source(key, region, publisher, name, url, identifier, *, official=True, kind=None, note=None):
     source = {
         "id": key, "region": region, "publisher": publisher, "name": name,
         "url": url, "identifier": identifier, "reviewed_at": REVIEWED_AT,
         "official": official,
-        "kind": "publication" if official else "manufacturer_documentation",
+        "kind": kind or ("publication" if official else "manufacturer_documentation"),
     }
     if note:
         source["access_note"] = note
@@ -31,7 +35,7 @@ SOURCES = (
         "mayo-amino-acids-plasma-aaqp", "US", "Mayo Clinic Laboratories",
         "AAQP: Amino Acids, Quantitative, Plasma",
         "https://www.mayocliniclabs.com/test-catalog/Overview/9265",
-        "AAQP; order LOINC 35083-5",
+        "AAQP; order LOINC 35083-5", official=False, kind="laboratory_catalogue",
         note="Catalogue and interpretation sections read. Its intervals are age-dependent, Mayo-derived and intended for fasting specimens; they are not imported as universal targets.",
     ),
     _source(
@@ -57,14 +61,14 @@ SOURCES = (
         "RET diagnostic parameters: reticulocyte count and fluorescence fractions",
         "https://www.sysmex.fr/fileadmin/media/f100/Business_Lines/Haematology/Cards/12_RET_Card_EN.pdf",
         "Sysmex RET diagnostic parameter card, 12_RET_Card_EN", official=False,
-        note="Indexed manufacturer PDF read for the identities of reticulocyte count and the three fluorescence groups. Direct PDF retrieval returned HTTP 403; no clinical cutoff is taken from it.",
+        note="PDF retrieved and read on 2026-11-15: it lists the reticulocyte count (RET%, RET#), the immature reticulocyte fraction (IRF) and the three fluorescence stages HFR, MFR and LFR. No clinical cutoff is taken from it.",
     ),
     _source(
         "sysmex-reticulocyte-irf-formula", "EU", "Sysmex",
         "RET channel: immature reticulocyte fraction",
         "https://www.sysmex.co.uk/education/knowledge-centre/technologies/fluorescence-flow-cytometry/ret-channel/",
         "RET channel; IRF = MFR + HFR", official=False,
-        note="The indexed manufacturer publication states that immature reticulocyte fraction is the sum of the medium- and high-fluorescence fractions. Full-page automated retrieval returned HTTP 403; no reference interval is taken from it.",
+        note="Page retrieved and read on 2026-11-15: reticulocytes are divided into LFR, MFR and HFR, and the IRF 'is calculated from the sum of MFR plus HFR'. No reference interval is taken from it.",
     ),
     _source(
         "isth-lupus-anticoagulant-detection-2020", "INT",
@@ -79,27 +83,16 @@ SOURCES = (
         "Lupus Anticoagulant Profile Testing Algorithm",
         "https://www.mayocliniclabs.com/en/-/media/it-mmfiles/Special%20Instructions/D/6/3/Lupus_Anticoagulant_Profile_Testing_Algorithm",
         "ALUPP / Lupus Anticoagulant Profile, Plasma; August 2025 algorithm",
+        official=False, kind="laboratory_catalogue",
         note="Used to preserve the distinction between clotting times, confirmatory testing and laboratory interpretation. Its assay cutoffs are not imported.",
     ),
     _source(
-        "moz-nastanova-00107", "UA", "МОЗ України, Реєстр медико-технологічних документів",
-        "Настанова 00107. Лабораторна оцінка тромбофілії",
-        "https://guidelines.moz.gov.ua/documents/3010", "ebm00107; document 3010",
-        note="Ukrainian-language indexed text identifies lupus anticoagulant testing and assay-specific boundaries. Full-page automated retrieval returned HTTP 503; no numerical threshold or retest interval is extracted.",
-    ),
-    _source(
-        "ash-d-dimer-assays-2020", "US", "American Society of Hematology",
-        "D-dimer Assays and Outcome Studies",
-        "https://www.hematology.org/-/media/hematology/files/covid-19/d-dimer-assays.pdf",
-        "ASH D-dimer assays table, posted 20 April 2020",
-        note="Indexed published table lists assay-dependent reporting in FEU and DDU. Direct PDF retrieval returned HTTP 404. Used for preserving the calibration label, not for adopting one assay's exclusion threshold universally; corroborated by the RCPA manual.",
-    ),
-    _source(
-        "rcpa-d-dimer-manual-2024", "INT", "Royal College of Pathologists of Australasia",
-        "RCPA Manual: D-Dimer",
-        "https://www.rcpa.edu.au/Manuals/RCPA-Manual/Pathology-Tests/D/D-Dimer",
-        "RCPA Manual, D-Dimer, reviewed 2 January 2024",
-        note="Indexed official text states that FEU and DDU are different calibrations and that cutoffs are not transferable between methods. Full-page automated retrieval returned HTTP 403.",
+        "rpth-d-dimer-reporting-2022", "INT", "Research and Practice in Thrombosis and Haemostasis",
+        "Standardization of D-dimer reporting in the COVID-19 era",
+        "https://pmc.ncbi.nlm.nih.gov/articles/PMC9487443/",
+        "Zhang L et al. Res Pract Thromb Haemost 2022;6(6):e12772; doi:10.1002/rth2.12772; PMCID: PMC9487443",
+        official=False, kind="primary_research",
+        note="Letter read in full on 2026-11-15. Manufacturers report D-dimer in fibrinogen-equivalent units (FEU) or D-dimer units (DDU), and the same samples gave different values on four commercial assays. Used for keeping the calibration label with the result, not for any cutoff.",
     ),
     _source(
         "nice-ng158-d-dimer", "EU", "National Institute for Health and Care Excellence",
@@ -146,7 +139,8 @@ def _entry(name, uk_name, unit, source_ids, description, uk_description, why, uk
         "kind": "no_universal_target", "bands": [],
         "source_id": source_ids[0], "source_ids": list(source_ids),
         "regions_covered": sorted({regions[key] for key in source_ids}),
-        "agreement": "no_universal_target",
+        # One source, or several that agree no universal target exists.
+        "agreement": "single_source" if len(source_ids) == 1 else "concordant",
         "short_description": description, "why_it_matters": why,
         "no_universal_target_reason": reason,
         "retest_interval_months": None, "retest_rationale": None,
@@ -219,7 +213,7 @@ def additions():
                               "Ці фракції аналізатора характеризують утворення еритроцитів; їх оцінюють разом із кількістю ретикулоцитів і рештою показників крові.",
                               "The populations and intervals depend on analyzer methodology and local validation. Manufacturer definitions do not establish a universal clinical target.",
                               "Визначення популяцій та інтервали залежать від методики аналізатора й перевірки в лабораторії. Опис виробника не встановлює універсальної клінічної норми."))
-    la_sources = ("isth-lupus-anticoagulant-detection-2020", "mayo-lupus-anticoagulant-algorithm-2025", "moz-nastanova-00107")
+    la_sources = ("isth-lupus-anticoagulant-detection-2020", "mayo-lupus-anticoagulant-algorithm-2025")
     for name, uk_name, unit, description, uk_description in (
         ("Lupus anticoagulant screening time", "Вовчаковий антикоагулянт: час скринінгового тесту", "s",
          "The clotting time of the laboratory's lupus-anticoagulant screening test. It is one stage of a multistep assessment, not a diagnosis by itself.",
@@ -238,7 +232,7 @@ def additions():
                               "Настанова ISTH вимагає локально встановлених порогів для конкретного методу та оцінки послідовності тестів. Універсальний поріг часу згортання чи індексу не встановлюється."))
     entries.append(_entry(
         "D-dimer", "D-димер", "ng/mL FEU",
-        ("ash-d-dimer-assays-2020", "rcpa-d-dimer-manual-2024", "nice-ng158-d-dimer"),
+        ("nice-ng158-d-dimer", "rpth-d-dimer-reporting-2022"),
         "A marker of cross-linked fibrin breakdown. The FEU label means fibrinogen-equivalent units and must remain distinct from D-dimer units (DDU).",
         "Маркер розщеплення зшитого фібрину. Позначення FEU означає фібриноген-еквівалентні одиниці; їх слід відрізняти від одиниць D-димера (DDU).",
         "This result is interpreted with symptoms, clinical probability and the assay's diagnostic pathway. An elevated value alone does not establish a blood clot.",
@@ -277,3 +271,17 @@ def extend(library: dict) -> dict[str, int]:
             analyte_ids.add(entry["concept_id"])
             analytes_added += 1
     return {"sources_added": sources_added, "analytes_added": analytes_added}
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--library", type=Path, default=Path("data/reference_library.json"))
+    args = parser.parse_args()
+    library = json.loads(args.library.read_text(encoding="utf-8"))
+    counts = extend(library)
+    args.library.write_text(json.dumps(library, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
+    print(json.dumps(counts))
+
+
+if __name__ == "__main__":
+    main()

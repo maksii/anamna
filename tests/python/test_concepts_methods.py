@@ -62,11 +62,14 @@ def test_analyser_and_smear_differentials_are_separate_series(printed, expected)
 @pytest.mark.parametrize(
     "printed, unit, value_text, reference, expected",
     [
-        # A cell-per-volume unit does not establish a chemical strip method.
-        ("Лейкоцити", "Leu/µL", "не виявлені", None, "Urine leukocytes"),
+        # Synevo: one word, two methods; the strip prints its own unit.
+        ("Лейкоцити", "Leu/µL", "не виявлені", None, "Urine leukocytes (dipstick)"),
         ("Лейкоцити", "Leu/µL", "не виявлені", "лейкоцитарна естераза", "Urine leukocytes (dipstick)"),
         ("Лейкоцити", "в п/з", "до 5.0", None, "Urine leukocytes per high-power field"),
-        ("Еритроцити", "Ery/µL", "не виявлені", None, "Urine erythrocytes"),
+        ("Еритроцити", "Ery/µL", "не виявлені", None, "Urine erythrocytes (dipstick)"),
+        # A concentration unit alone names no method; the printed enzyme does.
+        ("Лейкоцити", "кл/мкл", "25", None, "Urine leukocytes"),
+        ("Лейкоцити", "кл/мкл", "25", "лейкоцитарна естераза", "Urine leukocytes (dipstick)"),
         ("Еритроцити", "Ery/µL", "не виявлені", "активність пероксидази", "Urine erythrocytes (dipstick)"),
         # St. Paraskeva writes the field into the value.
         ("Urine leukocytes", None, "1-2 в п/з", "1 - 6 в п/з", "Urine leukocytes per high-power field"),

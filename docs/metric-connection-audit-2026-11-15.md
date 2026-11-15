@@ -4,7 +4,7 @@ Second-round corrections and current qualification are recorded in
 [the adversarial re-audit](metric-connection-audit-round2-2026-11-15.md).
 In particular, automatic indirect-bilirubin subtraction was withdrawn and
 source-unit, citation, sample-identity and provenance assumptions were corrected.
-The counts below describe the first-round checkpoint.
+The sections below describe the first-round checkpoint.
 
 The audit reviewed imports, concept aliases, units, specimen/method distinctions,
 calculations, panels, body-system navigation, laboratory ordering, caches and
@@ -12,40 +12,24 @@ exports. A consistent online snapshot was taken from the hosted development
 sandbox at the owner's request. All changes to records were exercised on a
 local working copy; the hosted database was not rewritten.
 
-This report contains public catalogue information and aggregate evidence only.
+This report contains public catalogue information and method only.
 Private source text, measurements and identifiers remain under ignored `work/`.
 Tests and browser verification use synthetic measurements.
 
 ## Corpus evidence
 
-| Check | Before | After |
-| --- | ---: | ---: |
-| Documents | 300 | 300 |
-| Observations | 3,102 | 3,124 |
-| Active observations classified as unmapped | 79 | 0 |
-| Device-day rows | 184,630 | 184,643 |
-| Distinct device metrics | 75 | 75 |
-| Observed device metrics without a panel/twin connection | 0 | 0 |
-| Calculated device BMI rows | 0 | 13 |
-| Foreign-key errors | 0 | 0 |
+After the refresh of the audited copy, no active observation is classified as
+unmapped, every observed device metric has a panel/twin connection, the set of
+documents is unchanged and there are no foreign-key errors.
 
-The 79 observations represented 76 legacy labels. They now resolve to 74 public
-targets: 73 newly defined concepts and the existing breath-hydrogen concept.
-Equivalent labels were joined; distinct assays, fractions, specimens and score
-models were kept apart. Catalogue facts and a blood-count comment are included
-in that concept count; they are not all quantitative tests.
+73 newly defined concepts were added to the catalogue. Equivalent labels were
+joined; distinct assays, fractions, specimens and score models were kept apart.
+Catalogue facts and a blood-count comment are included in that concept count;
+they are not all quantitative tests.
 
-The working-copy refresh added these provisional clinical calculations:
-
-| Calculation | Added rows |
-| --- | ---: |
-| Albumin/globulin ratio | 3 |
-| Clinical BMI | 3 |
-| Automated differential absolute counts | 7 |
-| Indirect bilirubin | 1 |
-| Non-HDL cholesterol | 5 |
-| Plateletcrit | 3 |
-| **Total** | **22** |
+The working-copy refresh adds provisional clinical and device calculations
+wherever the inputs qualify; the supported set is listed under "Calculation
+coverage and rules". Calculated results are provisional.
 
 Original reported numeric/text values, raw units, observation dates, ownership
 and verification states were compared by content fingerprint and remained
@@ -73,8 +57,8 @@ the archive README. The aggregate receipt is
   has English and Ukrainian naming and sourced guidance.
 - Added amino-acid, coeliac, folate-genetics and ovarian-risk panels, plus the
   missing members of existing panels and their body-system links.
-- Kept ROMA pre/postmenopausal scores apart, preserved reported HOMA's
-  unspecified model, and retained an unspecified H. pylori method where the
+- ROMA pre/postmenopausal scores are kept apart, a reported HOMA keeps an
+  unspecified model, and an H. pylori method stays unspecified where a
   source does not establish one. AMH assay context is retained. Gliadin IgG is
   not substituted for deamidated gliadin IgG.
 - Kept reticulocyte percentage, absolute count, reticulocyte index and
@@ -135,9 +119,8 @@ and the calculation registries. No pre-existing clinical band was changed.
 
 ## Evidence that cannot support a calculation
 
-Four weight-days in the copied corpus have no qualifying height evidence.
-They remain uncalculated. A current or future height was not silently assigned
-to those historical days.
+A weight-day with no qualifying height evidence remains uncalculated. A current
+or future height is not silently assigned to a historical day.
 
 | Candidate | Missing prerequisite or distinction |
 | --- | --- |
@@ -155,7 +138,7 @@ to those historical days.
 | Electrophoresis fractions | Method-specific fraction measurements; chemistry albumin/total protein does not recreate electrophoresis |
 
 These are explicit data/method limitations, not estimates filled with assumed
-numbers. This audit qualifies the current code and copied corpus; it does not
+numbers. This audit qualifies the current code and the audited copy; it does not
 claim coverage of future provider schemas or every possible medical model.
 
 ## Verification
@@ -168,14 +151,11 @@ claim coverage of future provider schemas or every possible medical model.
   errors. Both reported SQLite integrity `ok` and no foreign-key violations.
   These source-file validators used the existing local source corpus; the
   hosted database snapshot was audited separately using its retained page text.
-- Old/new unit-pattern comparison covered 17,850 retained source lines and
-  56,282 test strings: zero unexpected changes. Re-parsing retained text from
-  all 300 hosted documents removed no results and added one complete
-  reticulocyte parse. That result already existed exactly once in the stored
-  record, so no duplicate was inserted.
+- Old/new unit-pattern comparison covered every retained source line and
+  every test string: zero unexpected changes. Re-parsing retained text from
+  every hosted document removed no results and inserted no duplicate.
 - Synthetic browser checks used the documented baseline account, English and
   Ukrainian, at 390×844, 375×667, 820×1180 and 1180×820. Calculated BMI,
   laboratory calculation provenance, amino-acid panel and profile estimate
   were visually inspected. No horizontal page overflow was observed.
-- Nothing was committed, pushed or deployed. Hosted patient records were not
-  rewritten.
+- Hosted patient records were not rewritten.

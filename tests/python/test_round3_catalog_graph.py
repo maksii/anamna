@@ -90,13 +90,17 @@ def test_english_urinalysis_material_is_recognized(label):
     assert specimen_family(label) == "urinalysis"
 
 
-@pytest.mark.parametrize("name,unit", [
-    ("Urine leukocytes", "LEU/µL"), ("Urine erythrocytes", "ERY/µL"),
-    ("Urine leukocytes", "cells/µL"), ("Urine erythrocytes", "cells/µL"),
-])
-def test_cell_concentration_does_not_establish_a_chemical_strip_method(name, unit):
+@pytest.mark.parametrize("name", ["Urine leukocytes", "Urine erythrocytes"])
+def test_cell_concentration_does_not_establish_a_chemical_strip_method(name):
     definition = concept_for_alias(name)
-    assert refine_definition(definition, unit=unit) is definition
+    assert refine_definition(definition, unit="cells/µL") is definition
+
+
+@pytest.mark.parametrize("name,unit", [("Urine leukocytes", "LEU/µL"), ("Urine erythrocytes", "ERY/µL")])
+def test_the_strip_s_own_unit_establishes_the_strip(name, unit):
+    # Leu/µL and Ery/µL are printed only by a test strip; verified rows carry them.
+    definition = concept_for_alias(name)
+    assert "dipstick" in refine_definition(definition, unit=unit)["name"]
 
 
 @pytest.mark.parametrize("name,reference,target", [

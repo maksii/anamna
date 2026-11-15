@@ -535,10 +535,12 @@ UNIT_SYNONYMS = {
 #: Same number, different label -- registered per concept and never globally.
 #:
 #: Two situations produce these.  A dimensionless quantity gets a different
-#: name from each laboratory: the atherogenic ratio can carry «Од» and
-#: antibody indices "AI" or "R", where the library stores "ratio" or "index".
-#: Suspected source misprints are not aliases: platelet counts cannot become
-#: platelet fractions, and a percentage cannot become INR without assay data.
+#: name from each laboratory: Synevo prints the atherogenic ratio as «Од» and
+#: the mumps antibody indices as "AI" and "R", where Expert Hospital prints
+#: «коефіцієнт» and the library stores "index".  And a laboratory simply
+#: mislabels its own column: Expert Hospital heads plateletcrit «х 10*9/л» and
+#: INR «%», then prints values (0.22-0.36 against a 0.1-0.5 interval, 0.87
+#: against 0.77-1.24) that are unambiguously the percentage and the ratio.
 #:
 #: Scoping each to one concept is what makes this safe.  Folding «Од» into
 #: «коефіцієнт» globally would be wrong -- «Од» is "units" on an antibody
@@ -548,11 +550,16 @@ UNIT_SYNONYMS = {
 #: conversion (×16.9, in ``reference.UNIT_CONVERSIONS``), not a relabel.
 CONCEPT_UNIT_ALIASES: dict[tuple[str, str], str] = {
     ("atherogenic-coefficient", "units"): "ratio",
+    ("inr", "%"): "ratio",
+    ("plateletcrit", "10^9/l"): "%",
     ("mumps-virus-igg", "ai"): "index",
     ("mumps-virus-igm", "r"): "index",
-    # A reciprocal minute under a respiratory-rate concept counts breaths.
-    # Bare minutes are a duration and cannot be silently relabelled as a rate.
+    # A visit note prints breathing rate «18 /хв» inline and «16 хв» under its
+    # «ЧД» column: per minute, and minutes, by the letter.  Under the
+    # respiratory-rate concept both are breaths per minute; anywhere else «хв»
+    # stays minutes, which is why this is scoped here and not a synonym.
     ("resting-respiratory-rate", "/хв"): _BREATHS_PER_MIN,
+    ("resting-respiratory-rate", "min"): _BREATHS_PER_MIN,
     # Insulin «мкОд/мл» (µU/mL) and «мкМО/мл» (µIU/mL, folded to mIU/L): by
     # prefix arithmetic 1 µU/mL = 1 mU/L, and on an insulin immunoassay the
     # "unit" is the international unit of the WHO insulin reference

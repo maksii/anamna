@@ -231,33 +231,57 @@ SLEEP_KEYS = (
 )
 
 def quarantine_sleep(aggregates: list[Aggregate]) -> tuple[list[Aggregate], list[dict[str, object]]]:
-    """Withhold invalid durations, never an arbitrary maximum-length night.
+    """Withhold durations no day can hold: negative, non-finite or over 24 hours.
 
     Independent HRV and respiratory observations are not invalidated by a bad
     duration field. Acquisition overlap is checked before any period is summed.
     """
-    from .units import NONNEGATIVE_SLEEP_KEYS
+    from .units import MAX_SLEEP_HOURS, NONNEGATIVE_SLEEP_KEYS
 
     kept, withheld = [], []
     for item in aggregates:
         value = finite_number(item.value)
-        if item.definition.key in NONNEGATIVE_SLEEP_KEYS and (value is None or value < 0):
-            withheld.append({"day": item.day, "source": item.source_name, "metric": item.definition.key,
-                             "reason": "negative or non-finite duration"})
-        else:
+        if item.definition.key not in NONNEGATIVE_SLEEP_KEYS or (value is not None and 0 <= value <= MAX_SLEEP_HOURS):
             kept.append(item)
+            continue
+        reason = "longer than 24 hours" if value is not None and value > MAX_SLEEP_HOURS else "negative or non-finite duration"
+        withheld.append({"day": item.day, "source": item.source_name, "metric": item.definition.key, "reason": reason})
     return kept, withheld
 
 
-def distinct_sleep_periods(periods: Iterable[dict]) -> list[dict]:
-    """Deduplicate identical captures and refuse conflicting overlaps.
+#: Why a day's sleep is withheld when two of its periods cannot both be true.
+CONFLICTING_PERIODS = "overlapping sleep periods that differ"
+
+
+def conflicting_sleep_days(days: Iterable[str]) -> list[dict[str, object]]:
+    """`quarantined_sleep_days` entries for days withheld by `distinct_sleep_periods`."""
+    return [{"day": day, "source": SOURCE_NAME, "metric": "sleep_duration", "reason": CONFLICTING_PERIODS}
+            for day in sorted(set(days))]
+
+
+def _sleep_interval(start: object, end: object) -> tuple[datetime, datetime] | None:
+    try:
+        low = datetime.fromisoformat(str(start).replace("Z", "+00:00"))
+        high = datetime.fromisoformat(str(end).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if (low.tzinfo is None) != (high.tzinfo is None) or high <= low:
+        return None
+    return low, high
+
+
+def distinct_sleep_periods(periods: Iterable[dict], withheld: list[dict] | None = None) -> list[dict]:
+    """Deduplicate identical captures and withhold the ones that cannot both be true.
 
     A repeated acquisition with the same written fields is one capture even
-    if its storage ID differs. Different overlapping captures cannot be added
-    without reconstructing unreported sleep-stage timings, so the import/sync
-    fails explicitly and its transaction leaves the existing record intact.
+    if its storage ID differs. Different overlapping captures (a re-scored
+    night, a nap inside a night) cannot be added without reconstructing
+    unreported sleep-stage timings, and nothing says which one is right: both
+    are left out and appended to ``withheld``, as is a period whose interval
+    cannot be read. This never raises: one bad night must not reject a whole
+    export or fail every later sync. The caller withholds the affected days.
     """
-    kept, seen, intervals = [], set(), []
+    kept, seen, timed, dropped = [], set(), [], set()
     for row in periods:
         start, end = row.get("bedtime_start"), row.get("bedtime_end")
         if start and end:
@@ -265,21 +289,27 @@ def distinct_sleep_periods(periods: Iterable[dict]) -> list[dict]:
             if signature in seen:
                 continue
             seen.add(signature)
-            try:
-                low = datetime.fromisoformat(str(start).replace("Z", "+00:00"))
-                high = datetime.fromisoformat(str(end).replace("Z", "+00:00"))
-            except ValueError as exc:
-                raise ValueError("Invalid Oura sleep acquisition timestamp") from exc
-            if (low.tzinfo is None) != (high.tzinfo is None) or high <= low:
-                raise ValueError("Invalid Oura sleep acquisition interval")
-            for other_low, other_high in intervals:
-                if (low.tzinfo is None) != (other_low.tzinfo is None):
-                    raise ValueError("Inconsistent Oura sleep acquisition time zones")
-                if low < other_high and high > other_low:
-                    raise ValueError("Conflicting overlapping Oura sleep acquisitions")
-            intervals.append((low, high))
+            interval = _sleep_interval(start, end)
+            if interval is None:
+                dropped.add(len(kept))
+            else:
+                timed.append((*interval, len(kept)))
         kept.append(row)
-    return kept
+    # A timestamp without an offset cannot be placed among ones that carry it.
+    aware = [item for item in timed if item[0].tzinfo is not None]
+    naive = [item for item in timed if item[0].tzinfo is None]
+    if aware and naive:
+        dropped.update(index for _, _, index in naive)
+        naive = []
+    timed = sorted(aware or naive)
+    for position, (_, high, index) in enumerate(timed):
+        for other_low, _, other_index in timed[position + 1:]:
+            if other_low >= high:
+                break
+            dropped.update((index, other_index))
+    if withheld is not None:
+        withheld.extend(kept[index] for index in sorted(dropped))
+    return [row for index, row in enumerate(kept) if index not in dropped]
 
 
 def _float(value: object) -> float | None:
@@ -374,6 +404,7 @@ class _TakeoutParse:
         self.paths = paths
         self.tz = tz
         self.bucket: dict[tuple[str, str, str], Aggregate] = {}
+        self.withheld_sleep_days: set[str] = set()
         self.workouts: list[Workout] = []
         self.events: list[DeviceEvent] = []
         self.earliest: str | None = None
@@ -447,9 +478,18 @@ class _TakeoutParse:
         # the API mapper (oura._map_sleep) groups by -- never to the date its
         # bedtime falls on: an evening bedtime is the *next* day's night.
         sleep_by_day: dict[str, list[dict[str, str]]] = {}
-        for row in distinct_sleep_periods(row for row in self.rows(_SLEEPMODEL_CSV) if (row.get("type") or "") != "deleted"):
-            day = self.touch(row.get("day") or local_day(row.get("bedtime_end") or "", self.tz))
-            if len(day) == 10 and (row.get("type") or "") != "deleted":
+        withheld: list[dict[str, str]] = []
+
+        def day_of(row: dict[str, str]) -> str:
+            return row.get("day") or local_day(row.get("bedtime_end") or "", self.tz)
+
+        rows = distinct_sleep_periods(
+            (row for row in self.rows(_SLEEPMODEL_CSV) if (row.get("type") or "") != "deleted"), withheld)
+        # A day that lost a period would otherwise publish the rest as its night.
+        self.withheld_sleep_days = {day_of(row) for row in withheld}
+        for row in rows:
+            day = self.touch(day_of(row))
+            if len(day) == 10 and day not in self.withheld_sleep_days:
                 sleep_by_day.setdefault(day, []).append(row)
         for day, periods in sleep_by_day.items():
             self._add_sleep_day(day, periods)
@@ -596,16 +636,26 @@ class OuraAdapter:
         records = _legacy_records(files)
         bucket: dict[tuple[str, str, str], Aggregate] = {}
         days: list[str] = []
-        for row in distinct_sleep_periods(row for row in records if (row.get("type") or "") != "deleted"):
-            observed = next((str(row.get(key) or "") for key in
-                             ("day", "date", "timestamp", "start_datetime") if row.get(key)), "")
+        def observed_at(row: dict[str, object]) -> str:
+            return next((str(row.get(key) or "") for key in
+                         ("day", "date", "timestamp", "start_datetime") if row.get(key)), "")
+
+        withheld: list[dict[str, object]] = []
+        rows = distinct_sleep_periods((row for row in records if (row.get("type") or "") != "deleted"), withheld)
+        withheld_days = {local_day(observed_at(row), tz) for row in withheld}
+        for row in rows:
+            observed = observed_at(row)
             day = local_day(observed, tz)
             if len(day) != 10:
                 continue
             days.append(day)
+            # Only a sleep period carries a bedtime; the day's other records stay.
+            if day in withheld_days and row.get("bedtime_start") and row.get("bedtime_end"):
+                continue
             _add_legacy_row(bucket, row, day, observed)
         earliest, latest = (min(days), max(days)) if days else (None, None)
         aggregates, quarantined = quarantine_sleep(list(bucket.values()))
+        quarantined += conflicting_sleep_days(day for day in withheld_days if len(day) == 10)
         return ParsedDeviceExport(
             aggregates=aggregates, raw_record_count=len(records),
             export_started_at=earliest, export_ended_at=latest,
@@ -643,6 +693,7 @@ class OuraAdapter:
         state.parse_ring()
 
         aggregates, quarantined = quarantine_sleep(list(state.bucket.values()))
+        quarantined += conflicting_sleep_days(day for day in state.withheld_sleep_days if len(day) == 10)
         metadata = _takeout_metadata(source, app_data, paths, file_rows, file_columns, state,
                                      len(aggregates), quarantined)
         return ParsedDeviceExport(

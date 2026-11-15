@@ -1,32 +1,43 @@
 """Reproduce public definitions and applicability corrections from audit three."""
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 
 
-OW_TYPES = "https://github.com/the-momentum/open-wearables/blob/main/backend/app/schemas/enums/series_types.py"
+# Pinned to the commit that was read, so the cited lines cannot move.
+OW_COMMIT = "7ca121dd4e483ec2f397f141a326e2bc81a960bd"
+OW_TYPES = "https://github.com/the-momentum/open-wearables/blob/" + OW_COMMIT + "/backend/app/schemas/enums/series_types.py"
 PREGNANCY_SOURCE = "https://www.nice.org.uk/guidance/ng3/chapter/Recommendations"
 MEASUREMENTS_SOURCE = "https://www.niddk.nih.gov/research-funding/research-programs/kidney-clinical-research-epidemiology/laboratory/factors-affecting-egfr-accuracy/clinical-measurements"
 
 
 def extend(library: dict) -> None:
     sources = library["sources"]
-    def source(key, publisher, name, url, region, official):
+    def source(key, publisher, name, url, region, official, identifier, kind):
         existing = next((item for item in sources if item["url"] == url), None)
         if existing:
             return existing["id"]
         sources.append({"id": key, "publisher": publisher, "name": name, "url": url,
-                        "identifier": key, "region": region, "official": official,
-                        "reviewed_at": "2026-11-15"})
+                        "identifier": identifier, "region": region, "official": official,
+                        "kind": kind, "reviewed_at": "2026-11-15"})
         return key
 
-    weather_source = source("openwearables-series-types-2026", "OpenWearables",
-                            "Canonical series types and source aliases", OW_TYPES, "INT", False)
-    pregnancy_source = source("nice-ng3-egfr-pregnancy", "NICE", "NG3, recommendation 1.3.30",
-                              PREGNANCY_SOURCE, "EU", True)
-    measurement_source = source("niddk-egfr-clinical-measurements", "NIDDK",
-                                "Clinical measurements affecting eGFR accuracy", MEASUREMENTS_SOURCE, "US", True)
+    weather_source = source("openwearables-series-types-2026", "Open Wearables / Momentum",
+                            "Canonical series types and source aliases", OW_TYPES, "INT", False,
+                            "SeriesType.weather_temperature, SeriesType.weather_humidity; commit " + OW_COMMIT[:12],
+                            "manufacturer_documentation")
+    pregnancy_source = source("nice-ng3-egfr-pregnancy", "National Institute for Health and Care Excellence",
+                              "Diabetes in pregnancy: management from preconception to the postnatal period",
+                              PREGNANCY_SOURCE, "EU", True,
+                              "NICE guideline NG3, recommendation 1.3.30 [2008, amended 2015]; last updated 16 December 2020",
+                              "guideline")
+    measurement_source = source("niddk-egfr-clinical-measurements",
+                                "National Institute of Diabetes and Digestive and Kidney Diseases",
+                                "Clinical Measurements & eGFR Accuracy", MEASUREMENTS_SOURCE, "US", True,
+                                "NIDDK, Factors Affecting eGFR Accuracy: Clinical Measurements; last reviewed May 2025",
+                                "public_health_information")
     by_id = {item["concept_id"]: item for item in library["analytes"]}
     for key, name, uk_name, unit, description, uk_description in (
         ("weather_temperature", "Weather temperature", "Температура за даними погоди", "°C",
@@ -66,7 +77,7 @@ def extend(library: dict) -> None:
         "concept_id": reported_id, "canonical_name": "Estimated glomerular filtration rate, reported",
         "unit": "mL/min/1.73m²", "panel": "kidney", "kind": "no_universal_target", "bands": [],
         "source_id": measurement_source, "source_ids": list(egfr["source_ids"]),
-        "regions_covered": list(egfr["regions_covered"]), "agreement": "no_universal_target",
+        "regions_covered": list(egfr["regions_covered"]), "agreement": "concordant",
         "short_description": "An estimate of kidney filtration reported by a laboratory. This shared catalog identity does not establish the equation, its year or its filtration marker; any method printed in the original name remains part of the source evidence.",
         "why_it_matters": "Retain the reported method, biomarker, body-surface-area indexing and laboratory interpretation. A CKD-EPI, MDRD or cystatin-C label must not be silently renamed as the creatinine-only CKD-EPI 2021 equation used by Anamna.",
         "no_universal_target_reason": "The equation and assay are not established by a generic eGFR label. This shared identity receives no CKD-EPI 2021-specific interval or routine retest schedule.",
@@ -92,8 +103,14 @@ def extend(library: dict) -> None:
     sources.sort(key=lambda item: item["id"])
 
 
-if __name__ == "__main__":
-    path = Path(__file__).resolve().parents[1] / "data/reference_library.json"
-    library = json.loads(path.read_text(encoding="utf-8"))
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--library", type=Path, default=Path("data/reference_library.json"))
+    args = parser.parse_args()
+    library = json.loads(args.library.read_text(encoding="utf-8"))
     extend(library)
-    path.write_text(json.dumps(library, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    args.library.write_text(json.dumps(library, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
+
+
+if __name__ == "__main__":
+    main()

@@ -33,7 +33,7 @@ from datetime import date
 from .. import diagnoses, diagnosis_matrix, diagnosis_treatment, factors, icd10
 from ..calculation_info import calculation_source
 from ..devices.catalog import CORE_METRIC_KEYS
-from ..health import concept_display_name
+from ..health import concept_display_name, display_unit
 from ..i18n import get_locale, t, t_plural, translate_phrase
 from ..panels import SAME_DEVICE_KEYS
 
@@ -432,6 +432,12 @@ def _calculation_text(item: Mapping[str, object]) -> str:
     if not source:
         return ""
     parts = [t("doc." + method), f"{t('calc.source')}: {source}"]
+    if inputs := _calculation_inputs_text(item):
+        parts.append(inputs)
+    return "; ".join(parts)
+
+
+def _calculation_inputs_text(item: Mapping[str, object]) -> str:
     inputs = []
     for value in _calculation_inputs(item):
         kind = str(value.get("input_kind") or "")
@@ -439,12 +445,10 @@ def _calculation_text(item: Mapping[str, object]) -> str:
                  if kind == "observation" else t('calc.input_' + kind))
         inputs.append(
             f"{label} {_num(value.get('input_value'))} "
-            f"{value.get('input_unit') or ''} "
+            f"{display_unit(str(value.get('input_unit') or ''))} "
             f"@{value.get('input_day') or t('calc.undated_input')}"
         )
-    if inputs:
-        parts.append(f"{t('ai.calculation_inputs')}: " + "; ".join(inputs))
-    return "; ".join(parts)
+    return f"{t('ai.calculation_inputs')}: " + "; ".join(inputs) if inputs else ""
 
 
 def _calculated_days(item: Mapping[str, object]) -> str:
@@ -463,9 +467,10 @@ def _device_calculation_text(summary: Mapping[str, object]) -> str:
 
 def _device_day(day: Mapping[str, object]) -> str:
     text = f"{day['day']} {_num(day['value'], 4)}"
-    calculation = _calculation_text(day)
-    if calculation:
-        text += f" [{t('calc.status')}; {calculation}]"
+    # The formula and its source are stated once for the metric; a day says
+    # only that it was calculated and from what.
+    if calculation_source(day.get("extraction_method")):
+        text += " [" + "; ".join(filter(None, (t("calc.status"), _calculation_inputs_text(day)))) + "]"
     return text
 
 

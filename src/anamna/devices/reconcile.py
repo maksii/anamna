@@ -26,9 +26,9 @@ _MODEL = re.compile(r"^(?:iPhone|iPad|iPod|Watch|AppleTV|Mac)\d+,\d+$")
 #: when the origin name alone says nothing ("Olena", "Годинник").
 _PROVIDERS = {"apple": "Apple Health", "oura": "Oura", "garmin": "Garmin", "zepp": "Zepp Life"}
 
-#: Automatic-selection heuristic for a smaller competing daily total. It can
-#: suggest partial coverage, but magnitude cannot establish whether a device
-#: was worn. An explicit preference always takes precedence over this policy.
+#: A competing daily total smaller than this share of the largest one that day
+#: is a partly worn device (a watch on the charger at noon, a ring left by the
+#: sink), not a different opinion about the same day.
 LOW_COVERAGE_SHARE = 1 / 3
 
 
@@ -109,7 +109,8 @@ def human_source_label(vendor: str, name: str) -> str:
     if vendor.casefold() == "openwearables":
         origin, _physical = bridge_origin(name)
         return f"{_plain(origin)} · OpenWearables" if origin else "OpenWearables"
-    readable = _plain(name)
+    # The one source name the application itself wrote; a device's own name is never translated.
+    readable = translate_phrase(name) if name == "Garmin Connect user entry" else _plain(name)
     if not vendor or readable.casefold().startswith(vendor.casefold()) or vendor.casefold() in readable.casefold():
         return readable or vendor
     return f"{vendor} · {readable}"
@@ -158,11 +159,9 @@ def valid_row(row: Mapping) -> bool:
 
 
 def _low_coverage(row: Mapping, peak: float) -> bool:
-    """A possible partial daily total under the automatic coverage heuristic.
-
-    Only sums compare this way: two averages or latest readings are alternative
-    readings. A smaller total is not proof of partial wear.
-    """
+    """A daily total that is zero or a small share of another source's total
+    that day.  Only sums compare this way: two averages or two latest
+    readings are alternative readings, not partial ones."""
     if str(row.get("aggregation") or "") != "sum" or peak <= 0:
         return False
     return float(row["value"]) < peak * LOW_COVERAGE_SHARE
@@ -170,8 +169,8 @@ def _low_coverage(row: Mapping, peak: float) -> bool:
 
 def _rank(row: Mapping, preferred: str = "", peak: float = 0.0, priority=selection_priority) -> tuple:
     return (
-        0 if preferred and source_key(row) == preferred else 1,
         1 if _low_coverage(row, peak) else 0,
+        0 if preferred and source_key(row) == preferred else 1,
         priority(row),
         -int(row.get("sample_count") or 0),
         str(row["source_vendor"]), str(row["source_name"]), str(row.get("id") or ""),
@@ -192,14 +191,14 @@ def _cohort_rank(item, *, longest: float, direct_names: set[str], preferred: str
     key, values = item
     total = next((r for r in values if r["metric_key"] == "sleep_duration"), None)
     representative = total or min(values, key=lambda r: _rank(r, preferred))
-    # Under automatic selection, a smaller night may have partial coverage.
-    # The person's explicit source choice wins when it has valid evidence.
+    # A fragment (0.2 h in bed beside a 5.9 h night) never hides the
+    # night another source recorded, whoever is preferred.
     fragment = longest > 0 and _night_hours(values) < longest * LOW_COVERAGE_SHARE
     # The bridge's copy of a night the direct export also holds is the
     # same night re-served; its "asleep" total (the in-bed span again)
     # is no reason to prefer it over the original (OPS-02).
     shadowed = source_kind(values[0]) == "bridge" and bridge_origin(str(values[0]["source_name"]))[0] in direct_names
-    return (0 if preferred and key == preferred else 1, 1 if fragment else 0, 1 if shadowed else 0, 0 if total else 1,
+    return (1 if fragment else 0, 0 if preferred and key == preferred else 1, 1 if shadowed else 0, 0 if total else 1,
             *_rank(representative), -len({r["metric_key"] for r in values}), key)
 
 
@@ -219,12 +218,10 @@ def sleep_cohorts(rows: list[dict], preferred: str = "") -> dict[str, str]:
 
 
 def select_daily(rows: list[dict], preferred: str = "", cohorts: dict[str, str] | None = None) -> list[dict]:
-    """One row per day, never a sum or a mean of sources.
-
-    A valid explicitly preferred source wins, including a recorded zero.
-    Otherwise source priority and the automatic coverage heuristic select
-    between alternative readings without changing the stored evidence.
-    """
+    """One row per day, never a sum or a mean of sources.  A zero or partly
+    worn source never hides another source's real day: it ranks below every
+    candidate that covered the day, preference included, and still wins when
+    it is the only reading of that day."""
     candidates: dict[str, list[dict]] = defaultdict(list)
     for original in rows:
         if not valid_row(original):

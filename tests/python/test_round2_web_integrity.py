@@ -64,10 +64,12 @@ def test_clinical_calculation_displays_original_inputs_and_source_links(tmp_path
 def test_incompatible_reported_unit_is_preserved_and_explained(tmp_path):
     settings, owner, client = _build(tmp_path)
     _document(settings, owner, "synthetic", "Synthetic lab", "laboratory", "2025-01-01")
-    _observation(settings, owner, "pct", "synthetic", "plateletcrit", 0.2, "10^9/L", "2025-01-01")
+    # Not plateletcrit: a count unit under it is Expert Hospital's known mislabel
+    # of the percentage (CONCEPT_UNIT_ALIASES) and is folded, not refused.
+    _observation(settings, owner, "pct", "synthetic", "hematocrit", 0.2, "10^9/L", "2025-01-01")
     for lang, phrase in (("en", "The reported unit cannot be converted"), ("uk", "Зазначену одиницю неможливо перерахувати")):
         client.cookies.set("anamna_lang", lang)
-        page = client.get("/metrics/plateletcrit")
+        page = client.get("/metrics/hematocrit")
         assert page.status_code == 200 and phrase in page.text
     with connect(settings) as db:
         raw = db.execute("SELECT value_numeric, unit_raw FROM observations WHERE id='pct'").fetchone()

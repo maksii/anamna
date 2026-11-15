@@ -147,7 +147,7 @@ def test_api_long_sleep_and_independent_hrv_are_retained(tmp_path: Path, monkeyp
     assert hours(metric_rows(settings, "heart_rate_variability_rmssd"))["2026-08-03"] == 50
 
 
-def test_api_conflicting_sleep_overlaps_fail_without_replacing_the_stored_night(tmp_path: Path, monkeypatch):
+def test_api_conflicting_sleep_overlaps_withhold_the_night_and_the_sync_still_succeeds(tmp_path: Path, monkeypatch, caplog):
     settings, user_id, _ = build(tmp_path)
     configure(settings)
     connect_account(settings, user_id)
@@ -159,10 +159,19 @@ def test_api_conflicting_sleep_overlaps_fail_without_replacing_the_stored_night(
     oura.sync_range(settings, user_id, "sleep", "2026-08-03", "2026-08-03")
     fake_api(monkeypatch, {endpoint: {"data": [night, {**night, "id": "b", "total_sleep_duration": 25000}],
                                     "next_token": None}})
-    with pytest.raises(ValueError, match="Conflicting overlapping Oura sleep acquisitions"):
-        oura.sync_range(settings, user_id, "sleep", "2026-08-03", "2026-08-03")
-    assert hours(metric_rows(settings, "sleep_duration")) == {"2026-08-03": 7.5}
-    assert hours(metric_rows(settings, "heart_rate_variability_rmssd")) == {"2026-08-03": 50}
+    following = {**night, "id": "c", "day": "2026-08-04", "bedtime_start": "2026-08-03T22:00:00Z",
+                 "bedtime_end": "2026-08-04T06:00:00Z"}
+    fake_api(monkeypatch, {endpoint: {"data": [night, {**night, "id": "b", "total_sleep_duration": 25000}, following],
+                                    "next_token": None}})
+    # Two different answers for one night: neither is published, the stored
+    # copy of that night goes with them, and every other night still syncs.
+    with caplog.at_level("INFO", logger="anamna.oura"):
+        oura.sync_range(settings, user_id, "sleep", "2026-08-03", "2026-08-04")
+    assert hours(metric_rows(settings, "sleep_duration")) == {"2026-08-04": 7.5}
+    assert hours(metric_rows(settings, "heart_rate_variability_rmssd")) == {"2026-08-04": 50}
+    # A count, never the date of the night.
+    messages = [record.getMessage() for record in caplog.records if "withheld" in record.getMessage()]
+    assert messages == ["oura: withheld 1 sleep day(s) whose periods overlap and differ"]
 
 
 SLEEP_COLUMNS = ["id", "day", "type", "bedtime_start", "bedtime_end", "total_sleep_duration",

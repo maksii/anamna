@@ -224,6 +224,7 @@ from ..derived import refresh_derived_observations
 from ..calculation_info import calculation_source
 from ..profile_calculations import profile_bmi
 from ..ingest.classifier import repair_order_identifiers
+from ..ingest.concepts import specimen_family
 from ..ingest.extract import PDFIUM_LOCK
 from ..ingest.parsers import PARSER_VERSION, ParsedObservation, reference_bounds
 from ..ingest.positions import backfill_positions, page_box, position_key
@@ -232,6 +233,7 @@ from ..panels import (
     ATTENTION_INTERPRETATIONS,
     BORDERLINE_INTERPRETATIONS,
     DISPLAY_SUPPRESSED,
+    HOME_MONITORING_TYPES,
     MEASUREMENT_TWINS,
     PANEL_BY_ID,
     PANELS,
@@ -482,6 +484,9 @@ GUEST_ALLOWED_PAGES = ("/", _DOCTOR_URL)
 def _measured_body(connection, owner_user_id: str) -> dict[str, dict[str, object]]:
     """The newest device value for each linked body measurement, plus confirmed height.
 
+    What is returned stands in for the typed profile value and locks its
+    field, so a height is returned only when `profile_bmi` would use it.
+
     Routed through ``device_metric_values`` rather than a fresh query so a day
     with readings from a phone and a scale resolves to the same source the
     device pages already prefer — otherwise the profile and the metric page
@@ -554,10 +559,19 @@ def _measured_body(connection, owner_user_id: str) -> dict[str, dict[str, object
             "verification_status": row["verification_status"],
             "document_id": row["document_id"],
         })
+    measured.pop("height_cm", None)
     if height_candidates:
         newest = max(item["day"] for item in height_candidates)
         candidates = [item for item in height_candidates if item["day"] == newest]
-        measured["height_cm"] = {**candidates[0], "ambiguous": len({item["value"] for item in candidates}) > 1}
+        # A measured height replaces the typed one, and locks its field, only
+        # when it is one height the BMI calculation would carry forward to
+        # today (profile_bmi: not in the future, taken as an adult).  A clinic
+        # height from age 15, or two that disagree on one day, left an adult
+        # with no BMI and no field to type a height into.  The weight here is
+        # a stand-in so that only the height is being asked about.
+        if len({item["value"] for item in candidates}) == 1 and profile_bmi(
+                {**dict(patient), "weight_kg": 70.0}, {"height_cm": candidates[0]}):
+            measured["height_cm"] = candidates[0]
     return measured
 
 #: Lab wording -> canonical ABO group.  Ukrainian reports write the group with
@@ -1614,11 +1628,15 @@ def _device_reading_row(concept, row: dict[str, object], columns: list[str]) -> 
 def _linked_observation_rows(
     connection, owner_user_id: str, concept_id: str | None = None
 ) -> list[dict[str, object]]:
-    """Link the same quantity while preserving distinct source evidence.
+    """`_deduped_observation_rows` with each same-measurement device twin folded in.
 
-    A device day is an aggregate. Matching its maker and date to a printed
-    reading does not establish the same acquisition, so neither source is
-    discarded without an independently proven duplicate identity.
+    A scale's weight and a clinic's weight are one quantity, so they are one
+    series.  A home-monitoring PDF (a cuff's 4-week report) prints the readings
+    the cuff also streams, and the device day is their mean: counted beside it,
+    43 days of blood pressure were listed twice.  Its observation is dropped
+    when a device row from the same maker exists for that day.  Matched on day
+    and maker, never on value: the PDF rounds differently.  A clinic visit is
+    never dropped, whatever a device recorded the same morning.
     """
     rows = _deduped_observation_rows(connection, owner_user_id, concept_id)
     patient = _patient_row(connection, owner_user_id)
@@ -1643,8 +1661,16 @@ def _linked_observation_rows(
     }
     columns = [str(row[1]) for row in connection.execute("PRAGMA table_info(observations)")]
     device_rows: list[dict[str, object]] = []
+    recorded: set[tuple[str, str, str]] = set()
     for linked_id, concept in concepts.items():
         for key in device_twins(linked_id, "same"):
+            recorded.update(
+                (linked_id, str(row["day"])[:10], _device_maker(row))
+                for row in connection.execute(
+                    "SELECT day, source_vendor, source_name FROM device_metric_days WHERE owner_user_id=? AND metric_key=?",
+                    (owner_user_id, key),
+                )
+            )
             device_rows.extend(
                 _in_preferred_unit(_device_reading_row(concept, row, columns))
                 for row in device_metric_values(connection, owner_user_id, key, patient_id=patient["id"] if patient else None)
@@ -1652,10 +1678,21 @@ def _linked_observation_rows(
             )
     if not device_rows:
         return rows
+    kept = [
+        row for row in rows
+        if not (
+            row.get("document_clinical_type") in HOME_MONITORING_TYPES
+            and (
+                str(row["concept_id"]),
+                str(row.get("observed_at") or "")[:10],
+                canonical_source_vendor(str(row.get("vendor") or "")).casefold(),
+            ) in recorded
+        )
+    ]
     # Newest first, as the document rows already are; a stable sort keeps a
     # day's document and device rows in the order they arrived.
     return sorted(
-        [*rows, *device_rows],
+        [*kept, *device_rows],
         key=lambda row: str(row.get("observed_at") or row.get("created_at") or ""),
         reverse=True,
     )
@@ -1774,17 +1811,46 @@ def _reported_method_key(row: dict[str, object]) -> str | None:
 
 
 def _series_context(row: dict[str, object]) -> tuple[object, ...]:
-    # Acquisition date/report vary across a history; material, side, source
-    # method and isolate qualifiers must agree before its points form a line.
-    return (row.get("patient_id"), row.get("specimen"), row.get("sample_condition"),
-            row.get("note"), _reported_method_key(row))
+    # Acquisition date/report vary across a history; the person, the sample
+    # condition and the source method must agree before its points form a
+    # line.  The free-text note is not here: it holds remarks, not a context.
+    return (row.get("patient_id"), row.get("sample_condition"), _reported_method_key(row))
+
+
+def _specimen_key(row: dict[str, object]) -> str:
+    """The stated specimen, with every spelling of a blood sample as one.
+
+    «сироватка», «сироватка крові» and «плазма крові» under one analyte are
+    one series: apart they cut blood glucose to four of its seven results.
+    """
+    text = " ".join(str(row.get("specimen") or "").casefold().split())
+    return "blood" if specimen_family(text) == "hematology" else text
 
 
 def _latest_context_rows(daily: list[dict[str, object]]) -> list[dict[str, object]]:
+    """The rows that share the newest row's context, newest first.
+
+    Material and side live in ``specimen`` («ліва», «права», «сеча»).  Most
+    laboratories do not print it, so an unstated specimen fits any series:
+    only two different stated specimens are two series.  Counting an unstated
+    one as its own context cut hemoglobin's history to the two newest results.
+    The series' specimen is the newest stated one, so a newest row without a
+    specimen never joins a left and a right kidney into one line.
+    """
     if not daily:
         return []
     context = _series_context(daily[0])
-    return [row for row in daily if _series_context(row) == context]
+    specimen = ""
+    rows = []
+    for row in daily:
+        if _series_context(row) != context:
+            continue
+        stated = _specimen_key(row)
+        if stated and specimen and stated != specimen:
+            continue
+        specimen = specimen or stated
+        rows.append(row)
+    return rows
 
 
 def _report_context(row: dict[str, object]) -> str:
@@ -1912,22 +1978,40 @@ def _reading_patient(connection, row):
     owner, patient_id = _field(row, "owner_user_id"), _field(row, "patient_id")
     if not owner or not patient_id:
         return None
+    # is_record: whether this is the profile the personal record shows
+    # (`_record_patient_id`), read here so judging a reading costs one query.
     return _cached(("reading_patient", owner, patient_id), lambda: connection.execute(
-        "SELECT date_of_birth,sex_at_birth,pregnancy_due_date FROM patients WHERE id=? AND owner_user_id=?",
+        """SELECT date_of_birth,sex_at_birth,pregnancy_due_date,
+                  id=(SELECT id FROM patients WHERE owner_user_id=?2 ORDER BY created_at LIMIT 1) AS is_record
+           FROM patients WHERE id=?1 AND owner_user_id=?2""",
         (patient_id, owner),
     ).fetchone())
 
 
-def _reading_demographics(connection, row, age, sex):
-    patient = _reading_patient(connection, row)
+#: "Not read yet", where None already means "this reading names no patient".
+_UNREAD = object()
+
+
+def _reading_demographics(connection, row, age, sex, patient=_UNREAD):
+    if patient is _UNREAD:
+        patient = _reading_patient(connection, row)
     if patient is None:
         return age, sex
     return age_on(patient["date_of_birth"], _field(row, "observed_at")), patient["sex_at_birth"]
 
 
-def _person_context_owner(connection, row, owner):
+def _person_context_owner(connection, row, owner, patient=_UNREAD):
+    """``owner`` when the reading belongs to the profile the record shows, else None.
+
+    ``patient`` is the reading's `_reading_patient` row when the caller already
+    holds it and ``owner`` is the reading's own owner.
+    """
     patient_id = _field(row, "patient_id")
-    return owner if not patient_id or patient_id == _record_patient_id(connection, owner) else None
+    if not patient_id:
+        return owner
+    if patient is not _UNREAD and patient is not None:
+        return owner if patient["is_record"] else None
+    return owner if patient_id == _record_patient_id(connection, owner) else None
 
 
 def _measure_again(settings, connection, owner_user_id: str, concept_id: str, sex: str | None) -> dict | None:
@@ -2025,7 +2109,7 @@ def _factor_periods(connection, owner_user_id: str) -> list[tuple[str, str, str 
     )
 
 
-def _sample_facts(connection, row, owner_user_id: str | None = None) -> dict[str, object]:
+def _sample_facts(connection, row, owner_user_id: str | None = None, patient=_UNREAD) -> dict[str, object]:
     """Facts about one stored result that a published band may refuse:
     a sample the person marked as not fasting, a result dated within a
     pregnancy recorded in the profile, and the medicines and illnesses the
@@ -2034,7 +2118,9 @@ def _sample_facts(connection, row, owner_user_id: str | None = None) -> dict[str
     if _field(row, "sample_condition") == "not_fasting":
         facts["not_fasting_sample"] = True
     owner_user_id = owner_user_id or _field(row, "owner_user_id")
-    patient = _reading_patient(connection, row)
+    held = patient
+    if patient is _UNREAD:
+        patient = _reading_patient(connection, row)
     try:
         due = date.fromisoformat(patient["pregnancy_due_date"]) if patient and patient["pregnancy_due_date"] else _pregnancy_due_date(connection, owner_user_id) if not _field(row, "patient_id") else None
     except (ValueError, TypeError):
@@ -2047,7 +2133,7 @@ def _sample_facts(connection, row, owner_user_id: str | None = None) -> dict[str
             taken = None
         if taken is not None and due - timedelta(days=PREGNANCY_DAYS) <= taken <= due:
             facts["pregnant"] = True
-    if owner_user_id and observed and _person_context_owner(connection, row, owner_user_id):
+    if owner_user_id and observed and _person_context_owner(connection, row, owner_user_id, held):
         for fact in factors.facts_on(_factor_periods(connection, owner_user_id), observed):
             facts[fact] = True
     return facts
@@ -2375,14 +2461,20 @@ def _comparator_of(row) -> str | None:
 
 
 def _judge_reading(
-    connection, concept_id: str, row: dict[str, object], age: int | None, sex: str | None
+    connection, concept_id: str, row: dict[str, object], age: int | None, sex: str | None, patient=_UNREAD
 ) -> tuple[str | None, dict[str, object]]:
     """One reading's unit and verdict, worked out now.
 
     `_lab_card` judges the latest day through here and /results judges every
     day it compares, so the two can never disagree about the same number.
+    With ``patient`` (the reading's `_reading_patient` row), ``age`` and
+    ``sex`` are already the reading's own: `_reading_verdict` reads the row
+    once.  Read again here and in each helper, it was five queries a reading
+    where the request cache is off (`_matrix_cards`).
     """
-    age, sex = _reading_demographics(connection, row, age, sex)
+    if patient is _UNREAD:
+        patient = _reading_patient(connection, row)
+        age, sex = _reading_demographics(connection, row, age, sex, patient)
     unit_source = (
         (row["preferred_unit"] or row["unit_raw"])
         if row["value_numeric"] is not None
@@ -2413,8 +2505,8 @@ def _judge_reading(
         vendor_high=vendor_high,
         vendor_interpretation=vendor_interpretation,
         clinical_context={
-            **_clinical_context(connection, _person_context_owner(connection, row, row.get("owner_user_id"))),
-            **_sample_facts(connection, row, row.get("owner_user_id")),
+            **_clinical_context(connection, _person_context_owner(connection, row, row.get("owner_user_id"), patient)),
+            **_sample_facts(connection, row, row.get("owner_user_id"), patient),
         },
     )
     return unit_source, verdict
@@ -2431,11 +2523,12 @@ def _reading_verdict(
     write (GET) and has its request cache; everything else judges afresh.
     """
     owner_user_id, row_id = row.get("owner_user_id"), row.get("id")
-    age, sex = _reading_demographics(connection, row, age, sex)
+    patient = _reading_patient(connection, row)
+    age, sex = _reading_demographics(connection, row, age, sex, patient)
     # No memo without a request cache either: `_matrix_cards` switches it off,
     # and looking the memo up would then cost a record fingerprint per reading.
     if not owner_user_id or not row_id or _request_memo.get() is None or _request_cache.get() is None:
-        return _judge_reading(connection, concept_id, row, age, sex)
+        return _judge_reading(connection, concept_id, row, age, sex, patient)
     verdicts = _memoised(connection, str(owner_user_id), "reading_verdicts", dict)
     # Everything the verdict reads from the row is in the key: one reading
     # reaches here as stored and converted to its preferred unit.
@@ -2448,7 +2541,7 @@ def _reading_verdict(
     )
     found = verdicts.get(key)
     if found is None:
-        found = verdicts[key] = _judge_reading(connection, concept_id, row, age, sex)
+        found = verdicts[key] = _judge_reading(connection, concept_id, row, age, sex, patient)
     unit_source, verdict = found
     # A copy: the remembered verdict is shared by every later page.
     return unit_source, dict(verdict)
@@ -2475,9 +2568,13 @@ def _lab_card(
     unit_source, verdict = _reading_verdict(connection, concept_id, latest, age, sex)
     unit = display_unit(unit_source)
 
-    numeric_days = [row for row in _latest_context_rows(daily) if row["value_numeric"] is not None and not row.get("is_profile")
-                    and not _comparator_of(row) and not row.get("unit_mismatch")
-                    and canonical_unit(_row_display_unit(row)) == canonical_unit(_row_display_unit(latest))]
+    # The series is in the unit of the newest result that can be plotted, not
+    # of the newest result: a mislabelled or a text result on top («хв» for a
+    # rate, "negative") once emptied a series of good numbers.
+    plottable = [row for row in _latest_context_rows(daily) if row["value_numeric"] is not None and not row.get("is_profile")
+                 and not _comparator_of(row) and not row.get("unit_mismatch")]
+    numeric_days = [row for row in plottable
+                    if canonical_unit(_row_display_unit(row)) == canonical_unit(_row_display_unit(plottable[0]))]
     trend = None
     if len(numeric_days) >= 2 and numeric_days[0]["id"] == latest["id"] and category != "microbiology":
         trend = _trend(
@@ -4174,9 +4271,14 @@ def _correlation_lab_series(connection, owner_user_id: str) -> dict[str, dict[st
         # timestamp, so `setdefault` on the date part keeps the day's
         # most recent reading when a report printed two.
         for row in _latest_context_rows(_one_per_day(rows)):
-            if row["value_numeric"] is None or _comparator_of(row) or row.get("unit_mismatch") or canonical_unit(_row_display_unit(row)) != canonical_unit(unit):
+            # A concept with no preferred unit has nothing to compare against.
+            if row["value_numeric"] is None or _comparator_of(row) or row.get("unit_mismatch") or (
+                    unit and canonical_unit(_row_display_unit(row)) != canonical_unit(unit)):
                 continue
             by_day.setdefault(str(row["observed_at"])[:10], float(row["value_numeric"]))
+        if not by_day:
+            # Text-only: nothing to plot, so nothing to offer or to open.
+            continue
         labs[concept_id] = {
             "name": concept_display_name(name),
             "unit": display_unit(unit),
@@ -5794,7 +5896,9 @@ def _export_device_rows(connection, owner_user_id: str, metric_key: str) -> list
                 "reference": spread,
                 "provider": source_vendor or source_name,
                 "document_title": source_name if source_name != source_vendor else "",
-                "status": calculation_status(row) if calculation_source(row.get("extraction_method")) else t(_DEVICE_MEASUREMENT_KEY),
+                # A raw device row carries no extraction_method; a calculated
+                # BMI is known by its id, as in `_device_reading_row`.
+                "status": t("calc.status") if str(row["id"]).startswith("derived-bmi-") else t(_DEVICE_MEASUREMENT_KEY),
                 "document_url": None,
             }
         )
@@ -9082,9 +9186,8 @@ def _profile_store(connection, user_id: str, name: str, nickname, dob, sex, bloo
     # and the profile can never contradict the trend beside it.
     if _lab_blood_type(connection, user_id) is not None:
         blood = None
-    previous_patient = _patient_row(connection, user_id)
-    for column, reading in _measured_body(connection, user_id).items():
-        measurements[column] = previous_patient[column] if reading.get("ambiguous") and previous_patient else None
+    for column in _measured_body(connection, user_id):
+        measurements[column] = None
     connection.execute(
         "UPDATE users SET display_name=?, nickname=? WHERE id=?",
         (name, nickname, user_id),
@@ -14742,7 +14845,8 @@ def metric_detail(request: Request, concept_id: str, offset: int = 0):
             method_series=method_series,
             chart_points=chart_points,
             has_limits=any(_comparator_of(row) for row in values),
-            has_contexts=len({_series_context(row) for row in values}) > 1,
+            # Said only when a result really was left off the chart for it.
+            has_contexts=len(_latest_context_rows(values)) < len(values),
             pending_exclusions=pending_exclusions,
             latest=latest, previous_numeric=previous_numeric,
             card=card,

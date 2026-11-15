@@ -62,6 +62,10 @@ class Calculation:
     formula: str
     source_url: str
     maximum: float | None = None
+    #: Decimal places the result is stored with: what a laboratory prints for
+    #: this quantity.  Four everywhere read a plateletcrit as 0.1771 %, a
+    #: precision neither input carries.
+    decimals: int = 2
 
     @property
     def concept_id(self) -> str:
@@ -75,54 +79,55 @@ _WBC = Input("White blood cell count", "10^9/L")
 
 LAB_CALCULATIONS = [
     Calculation("Mean corpuscular volume", "derived_mcv", "fL", (_HCT, _RBC),
-                lambda hct, rbc: hct * 10 / rbc, "MCV = Hct (%) × 10 / RBC (10^12/L)", UTAH_SOURCE),
+                lambda hct, rbc: hct * 10 / rbc, "MCV = Hct (%) × 10 / RBC (10^12/L)", UTAH_SOURCE,
+                decimals=1),
     Calculation("Mean corpuscular hemoglobin", "derived_mch", "pg", (_HGB, _RBC),
-                lambda hb, rbc: hb / rbc, "MCH = Hb (g/L) / RBC (10^12/L)", UTAH_SOURCE),
+                lambda hb, rbc: hb / rbc, "MCH = Hb (g/L) / RBC (10^12/L)", UTAH_SOURCE, decimals=1),
     Calculation("Mean corpuscular hemoglobin concentration", "derived_mchc", "g/L", (_HGB, _HCT),
-                lambda hb, hct: hb * 100 / hct, "MCHC = Hb (g/L) × 100 / Hct (%)", UTAH_SOURCE),
+                lambda hb, hct: hb * 100 / hct, "MCHC = Hb (g/L) × 100 / Hct (%)", UTAH_SOURCE, decimals=1),
     Calculation("Hematocrit", "derived_hematocrit", "%", (_RBC, Input("Mean corpuscular volume", "fL")),
-                lambda rbc, mcv: rbc * mcv / 10, "Hct (%) = RBC (10^12/L) × MCV (fL) / 10", UTAH_SOURCE, 100),
+                lambda rbc, mcv: rbc * mcv / 10, "Hct (%) = RBC (10^12/L) × MCV (fL) / 10", UTAH_SOURCE, 100, decimals=1),
     Calculation("Plateletcrit", "derived_plateletcrit", "%",
                 (Input("Platelet count", "10^9/L", allow_zero=True), Input("Mean platelet volume", "fL")),
                 lambda plt, mpv: plt * mpv / 10000,
-                "PCT (%) = PLT (10^9/L) × MPV (fL) / 10000", SYSMEX_SOURCE, 100),
+                "PCT (%) = PLT (10^9/L) × MPV (fL) / 10000", SYSMEX_SOURCE, 100, decimals=2),
     Calculation("Non-HDL cholesterol", "derived_non_hdl", "mmol/L",
                 (Input("Total cholesterol", "mmol/L"), Input("HDL cholesterol", "mmol/L", allow_zero=True)),
-                lambda total, hdl: total - hdl, "non-HDL = TC (mmol/L) − HDL (mmol/L)", NHS_SOURCE),
+                lambda total, hdl: total - hdl, "non-HDL = TC (mmol/L) − HDL (mmol/L)", NHS_SOURCE, decimals=2),
     Calculation("Atherogenic coefficient", "derived_atherogenic_coefficient", "ratio",
                 (Input("Total cholesterol", "mmol/L"), Input("HDL cholesterol", "mmol/L")),
                 lambda total, hdl: (total - hdl) / hdl,
-                "AC = (TC (mmol/L) − HDL (mmol/L)) / HDL (mmol/L)", ATHEROGENIC_SOURCE),
+                "AC = (TC (mmol/L) − HDL (mmol/L)) / HDL (mmol/L)", ATHEROGENIC_SOURCE, decimals=2),
     Calculation("Indirect bilirubin", "derived_indirect_bilirubin", "µmol/L",
                 (Input("Total bilirubin", "µmol/L", allow_zero=True),
                  Input("Direct bilirubin", "µmol/L", allow_zero=True)),
                 lambda total, direct: total - direct,
-                "IBIL = TBIL (µmol/L) − DBIL (µmol/L)", BILIRUBIN_SOURCE),
+                "IBIL = TBIL (µmol/L) − DBIL (µmol/L)", BILIRUBIN_SOURCE, decimals=1),
     Calculation("Albumin to globulin ratio", "derived_albumin_globulin_ratio", "ratio",
                 (Input("Albumin", "g/L"), Input("Total protein", "g/L")),
                 lambda albumin, total: albumin / (total - albumin) if total > albumin else math.nan,
-                "A/G = albumin (g/L) / (total protein (g/L) − albumin (g/L))", ALBUMIN_GLOBULIN_SOURCE),
+                "A/G = albumin (g/L) / (total protein (g/L) − albumin (g/L))", ALBUMIN_GLOBULIN_SOURCE, decimals=2),
     Calculation("Globulin, calculated", "derived_globulin", "g/L",
                 (Input("Total protein", "g/L"), Input("Albumin", "g/L")),
                 lambda total, albumin: total - albumin,
-                "Globulin (g/L) = total protein (g/L) − albumin (g/L)", ALBUMIN_GLOBULIN_SOURCE),
+                "Globulin (g/L) = total protein (g/L) − albumin (g/L)", ALBUMIN_GLOBULIN_SOURCE, decimals=1),
     Calculation("Body mass index", "derived_bmi", "kg/m²",
                 (Input("Body weight", "kg"), Input("Body height", "cm")),
                 lambda weight, height: weight / height ** 2 * 10000,
-                "BMI (kg/m²) = weight (kg) / height (cm)² × 10000", BMI_SOURCE),
+                "BMI (kg/m²) = weight (kg) / height (cm)² × 10000", BMI_SOURCE, decimals=1),
     Calculation("Reticulocytes, absolute", "derived_reticulocytes_absolute", "10^9/L",
                 (_RBC, Input("Reticulocytes", "%", allow_zero=True, maximum=100)),
                 lambda rbc, percent: rbc * percent * 10,
-                "RET (10^9/L) = RBC (10^12/L) × RET (%) × 10", RETICULOCYTE_SOURCE),
+                "RET (10^9/L) = RBC (10^12/L) × RET (%) × 10", RETICULOCYTE_SOURCE, decimals=1),
     Calculation("Reticulocytes", "derived_reticulocytes_percentage", "%",
                 (_RBC, Input("Reticulocytes, absolute", "10^9/L", allow_zero=True)),
                 lambda rbc, absolute: absolute / (rbc * 10),
-                "RET (%) = RET (10^9/L) / (RBC (10^12/L) × 10)", RETICULOCYTE_SOURCE, 100),
+                "RET (%) = RET (10^9/L) / (RBC (10^12/L) × 10)", RETICULOCYTE_SOURCE, 100, decimals=2),
     Calculation("Immature reticulocyte fraction", "derived_immature_reticulocyte_fraction", "%",
                 (Input("Reticulocytes, medium fluorescence fraction", "%", allow_zero=True, maximum=100),
                  Input("Reticulocytes, high fluorescence fraction", "%", allow_zero=True, maximum=100)),
                 lambda medium, high: medium + high,
-                "IRF (%) = MFR (%) + HFR (%)", RETICULOCYTE_FRACTIONS_SOURCE, 100),
+                "IRF (%) = MFR (%) + HFR (%)", RETICULOCYTE_FRACTIONS_SOURCE, 100, decimals=1),
 ]
 
 # These are distinct analyser populations. Never use a manual differential,
@@ -133,11 +138,11 @@ for _name in ("Neutrophils", "Lymphocytes", "Monocytes", "Eosinophils", "Basophi
         Calculation(f"{_name}, absolute", "derived_differential_absolute", "10^9/L",
                     (_WBC, Input(_name, "%", allow_zero=True, maximum=100)),
                     lambda wbc, percent: wbc * percent / 100,
-                    "ABS (10^9/L) = WBC (10^9/L) × % / 100", SYSMEX_SOURCE),
+                    "ABS (10^9/L) = WBC (10^9/L) × % / 100", SYSMEX_SOURCE, decimals=2),
         Calculation(_name, "derived_differential_percentage", "%",
                     (_WBC, Input(f"{_name}, absolute", "10^9/L", allow_zero=True)),
                     lambda wbc, absolute: absolute * 100 / wbc,
-                    "% = ABS (10^9/L) × 100 / WBC (10^9/L)", SYSMEX_SOURCE, 100),
+                    "% = ABS (10^9/L) × 100 / WBC (10^9/L)", SYSMEX_SOURCE, 100, decimals=1),
     ))
 
 LAB_CALCULATIONS = tuple(LAB_CALCULATIONS)
@@ -230,15 +235,20 @@ def _input_value(row: sqlite3.Row, definition: Input) -> float | None:
     return value
 
 
-def wanted_lab_observations(connection: sqlite3.Connection) -> dict[str, tuple]:
+def wanted_lab_observations(
+    connection: sqlite3.Connection, owner_user_id: str | None = None,
+) -> dict[str, tuple]:
     """Return supported missing results in the column order of derived._COLUMNS.
 
     Reads source observations only; it never writes or marks anything checked.
+    ``owner_user_id`` limits it to one account's record.
     Multiple inputs for one concept in a sample are ambiguous even when their
     displayed numbers happen to match. A missing report/document or date is
     insufficient provenance for combining laboratory values.
     """
     groups: dict[tuple, dict[str, list[sqlite3.Row]]] = defaultdict(lambda: defaultdict(list))
+    # A plain equality, so the (owner, concept, date) index serves it.
+    owner = (owner_user_id,) if owner_user_id else ()
     target_presence = defaultdict(list)
     device_bmi = set()
     if connection.execute("SELECT 1 FROM sqlite_master WHERE name='device_metric_days'").fetchone():
@@ -246,8 +256,10 @@ def wanted_lab_observations(connection: sqlite3.Connection) -> dict[str, tuple]:
         # genuinely reported BMI takes precedence over either reconstruction.
         device_bmi = {
             (row[0], row[1], str(row[2])[:10]) for row in connection.execute(
-                """SELECT owner_user_id, patient_id, day FROM device_metric_days
-                   WHERE metric_key='body_mass_index' AND substr(id, 1, 12)<>'derived-bmi-'"""
+                f"""SELECT owner_user_id, patient_id, day FROM device_metric_days
+                   WHERE metric_key='body_mass_index' AND substr(id, 1, 12)<>'derived-bmi-'
+                     {'AND owner_user_id = ?' if owner else ''}""",
+                owner,
             )
         }
     for row in connection.execute(
@@ -263,8 +275,9 @@ def wanted_lab_observations(connection: sqlite3.Connection) -> dict[str, tuple]:
              AND (o.report_id IS NULL OR (r.owner_user_id=o.owner_user_id AND r.patient_id=o.patient_id
                   AND rd.owner_user_id=o.owner_user_id AND rd.patient_id=o.patient_id
                   AND (o.document_id IS NULL OR r.document_id=o.document_id)))
+             {'AND o.owner_user_id = ?' if owner else ''}
              ORDER BY o.id""",
-        sorted(_CONCEPT_IDS),
+        (*sorted(_CONCEPT_IDS), *owner),
     ):
         if not any(str(row[key] or "").strip() for key in ("report_id", "document_id")):
             continue
@@ -327,7 +340,7 @@ def wanted_lab_observations(connection: sqlite3.Connection) -> dict[str, tuple]:
             )
             wanted[row_id] = (
                 anchor["owner_user_id"], anchor["patient_id"], anchor["document_id"], anchor["page_number"],
-                calculation.concept_id, calculation.name, "numeric", round(result, 4),
+                calculation.concept_id, calculation.name, "numeric", round(result, calculation.decimals),
                 calculation.unit, calculation.unit, anchor["observed_at"], "extracted", calculation.method,
                 min(float(row["confidence"]) for row in rows), evidence, None, PARSER_VERSION,
                 anchor["report_id"], anchor["entry_source"], anchor["entered_by_user_id"],

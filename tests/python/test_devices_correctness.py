@@ -81,8 +81,9 @@ def test_zero_or_low_coverage_total_never_hides_another_sources_day():
     watch = reading("Ivan’s Apple Watch", "Apple Health", "steps", 0)
     phone = reading("Owner", "Apple Health", "steps", 7133)
     assert select_daily([watch, phone])[0]["value"] == 7133
-    # An explicit preference keeps even an observed zero.
-    assert select_daily([watch, phone], source_key(watch))[0]["value"] == 0
+    # Even an explicit preference yields to a source that covered the day...
+    assert select_daily([watch, phone], source_key(watch))[0]["value"] == 7133
+    assert select_daily([dict(watch, value=12), phone], source_key(watch))[0]["value"] == 7133
     # ...and the totals are chosen between, never summed.
     assert [row["value"] for row in select_daily([dict(watch, value=2000), phone])] == [7133]
     # A comparable reading keeps the device priority.
@@ -95,6 +96,9 @@ def test_a_sleep_fragment_never_hides_the_night_another_source_recorded():
     fragment = dict(reading("Oura", "Oura", "time_in_bed", 0.2, unit="hours"), category="device_sleep")
     night = dict(reading("Clock", "Apple Health", "time_in_bed", 5.9, unit="hours"), category="device_sleep")
     assert select_metrics({"time_in_bed": [fragment, night]}, {})["time_in_bed"][0]["value"] == 5.9
+    # The preference is per metric: it cannot be corrected for one night.
+    preferred = {"sleep": source_key(fragment)}
+    assert select_metrics({"time_in_bed": [fragment, night]}, preferred)["time_in_bed"][0]["value"] == 5.9
 
 
 # --- OPS-01: implausible body values -----------------------------------------
@@ -429,6 +433,10 @@ def test_source_sleep_durations_have_no_invented_sixteen_hour_maximum():
     assert is_plausible("sleep_awake", 0.0)
     assert not is_plausible("sleep_duration", -1)
     assert not is_plausible("sleep_duration", float("inf"))
+    # A day holds 24 hours: that, and nothing shorter, is the upper bound.
+    assert valid_row({"metric_key": "sleep_duration", "value": 24.0})
+    assert not valid_row({"metric_key": "sleep_duration", "value": 24.01})
+    assert not is_plausible("time_in_bed", 168)
 
 
 def test_a_quiet_device_metric_never_marks_a_panel_overdue(ledger):

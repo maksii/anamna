@@ -148,12 +148,12 @@
         <dl class="facts an-static-field">
           <div>
             <dt>{{ t('profile.' ~ column) }}</dt>
-            <dd>{{ t('profile.height_conflict') if device.ambiguous else device.text }}</dd>
+            <dd>{{ device.text }}</dd>
           </div>
         </dl>
         <p class="tiny muted">
-          {{ t('profile.height_conflict_detail') if device.ambiguous else t('profile.from_record' if device.input_kind == 'observation_height' else 'profile.from_device', date=device.date_text, source=device.source) }}
-          <a href="{{ '/metrics/body-height' if device.ambiguous else '/documents/' ~ device.document_id ~ '#observation-' ~ device.id if device.input_kind == 'observation_height' else '/devices/metrics/' ~ device.metric_key }}">{{ t('profile.open_measurement') }}</a>
+          {{ t('profile.from_record' if device.input_kind == 'observation_height' else 'profile.from_device', date=device.date_text, source=device.source) }}
+          <a href="{{ '/documents/' ~ device.document_id ~ '#observation-' ~ device.id if device.input_kind == 'observation_height' else '/devices/metrics/' ~ device.metric_key }}">{{ t('profile.open_measurement') }}</a>
         </p>
         {% else %}
         <label>{{ t('profile.' ~ column) }}

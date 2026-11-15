@@ -86,7 +86,9 @@ def test_calculated_bmi_visible_with_both_inputs_in_both_views_and_languages(tmp
             assert response.status_code == 200
             assert CALCULATION_URLS["derived_bmi"] in response.text
             assert "2024" in response.text and "2025" in response.text
-            assert (expected in response.text) if "/metrics/body-" in url else (MESSAGES["calc.provisional"][lang] in response.text)
+            assert (expected in response.text) if "/metrics/body-" in url else (MESSAGES["calc.provisional_auto"][lang] in response.text)
+            # A device day has no review step: it must not ask to be confirmed.
+            assert MESSAGES["calc.provisional"][lang] not in response.text
 
 
 def test_profile_only_bmi_has_no_invented_date_and_is_visible_with_its_inputs(tmp_path):

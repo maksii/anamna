@@ -36,6 +36,10 @@ CONCEPTS: dict[tuple[str, str], tuple[str, str]] = {
     # with no word the concept's aliases share.
     ("esculab", "67"): ("cancer-antigen-15-3-ca-15-3", "Онкомаркер молочної залози (СА-15-3)"),
     ("synevo", "4028"): ("h-pylori-stool-antigen", "Helicobacter pylori, антиген у калі (якісне визначення)"),
+    # Every Esculab test that lists this row lists «Ретикулоцити %» (546)
+    # beside it: two rows of one test are not one measurement, and the bare
+    # name is the count.  By name alone it read as the percentage.
+    ("esculab", "547"): ("reticulocytes-absolute", "Ретикулоцити"),
     # hs-CRP: the bracketed English «C-Reactive Protein» alone would read as plain CRP.
     ("synevo", "10019"): ("high-sensitivity-c-reactive-protein",
                           "C-реактивний білок, високочутливий (C-Reactive Protein, High Sensitivity)"),

@@ -69,7 +69,7 @@ def test_cbc_calculations_and_explicit_converted_units(connection):
     rows = results(connection)
     assert rows["mean-corpuscular-volume"]["value_numeric"] == 90
     assert rows["mean-corpuscular-hemoglobin"]["value_numeric"] == 30
-    assert rows["mean-corpuscular-hemoglobin-concentration"]["value_numeric"] == pytest.approx(333.3333)
+    assert rows["mean-corpuscular-hemoglobin-concentration"]["value_numeric"] == 333.3
     assert {row["verification_status"] for row in rows.values()} == {"extracted"}
     assert "150 g/L" in rows["mean-corpuscular-hemoglobin"]["evidence_text"]
     assert "input-0" in rows["mean-corpuscular-hemoglobin"]["evidence_text"]
@@ -106,7 +106,7 @@ def test_subtractions_keep_reported_targets_and_refuse_negative_values(connectio
 def test_cholesterol_mass_units_are_explicitly_converted(connection):
     add(connection, "Total cholesterol", 200, "mg/dL")
     add(connection, "HDL cholesterol", 50, "mg/dL")
-    assert results(connection)["non-hdl-cholesterol"]["value_numeric"] == pytest.approx(round(150 / 38.67, 4))
+    assert results(connection)["non-hdl-cholesterol"]["value_numeric"] == round(150 / 38.67, 2)
     assert results(connection)["atherogenic-coefficient"]["value_numeric"] == 3
 
 
@@ -151,7 +151,7 @@ def test_reported_device_bmi_wins_but_computed_fallback_does_not(connection):
 def test_albumin_globulin_ratio_and_zero_denominator(connection):
     add(connection, "Albumin", 4, "g/dL")
     add(connection, "Total protein", 70, "g/L")
-    assert results(connection)["albumin-to-globulin-ratio"]["value_numeric"] == pytest.approx(1.3333)
+    assert results(connection)["albumin-to-globulin-ratio"]["value_numeric"] == 1.33
     assert results(connection)["globulin-calculated"]["value_numeric"] == 30
     connection.execute("UPDATE observations SET value_numeric=40 WHERE concept_id='total-protein'")
     assert "albumin-to-globulin-ratio" not in results(connection)

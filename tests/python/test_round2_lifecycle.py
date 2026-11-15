@@ -8,6 +8,7 @@ from anamna.calculation_info import calculation_source
 from anamna import derived
 from anamna.db import connect
 from anamna.derived import refresh_derived_observations
+from anamna.health import display_unit
 from anamna.i18n import activate_locale, reset_locale, t
 from anamna.ingest.pipeline import DuplicateRefused, _copy_rows_held_by_primary, _result_fingerprints
 from anamna.web import ai_export, chat_routes
@@ -139,7 +140,7 @@ def test_egfr_structured_dependencies_export_actual_source_identity_value_and_un
     try:
         card = ai_export._observation_card(dict(result))
         text = ai_export._calculation_text(card)
-        assert "Креатинін 88 µmol/L @2025-02-13" in text
+        assert "Креатинін 88 мкмоль/л @2025-02-13" in text
         assert "calc.input_observation" not in text
     finally:
         reset_locale(token)
@@ -194,7 +195,7 @@ def test_model_hand_off_keeps_calculation_status_inputs_and_full_dates(locale):
                      chat_routes._device_detail(summary), chat_routes._device_line(summary)):
             assert calculation_source("derived_bmi") in text
             assert t("ai.calculated_days", count=1) in text
-            assert "80 kg @2026-02-01" in text
+            assert f"80 {display_unit('kg')} @2026-02-01" in text
             assert t("calc.undated_input") in text
         for text in ("\n".join(ai_export._device_block(summary)), chat_routes._device_detail(summary)):
             assert "2024-01-01 21" in text

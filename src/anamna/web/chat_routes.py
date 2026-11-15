@@ -269,7 +269,10 @@ def _history_text(item: dict, current: dict, previous: dict) -> str:
     verdict = item.get("verdict") or {}
     text = (f"{str(item.get('observed_at') or '-')[:10]} {item['display_value']} {item['display_unit']}".rstrip()
             + f" {_code(verdict.get('interpretation'))}")
-    text += "".join(value for key, value in current.items() if value != previous[key])
+    text += "".join(value for key, value in current.items() if key != "calculation" and value != previous[key])
+    # Never deduplicated: a calculated row with its marker left out because the
+    # row above carried the same one reads as a measurement.
+    text += current["calculation"]
     if str(item.get("verification_status")) in {"verified", "corrected"}:
         text += " ✓"
     return text

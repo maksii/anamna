@@ -410,9 +410,17 @@ _SLEEP_FIELDS = (
 
 def _sleep_periods_by_day(documents: list[dict]) -> dict[str, list[dict]]:
     by_day: dict[str, list[dict]] = {}
-    for document in distinct_sleep_periods(document for document in documents if str(document.get("type") or "") != "deleted"):
+    withheld: list[dict] = []
+    kept = distinct_sleep_periods(
+        (document for document in documents if str(document.get("type") or "") != "deleted"), withheld)
+    # A day that lost a period would otherwise publish the rest as its night.
+    withheld_days = {str(document.get("day") or "")[:10] for document in withheld}
+    if withheld_days:
+        # A count only: the dates of a person's nights do not belong in the log.
+        logger.warning("oura: withheld %d sleep day(s) whose periods overlap and differ", len(withheld_days))
+    for document in kept:
         day = str(document.get("day") or "")[:10]
-        if len(day) == 10 and str(document.get("type") or "") != "deleted":
+        if len(day) == 10 and day not in withheld_days:
             by_day.setdefault(day, []).append(document)
     return by_day
 

@@ -12,8 +12,8 @@ MESSAGES = {
         "uk": "Для кожної ночі береться одне джерело, щоб тривалість і фази сну не розходилися. Дані інших пристроїв доступні для порівняння, але їхні години ніколи не додаються. Фази, яких немає в джерелі, лишаються невідомими.",
     },
     "source_policy.daily": {
-        "en": "Automatic selection uses source priority and a daily-coverage heuristic; a smaller reading may be set aside. This does not prove the device was unworn. An explicit preferred source is used whenever it has a valid reading.",
-        "uk": "Автоматичний вибір враховує пріоритет джерела та евристику добового охоплення; менше значення може бути відкладено. Це не доводить, що пристрій не носили. Явно обране пріоритетне джерело використовується, коли воно має коректний запис.",
+        "en": "One source per day supplies the combined trend. Other measurements remain available for comparison and are never added or averaged across devices. If your preferred source has no data that day, another available source is used.",
+        "uk": "Спільна динаміка будується з одного джерела на день. Вимірювання інших пристроїв доступні для порівняння, їх ніколи не додають і не усереднюють. Якщо в бажаного джерела немає даних за цей день, використовується інше доступне.",
     },
     "source_policy.invalid": {
         "en": "Choose a source already present in your record, or automatic selection.",

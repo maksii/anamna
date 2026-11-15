@@ -1208,8 +1208,15 @@ def _sample_site(text: str | None) -> str | None:
 
 
 def _same_reading_identity(row: dict, obs: dict) -> bool:
-    """Refuse a false match when the sources explicitly name different tests/samples."""
-    from ..ingest.concepts import concept_for_alias, refine_definition, specimen_family, stable_concept_id
+    """Refuse a false match when the sources explicitly name different tests/samples.
+
+    A method only one side states does not make two tests: the lab's row may
+    carry «…за активністю лейкоцитестерази» in its norm where the PDF row is a
+    bare «Лейкоцити».  Only two stated, different methods do
+    (``same_method_family``)."""
+    from ..ingest.concepts import (
+        concept_for_alias, refine_definition, same_method_family, specimen_family, stable_concept_id,
+    )
 
     material = row.get("_sample_specimen") or row.get("material")
     lab_family = specimen_family(material, row.get("test"), row.get("packet"))
@@ -1232,7 +1239,7 @@ def _same_reading_identity(row: dict, obs: dict) -> bool:
                              unit=obs.get("unit_raw"), value_text=obs.get("value_text"),
                              reference="; ".join(str(obs.get(field) or "")
                                                  for field in ("vendor_reference_text", "reference", "note")))
-    if lab and ours and stable_concept_id(str(lab["name"])) != stable_concept_id(str(ours["name"])):
+    if lab and ours and not same_method_family(str(lab["name"]), str(ours["name"])):
         return False
     # An explicit material must also agree with a known stored concept when
     # the original printed name itself is too terse to resolve.
@@ -2434,7 +2441,7 @@ def _same_result(parsed: ParsedObservation, obs: dict) -> bool:
     if not _same_reading_identity(row, obs):
         return False
     if name_key(parsed.raw_name) != name_key(obs.get("raw_name")):
-        from ..ingest.concepts import concept_for_alias, refine_definition, specimen_family
+        from ..ingest.concepts import concept_for_alias, refine_definition, same_method_family, specimen_family
 
         family = specimen_family(parsed.specimen, parsed.section, parsed.raw_name)
         left = refine_definition(concept_for_alias(parsed.raw_name, specimen=family),
@@ -2449,15 +2456,18 @@ def _same_result(parsed: ParsedObservation, obs: dict) -> bool:
         )
         # Coincident values cannot establish the identity of an unresolved
         # test. Keep the source row for review rather than silently losing it.
-        if left is None or right is None or left["name"] != right["name"]:
+        if left is None or right is None or not same_method_family(str(left["name"]), str(right["name"])):
             return False
+    # A unit only one side printed is not a second reading: the same value
+    # beside it is left to the person, as before.
+    units = [unit for unit in (obs.get("unit_raw"), parsed.unit_raw) if str(unit or "").strip()]
+    if len(units) == 2 and canonical_unit(units[0]) != canonical_unit(units[1]):
+        return False
     if parsed.value_numeric is not None:
         return (obs["value_numeric"] is not None
                 and _same_number(float(obs["value_numeric"]), parsed.value_numeric)
-                and comparator(obs.get("comparator")) == comparator(parsed.comparator)
-                and canonical_unit(obs.get("unit_raw")) == canonical_unit(parsed.unit_raw))
-    return (obs["value_numeric"] is None and _same_text(obs["value_text"], parsed.value_text)
-            and canonical_unit(obs.get("unit_raw")) == canonical_unit(parsed.unit_raw))
+                and comparator(obs.get("comparator")) == comparator(parsed.comparator))
+    return obs["value_numeric"] is None and _same_text(obs["value_text"], parsed.value_text)
 
 
 def _collected_from_order(connection, user_id: str, row) -> int:
