@@ -60,6 +60,8 @@ def test_a_blood_count_unit_outranks_a_urinalysis_title(connection):
     # The same order's urine rows keep their urine concepts.
     assert filed(connection, "Лейкоцити", title=URINALYSIS_TITLE, unit_raw="Leu/µL",
                  value_text="не виявлені") == "urine-leukocyte-esterase"
+    assert filed(connection, "Лейкоцити", title=URINALYSIS_TITLE, unit_raw="Leu/µL",
+                 value_text="не виявлені", reference_text="Активність лейкоцитарної естерази") == "urine-leukocyte-esterase"
     assert filed(connection, "Лейкоцити в мкл (WBC)", value_type="numeric", title=URINALYSIS_TITLE,
                  unit_raw="кл/мкл", specimen="сеча") == "urine-leukocytes"
 
@@ -187,8 +189,16 @@ def test_microscopy_on_the_slide_is_per_field_and_the_analyser_count_is_per_micr
 )
 def test_other_laboratories_spellings_reach_the_existing_concept(connection, raw_name, value_type, expected):
     assert filed(connection, raw_name, value_type=value_type) == expected
-    # The stool test keeps its concept with the stool specimen the row carries.
-    assert filed(connection, raw_name, value_type=value_type, specimen="кал") == expected
+    stool = filed(connection, raw_name, value_type=value_type, specimen="кал")
+    if expected == "h-pylori-stool-antigen":
+        # This test actually names a stool measurement.
+        assert stool == expected
+    else:
+        # Recognizing a blood-test name cannot override an explicitly
+        # different source specimen; it needs its own reviewed identity.
+        assert stool != expected
+        assert connection.execute("SELECT category FROM concepts WHERE id=?", (stool,)).fetchone()[0] == "stool"
+        assert filed(connection, raw_name, value_type=value_type, specimen="сироватка") == expected
 
 
 def test_free_t3_in_pg_per_ml_and_total_ige_in_iu_per_ml_convert():
@@ -202,14 +212,18 @@ def test_free_t3_in_pg_per_ml_and_total_ige_in_iu_per_ml_convert():
 def test_stored_rows_move_on_start(tmp_path: Path):
     """The start-up repair reads the stored unit, specimen and title, so the
     white-cell count, the analyser count, the IgE and a coprogram row whose
-    stool specimen was stored move without a re-read."""
+    stool specimen was stored move without a re-read.  The IgE moves with
+    its serum specimen and without one: a urine title is a preference, and
+    total IgE is the label's only definition.
+    """
     settings, user_id, _client = build(tmp_path)
     with connect(settings) as connection:
         connection.execute("UPDATE documents SET title=? WHERE id='doc-1'", (URINALYSIS_TITLE,))
         rows = (
             ("wbc", "Лейкоцити (WBC)", 6.84, "10^9 клітин/л", None, "urine-leukocytes"),
             ("nl", "Незмінені еритроцити (NL RBC)", 16.4, "кл/мкл", "сеча", "urine-erythrocytes-unchanged"),
-            ("ige", "Загальний Ig E", 38.9, "МО/мл", None, "urine-leukocytes"),
+            ("ige", "Загальний Ig E", 38.9, "МО/мл", "сироватка", "urine-leukocytes"),
+            ("ige-unknown", "Загальний Ig E", 38.9, "МО/мл", None, "urine-leukocytes"),
             ("copro", "pH", 6.75, None, "кал", "urine-ph"),
         )
         for row_id, raw_name, value, unit, specimen, old in rows:
@@ -223,12 +237,13 @@ def test_stored_rows_move_on_start(tmp_path: Path):
             )
         repair_observation_semantics(connection)
         moved = dict(connection.execute(
-            "SELECT id, concept_id FROM observations WHERE id IN ('wbc', 'nl', 'ige', 'copro')"
+            "SELECT id, concept_id FROM observations WHERE id IN ('wbc', 'nl', 'ige', 'ige-unknown', 'copro')"
         ).fetchall())
         assert moved == {
             "wbc": "white-blood-cell-count",
             "nl": "urine-erythrocytes-unchanged-per-microlitre",
             "ige": "total-immunoglobulin-e",
+            "ige-unknown": "total-immunoglobulin-e",
             "copro": "stool-ph",
         }
         # Idempotent: a second start finds nothing to move.

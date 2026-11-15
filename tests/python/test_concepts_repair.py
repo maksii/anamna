@@ -131,7 +131,7 @@ def test_egfr_is_derived_from_creatinine_and_follows_its_input(tmp_path: Path):
         # An unchecked creatinine gives nothing: no figure nobody confirmed.
         assert _egfr(connection) == []
 
-        # A verified creatinine makes a verified eGFR -- arithmetic, not extraction.
+        # Confirmed inputs permit arithmetic; the new result remains provisional.
         connection.execute("UPDATE observations SET verification_status='verified' WHERE concept_id='creatinine'")
         refresh_derived_observations(connection)
         [row] = _egfr(connection)
@@ -140,8 +140,9 @@ def test_egfr_is_derived_from_creatinine_and_follows_its_input(tmp_path: Path):
         assert row["unit_raw"] == "mL/min/1.73m²"
         assert row["document_id"] == "doc-1"
         assert row["observed_at"] == "2025-02-13"
-        assert row["evidence_text"] == "Creatinine evidence"  # the printed line it came from
-        assert row["verification_status"] == "verified"
+        assert "Creatinine evidence" in row["evidence_text"]
+        assert "Scr=" in row["evidence_text"] and "age=34" in row["evidence_text"]
+        assert row["verification_status"] == "extracted"
         assert refresh_derived_observations(connection) == {"added": 0, "updated": 0, "removed": 0}
 
         # A corrected value recalculates.

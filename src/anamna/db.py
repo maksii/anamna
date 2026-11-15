@@ -12,7 +12,8 @@ from .config import Settings, get_settings, resource_path
 MIGRATIONS_DIR = resource_path("migrations")
 #: A migration that opens its own transaction or sets a PRAGMA (which a
 #: wrapping transaction silently ignores) runs as written.  A trigger body's
-#: BEGIN on its own line also matches, so such a file is simply not wrapped.
+#: BEGIN on its own line also matches and leaves the file unwrapped: write it
+#: at the end of the CREATE TRIGGER line (migrations 073, 075, 076).
 _SELF_MANAGED = re.compile(r"^\s*(BEGIN|COMMIT|PRAGMA)\b", re.IGNORECASE | re.MULTILINE)
 
 

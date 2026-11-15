@@ -14,6 +14,10 @@ every aggregation entry point consults the rules as samples are added
 (``Aggregate.add`` through ``EXCLUDING``), so a re-sync or re-import of the
 same data stays excluded.  Read paths are never filtered: there are too many
 of them, and a filter forgotten on one would show the reading again.
+
+An uploaded export whose kept copy is gone cannot be re-read.  Its stored rows
+that a rule reaches are moved to ``device_exclusion_held`` and moved back by
+the undo (``_apply_without_source``).
 """
 from __future__ import annotations
 
@@ -26,6 +30,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from statistics import median
 
+from ..config import resolve_source_path
 from ..db import connect, transaction, utc_now
 from .models import EXCLUDING
 from .timezone import _instant, local_bounds_utc, user_timezone, user_timezone_for
@@ -39,6 +44,10 @@ WORKOUTS = "workouts"
 EVENTS = "events"
 #: File adapters: a rule they own names the export's own source name.
 FILE_ADAPTERS = ("apple_health", "oura", "garmin", "kardia")
+# FIT-only captures are a distinct provenance channel of the same scale. A
+# canonical scale rule reaches them; a FIT-specific rule stays FIT-specific.
+FIT_SCALE_SOURCE = "Garmin Index Scale FIT archive"
+_SOURCE_RULE_ALIASES = {FIT_SCALE_SOURCE: ("Garmin Index Scale",)}
 #: Direct provider APIs; their rows carry the same source names as the
 #: provider's own file export ("Oura", "Garmin Index Scale").
 API_ADAPTERS = ("oura_api", "garmin_api", "garmin_personal_api")
@@ -128,14 +137,27 @@ class Rule:
         if moment is None:
             # A daily total dated by its writer: a window that overlaps the
             # day removes the total whole; one reading never does.
-            if self.scope != "window" or day is None:
-                return False
-            start = datetime.combine(day, time.min, day_zone)
-            after = datetime.combine(day + timedelta(days=1), time.min, day_zone)
-            return self.lower < after and self.upper >= start
+            return self.scope == "window" and day is not None and self._meets_day(day, day_zone)
         if self.scope == "reading":
             return moment == self.lower
         return self.lower <= (until or moment) and moment <= self.upper
+
+    def _meets_day(self, day: date, day_zone) -> bool:
+        start = datetime.combine(day, time.min, day_zone)
+        after = datetime.combine(day + timedelta(days=1), time.min, day_zone)
+        return self.lower < after and (self.upper or self.lower) >= start
+
+    def reaches_stored_day(self, key: str, day: date, day_zone) -> bool:
+        """Whether a stored day row may hold something this rule excludes.
+
+        A stored day keeps no sample times, so a reading or a window that
+        falls anywhere in the day reaches the whole row: the part outside the
+        rule cannot be recalculated without the source, and a value that still
+        includes an excluded reading is the wrong side to err on.
+        """
+        if self.series is not None and key not in self.series:
+            return False
+        return self.scope == "origin" or self._meets_day(day, day_zone)
 
 
 class Matcher:
@@ -150,13 +172,28 @@ class Matcher:
         self._rules = rules
         self._day_zone = day_zone
 
+    def _reaching(self, source_name: str) -> list[Rule]:
+        return [rule for name in source_rule_names(source_name) for rule in self._rules.get(name, ())]
+
     def excludes(self, source_name: str, key: str, observed: object, until: object = None) -> bool:
-        rules = self._rules.get(source_name)
+        rules = self._reaching(source_name)
         if not rules:
             return False
         moment, day = _when(observed)
         end = _when(until)[0] if until else None
         return any(rule.covers(key, moment, day, end, self._day_zone) for rule in rules)
+
+    def excludes_stored_day(self, source_name: str, key: str, day: object) -> bool:
+        """For a stored day row whose source cannot be re-read; see
+        ``Rule.reaches_stored_day``."""
+        when = _when(str(day)[:10])[1]
+        return when is not None and any(
+            rule.reaches_stored_day(key, when, self._day_zone) for rule in self._reaching(source_name))
+
+
+def source_rule_names(source_name: str) -> tuple[str, ...]:
+    """Source-specific and inherited physical-origin rules, in one direction."""
+    return (source_name, *_SOURCE_RULE_ALIASES.get(source_name, ()))
 
 
 def _rule(row) -> Rule:
@@ -169,12 +206,14 @@ def _rule(row) -> Rule:
     )
 
 
-def matcher(db, owner_user_id: str, context: str = OPENWEARABLES) -> Matcher | None:
-    """The person's active rules for one aggregation context; None when none
-    apply, so the hot path stays a single ContextVar read."""
+def matcher(db, owner_user_id: str, context: str = OPENWEARABLES, rule_id: str | None = None) -> Matcher | None:
+    """The person's active rules for one aggregation context (or the one rule
+    ``rule_id``); None when none apply, so the hot path stays a single
+    ContextVar read."""
     rules: dict[str, list[Rule]] = {}
     for row in db.execute(
-        "SELECT * FROM device_exclusions WHERE owner_user_id=? AND revoked_at IS NULL", (owner_user_id,)
+        "SELECT * FROM device_exclusions WHERE owner_user_id=? AND revoked_at IS NULL AND (? IS NULL OR id=?)",
+        (owner_user_id, rule_id, rule_id),
     ):
         label = label_for(row, context)
         if label:
@@ -491,10 +530,7 @@ def rebuild_openwearables(settings, owner_user_id: str, first: str, last: str) -
 def _adapters_reached(db, owner_user_id: str, rows) -> set[str]:
     """File exports and provider APIs holding rows that a pending rule reaches."""
     adapters = {row[0] for row in db.execute(
-        """SELECT DISTINCT i.adapter_key FROM device_imports i WHERE i.owner_user_id=? AND (
-               EXISTS (SELECT 1 FROM device_metric_days d WHERE d.import_id=i.id)
-               OR EXISTS (SELECT 1 FROM device_workouts w WHERE w.import_id=i.id)
-               OR EXISTS (SELECT 1 FROM device_events e WHERE e.import_id=i.id))""", (owner_user_id,))}
+        "SELECT DISTINCT i.adapter_key FROM device_imports i WHERE i.owner_user_id=?", (owner_user_id,))}
     return {adapter for adapter in adapters & set(ADAPTERS) if any(label_for(row, adapter) for row in rows)}
 
 
@@ -536,20 +572,139 @@ def _merged_spans(rows) -> list[list[str]]:
     return merged
 
 
-def _rebuild_providers(settings, owner_user_id: str, adapters: set[str], first: str, last: str) -> None:
+def _rebuild_providers(settings, owner_user_id: str, adapters: set[str], first: str, last: str) -> bool:
+    complete = True
     for adapter in sorted(adapters & set(API_ADAPTERS)):
         try:
             _rebuild_provider(settings, owner_user_id, adapter, first, last)
         except Exception:  # noqa: BLE001 - its next sync applies the rules in its own write
             logger.warning("exclusions: %s could not be asked again", adapter, exc_info=True)
+            complete = False
+    return complete
 
 
-def _reimport_files(settings, owner_user_id: str) -> None:
+def _reimport_files(settings, owner_user_id: str, adapters: set[str]) -> int:
+    """Re-read the kept exports; returns how many had no kept copy to re-read."""
     from .reaggregate import reimport_files
 
-    for result in reimport_files(settings, owner_user_id):
+    missing = 0
+    for result in reimport_files(settings, owner_user_id, adapters=adapters):
         if result["status"] == "skipped_source_missing":
             logger.warning("exclusions: export %s has no kept copy to re-read", result["import_id"])
+            missing += 1
+    return missing
+
+
+_HELD_TABLES = ("device_metric_days", "device_workouts", "device_events")
+
+
+def _unreadable_imports(settings, owner_user_id: str) -> dict[str, str]:
+    """{import id: adapter} of the uploaded exports whose kept copy is gone."""
+    with connect(settings) as db:
+        rows = db.execute(
+            "SELECT id, adapter_key, source_path FROM device_imports WHERE owner_user_id=? AND adapter_key IN (%s)"
+            % ",".join("?" * len(FILE_ADAPTERS)), (owner_user_id, *FILE_ADAPTERS)).fetchall()
+    return {str(row["id"]): str(row["adapter_key"]) for row in rows
+            if not resolve_source_path(settings, str(row["source_path"])).exists()}
+
+
+def _restore_held(db, owner_user_id: str) -> set[tuple[str, str]]:
+    """Put back the rows held for undone rules; returns (table, id) restored.
+
+    A held row whose place is taken (the export came back, or a newer one
+    brought the same reading) is dropped: the live row is the record."""
+    restored = set()
+    for item in db.execute(
+        """SELECT h.id, h.source_table, h.row_json FROM device_exclusion_held h
+           JOIN device_exclusions e ON e.id=h.exclusion_id
+           WHERE h.owner_user_id=? AND e.revoked_at IS NOT NULL ORDER BY h.id""", (owner_user_id,),
+    ).fetchall():
+        table = item["source_table"]
+        if table not in _HELD_TABLES:
+            continue
+        live = {column[1] for column in db.execute(f"PRAGMA table_info({table})")}
+        row = {key: value for key, value in json.loads(item["row_json"]).items() if key in live}
+        if db.execute(f"INSERT OR IGNORE INTO {table}({', '.join(row)}) VALUES ({', '.join('?' * len(row))})",
+                      tuple(row.values())).rowcount:
+            restored.add((table, str(row["id"])))
+        db.execute("DELETE FROM device_exclusion_held WHERE id=?", (item["id"],))
+    return restored
+
+
+def _hold(db, rule_id: str, table: str, row) -> None:
+    db.execute(
+        "INSERT INTO device_exclusion_held(owner_user_id, exclusion_id, import_id, source_table, row_json) VALUES (?, ?, ?, ?, ?)",
+        (row["owner_user_id"], rule_id, row["import_id"], table, json.dumps(dict(row), ensure_ascii=False)))
+    db.execute(f"DELETE FROM {table} WHERE id=?", (row["id"],))
+
+
+def _hold_excluded(db, owner_user_id: str, unreadable: dict[str, str], restored: set[tuple[str, str]]) -> int:
+    """Move to the held table what an active rule reaches among the rows of
+    unreadable exports and the rows just restored; returns how many."""
+    from .calculations import BMI_ID_PREFIX
+
+    adapters = {str(row[0]): str(row[1]) for row in db.execute(
+        "SELECT id, adapter_key FROM device_imports WHERE owner_user_id=?", (owner_user_id,))}
+    rows: dict[str, list] = {table: [] for table in _HELD_TABLES}
+    for table in _HELD_TABLES:
+        found = [row for import_id in unreadable for row in db.execute(
+            f"SELECT * FROM {table} WHERE import_id=? AND owner_user_id=?", (import_id, owner_user_id))]
+        found += [row for name, row_id in restored if name == table for row in db.execute(
+            f"SELECT * FROM {table} WHERE id=? AND owner_user_id=?", (row_id, owner_user_id))]
+        # A calculated BMI carries its weight's import but is not the export's row.
+        rows[table] = list({row["id"]: row for row in found
+                            if adapters.get(row["import_id"]) in FILE_ADAPTERS
+                            and not str(row["id"]).startswith(BMI_ID_PREFIX)}.values())
+    if not any(rows.values()):
+        return 0
+    held = 0
+    for (rule_id,) in db.execute(
+        "SELECT id FROM device_exclusions WHERE owner_user_id=? AND revoked_at IS NULL ORDER BY created_at, id",
+        (owner_user_id,),
+    ).fetchall():
+        matchers: dict[str, Matcher | None] = {}
+        for table in _HELD_TABLES:
+            kept = []
+            for row in rows[table]:
+                adapter = adapters[row["import_id"]]
+                if adapter not in matchers:
+                    matchers[adapter] = matcher(db, owner_user_id, adapter, rule_id)
+                rules = matchers[adapter]
+                if rules is None:
+                    reached = False
+                elif table == "device_metric_days":
+                    reached = rules.excludes_stored_day(row["source_name"], row["metric_key"], row["day"])
+                else:  # As the importer filters them.
+                    reached = rules.excludes(row["source_name"], WORKOUTS if table == "device_workouts" else EVENTS,
+                                             row["started_at"], row["ended_at"])
+                if not reached:
+                    kept.append(row)
+                    continue
+                if table == "device_metric_days":
+                    # The value calculated from this row goes with it, so the
+                    # undo brings both back as they were.
+                    for derived in db.execute(
+                        """SELECT d.* FROM device_calculation_inputs i JOIN device_metric_days d ON d.id=i.row_id
+                           WHERE i.input_id=? AND i.input_kind LIKE 'device_%' AND d.owner_user_id=?""",
+                        (row["id"], owner_user_id),
+                    ).fetchall():
+                        _hold(db, rule_id, table, derived)
+                        held += 1
+                _hold(db, rule_id, table, row)
+                held += 1
+            rows[table] = kept
+    return held
+
+
+def _apply_without_source(db, owner_user_id: str, unreadable: dict[str, str]) -> None:
+    """Make the rules hold for exports that cannot be re-read: restore what
+    undone rules held, then hold what the active rules reach."""
+    from .calculations import refresh_device_calculations
+
+    restored = _restore_held(db, owner_user_id)
+    if _hold_excluded(db, owner_user_id, unreadable, restored) or restored:
+        # As after any import: calculated values follow the rows they read.
+        refresh_device_calculations(db)
 
 
 def run_pending(settings, owner_user_id: str) -> int:
@@ -564,12 +719,21 @@ def run_pending(settings, owner_user_id: str) -> int:
         adapters = _adapters_reached(db, owner_user_id, rows) if rows else set()
     if not rows:
         return 0
+    complete = True
     for first, last in _merged_spans(rows):
         rebuild_openwearables(settings, owner_user_id, first, last)
-        _rebuild_providers(settings, owner_user_id, adapters, first, last)
+        complete = _rebuild_providers(settings, owner_user_id, adapters, first, last) and complete
     if adapters & set(FILE_ADAPTERS):
-        _reimport_files(settings, owner_user_id)
+        # A missing kept copy is permanent: waiting never brings the file back,
+        # and a rule left pending for it reads as "applying" for good. What
+        # can be re-read has been; the rule settles, the count is logged, and
+        # the stored rows of the missing export are held below.
+        _reimport_files(settings, owner_user_id, adapters)
+    if not complete:
+        return 0  # Retain the pending state; a provider that did not answer is asked again.
+    unreadable = _unreadable_imports(settings, owner_user_id)
     with transaction(settings, immediate=True) as db:
+        _apply_without_source(db, owner_user_id, unreadable)
         settled = 0
         for row in rows:
             # A rule undone (or re-applied) while this ran stays pending.

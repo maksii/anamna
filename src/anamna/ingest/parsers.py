@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, replace
 from datetime import datetime
+from itertools import accumulate
 from typing import cast
 
 from .text import collapse_space, parse_decimal
@@ -14,7 +15,7 @@ from .text import collapse_space, parse_decimal
 # the files it names.  Two changes reached `main` without a bump -- 196 lines of
 # new rules in 4472233, and the Latin unit spellings below -- so every row those
 # produced is indistinguishable from a row the previous parser produced.
-PARSER_VERSION = "2026.11.09-1"
+PARSER_VERSION = "2026.11.15-3"
 
 #: The kinds of report this module reads values out of.  Everything else --
 #: ultrasound, MRI, consultation, pathology, radiology -- it returns nothing
@@ -56,6 +57,9 @@ _HYPHEN_BREAK = re.compile(r"(?<=\w)- (?=\w)")
 # Absent, the report's only result was dropped and the lab's own record of it
 # was the one copy left.
 UNIT_PATTERN = (
+    # Explicit units of cortisol, FEU-calibrated D-dimer, antibody titres and
+    # reticulocytes. Keep their complete forms ahead of ng/mL and bare 10^n.
+    r"мкг/дл|µg/dL|ug/dL|нгФЕОд/мл|ng/mL\s*FEU|Titer|титр|10\^6/мкл|10\^6/[µμu]L|"
     r"ммоль/л|мкмоль/л|мкмоль\/л|мкМО/мл|мМО/мл|нг/мл|пг/мл|мг/дл|г/дл|г/л|мг/л|мкг/мл|мкг/л|"
     r"ммо/л|мМО/л|мо/мл|мо/л|мекв/л|од/л|Од/л|ОД/л|пмоль/л|нмоль/л|"
     r"клітин/мкл|тис/мкл|кл/мкл|цл/мкл|мл|"
@@ -611,13 +615,15 @@ def valid_analyte_name(name: str) -> bool:
     )
 
 
-CATEGORICAL_VALUE = (
+_ENGLISH_CATEGORICAL_VALUE = r"not\s+detected|not\s+reactive|non[- ]reactive|negative|positive|reactive"
+_UKRAINIAN_CATEGORICAL_VALUE = (
     r"помірночутливий|резистентний|стійкий|чутливий|не виявлено|не виявлений|не виявлена|не виявлені|негативний|позитивний|"
     # «в нормі» is the locative Expert Hospital prints on its dipstick pads --
     # «Глюкоза, ммоль/л в нормі» (result N1) -- and without it the whole
     # row vanished: no observation, no review task.
     r"прозора|каламутна|бурштиновий|жовтий|сліди|в нормі|норма|нормальний|нормальна"
 )
+CATEGORICAL_VALUE = rf"{_ENGLISH_CATEGORICAL_VALUE}|{_UKRAINIAN_CATEGORICAL_VALUE}"
 
 # An antibiogram row wears the same "<name> <number> <unit>" clothes as a
 # result row -- "Бензилпеніцилін 1 од Стійкий" -- but the number is the disk
@@ -632,11 +638,22 @@ SUSCEPTIBILITY_VERDICT = (
 )
 
 
+#: An English table header: a line made of column words and nothing else.
+#: "the test result was" is prose, and «Test Result Units Reference» is taken
+#: whole -- cut after "Result", its tail joined the first row as a name.
+#: The line anchors are switched on for this part alone, so the patterns it
+#: joins keep their own flags.
+_ENGLISH_RESULT_HEADER = (
+    r"(?m:^[ \t]*(?:(?:Test|Analyte|Investigation)(?:[ \t]+name)?[ \t]+Results?|Results?(?=[ \t]+(?:Units?|Reference)))"
+    r"(?:[ \t]+(?:Units?|Reference|Range|Interval|Values?|Flag))*[ \t]*$)"
+)
+
+
 def has_result_header(text: str) -> bool:
     return bool(
         re.search(
             r"Показник\s+Результат|РЕЗУЛЬТАТ\s+НОРМА|Назва дослідження\s+Результат|"
-            r"Результат дослідження|антигени\s+діапазон",
+            r"Результат дослідження|антигени\s+діапазон|" + _ENGLISH_RESULT_HEADER,
             text,
             re.I,
         )
@@ -646,23 +663,38 @@ def has_result_header(text: str) -> bool:
 #: The header row a categorical table opens with.  Expert's capitals header
 #: «ПОКАЗНИК РЕЗУЛЬТАТ НОРМА» is matched by it too: the pattern is
 #: case-insensitive, and the text after the header is the table either way.
-_CATEGORICAL_HEADER = re.compile(r"Показник\s+Результат(?:\s+Од\.)?(?:\s+Одиниці)?(?:\s+Референтн\w*)?", re.I)
-_CATEGORICAL_FOOTER = re.compile(r"Результати (?:лабораторних )?досліджень не є|Дослідження виконала", re.I)
+_CATEGORICAL_HEADER = re.compile(
+    r"Показник\s+Результат(?:\s+Од\.)?(?:\s+Одиниці)?(?:\s+Референтн\w*)?|" + _ENGLISH_RESULT_HEADER,
+    re.I,
+)
+_CATEGORICAL_FOOTER = re.compile(
+    r"Результати (?:лабораторних )?досліджень не є|Дослідження виконала|"
+    r"\b(?:Laboratory )?Results (?:are not|should be interpreted)\b", re.I,
+)
 _CATEGORICAL_ROW = re.compile(
-    rf"^(?P<name>.+?)\s+(?P<value>{CATEGORICAL_VALUE})(?:\s+(?P<unit>{UNIT_PATTERN}))?(?:\s+(?P<ref>.*))?$",
+    rf"^(?P<name>.+?)\s+(?P<value>{_UKRAINIAN_CATEGORICAL_VALUE})(?:\s+(?P<unit>{UNIT_PATTERN}))?(?:\s+(?P<ref>.*))?$",
+    re.I,
+)
+#: An English word is a result only in the result cell: after it come a unit,
+#: the reference -- another such word alone, or a limit -- or nothing.
+#: "Comment: positive results should be confirmed" and "C reactive protein
+#: 5.0 mg/L" hold the word in a sentence and in a name.
+_ENGLISH_CATEGORICAL_ROW = re.compile(
+    rf"^(?P<name>.+?)\s+(?P<value>{_ENGLISH_CATEGORICAL_VALUE})(?:\s+(?P<unit>{UNIT_PATTERN}))?"
+    rf"(?:\s+(?P<ref>(?:{CATEGORICAL_VALUE})|[<>≤≥0-9].*))?$",
     re.I,
 )
 _BLOOD_GROUP_ROW = re.compile(r"^(Група крові)\s+([ABАВOОIІVХ]+\s*\([^)]*\))$", re.I)
 
 
 def _categorical_row(candidate: str, page_number: int) -> ParsedObservation | None:
-    match = _CATEGORICAL_ROW.match(candidate)
+    match = _CATEGORICAL_ROW.match(candidate) or _ENGLISH_CATEGORICAL_ROW.match(candidate)
     if not match:
         return None
     name = match.group("name").strip(" ,-:")
     if (
         not valid_analyte_name(name)
-        or name.casefold() == "результат"
+        or name.casefold() in {"результат", "result", "results", "reference", "reference range", "reference interval"}
         or re.fullmatch(CATEGORICAL_VALUE, name, re.I)
         or any(symbol in name for symbol in "<>≤≥")
     ):
@@ -1320,6 +1352,10 @@ _GLUED_SIGN_ROW = re.compile(
     rf"^(?P<name>.+?)\s+(?P<value>[-−]\d+(?:[.,]\d+)?)\s+(?P<unit>{UNIT_PATTERN})(?:\s+(?P<ref>.*))?$",
     re.I,
 )
+_SECONDS_UNIT_ROW = re.compile(
+    rf"^(?P<name>.+?)\s+(?P<value>{NUMBER})\s+(?P<unit>[sс])(?:\s+(?P<ref>.*))?$",
+    re.I,
+)
 #: Analytes that can be negative.  A dash before the value is a sign for these
 #: only: «BE - 2,3» is base excess -2.3, while «Глюкоза - 5,2» stays +5.2.
 _SIGNED_ANALYTE = re.compile(
@@ -1399,6 +1435,35 @@ def _within_interval_magnitude(number: float, low: float | None, high: float | N
     return high is None or number <= high * 10
 
 
+#: A numbered assay written with its number apart: «Вітамін B 12»,
+#: «Інтерлейкін 6», "Immunoglobulin G 4".  The number follows the family word
+#: or its one letter directly, so «Вітамін B12 1» and «Імуноглобулін E
+#: загальний 2» -- a complete name, then the thousands of its value -- are not it.
+_SPACED_ASSAY_NUMBER = re.compile(
+    r"\b(?:(?:вітамін|витамин|vitamin)\s+[a-zа-яіїє]|"
+    r"(?:імуноглобулін|иммуноглобулин|immunoglobulin)\s+[agаг]|"
+    r"інтерлейкін|интерлейкин|interleukin)\s+[0-9]{1,2}$",
+    re.I,
+)
+
+
+def _number_belongs_to_name(name: str, rest: str) -> bool:
+    """Whether the digit group ending ``name`` is the assay's own number.
+
+    ``rest`` is the name without that group.  A zero-padded result is still a
+    result: «CA 125 050» is CA 125 of 50, not an analyte called CA of 125050,
+    because «CA 125» is in the catalogue and «CA» is not.  «Вітамін B12 1 050»
+    is the other way round: the name is complete without the «1», so the
+    group is the thousands of 1050 and the join is left to its usual proof.
+    """
+    from .concepts import concept_for_alias
+
+    whole = concept_for_alias(name)
+    if whole is not None:
+        return whole is not concept_for_alias(rest)
+    return bool(_SPACED_ASSAY_NUMBER.search(name))
+
+
 def _thousands_split(name: str, digits: str, reference: str | None) -> tuple[str, str] | None:
     """(name, number) for a thousands-spaced value the unit row split apart.
 
@@ -1411,18 +1476,21 @@ def _thousands_split(name: str, digits: str, reference: str | None) -> tuple[str
     B12 of 350.
 
     A group that starts with 0 («000», «050») is never a value printed on its
-    own, so the one group before it is always its thousands: «Тромбоцити 250
-    000» is 250000 and «Лейкоцити 4 050» is 4050, interval or none.  Further
+    own, so the one group before it is its thousands: «Тромбоцити 250 000» is
+    250000 and «Лейкоцити 4 050» is 4050, interval or none -- unless that
+    group is the assay's own number (``_number_belongs_to_name``).  Further
     groups still need the interval.
     """
     if not re.fullmatch(r"\d{3}", digits):
         return None
+    head_pattern = r"(?P<rest>.*\S)\s+(?P<lead>\d{1,3})$"
+    head = re.match(head_pattern, name)
+    if head and _number_belongs_to_name(name, head.group("rest")):
+        return None
     low, high = reference_bounds(reference)
     has_interval = low is not None or high is not None
-    head_pattern = r"(?P<rest>.*\S)\s+(?P<lead>\d{1,3})$"
     joined = digits
     if digits.startswith("0"):
-        head = re.match(head_pattern, name)
         if not head:
             return None
         name, joined = head.group("rest"), f"{head.group('lead')} {digits}"
@@ -1508,11 +1576,27 @@ def parse_unit_rows(text: str, page_number: int) -> list[ParsedObservation]:
     for index, line in enumerate(lines):
         match = _UNIT_ROW.match(line) or _GLUED_SIGN_ROW.match(line)
         if not match:
+            match = _seconds_unit_match(line)
+        if not match:
             continue
         observation = _unit_row_observation(match, line, lines, index, page_number)
         if observation is not None:
             observations.append(observation)
     return observations
+
+
+def _seconds_unit_match(line: str) -> re.Match | None:
+    """Read a known seconds quantity without treating vitamin C as a unit.
+
+    Coagulation rows print single-letter Cyrillic seconds as well as Latin s.
+    A global unit alias would also consume an analyte's final C or an
+    antibiogram's S verdict, so both the name and the dimension must agree.
+    """
+    from .concepts import concept_for_alias
+
+    match = _SECONDS_UNIT_ROW.match(line)
+    definition = concept_for_alias(match.group("name")) if match else None
+    return match if definition and definition.get("unit") == "s" else None
 
 
 _HBA1C_LABEL = re.compile(r"Глікований гемоглобін\s*\(HbA1c\)", re.I)
@@ -5583,14 +5667,14 @@ def _us_follicle(text: str, side: str, page_number: int, cycle: str | None) -> P
 
 # --- breast ultrasound --------------------------------------------------------
 
-_US_BREAST_START = re.compile(r"(?P<side>Права|Ліва)\s+грудна\s+залоза", re.I)
+_US_BREAST_START = re.compile(r"(?:(?P<side>Права|Ліва)\s+)?грудна\s+залоза", re.I)
 _US_BREAST_END = re.compile(r"BI-?RADS|Заключення|Висновок", re.I)
 _US_SIZE_PHRASE = re.compile(
     rf"(?:діаметром|розміром)\s*(?P<le>до\s*)?(?P<nums>{_US_N}(?:\s*(?:{_US_MM})?\s*(?:{_US_X}|та|і|,)\s*{_US_N})*)\s*{_US_MM}"
 )
 
 
-def _us_breast_thickness_rows(text: str, side: str, page_number: int) -> list[ParsedObservation | None]:
+def _us_breast_thickness_rows(text: str, side: str | None, page_number: int) -> list[ParsedObservation | None]:
     rows = []
     for label, name in (
         (r"Шкіра[^.]{0,30}?товщиною", "Breast skin thickness"),
@@ -5603,7 +5687,7 @@ def _us_breast_thickness_rows(text: str, side: str, page_number: int) -> list[Pa
     return rows
 
 
-def _us_breast_lesion_rows(text: str, side: str, page_number: int) -> list[ParsedObservation | None]:
+def _us_breast_lesion_rows(text: str, side: str | None, page_number: int) -> list[ParsedObservation | None]:
     lesion = re.search(rf"гіпоехогенне\s+утворення[^;]{{0,80}}?розміром\s*(?P<a>{_US_N})\s*{_US_X}\s*(?P<b>{_US_N})\s*{_US_MM}", text)
     if not lesion:
         return []
@@ -5631,6 +5715,37 @@ def _us_breast_category_row(flat: str, page_number: int) -> ParsedObservation | 
     return replace(item, unit_raw=None) if item else None
 
 
+def _us_breast_category_rows(flat: str, starts: list[re.Match], page_number: int) -> list[ParsedObservation]:
+    """Keep explicit bilateral assessments without assigning an overall one to a side."""
+    pattern = re.compile(r"BI-?\s?RADS\s*(?::\s*)?[0-6](?:[abcABC])?\b")
+    matches = list(pattern.finditer(flat))
+    if len(matches) < 2:
+        item = _us_breast_category_row(flat, page_number)
+        return [item] if item else []
+    sided: dict[int, str] = {}
+    for index, found in enumerate(starts):
+        if not found.group("side"):
+            continue
+        end = starts[index + 1].start() if index + 1 < len(starts) else len(flat)
+        conclusion = re.search(r"Заключення|Висновок", flat[found.end():end], re.I)
+        if conclusion:
+            end = found.end() + conclusion.start()
+        side = _RIGHT if found.group("side").casefold().startswith("прав") else "ліва"
+        for match in matches:
+            if found.end() <= match.start() < end:
+                sided[match.start()] = side
+    # One assessment after bilateral descriptions is often the report's overall
+    # assessment. Only independently labelled segments establish both sides.
+    if len(set(sided.values())) < 2:
+        sided = {}
+    rows = []
+    for match in matches:
+        item = _us_breast_category_row(match.group(0), page_number)
+        if item is not None:
+            rows.append(replace(item, specimen=sided.get(match.start())))
+    return rows
+
+
 def _us_breast(lines: list[str], page_number: int) -> list[ParsedObservation]:
     """Each breast's skin, fat and glandular thickness, its solid lesion and
     its largest simple cyst, and the report's BI-RADS category (InMed).
@@ -5641,19 +5756,38 @@ def _us_breast(lines: list[str], page_number: int) -> list[ParsedObservation]:
     загальним розміром …») is not one cyst and is not read as one.
     """
     flat = " ".join(lines)
-    starts = list(_US_BREAST_START.finditer(flat))
+    # Without its side word «грудна залоза» opens a segment only as a heading:
+    # at the start of a line, closed by a stop, a colon or the line's end.
+    # «…; грудна залоза звичайної форми; …» inside the right breast's text
+    # is a description, and the rows after it are still the right breast's.
+    line_starts = set(accumulate((len(line) + 1 for line in lines), initial=0))
+    line_ends = {start - 1 for start in line_starts}
+    starts = [
+        found for found in _US_BREAST_START.finditer(flat)
+        if found.group("side") or (
+            found.start() in line_starts and (found.end() in line_ends or flat[found.end():found.end() + 1] in {".", ":"})
+        )
+    ]
     if not starts:
         return []
     rows: list[ParsedObservation | None] = []
     for index, found in enumerate(starts):
-        side = _RIGHT if found.group("side").casefold().startswith("прав") else "ліва"
+        side = found.group("side")
+        side = (_RIGHT if side.casefold().startswith("прав") else "ліва") if side else None
         end = starts[index + 1].start() if index + 1 < len(starts) else len(flat)
         stop = _US_BREAST_END.search(flat, found.end(), end)
         text = flat[found.start(): stop.start() if stop else end]
-        rows.extend(_us_breast_thickness_rows(text, side, page_number))
-        rows.extend(_us_breast_lesion_rows(text, side, page_number))
-        rows.append(_us_breast_cyst(text, side, page_number))
-    rows.append(_us_breast_category_row(flat, page_number))
+        segment = [*_us_breast_thickness_rows(text, side, page_number),
+                   *_us_breast_lesion_rows(text, side, page_number),
+                   _us_breast_cyst(text, side, page_number)]
+        for item in segment:
+            if item is not None and side is None:
+                # A missing OCR side word must not give this segment the prior
+                # breast's side. Preserve its quantity for source-page review.
+                uncertainty = "Laterality could not be established from source text."
+                item = replace(item, note=f"{item.note}; {uncertainty}" if item.note else uncertainty)
+            rows.append(item)
+    rows.extend(_us_breast_category_rows(flat, starts, page_number))
     return [row for row in rows if row is not None]
 
 
@@ -5685,7 +5819,7 @@ def _us_cyst_sizes(clause: str) -> list[tuple[float | None, str, str, bool]]:
     return sizes
 
 
-def _us_breast_cyst(text: str, side: str, page_number: int) -> ParsedObservation | None:
+def _us_breast_cyst(text: str, side: str | None, page_number: int) -> ParsedObservation | None:
     """The largest cyst of one breast: the maximum of every size printed for it.
 
     When a cyst is named and its size cannot be read (OCR of a photo loses or
@@ -7283,7 +7417,10 @@ def _distinct_rows(observations: list[ParsedObservation]) -> list[ParsedObservat
             observation.page_number,
             collapse_space(observation.raw_name).casefold(),
             observation.value_numeric,
-            observation.value_text or observation.unit_raw,
+            observation.value_text or None,
+            observation.unit_raw or None,
+            observation.comparator,
+            observation.observed_at,
             observation.section,
             observation.specimen,
         )
@@ -7297,6 +7434,8 @@ def _distinct_rows(observations: list[ParsedObservation]) -> list[ParsedObservat
         if not any(
             other is not item
             and other.page_number == item.page_number
+            and other.comparator == item.comparator
+            and other.observed_at == item.observed_at
             and other.evidence_text == item.evidence_text
             and item.raw_name.casefold().startswith(other.raw_name.casefold() + " ")
             and other.value_numeric is not None

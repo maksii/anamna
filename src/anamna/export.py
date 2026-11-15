@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import BinaryIO
 
 from . import factors
+from .calculation_info import calculation_source
 from .config import Settings, resolve_source_path
 from .db import transaction, utc_now
 
@@ -18,13 +19,21 @@ EXPORT_FORMAT = "anamna-record-export"
 EXPORT_VERSION = 1
 #: Columns that never leave the installation: credentials, sessions and keys.
 _SECRET_WORDS = ("password", "secret", "token", "hash", "key")
+_PUBLIC_IDENTIFIER_COLUMNS = {
+    "device_metric_days": frozenset({"metric_key"}),
+    "device_imports": frozenset({"adapter_key"}),
+}
 
 _OBSERVATION_HEADER = [
     "observed_at", "concept", "printed_name", "value_numeric", "value_text", "comparator", "unit",
     "reference_text", "reference_low", "reference_high", "laboratory_flag", "verification_status",
     "document_id", "page_number",
+    "extraction_method", "evidence_text", "calculation_source",
+    "id", "patient_id", "report_id", "concept_id", "unit_canonical", "specimen", "sample_condition",
+    "calculation_inputs_json",
 ]
 _DOCUMENT_HEADER = ["id", "title", "document_type", "document_date", "original_filename", "archive_path"]
+_CALCULATION_INPUTS_CSV = "device_calculation_inputs.csv"
 _MEDICINES_CSV = "medicines.csv"
 #: CSV file name in the archive -> the table it is a copy of.
 _OWNED_TABLES = {
@@ -43,7 +52,8 @@ _OWNED_TABLES = {
 
 def _kept_columns(connection: sqlite3.Connection, table: str) -> list[str]:
     names = [row["name"] for row in connection.execute(f"PRAGMA table_info({table})")]
-    return [name for name in names if not any(word in name.lower() for word in _SECRET_WORDS)]
+    public = _PUBLIC_IDENTIFIER_COLUMNS.get(table, ())
+    return [name for name in names if name in public or not any(word in name.lower() for word in _SECRET_WORDS)]
 
 
 def _owned_rows(connection: sqlite3.Connection, table: str, user_id: str) -> tuple[list[str], list[tuple]]:
@@ -52,6 +62,28 @@ def _owned_rows(connection: sqlite3.Connection, table: str, user_id: str) -> tup
         f"SELECT {', '.join(columns)} FROM {table} WHERE owner_user_id = ? ORDER BY rowid", (user_id,)
     ).fetchall()
     return columns, [tuple(row) for row in rows]
+
+
+def _calculation_inputs(connection: sqlite3.Connection, user_id: str) -> tuple[list[str], list[tuple]]:
+    """Inputs inherit ownership through the calculated device row, never input ids."""
+    columns = _kept_columns(connection, "device_calculation_inputs")
+    rows = connection.execute(
+        f"""SELECT {', '.join('i.' + column for column in columns)}
+            FROM device_calculation_inputs i JOIN device_metric_days d ON d.id=i.row_id
+            WHERE d.owner_user_id=? ORDER BY i.row_id, i.input_kind""", (user_id,),
+    ).fetchall()
+    return columns, [tuple(row) for row in rows]
+
+
+def _device_metric_csv(columns: list[str], rows: list[tuple]) -> tuple[list[str], list[tuple]]:
+    """Distinguish provisional arithmetic from measurements in a portable export."""
+    header = [*columns, "extraction_method", "verification_status", "calculation_source"]
+    id_index = columns.index("id")
+    out = []
+    for row in rows:
+        method = "derived_bmi" if str(row[id_index]).startswith("derived-bmi-") else ""
+        out.append((*row, method, "extracted" if method else "device_measurement", calculation_source(method) or ""))
+    return header, out
 
 
 #: Raw dose columns that medicines.csv moves beside ``schedule`` (see ``_medicine_csv``).
@@ -159,7 +191,9 @@ def write_record_archive(settings: Settings, user_id: str, target: BinaryIO) -> 
             """SELECT o.observed_at, c.canonical_name, o.raw_name, o.value_numeric, o.value_text,
                       o.comparator, o.unit_raw, o.vendor_reference_text, o.vendor_reference_low,
                       o.vendor_reference_high, o.vendor_interpretation, o.verification_status,
-                      o.document_id, o.page_number
+                      o.document_id, o.page_number, o.extraction_method, o.evidence_text,
+                      o.id, o.patient_id, o.report_id, o.concept_id, o.unit_canonical,
+                      o.specimen, o.sample_condition, o.calculation_inputs_json
                  FROM observations o LEFT JOIN concepts c ON c.id = o.concept_id
                 WHERE o.owner_user_id = ? ORDER BY o.observed_at, o.id""",
             (user_id,),
@@ -170,6 +204,14 @@ def write_record_archive(settings: Settings, user_id: str, target: BinaryIO) -> 
             (user_id,),
         ).fetchall()
         owned = {name: _owned_rows(connection, table, user_id) for name, table in _OWNED_TABLES.items()}
+        owned[_CALCULATION_INPUTS_CSV] = _calculation_inputs(connection, user_id)
+    # Keep the existing CSV prefix stable while making evidence's input ids
+    # resolvable and retaining the patient/sample identity of every result.
+    observation_rows = [
+        (*row[:16], calculation_source(row["extraction_method"]) or "", *row[16:])
+        for row in observation_rows
+    ]
+    owned["device_metric_days.csv"] = _device_metric_csv(*owned["device_metric_days.csv"])
     owned[_MEDICINES_CSV] = _medicine_csv(*owned[_MEDICINES_CSV])
 
     files: dict[str, Path] = {}
@@ -209,6 +251,7 @@ def write_record_archive(settings: Settings, user_id: str, target: BinaryIO) -> 
         "vaccinations": len(owned["vaccinations.csv"][1]),
         "device_imports": len(device_rows),
         "device_metric_days": len(owned["device_metric_days.csv"][1]),
+        "device_calculation_inputs": len(owned[_CALCULATION_INPUTS_CSV][1]),
         "device_workouts": len(workout_rows),
         "medicines": len(owned[_MEDICINES_CSV][1]),
         "medicine_effects": len(owned["medicine_effects.csv"][1]),

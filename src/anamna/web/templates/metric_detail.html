@@ -1,11 +1,12 @@
 {% extends "base.html" %}
 {% from "_components.html" import range_bar, status_chip, staleness_chip, authority_badge,
-        verdict_details, trend_chip, micro_mark, empty_state, plural_t with context %}
+        verdict_details, trend_chip, micro_mark, empty_state, plural_t, calculation_details with context %}
 {% from "_correlation.html" import correlation_block with context %}
 {% from "_experience.html" import period_stats, metric_about with context %}
 {% from "_factors.html" import factor_key with context %}
 {% block title %}{{ concept_name if concept_name else concept.canonical_name|conceptfmt }} · {{ t('brand.name') }}{% endblock %}
 {% block content %}
+{% if pending_exclusions %}<p class="alert neutral">{{ t('device.exclusions_pending') }} <a href="/devices">{{ t('devices.heading') }}</a></p>{% endif %}
 <link rel="stylesheet" href="{{ asset('patient-experience.css') }}">
 <script src="{{ asset('patient-experience.js') }}"></script>
 {% set display_name = concept_name if concept_name else concept.canonical_name|conceptfmt %}
@@ -47,8 +48,10 @@
     {% if latest %}
     <div class="an-metric-hero__value">
       <span>{{ t('metric.latest', date=latest.observed_at|datefmt) }}</span>
-      {% if mixed_sources %}<small class="an-latest-source">{{ t('twin.source_device') if latest.is_device else t('twin.source_clinic') }} · {{ latest.vendor|phrase }}</small>{% endif %}
+      {% if calculation_source(latest.extraction_method) %}<small class="an-latest-source">{{ calculation_status(latest) }} · {{ latest.vendor|phrase }}</small>
+      {% elif mixed_sources %}<small class="an-latest-source">{{ t('twin.source_device') if latest.is_device else t('twin.source_clinic') }} · {{ latest.vendor|phrase }}</small>{% endif %}
       <strong>{{ latest.display_value }} <small>{{ latest.display_unit }}</small></strong>
+      {% if latest.unit_mismatch %}<p class="tiny">{{ t('metric.unit_mismatch', unit=latest.expected_unit|unitfmt) }}</p>{% endif %}
       <div class="an-verdict-meta">
         {{ status_chip(verdict.interpretation, verdict.label, verdict.conflicts_with_vendor) }}
         {#- A qualitative result has no bar, so the details block that names the
@@ -112,6 +115,8 @@
 </section>
 
 <section class="panel interactive-chart-panel an-metric-chart" id="reading-trend" aria-labelledby="reading-trend-heading">
+{% if has_limits %}<p class="an-field-help">{{ t('metric.limit_history_note') }}</p>{% endif %}
+{% if has_contexts %}<p class="an-field-help">{{ t('metric.context_history_note') }}</p>{% endif %}
   <div class="panel-head chart-heading">
     <h2 id="reading-trend-heading">{{ t('metric.value_over_time') }}{% if chart_points %} <small class="an-chart-unit">{{ chart_points[0].unit }}</small>{% endif %}</h2>
     {% if chart_points|length > 1 %}
@@ -175,7 +180,7 @@
         {% for item in history %}
         <tr{% if item.is_device %} data-source="device"{% endif %}>
           <td data-label="{{ t('metric.th_date') }}">{{ item.observed_at|datefmt }}</td>
-          <td class="result" data-label="{{ t('metric.th_result') }}"><span>{{ item.display_value }} <small>{{ item.display_unit }}</small>{% if item.off_axis %} <small class="an-off-axis-note">{{ t('metric.off_axis') }}</small>{% endif %}</span></td>
+          <td class="result" data-label="{{ t('metric.th_result') }}"><span>{{ item.display_value }} <small>{{ item.display_unit }}</small>{% if item.off_axis %} <small class="an-off-axis-note">{{ t('metric.off_axis') }}</small>{% endif %}</span>{% if item.unit_mismatch %}<small>{{ t('metric.unit_mismatch', unit=item.expected_unit|unitfmt) }}</small>{% endif %}</td>
           <td data-label="{{ t('metric.th_comparison') }}">
             {#- The verdict and the interval that gave it (the same judgement
                 the chart point is coloured by), then the laboratory's own
@@ -193,26 +198,32 @@
             {% endif %}
           </td>
           <td data-label="{{ t('metric.th_provider') }}">
-            {% if item.is_device %}
+            {% if item.is_profile %}
+            <strong>{{ t('calc.profile_source') }}</strong>
+            {{ calculation_details(item) }}
+            <a href="/profile">{{ t('profile.open_measurement') }}</a>
+            {% elif item.is_device %}
             {#- A device day: no page to open, so it leads to the device page
                 where every source's value for that day is compared. -#}
-            <span class="an-source-tag" data-source="device">{{ t('twin.source_device') }}</span>
+            <span class="an-source-tag" data-source="device">{{ t('calc.status') if calculation_source(item.extraction_method) else t('twin.source_device') }}</span>
             <strong>{{ item.vendor }}</strong>
             <small>{{ t('twin.device_row') }}</small>
+            {{ calculation_details(item) }}
             <span class="evidence-links"><a href="{{ item.device_url }}">{{ t('twin.compare_sources') }}</a></span>
             {% else %}
             {% if mixed_sources %}<span class="an-source-tag" data-source="clinic">{{ t('twin.source_clinic') }}</span>{% endif %}
-            <strong>{{ item.vendor|phrase }}</strong>
+              <strong>{{ item.vendor|phrase }}</strong>
+                {% if item.context_text %}<small>{{ t('metric.report_context') }}: {{ item.context_text }}</small>{% endif %}
             {% if item.extraction_method == 'lab_api' %}<small>{{ t('labsync.record_source', order=item.document_order or '-') }}</small>
             {% else %}<small>{{ t('metric.original_report', title=document_title(item.document_title, vendor=item.vendor|phrase), page=item.page_number) }}{% if item.evidence_count > 1 %} · {{ t('metric.matching_copies', count=item.evidence_count) }}{% endif %}</small>{% endif %}
-            {% if item.extraction_method == 'derived_ckd_epi_2021' %}<small>{{ t('doc.derived_egfr') }}</small>{% endif %}
+            {{ calculation_details(item) }}
             <span class="evidence-links">
               <a href="/documents/{{ item.document_id }}#observation-{{ item.id }}">{{ t('metric.open_details') }}</a>
               <a href="/documents/{{ item.document_id }}#observation-{{ item.id }}" target="_blank" rel="noreferrer">{{ t('chart.new_tab') }}</a>
             </span>
             {% endif %}
           </td>
-          <td data-label="{{ t('metric.th_trust') }}">{% if item.is_device %}<span class="status device_measurement">{{ t('device.measurement') }}</span>{% else %}<span class="status {{ item.verification_status }}">{{ item.verification_status|statusfmt }}</span>{% endif %}</td>
+          <td data-label="{{ t('metric.th_trust') }}">{% if item.is_device %}<span class="status {{ 'extracted' if calculation_source(item.extraction_method) else 'device_measurement' }}">{{ t('calc.status') if calculation_source(item.extraction_method) else t('device.measurement') }}</span>{% else %}<span class="status {{ item.verification_status }}">{{ item.verification_status|statusfmt }}</span>{% endif %}</td>
           {% if fasting_applies %}
           {#- A device day is not a stored sample, so it has nothing to ask. -#}
           <td data-label="{{ t('glucose.question') }}">

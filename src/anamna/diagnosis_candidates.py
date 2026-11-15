@@ -26,9 +26,10 @@ from datetime import date
 
 from . import diagnoses, icd10
 from .db import utc_now
+from .health import IMAGE_SOURCE_REVIEW
 
 # Raise when the reading rules change: the job's fingerprint holds it, so every record is read again.
-READER_VERSION = 3
+READER_VERSION = 4
 
 # A code is a letter, two digits and an optional decimal part.  Cyrillic
 # look-alikes are allowed; icd10.normalize folds them to Latin.
@@ -371,6 +372,7 @@ def collect(connection: sqlite3.Connection, owner_id: str) -> int:
     )
     rows = connection.execute(
         """SELECT f.document_id, f.summary_uk, f.summary_en, f.original_text, d.report_date,
+                  f.verification_status, d.clinical_type,
                   EXISTS(SELECT 1 FROM diagnosis_scans s WHERE s.document_id = d.id) AS ai_read,
                   (SELECT COALESCE(SUM(LENGTH(TRIM(p.native_text))), 0) FROM document_pages p
                     WHERE p.document_id = d.id) AS native_chars
@@ -383,6 +385,12 @@ def collect(connection: sqlite3.Connection, owner_id: str) -> int:
     ).fetchall()
     by_document: dict[str, list] = {}
     for row in rows:
+        # This is a machine extraction-state notice, not text read from the
+        # image. A person's subsequently written conclusion is still read.
+        if (row["clinical_type"] == "diagnostic_image" and row["verification_status"] == "extracted"
+                and row["summary_en"] == IMAGE_SOURCE_REVIEW and not row["summary_uk"]
+                and not row["original_text"]):
+            continue
         by_document.setdefault(row["document_id"], []).append(row)
     now = utc_now()
     inserted = 0

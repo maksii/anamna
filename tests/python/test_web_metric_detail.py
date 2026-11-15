@@ -105,7 +105,7 @@ def test_chart_leads_points_are_judged_and_the_rest_is_folded(tmp_path, locale):
     if since:
         assert text.count(since) == 1
     one = client.get(f"/metrics/{single}").text
-    assert ("One measurement so far" if locale == "en" else "Поки що одне вимірювання") in one
+    assert ("One result so far" if locale == "en" else "Поки що один результат") in one
 
 
 def test_hero_reads_top_to_bottom_with_details_at_full_width(tmp_path):

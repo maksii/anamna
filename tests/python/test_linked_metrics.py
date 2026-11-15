@@ -210,9 +210,10 @@ def test_devices_overview_shows_a_twin_on_its_concept_card(tmp_path: Path):
 
 
 def test_home_pdf_duplicate_is_shown_once_and_clinic_reading_is_kept(tmp_path: Path):
-    """The Garmin 4-week report printed the cuff's readings; matched on day and
-    maker, never on value (the PDF rounds differently).  A clinic pulse taken
-    the same morning is a different reading and stays."""
+    """The Garmin 4-week report printed the cuff's readings, and the device day is
+    their mean; matched on day and maker, never on value (the PDF rounds
+    differently).  A clinic pulse taken the same morning is a different reading
+    and stays."""
     settings, user_id, client = _build(tmp_path)
     _document(settings, user_id, "garmin-pdf", "Garmin Connect", "blood_pressure", "2025-08-01")
     _document(settings, user_id, "visit-1", "Veselka", "consultation", "2025-08-01")

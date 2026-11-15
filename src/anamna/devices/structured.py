@@ -5,12 +5,13 @@ import json
 import logging
 import struct
 import zipfile
-from collections import Counter
-from datetime import datetime
+from collections import Counter, defaultdict
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Iterable
 
 from .catalog import metric
+from .exclusions import FIT_SCALE_SOURCE as FIT_SCALE_SOURCE
 from .models import Aggregate, ParsedDeviceExport
 from .oura_export import OuraAdapter as OuraAdapter
 from .units import finite_number
@@ -121,17 +122,12 @@ def _fit_message_numbers(data: bytes) -> set[int]:
 MAX_NESTED_MEMBER_BYTES = 64 * 1024 * 1024
 
 
-def _fit_archive_counts(path: Path) -> dict[str, int]:
-    """Count Garmin wellness FIT message types without treating them as new samples.
+def _fit_members(path: Path, counts: Counter[str]):
+    """Each readable FIT member of one archive, read once, with its message numbers.
 
-    The account export includes the same blood-pressure and scale records in
-    JSON and in a ZIP of tiny FIT files. JSON remains the canonical value
-    source; FIT definitions are reconciled so a missing export segment is
-    visible in metadata rather than silently double-counted.
+    One corrupt, encrypted or unreadable archive is counted, not fatal: the
+    rest of the export still imports and the count shows what was skipped.
     """
-    counts: Counter[str] = Counter()
-    # One corrupt, encrypted or unreadable archive is counted, not fatal: the
-    # rest of the export still imports and the count shows what was skipped.
     try:
         with zipfile.ZipFile(path) as archive:
             for entry in archive.infolist():
@@ -153,9 +149,134 @@ def _fit_archive_counts(path: Path) -> dict[str, int]:
                     counts["weight_scale"] += 1
                 else:
                     counts["other"] += 1
+                yield data, message_numbers
     except (zipfile.BadZipFile, RuntimeError, NotImplementedError, OSError):
         counts["invalid"] += 1
+
+
+def _fit_archive_counts(path: Path) -> dict[str, int]:
+    """Count Garmin wellness FIT message types without treating them as new samples.
+
+    The account export includes the same blood-pressure and scale records in
+    JSON and in a ZIP of tiny FIT files. JSON remains the canonical value
+    source; FIT definitions are reconciled so a missing export segment is
+    visible in metadata rather than silently double-counted.
+    """
+    counts: Counter[str] = Counter()
+    for _member in _fit_members(path, counts):
+        pass
     return dict(counts)
+
+
+_FIT_EPOCH = datetime(1989, 12, 31, tzinfo=UTC)
+_FIT_CRC_TABLE = (0x0000, 0xCC01, 0xD801, 0x1400, 0xF001, 0x3C00, 0x2800, 0xE401,
+                  0xA001, 0x6C00, 0x7800, 0xB401, 0x5000, 0x9C01, 0x8801, 0x4400)
+#: Fields of the weight-scale message (30) in the published FIT profile.
+_FIT_SCALE_FIELDS = frozenset({253, 0, 1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13})
+
+
+def _fit_crc(data: bytes) -> int:
+    """The FIT CRC-16; over a whole file, trailing CRC included, it is zero."""
+    crc = 0
+    for byte in data:
+        for nibble in (byte & 0xF, byte >> 4):
+            crc = (crc >> 4) & 0x0FFF ^ _FIT_CRC_TABLE[crc & 0xF] ^ _FIT_CRC_TABLE[nibble]
+    return crc
+
+
+def _fit_weight_scale_rows(data: bytes) -> list[dict]:
+    """The weight-scale messages of one FIT file; raises on a malformed file.
+
+    A reader of our own: the licence of Garmin's SDK does not allow it to be
+    redistributed with this application. Only the capture instant (field 253)
+    and the weight (field 0, hundredths of a kilogram) are interpreted; the
+    other fields are kept as raw bytes, enough to tell two captures apart.
+    """
+    header_size = data[0]
+    end = header_size + struct.unpack_from("<I", data, 4)[0]
+    if len(data) < end + 2 or _fit_crc(data[: end + 2]):
+        raise ValueError("FIT CRC mismatch")
+    position = header_size
+    definitions: dict[int, tuple[int, list[tuple[int, int]], str, int]] = {}
+    rows = []
+    while position < end:
+        header = data[position]
+        position += 1
+        if not header & 0x80 and header & 0x40:
+            endian = ">" if data[position + 1] else "<"
+            global_number = struct.unpack_from(endian + "H", data, position + 2)[0]
+            count = data[position + 4]
+            position += 5
+            fields = [(data[position + index * 3], data[position + index * 3 + 1]) for index in range(count)]
+            position += count * 3
+            developer = 0
+            if header & 0x20:
+                developer_count = data[position]
+                developer = sum(data[position + 2 + index * 3] for index in range(developer_count))
+                position += 1 + developer_count * 3
+            definitions[header & 0x0F] = (global_number, fields, endian, developer)
+            continue
+        global_number, fields, endian, developer = definitions[(header >> 5) & 0x03 if header & 0x80 else header & 0x0F]
+        raw = {}
+        for number, size in fields:
+            raw[number] = data[position : position + size]
+            position += size
+        position += developer
+        if position > end:
+            raise ValueError("FIT message runs past the data")
+        if global_number != 30:
+            continue
+        seconds = struct.unpack(endian + "I", raw[253])[0] if len(raw.get(253, b"")) == 4 else 0xFFFFFFFF
+        grams = struct.unpack(endian + "H", raw[0])[0] if len(raw.get(0, b"")) == 2 else 0xFFFF
+        rows.append({
+            "timestamp": _FIT_EPOCH + timedelta(seconds=seconds) if seconds != 0xFFFFFFFF else None,
+            # 0xFFFF is "no value" and 0xFFFE "still calculating" in the profile.
+            "weight": grams / 100 if grams < 0xFFFE else None,
+            "signature": tuple(sorted((number, value) for number, value in raw.items() if number != 253)),
+            "unknown": [str(number) for number, value in raw.items()
+                        if number not in _FIT_SCALE_FIELDS and any(byte != 255 for byte in value)],
+        })
+    return rows
+
+
+def _fit_scale_records(source: Path):
+    """The weight-scale captures in the export's FIT archives.
+
+    A full account export holds gigabytes of activity files: only a member
+    whose definitions name the weight-scale message (30) is decoded. Each
+    member is read once; the archive counts come from the same pass.
+    """
+    counts: Counter[str] = Counter()
+    unknown: Counter[str] = Counter()
+    archive_counts: Counter[str] = Counter()
+    records = []
+    for path in sorted(source.rglob("*.zip")) if source.is_dir() else []:
+        for data, message_numbers in _fit_members(path, archive_counts):
+            if 30 not in message_numbers:
+                continue
+            try:
+                rows = _fit_weight_scale_rows(data)
+            except (IndexError, KeyError, ValueError, struct.error):
+                counts["decode_errors"] += 1
+                continue
+            for row in rows:
+                counts["weight_scale_messages"] += 1
+                unknown.update(row["unknown"])
+                records.append(row)
+    if archive_counts["skipped_large"]:
+        counts["skipped_large"] = archive_counts["skipped_large"]
+    return records, counts, unknown, dict(archive_counts)
+
+
+def _json_weight_instant(value) -> datetime | None:
+    """The export's explicitly named timestampGMT field denotes UTC."""
+    if not isinstance(value, str):
+        return None
+    try:
+        observed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return observed.replace(tzinfo=UTC) if observed.tzinfo is None else observed.astimezone(UTC)
+    except ValueError:
+        return None
 
 
 class StructuredAdapter:
@@ -230,6 +351,9 @@ class _GarminExportState:
         self.scale_records = 0
         self.missing_measurements = 0
         self.excluded: list[dict[str, object]] = []
+        self.raw_impedance_records = 0
+        self.raw_impedance_positive_records = 0
+        self.json_weight_instants: set[datetime] = set()
 
     def note_observed(self, observed: str) -> None:
         if len(observed) < 10:
@@ -296,11 +420,19 @@ class _GarminExportState:
             recognized = self.scale_weight(weight, observed) or recognized
         return recognized
 
-    def scale_weight(self, weight: dict, observed: str) -> bool:
+    def scale_weight(self, weight: dict, observed: str, *, source_name: str | None = None, count_scale: bool = True) -> bool:
         recognized = False
+        if count_scale:
+            instant = _json_weight_instant(weight.get("timestampGMT"))
+            if instant is not None:
+                self.json_weight_instants.add(instant)
+        impedance = _float(weight.get("rawImpedance"))
+        if impedance is not None:
+            self.raw_impedance_records += 1
+            self.raw_impedance_positive_records += impedance > 0
         source_type = str(weight.get("sourceType") or "Garmin Connect")
-        source_name = "Garmin Index Scale" if source_type == "INDEX_SCALE" else "Garmin Connect user entry"
-        if source_type == "INDEX_SCALE":
+        source_name = source_name or ("Garmin Index Scale" if source_type == "INDEX_SCALE" else "Garmin Connect user entry")
+        if source_type == "INDEX_SCALE" and count_scale:
             self.scale_records += 1
         raw_weight = _float(weight.get("weight"))
         weight_is_plausible = False
@@ -373,13 +505,11 @@ def _scan_garmin_csv(state: "_GarminExportState", path: Path) -> None:
 
 
 def _garmin_fit_counts(source: Path) -> dict[str, int]:
-    fit_counts: dict[str, int] = {}
-    if not source.is_dir():
-        return fit_counts
-    for archive in sorted(source.rglob("*.zip")):
-        for key, value in _fit_archive_counts(archive).items():
-            fit_counts[key] = fit_counts.get(key, 0) + value
-    return fit_counts
+    counts: Counter[str] = Counter()
+    for archive in sorted(source.rglob("*.zip")) if source.is_dir() else []:
+        for _member in _fit_members(archive, counts):
+            pass
+    return dict(counts)
 
 
 class GarminAdapter(StructuredAdapter):
@@ -411,7 +541,36 @@ class GarminAdapter(StructuredAdapter):
         for path in csv_files:
             _scan_garmin_csv(state, path)
 
-        fit_counts = _garmin_fit_counts(source)
+        fit_records, fit_coverage, unknown_fit_fields, fit_counts = _fit_scale_records(source)
+        by_instant = defaultdict(list)
+        for row in fit_records:
+            instant = row.get("timestamp")
+            if instant is None:
+                fit_coverage["invalid_timestamps"] += 1
+                continue
+            if instant in state.json_weight_instants:
+                fit_coverage["matched_json_records"] += 1
+                continue  # JSON is the canonical capture at this exact UTC instant.
+            by_instant[instant].append(row)
+        for captures in by_instant.values():
+            signatures = {row["signature"] for row in captures}
+            if len(signatures) != 1:
+                fit_coverage["conflicting_fit_timestamps"] += 1
+                fit_coverage["conflicting_fit_records"] += len(captures)
+                continue
+            fit_coverage["repeated_fit_timestamps"] += len(captures) - 1
+            fit_coverage["unmatched_json_records"] += 1
+            weight = captures[0]["weight"]
+            if weight is None:
+                fit_coverage["missing_weight"] += 1
+            elif not 30 <= weight <= 300:  # The existing Garmin input policy, not a medical interval.
+                fit_coverage["product_weight_bounds_rejected"] += 1
+            else:
+                # A capture the account's JSON does not hold cannot be attributed
+                # to this person: the scale's archive keeps weigh-ins of other
+                # users and ones the person deleted. It is counted, never imported.
+                fit_coverage["withheld_unmatched_records"] += 1
+
         reconciliation = {
             "blood_pressure_matches": fit_counts.get("blood_pressure", 0) == state.blood_pressure_records,
             "scale_matches": fit_counts.get("weight_scale", 0) == state.scale_records,
@@ -435,6 +594,18 @@ class GarminAdapter(StructuredAdapter):
                 "excluded_implausible_values": state.excluded,
                 "fit_archive_counts": fit_counts,
                 "fit_json_reconciliation": reconciliation,
+                "fit_scale_coverage": dict(fit_coverage),
+                "uninterpreted_fields": {
+                    "weight.rawImpedance": {
+                        "records": state.raw_impedance_records,
+                        "positive_records": state.raw_impedance_positive_records,
+                        "reason": "Unit and calibration are undocumented; retained in the source export, not interpreted as ohms.",
+                    },
+                } if state.raw_impedance_records else {},
+                "uninterpreted_fit_fields": {
+                    field: {"records": count, "reason": "Field is absent from the published FIT profile; retained without interpreting its quantity or unit."}
+                    for field, count in sorted(unknown_fit_fields.items())
+                },
                 "source_vendor_counts": {self.vendor_name: state.recognized_records},
             },
         )

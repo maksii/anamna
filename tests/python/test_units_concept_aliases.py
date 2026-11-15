@@ -18,8 +18,8 @@ from anamna.reference import canonical_unit, convert_value
         ("inr", "%", "ratio", "ratio"),
         # Synevo's «Од» on the atherogenic ratio is the same dimensionless number.
         ("atherogenic-coefficient", "Од", "ratio", "ratio"),
-        # Specific gravity has no unit; «г/мл» is the lab's label, not a quantity.
-        ("urine-specific-gravity", "г/мл", None, ""),
+        # Density and relative density require a reference fluid/temperature.
+        ("urine-specific-gravity", "г/мл", None, "г/мл"),
         # A real unit stays exactly as printed.
         ("platelet-count", "х 10*9/л", "10^9/L", "х 10*9/л"),
         ("creatinine", "мкмоль/л", "µmol/L", "мкмоль/л"),
@@ -38,7 +38,7 @@ def test_od_is_not_folded_into_ratio_outside_the_atherogenic_coefficient():
 def test_per_field_and_specific_gravity_fold_as_the_lab_sync_writes_them():
     """OPS-37: the lab sync adopted «г/мл» and «в п/з» from the lab's record."""
     assert canonical_unit("в п/з") == canonical_unit("per HPF")
-    # «г/мл» folds to no unit for specific gravity only (CONCEPT_UNIT_ALIASES).
+    # A density label is preserved even for a relative-density concept.
     assert canonical_unit("г/мл") == "г/мл"
     assert stored_unit("в п/з", "per HPF", "urine-changed-erythrocytes") == "в п/з"
 
@@ -52,6 +52,25 @@ def test_urobilinogen_is_converted_not_relabelled():
 def test_every_concept_alias_converts_at_factor_one():
     for (concept, printed), stored in CONCEPT_UNIT_ALIASES.items():
         assert convert_value(0.3, printed, stored, concept) == 0.3
+
+
+@pytest.mark.parametrize("concept,printed,target", [
+    ("plateletcrit", "х 10*9/л", "%"), ("inr", "%", "ratio"),
+    ("resting-respiratory-rate", "хв", "breaths/min"),
+])
+def test_a_mislabelled_column_keeps_its_analyte_in_one_series(concept, printed, target):
+    """Stored rows carry these three labels: unfolded, each analyte gets a
+    second unit, its trend splits and every curated rule skips the value."""
+    assert canonical_unit(stored_unit(printed, target, concept)) == canonical_unit(target)
+    assert convert_value(1, printed, target, concept) == 1
+
+
+@pytest.mark.parametrize("concept,printed,target", [
+    ("platelet-count", "%", "10^9/L"), ("prothrombin-time", "%", "ratio"),
+    ("pulse-rate", "min", "breaths/min"),
+])
+def test_the_relabels_stay_inside_their_own_concept(concept, printed, target):
+    assert convert_value(1, printed, target, concept) is None
 
 
 @pytest.mark.parametrize(

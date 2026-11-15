@@ -141,7 +141,7 @@ def _import_once(
         # export sitting where only the previous copy of this very import used to
         # look.  Read it before the upsert overwrites it.
         superseded = connection.execute(
-            "SELECT source_path FROM device_imports WHERE id=?", (import_id,)
+            "SELECT source_path, metadata_json FROM device_imports WHERE id=?", (import_id,)
         ).fetchone()
         vendor_id = ensure_vendor(connection, adapter.vendor_name, adapter.website)
         reconciliation = _identity_reconciliation(connection, patient_id, parsed.metadata)
@@ -178,8 +178,12 @@ def _import_once(
         }
         previous_rows: set[tuple[str, str]] = set()
         for table in ("device_metric_days", "device_workouts", "device_events"):
+            # A calculated BMI carries its weight's import_id but is not this
+            # export's row: refresh_device_calculations below keeps or removes
+            # it. Deleting it here re-created it on every re-read.
             previous = connection.execute(
-                f"SELECT id, {key_columns[table]} FROM {table} WHERE import_id=?", (import_id,)
+                f"SELECT id, {key_columns[table]} FROM {table} WHERE import_id=? AND id NOT LIKE 'derived-bmi-%'",
+                (import_id,),
             ).fetchall()
             previous_rows.update((table, row["id"]) for row in previous)
             connection.executemany(
@@ -262,12 +266,28 @@ def _import_once(
                 for item in parsed.events
             ],
         )
+        from .calculations import refresh_device_calculations
+
+        refresh_device_calculations(connection)
         current_rows = {
             (table, row["id"])
             for table in ("device_metric_days", "device_workouts", "device_events")
             for row in connection.execute(f"SELECT id FROM {table} WHERE import_id=?", (import_id,))
         }
         removed = len(previous_rows - current_rows)
+        # Empty does not always mean superseded: rules can remove the last
+        # result in a retained export. Keep it eligible for the undo rebuild.
+        # A parsed export that lost ownership to another import is genuinely
+        # superseded and must not regain that ownership on a routine re-read.
+        prior_metadata = json.loads(superseded["metadata_json"] or "{}") if superseded else {}
+        retry_empty = not current_rows and not (parsed.aggregates or parsed.workouts or parsed.events) and (
+            (rules is not None and parsed.raw_record_count > 0)
+            or bool(prior_metadata.get("rebuild_after_exclusion"))
+        )
+        if retry_empty:
+            metadata["rebuild_after_exclusion"] = True
+        connection.execute("UPDATE device_imports SET metadata_json=? WHERE id=?",
+                           (json.dumps(metadata, ensure_ascii=False), import_id))
         connection.execute(
             """INSERT INTO audit_events(owner_user_id, actor_user_id, action, entity_type, entity_id, details_json, created_at)
                VALUES (?, ?, 'device_export_imported', 'device_import', ?, ?, ?)""",

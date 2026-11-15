@@ -30,7 +30,7 @@ CONCEPT_DEFINITIONS: list[dict[str, object]] = [
     {"name": "Weekly blood pressure reading count", "category": "cardiovascular", "unit": "count", "aliases": ["weekly blood pressure reading count"]},
     {"name": "White blood cell count", "category": "hematology", "unit": "10^9/L", "aliases": ["лейкоцити (wbc)", "лейкоцити", "wbc"]},
     {"name": "Red blood cell count", "category": "hematology", "unit": "10^12/L", "aliases": ["еритроцити (rbc)", "еритроцити", "rbc"]},
-    {"name": "Hemoglobin", "category": "hematology", "unit": "g/L", "aliases": ["гемоглобін (hgb)", "гемоглобін", "hgb"]},
+    {"name": "Hemoglobin", "category": "hematology", "unit": "g/L", "aliases": ["гемоглобін (hgb)", "гемоглобін", "hgb", "hb"]},
     {"name": "Hematocrit", "category": "hematology", "unit": "%", "aliases": ["гематокрит (hct)", "гематокрит (нст)", "гематокрит", "hct"]},
     {"name": "Mean corpuscular volume", "category": "hematology", "unit": "fL", "aliases": ["середній об'єм еритроцита (mcv)", "mcv"]},
     # «(МСН)» and «(МСНС)» are Cyrillic homoglyphs of MCH and MCHC, identical on
@@ -50,10 +50,10 @@ CONCEPT_DEFINITIONS: list[dict[str, object]] = [
     {"name": "Total protein", "category": "liver", "unit": "g/L", "aliases": ["білок загальний", "загальний білок", "total protein"]},
     {"name": "Urea", "category": "renal", "unit": "mmol/L", "aliases": ["сечовина", "urea"]},
     {"name": "Creatinine", "category": "renal", "unit": "µmol/L", "aliases": ["креатинін", "creatinine"]},
-    # Calculated by ``anamna.derived`` from each creatinine reading
-    # (CKD-EPI 2021, race-free) and also the concept a laboratory-printed eGFR
-    # resolves to; the calculation steps aside where the report printed one.
-    {"name": "Estimated glomerular filtration rate (CKD-EPI 2021)", "category": "renal", "unit": "mL/min/1.73m²", "aliases": ["estimated glomerular filtration rate (ckd-epi 2021)", "estimated glomerular filtration rate", "egfr (ckd-epi 2021)", "egfr", "ckd-epi", "швидкість клубочкової фільтрації", "розрахункова швидкість клубочкової фільтрації", "швидкість клубочкової фільтрації (ckd-epi)", "ршкф", "шкф", "ршкф (ckd-epi)", "шкф (ckd-epi)", "рскф", "скф"]},
+    # Anamna's creatinine calculation has an explicit equation identity. A
+    # laboratory's bare eGFR/CKD-EPI label does not establish its model/year.
+    {"name": "Estimated glomerular filtration rate (CKD-EPI 2021)", "category": "renal", "unit": "mL/min/1.73m²", "aliases": ["estimated glomerular filtration rate (ckd-epi 2021)", "egfr (ckd-epi 2021)", "ckd-epi 2021", "ckd-epi2021", "швидкість клубочкової фільтрації (ckd-epi 2021)", "ршкф (ckd-epi 2021)", "шкф (ckd-epi 2021)"]},
+    {"name": "Estimated glomerular filtration rate, reported", "category": "renal", "unit": "mL/min/1.73m²", "aliases": ["estimated glomerular filtration rate", "egfr", "ckd-epi", "швидкість клубочкової фільтрації", "розрахункова швидкість клубочкової фільтрації", "швидкість клубочкової фільтрації (ckd-epi)", "ршкф", "шкф", "ршкф (ckd-epi)", "шкф (ckd-epi)", "рскф", "скф", "egfr (ckd-epi 2009)", "egfr (mdrd)"]},
     {"name": "Uric acid", "category": "metabolic", "unit": "µmol/L", "aliases": ["сечова кислота", "uric acid"]},
     {"name": "Total bilirubin", "category": "liver", "unit": "µmol/L", "aliases": ["білірубін загальний", "total bilirubin"]},
     {"name": "Direct bilirubin", "category": "liver", "unit": "µmol/L", "aliases": ["білірубін прямий", "direct bilirubin"]},
@@ -67,7 +67,9 @@ CONCEPT_DEFINITIONS: list[dict[str, object]] = [
     {"name": "HDL cholesterol", "category": "lipids", "unit": "mmol/L", "aliases": ["ліпопротеїди високої щільності (лпвщ", "ліпопротеїди високої щільності (лпвщ, hdl)", "ліпопротеїди високої щільності", "лпвщ", "hdl"]},
     {"name": "VLDL cholesterol", "category": "lipids", "unit": "mmol/L", "aliases": ["ліпопротеїди дуже низької щільності", "ліпопротеїди дуже низької щільності (лпднщ)", "лпднщ", "vldl"]},
     {"name": "Triglycerides", "category": "lipids", "unit": "mmol/L", "aliases": ["тригліцериди", "triglycerides"]},
-    {"name": "Atherogenic coefficient", "category": "lipids", "unit": "ratio", "aliases": ["коефіцієнт атерогенності", "коефіцієнт атерогенності (ка)", "atherogenic coefficient", "atherogenic index"]},
+    # Bare "atherogenic index" does not specify an equation: the atherogenic
+    # index of plasma uses log(TG/HDL), a different quantity from (TC-HDL)/HDL.
+    {"name": "Atherogenic coefficient", "category": "lipids", "unit": "ratio", "aliases": ["коефіцієнт атерогенності", "коефіцієнт атерогенності (ка)", "atherogenic coefficient"]},
     {"name": "Thyroid stimulating hormone", "category": "thyroid", "unit": "mIU/L", "aliases": ["тиреотропний гормон (tsh)", "тиреотропний гормон. високочутливий, біотин-незалежний", "тиреотропний гормон", "ттг", "tsh"]},
     {"name": "Free triiodothyronine", "category": "thyroid", "unit": "pmol/L", "aliases": ["трийодтиронін вільний (ft3)", "ft3", "трийодтиронін вільний (t3 вільний)"]},
     {"name": "Free thyroxine", "category": "thyroid", "unit": "pmol/L", "aliases": ["тироксин вільний (ft4)", "тироксин вільний (t4 вільний)", "ft4"]},
@@ -206,22 +208,22 @@ CONCEPT_DEFINITIONS: list[dict[str, object]] = [
     # which has no -%/-абс. suffix and sits under «ручна лейкоформула».
     {"name": "Granulocytes", "category": "hematology", "unit": "%", "aliases": ["відносне значення гранулоцитів (gra%)", "gra%", "granulocytes", "нейтрофіли (gran)-%"]},
     {"name": "Granulocytes, absolute", "category": "hematology", "unit": "10^9/L", "aliases": ["абсолютне значення гранулоцитів (gra#)", "gra#", "granulocytes, absolute", "нейтрофіли (gran)-абс."]},
-    {"name": "Mixed white cells", "category": "hematology", "unit": "%", "aliases": ["відносне значення суміші (моноцити, базофіли та еозинофіли) (mid%)", "відносне значення суміші (моноцити, базофіли та еозинофіли)", "моноцити (mid)-%"]},
-    {"name": "Mixed white cells, absolute", "category": "hematology", "unit": "10^9/L", "aliases": ["абсолютне значення суміші (моноцити, базофіли та еозинофіли) (mid#)", "абсолютне значення суміші (моноцити, базофіли та еозинофіли)", "моноцити (mid)-абс."]},
+    {"name": "Mixed white cells", "category": "hematology", "unit": "%", "aliases": ["відносне значення суміші (моноцити, базофіли та еозинофіли) (mid%)", "відносне значення суміші (моноцити, базофіли та еозинофіли)", "моноцити (mid)-%", "mid%"]},
+    {"name": "Mixed white cells, absolute", "category": "hematology", "unit": "10^9/L", "aliases": ["абсолютне значення суміші (моноцити, базофіли та еозинофіли) (mid#)", "абсолютне значення суміші (моноцити, базофіли та еозинофіли)", "моноцити (mid)-абс.", "mid#"]},
     # The two «ширина розподілу еритроцитів ...» aliases below look swapped and
     # are not: Expert Hospital prints "коефіцієнт варіації" above values in F/л
     # (an SD spread) and "стандартне відхилення" above values in % (a CV one).
     # The parenthesised code is the reliable half of that label, so each alias
     # is filed by its code and by the unit its values actually arrive in.
-    {"name": "Red cell distribution width, CV", "category": "hematology", "unit": "%", "aliases": ["ширина розподілу еритроцитів (стандартне відхилення) (rdw-cv)", "ширина розподілення еритроцитів (rdw-cv)", "ширина розподілу еритроцитів по об'ємі (rdw-cv)", "ширина розподілення еритроцитів", "ширина розподілу еритроцитів (rdw)"]},
-    {"name": "Red cell distribution width, SD", "category": "hematology", "unit": "fL", "aliases": ["ширина розподілу еритроцитів (коефіцієнт варіації) (rdw-sd)", "ширина розподілення еритроцитів (rdw-sd)", "ширина розподілу еритроцитів (rdw-sd)"]},
+    {"name": "Red cell distribution width, CV", "category": "hematology", "unit": "%", "aliases": ["ширина розподілу еритроцитів (стандартне відхилення) (rdw-cv)", "ширина розподілення еритроцитів (rdw-cv)", "ширина розподілу еритроцитів по об'ємі (rdw-cv)", "ширина розподілення еритроцитів", "ширина розподілу еритроцитів (rdw)", "rdw-cv"]},
+    {"name": "Red cell distribution width, SD", "category": "hematology", "unit": "fL", "aliases": ["ширина розподілу еритроцитів (коефіцієнт варіації) (rdw-sd)", "ширина розподілення еритроцитів (rdw-sd)", "ширина розподілу еритроцитів (rdw-sd)", "rdw-sd"]},
     {"name": "Platelet distribution width", "category": "hematology", "unit": "%", "aliases": ["відносна ширина розподілу тромбоцитів за об'ємом (pdw)", "ширина розподілу тромбоцитів (pdw)"]},
     # Kept apart from the relative PDW above rather than merged into it: that
     # one arrives as ~12 %, this one as ~11 fL.  One series holding both would
     # read as a platelet population that halved and recovered between visits.
     {"name": "Platelet distribution width, SD", "category": "hematology", "unit": "fL", "aliases": ["ширина розподілення тромбоцитів за обсягами (pdw)"]},
     {"name": "Seromucoids", "category": "inflammation", "unit": "units", "aliases": ["серомукоїди"]},
-    {"name": "Platelet large cell ratio", "category": "hematology", "unit": "%", "aliases": ["коефіцієнт великих тромбоцитів (p-lcr)", "p-lcr коефіцієнт великих тромбоцитів"]},
+    {"name": "Platelet large cell ratio", "category": "hematology", "unit": "%", "aliases": ["коефіцієнт великих тромбоцитів (p-lcr)", "p-lcr коефіцієнт великих тромбоцитів", "p-lcr"]},
     {"name": "Plateletcrit", "category": "hematology", "unit": "%", "aliases": ["тромбокрит (pct)", "тромбокрит (рст)", "тромбокрит (pст)", "тромбокрит"]},
     {"name": "Activated partial thromboplastin time", "category": "coagulation", "unit": "s", "aliases": ["ачтч", "aptt", "активований частковий тромбопластиновий час (ачтч,артт)"]},
     {"name": "Prothrombin time", "category": "coagulation", "unit": "s", "aliases": ["птч (протромбіновий час)", "протромбіновий час", "протромбіновий час (пч)", "пч", "протромбіновий час (пч, рт, сек.)"]},
@@ -247,7 +249,7 @@ CONCEPT_DEFINITIONS: list[dict[str, object]] = [
     # «Каламутність(рівень) (C-CLOUD) - - -».
     {"name": "Urine appearance", "category": "urinalysis", "unit": None, "value_type": "text", "aliases": ["прозорість", "urine clarity", "каламутність", "каламутність(рівень) (c-cloud)"]},
     {"name": "Urine colour", "category": "urinalysis", "unit": None, "value_type": "text", "aliases": ["колір", "колір сечі (c-color)", "urine color", "urine colour"]},
-    {"name": "Urine pH", "category": "urinalysis", "unit": None, "aliases": ["рн (c-ph)", "ph сечі", "urine ph"]},
+    {"name": "Urine pH", "category": "urinalysis", "unit": None, "aliases": ["рн (c-ph)", "ph сечі", "urine ph", "рн"]},
     {"name": "Urine specific gravity", "category": "urinalysis", "unit": None, "aliases": ["питома вага", "питома вага (c-s.g.(ref))", "питома вага, г/мл", "відносна щільність", "питома густина", "urine specific gravity", "specific gravity"]},
     {"name": "Urine protein", "category": "urinalysis", "unit": "g/L", "value_type": "mixed", "aliases": ["білок в сечі", "білок (c-pro)", "білок в сечі, г/л", "білок", "urine protein"]},
     # "mixed" like Urine protein: a numeric strip reading of «Глюкоза» must not fall through to Blood glucose.
@@ -295,15 +297,15 @@ CONCEPT_DEFINITIONS: list[dict[str, object]] = [
     # made concept_for_alias refuse those rows, minting a learned concept per
     # vendor spelling -- one analyte, two or three half-length trends.
     {"name": "Squamous epithelial cells in urine", "category": "urinalysis", "unit": None, "value_type": "mixed", "aliases": ["плоский епітелій", "клітини плоского епітелію в мкл (squa.ec)", "клітини плоского епітелію, в п/з", "клітини плоского епітелію", "squamous epithelial cells in urine", "епітелій плоский"]},
-    {"name": "Transitional epithelial cells in urine", "category": "urinalysis", "unit": None, "value_type": "mixed", "aliases": ["перехідний епітелій", "клітини перехідного епітелію в мкл (tran.ec)", "клітини перехідного епітелію", "transitional epithelial cells in urine", "епітелій перехідний"]},
-    {"name": "Renal epithelial cells in urine", "category": "urinalysis", "unit": None, "value_type": "mixed", "aliases": ["нирковий епітелій", "клітини ниркового епітелію (rtec)", "клітини ниркового епітелію", "renal epithelial cells in urine", "епітелій нирковий"]},
-    {"name": "Hyaline casts in urine", "category": "urinalysis", "unit": None, "value_type": "mixed", "aliases": ["циліндри гіалінові", "гіалінові циліндри", "гіалінові циліндри в мкл (hy.cast)", "hyaline casts in urine"]},
-    {"name": "Granular casts in urine", "category": "urinalysis", "unit": None, "value_type": "text", "aliases": ["циліндри зернисті", "зернисті циліндри", "granular casts in urine"]},
-    {"name": "Epithelial casts in urine", "category": "urinalysis", "unit": None, "value_type": "text", "aliases": ["циліндри епітеліальні", "епітеліальні циліндри", "epithelial casts in urine"]},
+    {"name": "Transitional epithelial cells in urine", "category": "urinalysis", "unit": None, "value_type": "mixed", "aliases": ["перехідний епітелій", "клітини перехідного епітелію в мкл (tran.ec)", "клітини перехідного епітелію", "transitional epithelial cells in urine", "епітелій перехідний", "клітини перехідного епітелію , в п/з"]},
+    {"name": "Renal epithelial cells in urine", "category": "urinalysis", "unit": None, "value_type": "mixed", "aliases": ["нирковий епітелій", "клітини ниркового епітелію (rtec)", "клітини ниркового епітелію", "renal epithelial cells in urine", "епітелій нирковий", "клітини ниркового епітелію , в п/з"]},
+    {"name": "Hyaline casts in urine", "category": "urinalysis", "unit": None, "value_type": "mixed", "aliases": ["циліндри гіалінові", "гіалінові циліндри", "гіалінові циліндри в мкл (hy.cast)", "hyaline casts in urine", "циліндри гіалінові, в п/з"]},
+    {"name": "Granular casts in urine", "category": "urinalysis", "unit": None, "value_type": "text", "aliases": ["циліндри зернисті", "зернисті циліндри", "granular casts in urine", "циліндри зернисті, в п/з"]},
+    {"name": "Epithelial casts in urine", "category": "urinalysis", "unit": None, "value_type": "text", "aliases": ["циліндри епітеліальні", "епітеліальні циліндри", "epithelial casts in urine", "циліндри епітеліальні , в п/з"]},
     {"name": "Brown-pigmented casts in urine", "category": "urinalysis", "unit": None, "value_type": "text", "aliases": ["буропігментовані циліндри", "brown-pigmented casts in urine", "циліндри буропігментовані"]},
-    {"name": "Waxy casts in urine", "category": "urinalysis", "unit": None, "value_type": "text", "aliases": ["циліндри воскоподібні", "восковидні циліндри", "воскоподібні циліндри", "waxy casts in urine", "циліндри восковидні"]},
+    {"name": "Waxy casts in urine", "category": "urinalysis", "unit": None, "value_type": "text", "aliases": ["циліндри воскоподібні", "восковидні циліндри", "воскоподібні циліндри", "waxy casts in urine", "циліндри восковидні", "циліндри воскоподібні, в п/з"]},
     {"name": "Urine mucus", "category": "urinalysis", "unit": None, "value_type": "text", "aliases": ["слиз", "слиз, в п/з", "urine mucus"]},
-    {"name": "Urine salts", "category": "urinalysis", "unit": None, "value_type": "text", "aliases": ["солі", "urine salts"]},
+    {"name": "Urine salts", "category": "urinalysis", "unit": None, "value_type": "text", "aliases": ["солі", "urine salts", "солі, в п/з"]},
     {"name": "H. pylori stool antigen", "category": "infection", "unit": None, "value_type": "text", "aliases": ["h.pylori антиген у калі (якісне визначення)", "h. pylori stool antigen", "хелікобактер пілорі, кал"]},
     # Synevo prints «HBcorAg, антитіла сумарні»: total antibodies to the core
     # antigen, not the antigen itself.  Renamed from "Hepatitis B core antigen
@@ -385,8 +387,6 @@ CONCEPT_DEFINITIONS: list[dict[str, object]] = [
     # with its id kept (CONCEPT_ID_OVERRIDES).  Expert Hospital prints the same
     # strip result as «Лейкоцити в сечі, кл/мкл» in its chemistry block.
     {"name": "Urine leukocytes (dipstick)", "category": "urinalysis", "unit": "cells/µL", "value_type": "mixed", "aliases": ["лейкоцити (c-leu)", "лейкоцити в сечі, кл/мкл", "лейкоцитарна естераза", "лейкоцитестераза", "leukocyte esterase", "urine leukocyte esterase", "urine leukocytes (dipstick)"]},
-    {"name": "Urine pH", "category": "urinalysis", "unit": None, "aliases": ["рн"]},
-    {"name": "Urine salts", "category": "urinalysis", "unit": None, "value_type": "text", "aliases": ["солі, в п/з"]},
     # The coprogram.  Two pages of it produced nothing at all until the
     # column parser read the table, so every one of these is a result that
     # was in the record's source documents and not in the record.  Each name
@@ -427,12 +427,6 @@ CONCEPT_DEFINITIONS: list[dict[str, object]] = [
     {"name": "Stool protozoa", "category": "stool", "unit": None, "value_type": "text", "aliases": ["найпростіші (кал)", "найпростіші (цисти лямблій) (кал)", "вегетативні форми і цисти найпростіших (кал)", "вегетативні форми і цисти найпростіших (parasep) (кал)"]},
     {"name": "Stool helminth eggs", "category": "stool", "unit": None, "value_type": "text", "aliases": ["яйця гельмінтів (кал)", "яйця гельмінтів (parasep) (кал)", "яйця глистів (кал)"]},
     {"name": "Stool yeast-like fungal elements", "category": "stool", "unit": None, "value_type": "text", "aliases": ["елементи гриба, подібного до дріжджевого (кал)", "дріжджовий грибок (кал)"]},
-    {"name": "Transitional epithelial cells in urine", "category": "urinalysis", "unit": None, "value_type": "mixed", "aliases": ["клітини перехідного епітелію , в п/з"]},
-    {"name": "Renal epithelial cells in urine", "category": "urinalysis", "unit": None, "value_type": "mixed", "aliases": ["клітини ниркового епітелію , в п/з"]},
-    {"name": "Hyaline casts in urine", "category": "urinalysis", "unit": None, "value_type": "mixed", "aliases": ["циліндри гіалінові, в п/з"]},
-    {"name": "Granular casts in urine", "category": "urinalysis", "unit": None, "value_type": "text", "aliases": ["циліндри зернисті, в п/з"]},
-    {"name": "Epithelial casts in urine", "category": "urinalysis", "unit": None, "value_type": "text", "aliases": ["циліндри епітеліальні , в п/з"]},
-    {"name": "Waxy casts in urine", "category": "urinalysis", "unit": None, "value_type": "text", "aliases": ["циліндри воскоподібні, в п/з"]},
     # Esculab's automated urinalysis reports four sediment aggregates the
     # manual-microscopy definitions above have no counterpart for.  Named here
     # so their readings stop minting learned Ukrainian-only concepts.
@@ -445,10 +439,13 @@ CONCEPT_DEFINITIONS: list[dict[str, object]] = [
     {"name": "La/SS-B antibodies", "category": "autoimmune", "unit": "kU/L", "aliases": ["la/ss-b"]},
     {"name": "CENP-B antibodies", "category": "autoimmune", "unit": "kU/L", "aliases": ["cenp-b"]},
     {"name": "Scl-70 antibodies", "category": "autoimmune", "unit": "kU/L", "aliases": ["scl-70"]},
-    {"name": "Double-stranded DNA antibodies", "category": "autoimmune", "unit": "kU/L", "aliases": ["dsdna"]},
+    {"name": "Double-stranded DNA antibodies", "category": "autoimmune", "unit": "kU/L", "aliases": [
+        "dsdna", "днк двоспіральна (dsdna), антитіла igg", "ana. днк двоспіральна (dsdna), антитіла igg", "днк двоспіральна, антитіла igg"]},
     {"name": "Jo-1 antibodies", "category": "autoimmune", "unit": "kU/L", "aliases": ["jo-1"]},
-    {"name": "Myeloperoxidase antibodies", "category": "autoimmune", "unit": "kU/L", "aliases": ["mpo"]},
-    {"name": "Proteinase 3 antibodies", "category": "autoimmune", "unit": "kU/L", "aliases": ["pr3"]},
+    {"name": "Myeloperoxidase antibodies", "category": "autoimmune", "unit": "kU/L", "aliases": [
+        "mpo", "мієлопероксидаза (mpo), антитіла igg", "мієлопероксидаза (mpo), антитіла igg_anca"]},
+    {"name": "Proteinase 3 antibodies", "category": "autoimmune", "unit": "kU/L", "aliases": [
+        "pr3", "протеїназа 3 (pr3), антитіла igg", "протеїназа 3 (pr3), антитіла igg_anca", "антитіла igg до протеїнази (pr3, с-anca) elia"]},
     {"name": "AMA-M2 antibodies", "category": "autoimmune", "unit": "kU/L", "aliases": ["ama m2"]},
     {"name": "LC1 antibodies", "category": "autoimmune", "unit": "kU/L", "aliases": ["lc 1"]},
     {"name": "LKM1 antibodies", "category": "autoimmune", "unit": "kU/L", "aliases": ["lkm 1"]},
@@ -487,7 +484,7 @@ CONCEPT_DEFINITIONS: list[dict[str, object]] = [
     {"name": "Alpha-2 globulins", "category": "liver", "unit": "%", "aliases": ["α2 глобуліни", "альфа2 глобуліни"]},
     {"name": "Beta globulins", "category": "liver", "unit": "%", "aliases": ["β глобуліни", "бета глобуліни"]},
     {"name": "Gamma globulins", "category": "liver", "unit": "%", "aliases": ["γ глобуліни", "гамма глобуліни"]},
-    {"name": "Albumin to globulin ratio", "category": "liver", "unit": None, "aliases": ["а/г коефіцієнт"]},
+    {"name": "Albumin to globulin ratio", "category": "liver", "unit": "ratio", "aliases": ["а/г коефіцієнт"]},
     {"name": "Nucleated red blood cell fraction", "category": "hematology", "unit": "%", "aliases": ["nrbc-фракція ядровмістних еритроцитів"]},
     {"name": "Atypical lymphocytes", "category": "hematology", "unit": "%", "aliases": ["атипові лімфоцити"]},
     {"name": "Reactive lymphocytes", "category": "hematology", "unit": "%", "aliases": ["реактивні лімфоцити"]},
@@ -594,7 +591,7 @@ CONCEPT_DEFINITIONS: list[dict[str, object]] = [
     {"name": "EEG theta rhythm amplitude", "category": "neurophysiology", "unit": "µV", "aliases": ["eeg theta rhythm amplitude"]},
     # Breath tests.  Hydrogen per time point; the substrate and minute are
     # the specimen («глюкоза, 15 хв»), so two protocols never share a series.
-    {"name": "Breath hydrogen", "category": "breath_test", "unit": "ppm", "aliases": ["breath hydrogen", "водень у видихуваному повітрі"]},
+    {"name": "Breath hydrogen", "category": "breath_test", "unit": "ppm", "aliases": ["breath hydrogen", "водень у видихуваному повітрі", "Базовий рівень водню (H2)"]},
     {"name": "H. pylori urea breath test", "category": "infection", "unit": None, "aliases": ["h. pylori urea breath test", "дихальний тест на helicobacter pylori"]},
     # The effective dose of one X-ray or CT exposure, which Ukrainian
     # radiology departments must record per patient (ДСанПіН, наказ МОЗ
@@ -632,6 +629,113 @@ CONCEPT_DEFINITIONS: list[dict[str, object]] = [
     {"name": "QTc (Framingham)", "category": "cardiovascular", "unit": "ms", "aliases": ["qtc (framingham)", "qtc (sagie/framingham)", "qtc framingham", "qtc за фремінгемом"]},
 ]
 
+
+# Hosted catalogue connection audit: distinct reported analytes, without
+# invented clinical thresholds. Serum/plasma aliases never claim urine tests.
+CONCEPT_DEFINITIONS.extend([
+    {'name': 'Globulin, calculated', 'category': 'liver', 'unit': 'g/L', 'aliases': ['calculated globulin', 'globulin, calculated', 'Глобуліни (розрахунок)', 'Глобулін розрахунковий'], 'specimen_family': 'hematology'},
+    {'name': '1-Methylhistidine, serum or plasma', 'category': 'metabolic', 'unit': 'µmol/L', 'aliases': ['1-Methylhistidine', '1-Метилгістидин'], 'specimen_family': 'hematology'},
+    {'name': '3-Methylhistidine, serum or plasma', 'category': 'metabolic', 'unit': 'µmol/L', 'aliases': ['3-Methylhistidine', '3-Метилгістидин'], 'specimen_family': 'hematology'},
+    {'name': 'Alpha-aminoadipic acid, serum or plasma', 'category': 'metabolic', 'unit': 'µmol/L', 'aliases': ['Alpha-aminoadipic acid', 'α-Аміноадипінова кислота'], 'specimen_family': 'hematology'},
+    {'name': 'Alpha-aminobutyric acid, serum or plasma', 'category': 'metabolic', 'unit': 'µmol/L', 'aliases': ['Alpha-aminobutyric acid', 'α-Аміномасляна кислота'], 'specimen_family': 'hematology'},
+    {'name': 'Beta-alanine, serum or plasma', 'category': 'metabolic', 'unit': 'µmol/L', 'aliases': ['Beta-alanine', 'β-Аланін'], 'specimen_family': 'hematology'},
+    {'name': 'Beta-aminoisobutyric acid, serum or plasma', 'category': 'metabolic', 'unit': 'µmol/L', 'aliases': ['Beta-aminoisobutyric acid', 'β-Аміноізомасляна кислота'], 'specimen_family': 'hematology'},
+    {'name': 'Gamma-aminobutyric acid, serum or plasma', 'category': 'metabolic', 'unit': 'µmol/L', 'aliases': ['Gamma-aminobutyric acid', 'γ-Аміномасляна кислота'], 'specimen_family': 'hematology'},
+    {'name': 'Alanine, serum or plasma', 'category': 'metabolic', 'unit': 'µmol/L', 'aliases': ['Alanine', 'Аланін'], 'specimen_family': 'hematology'},
+    {'name': 'Arginine, serum or plasma', 'category': 'metabolic', 'unit': 'µmol/L', 'aliases': ['Arginine', 'Аргінін'], 'specimen_family': 'hematology'},
+    {'name': 'Asparagine, serum or plasma', 'category': 'metabolic', 'unit': 'µmol/L', 'aliases': ['Asparagine', 'Аспарагін'], 'specimen_family': 'hematology'},
+    {'name': 'Aspartic acid, serum or plasma', 'category': 'metabolic', 'unit': 'µmol/L', 'aliases': ['Aspartic acid', 'Аспарагінова кислота'], 'specimen_family': 'hematology'},
+    {'name': 'Valine, serum or plasma', 'category': 'metabolic', 'unit': 'µmol/L', 'aliases': ['Valine', 'Валін'], 'specimen_family': 'hematology'},
+    {'name': 'Glutamine, serum or plasma', 'category': 'metabolic', 'unit': 'µmol/L', 'aliases': ['Glutamine', 'Глутамін'], 'specimen_family': 'hematology'},
+    {'name': 'Glutamic acid, serum or plasma', 'category': 'metabolic', 'unit': 'µmol/L', 'aliases': ['Glutamic acid', 'Глутамінова кислота'], 'specimen_family': 'hematology'},
+    {'name': 'Glycine, serum or plasma', 'category': 'metabolic', 'unit': 'µmol/L', 'aliases': ['Glycine', 'Гліцин'], 'specimen_family': 'hematology'},
+    {'name': 'Homocitrulline, serum or plasma', 'category': 'metabolic', 'unit': 'µmol/L', 'aliases': ['Homocitrulline', 'Гомоцитрулін'], 'specimen_family': 'hematology'},
+    {'name': 'Hydroxylysine, serum or plasma', 'category': 'metabolic', 'unit': 'µmol/L', 'aliases': ['Hydroxylysine', 'Гідроксилізин'], 'specimen_family': 'hematology'},
+    {'name': 'Hydroxyproline, serum or plasma', 'category': 'metabolic', 'unit': 'µmol/L', 'aliases': ['Hydroxyproline', 'Гідроксипролін'], 'specimen_family': 'hematology'},
+    {'name': 'Histidine, serum or plasma', 'category': 'metabolic', 'unit': 'µmol/L', 'aliases': ['Histidine', 'Гістидин'], 'specimen_family': 'hematology'},
+    {'name': 'Isoleucine, serum or plasma', 'category': 'metabolic', 'unit': 'µmol/L', 'aliases': ['Isoleucine', 'Ізолейцин'], 'specimen_family': 'hematology'},
+    {'name': 'Carnosine, serum or plasma', 'category': 'metabolic', 'unit': 'µmol/L', 'aliases': ['Carnosine', 'Карнозин'], 'specimen_family': 'hematology'},
+    {'name': 'Leucine, serum or plasma', 'category': 'metabolic', 'unit': 'µmol/L', 'aliases': ['Leucine', 'Лейцин'], 'specimen_family': 'hematology'},
+    {'name': 'Lysine, serum or plasma', 'category': 'metabolic', 'unit': 'µmol/L', 'aliases': ['Lysine', 'Лізин'], 'specimen_family': 'hematology'},
+    {'name': 'Methionine, serum or plasma', 'category': 'metabolic', 'unit': 'µmol/L', 'aliases': ['Methionine', 'Метіонін'], 'specimen_family': 'hematology'},
+    {'name': 'Ornithine, serum or plasma', 'category': 'metabolic', 'unit': 'µmol/L', 'aliases': ['Ornithine', 'Орнітин'], 'specimen_family': 'hematology'},
+    {'name': 'Proline, serum or plasma', 'category': 'metabolic', 'unit': 'µmol/L', 'aliases': ['Proline', 'Пролін'], 'specimen_family': 'hematology'},
+    {'name': 'Sarcosine, serum or plasma', 'category': 'metabolic', 'unit': 'µmol/L', 'aliases': ['Sarcosine', 'Саркозін'], 'specimen_family': 'hematology'},
+    {'name': 'Serine, serum or plasma', 'category': 'metabolic', 'unit': 'µmol/L', 'aliases': ['Serine', 'Серин'], 'specimen_family': 'hematology'},
+    {'name': 'Taurine, serum or plasma', 'category': 'metabolic', 'unit': 'µmol/L', 'aliases': ['Taurine', 'Таурин'], 'specimen_family': 'hematology'},
+    {'name': 'Tyrosine, serum or plasma', 'category': 'metabolic', 'unit': 'µmol/L', 'aliases': ['Tyrosine', 'Тирозин'], 'specimen_family': 'hematology'},
+    {'name': 'Threonine, serum or plasma', 'category': 'metabolic', 'unit': 'µmol/L', 'aliases': ['Threonine', 'Треонін'], 'specimen_family': 'hematology'},
+    {'name': 'Tryptophan, serum or plasma', 'category': 'metabolic', 'unit': 'µmol/L', 'aliases': ['Tryptophan', 'Триптофан'], 'specimen_family': 'hematology'},
+    {'name': 'Phenylalanine, serum or plasma', 'category': 'metabolic', 'unit': 'µmol/L', 'aliases': ['Phenylalanine', 'Фенілаланін'], 'specimen_family': 'hematology'},
+    {'name': 'Phosphoethanolamine, serum or plasma', 'category': 'metabolic', 'unit': 'µmol/L', 'aliases': ['Phosphoethanolamine', 'Фосфоетаноламін'], 'specimen_family': 'hematology'},
+    {'name': 'Phosphoserine, serum or plasma', 'category': 'metabolic', 'unit': 'µmol/L', 'aliases': ['Phosphoserine', 'Фосфосерин'], 'specimen_family': 'hematology'},
+    {'name': 'Cystathionine, serum or plasma', 'category': 'metabolic', 'unit': 'µmol/L', 'aliases': ['Cystathionine', 'Цистатіонін'], 'specimen_family': 'hematology'},
+    {'name': 'Cystine, serum or plasma', 'category': 'metabolic', 'unit': 'µmol/L', 'aliases': ['Cystine', 'Цистін'], 'specimen_family': 'hematology'},
+    {'name': 'Citrulline, serum or plasma', 'category': 'metabolic', 'unit': 'µmol/L', 'aliases': ['Citrulline', 'Цитрулін'], 'specimen_family': 'hematology'},
+    {'name': 'Ethanolamine, serum or plasma', 'category': 'metabolic', 'unit': 'µmol/L', 'aliases': ['Ethanolamine', 'Етаноламін'], 'specimen_family': 'hematology'},
+    {'name': 'Total beta-hCG', 'category': 'hormones', 'unit': 'IU/L', 'aliases': ['β-ХГЛ загальний (хоріонічний гонадотропін загальний)', 'beta-hcg, total', 'total hcg'], 'specimen_family': 'hematology'},
+    {'name': 'Anti-Mullerian hormone', 'category': 'hormones', 'unit': 'ng/mL', 'aliases': ['Антимюллерів гормон (АМГ, MIS)', 'Антимюллерів гормон Advanced (АМГ, AMH Advanced)', 'amh', 'anti-müllerian hormone'], 'specimen_family': 'hematology'},
+    {'name': 'Estradiol', 'category': 'hormones', 'unit': 'pg/mL', 'aliases': ['Естрадіол (E2)', 'e2'], 'specimen_family': 'hematology'},
+    {'name': 'Prolactin', 'category': 'hormones', 'unit': 'ng/mL', 'aliases': ['Пролактин (ПРЛ)', 'prolactin'], 'specimen_family': 'hematology'},
+    {'name': 'Cortisol', 'category': 'hormones', 'unit': 'µg/dL', 'aliases': ['Кортизол', 'serum cortisol'], 'specimen_family': 'hematology'},
+    {'name': 'Pancreatic amylase', 'category': 'pancreas', 'unit': 'U/L', 'aliases': ['Амілаза панкреатична', 'pancreatic alpha-amylase'], 'specimen_family': 'hematology'},
+    {'name': 'Total immunoglobulin A', 'category': 'immunology', 'unit': 'g/L', 'aliases': ['Концентрація Ig А в сироватці крові', 'total iga', 'serum iga'], 'specimen_family': 'hematology'},
+    {'name': 'Tissue transglutaminase IgG antibodies', 'category': 'autoimmune', 'unit': 'U/mL', 'aliases': ['Антитіла IgG до тканинної трансглютамінази (t-TG), ELiA', 'ttg igg'], 'value_type': 'mixed'},
+    {'name': 'Endomysial IgA antibodies', 'category': 'autoimmune', 'unit': 'titer', 'aliases': ['Ендомізіум, антитіла IgA', 'endomysial iga'], 'value_type': 'mixed'},
+    {'name': 'Gliadin IgG antibodies', 'category': 'autoimmune', 'unit': 'U/mL', 'aliases': ['антиГліадин (Gliadin) IgG', 'gliadin igg'], 'value_type': 'mixed'},
+    {'name': 'Ascaris IgG antibodies', 'category': 'infection', 'unit': None, 'aliases': ['Антитіла Іg G до аскарид (Ascaris)', 'ascaris igg'], 'value_type': 'mixed'},
+    {'name': 'Toxocara IgG antibodies', 'category': 'infection', 'unit': None, 'aliases': ['Антитіла Іg G до токсокар (Toxocara)', 'toxocara igg'], 'value_type': 'mixed'},
+    {'name': 'Giardia total antibodies', 'category': 'infection', 'unit': None, 'aliases': ['Сумарні (Ig A, Ig M, Ig G) до лямблій', 'giardia total antibodies'], 'value_type': 'mixed'},
+    {'name': 'Syphilis non-treponemal screening test', 'category': 'infection', 'unit': None, 'aliases': ['Скринінг на сифіліс (реакція мікропреципітації)'], 'value_type': 'text'},
+    {'name': 'MTHFR C677T genotype', 'category': 'immunogenetics', 'unit': None, 'aliases': ['Метілентетрагідрофолатредуктаза (MTHFR 677 C>T)', 'MTHFR 677 C>T'], 'value_type': 'text'},
+    {'name': 'MTHFR A1298C genotype', 'category': 'immunogenetics', 'unit': None, 'aliases': ['Метілентетрагідрофолатредуктаза (MTHFR 1298 A>C)', 'MTHFR 1298 A>C'], 'value_type': 'text'},
+    {'name': 'MTR A2756G genotype', 'category': 'immunogenetics', 'unit': None, 'aliases': ['В12-залежна метіонін-синтаза (MTR 2756 A>G)', 'MTR 2756 A>G'], 'value_type': 'text'},
+    {'name': 'MTRR A66G genotype', 'category': 'immunogenetics', 'unit': None, 'aliases': ['Метіонін-синтаза редуктаза (MTRR 66 A>G)', 'ПЛР. Фолатний цикл. MTRR (66 A>G)', 'MTRR 66 A>G'], 'value_type': 'text'},
+    {'name': 'HOMA index (reported, model unspecified)', 'category': 'metabolic', 'unit': 'ratio', 'aliases': ['Індекс HOMA']},
+    {'name': 'ROMA, premenopausal', 'category': 'tumour_markers', 'unit': '%', 'aliases': ['Індекс ROMA пременопауза']},
+    {'name': 'ROMA, postmenopausal', 'category': 'tumour_markers', 'unit': '%', 'aliases': ['Індекс ROMA постменопауза']},
+    {'name': 'H. pylori test, method unspecified', 'category': 'infection', 'unit': None, 'aliases': ['Helicobacter pylori'], 'value_type': 'mixed'},
+    {'name': 'Reticulocytes', 'category': 'hematology', 'unit': '%', 'aliases': ['Ретикулоцити', 'Ретикулоцити %', 'reticulocytes %', 'ret%']},
+    {'name': 'Reticulocytes, absolute', 'category': 'hematology', 'unit': '10^9/L', 'aliases': ['Ретикулоцити, абсолютна кількість', 'reticulocytes, absolute', 'ret#']},
+    {'name': 'Reticulocyte index', 'category': 'hematology', 'unit': 'ratio', 'aliases': ['Ретикулоцитарний індекс']},
+    {'name': 'Immature reticulocyte fraction', 'category': 'hematology', 'unit': '%', 'aliases': ['Фракція незрілих ретикулоцитів', 'irf']},
+    {'name': 'Reticulocytes, low fluorescence fraction', 'category': 'hematology', 'unit': '%', 'aliases': ['Фракція ретикулоцитів низької флуорисценції', 'lfr']},
+    {'name': 'Reticulocytes, medium fluorescence fraction', 'category': 'hematology', 'unit': '%', 'aliases': ['Фракція ретикулоцитів середньої флуорисценції', 'mfr']},
+    {'name': 'Reticulocytes, high fluorescence fraction', 'category': 'hematology', 'unit': '%', 'aliases': ['Фракція ретикулоцитів високої флуорисценції', 'hfr']},
+    {'name': 'Lupus anticoagulant screening time', 'category': 'coagulation', 'unit': 's', 'aliases': ['Вовчаковий антикоагулянт, скринінговий тест']},
+    {'name': 'Lupus anticoagulant confirmation time', 'category': 'coagulation', 'unit': 's', 'aliases': ['Вовчаковий антикоагулянт, підтверджуючий тест']},
+    {'name': 'Lupus anticoagulant index', 'category': 'coagulation', 'unit': 'index', 'aliases': ['LA-AUTO']},
+    {'name': 'D-dimer', 'category': 'coagulation', 'unit': 'ng/mL FEU', 'aliases': ['Д-димер', 'd dimer']},
+    {'name': 'Blood count comment', 'category': 'hematology', 'unit': None, 'aliases': ['Примітки (зак)'], 'value_type': 'text'},
+])
+
+# These catalogue quantities describe blood results. The same chemical or
+# cell can be measured in urine, saliva or CSF, but that is a distinct result
+# with its own specimen and reference information. Organ measurements share
+# some categories (renal/liver/thyroid), so those are listed by name instead.
+_BLOOD_MEASUREMENT_CATEGORIES = frozenset({
+    "hematology", "lipids", "hormones", "coagulation", "immunology",
+    "inflammation", "iron", "vitamins", "electrolytes", "autoimmune",
+    "metabolic", "tumour_markers", "allergy",
+})
+_BLOOD_MEASUREMENT_NAMES = frozenset({
+    "Urea", "Creatinine", "Estimated glomerular filtration rate (CKD-EPI 2021)",
+    "Estimated glomerular filtration rate, reported",
+    "Albumin", "Total protein", "Total bilirubin", "Direct bilirubin", "Indirect bilirubin",
+    "Alanine aminotransferase", "Aspartate aminotransferase", "Gamma-glutamyl transferase",
+    "Alkaline phosphatase", "Thymol turbidity test", "Albumin fraction", "Alpha-1 globulins",
+    "Alpha-2 globulins", "Beta globulins", "Gamma globulins", "Albumin to globulin ratio",
+    "Globulin, calculated", "Thyroid stimulating hormone", "Free triiodothyronine", "Free thyroxine",
+    "Thyroglobulin antibodies", "Thyroid peroxidase antibodies", "Alpha-amylase", "Lipase",
+    "C-peptide", "Pancreatic amylase", "Antistreptolysin O", "Hepatitis B core antibodies, total (anti-HBc)",
+    "Hepatitis B surface antigen", "Hepatitis C total antibodies", "Treponema pallidum total antibodies",
+    "Mumps virus IgG", "Mumps virus IgM", "HIV I/II rapid test", "Syphilis antibody rapid test",
+    "Hepatitis C antibody rapid test", "Hepatitis B surface antigen rapid test", "Ascaris IgG antibodies",
+    "Toxocara IgG antibodies", "Giardia total antibodies", "Syphilis non-treponemal screening test",
+})
+for _definition in CONCEPT_DEFINITIONS:
+    if _definition["category"] in _BLOOD_MEASUREMENT_CATEGORIES or _definition["name"] in _BLOOD_MEASUREMENT_NAMES:
+        _definition.setdefault("specimen_family", "hematology")
 
 #: Renamed concepts keep the id their old name slugged to, so a bookmarked
 #: /metrics/<id>, the reference library entry and every stored observation go
@@ -720,7 +824,10 @@ def clean_label(label: str) -> str:
 def _build_index() -> dict[str, list[dict[str, object]]]:
     index: dict[str, list[dict[str, object]]] = {}
     for definition in CONCEPT_DEFINITIONS:
-        for alias in definition["aliases"]:
+        # An export can use the catalogue's own English name.  It must take
+        # the same defined path as a laboratory alias, including specimen and
+        # method refinement, rather than creating an unclassified duplicate.
+        for alias in (definition["name"], *definition["aliases"]):
             bucket = index.setdefault(label_key(str(alias)), [])
             if definition not in bucket:
                 bucket.append(definition)
@@ -730,22 +837,60 @@ def _build_index() -> dict[str, list[dict[str, object]]]:
 _ALIAS_INDEX = _build_index()
 _BY_NAME = {str(definition["name"]): definition for definition in CONCEPT_DEFINITIONS}
 
+# Generic English API labels are useful only with their material. Do not seed
+# these as global aliases: bare "Protein" must not silently become urine
+# protein, and albumin is never a synonym of the total-protein measurement.
+_CONTEXTUAL_SPECIMEN_ALIASES = {
+    "urinalysis": {
+        "appearance": "Urine appearance", "clarity": "Urine appearance",
+        "color": "Urine colour", "colour": "Urine colour",
+        "protein": "Urine protein", "glucose": "Urine glucose",
+        "ketones": "Urine ketones", "ketone bodies": "Urine ketones",
+        "nitrite": "Urine nitrite", "nitrites": "Urine nitrite",
+        "bilirubin": "Urine bilirubin", "urobilinogen": "Urine urobilinogen",
+        "leukocytes": "Urine leukocytes", "leukocyte count": "Urine leukocytes",
+        "white blood cells": "Urine leukocytes", "wbc": "Urine leukocytes",
+        "erythrocytes": "Urine erythrocytes", "erythrocyte count": "Urine erythrocytes",
+        "red blood cells": "Urine erythrocytes", "rbc": "Urine erythrocytes",
+    },
+    "hematology": {
+        "leukocytes": "White blood cell count", "leukocyte count": "White blood cell count",
+        "white blood cells": "White blood cell count",
+        "erythrocytes": "Red blood cell count", "erythrocyte count": "Red blood cell count",
+        "red blood cells": "Red blood cell count",
+    },
+}
+
 #: «в п/з», «у полі зору», "HPF" -- and «поодинокі в препараті», the
 #: microscopist's word for a few cells on the slide: Synevo's manual sediment
 #: erythrocyte row prints no field at all («не виявлені, поодинокі в
 #: препараті»), only the slide, and without it the row joined the analyser's
 #: per-microlitre series.
 _PER_FIELD = re.compile(r"п\s*/\s*з|п\.\s*з|полі\s+зору|hpf|в\s+препараті", re.IGNORECASE)
+#: Synevo's strip unit, «Leu/µL» and «Ery/µL»: leukocyte esterase and
+#: peroxidase activity graded 25 = +, 100 = ++, 500 = +++.  The unit is the
+#: method; the microscopy row under the same word prints «в п/з».
 _STRIP_UNIT = re.compile(r"^\s*(leu|ery)\s*/", re.IGNORECASE)
+_URINE_STRIP_METHOD = re.compile(r"dipstick|(?:test|reagent)[ -]?strip|тест[ -]?смуж|реагентн\w*\s+смуж", re.IGNORECASE)
+_URINE_MICROSCOPY_METHOD = re.compile(r"мікроскоп|microscop|цитометр|cytometr", re.IGNORECASE)
+_LEUKOCYTE_ESTERASE_METHOD = re.compile(r"естераз|esteras", re.IGNORECASE)
+_ERYTHROCYTE_PEROXIDASE_METHOD = re.compile(r"пероксидаз|peroxidas", re.IGNORECASE)
 _RISK_TIERS = re.compile(r"ризик|risk", re.IGNORECASE)
 _PER_MICROLITRE = re.compile(r"мкл|[µμu]l\b", re.IGNORECASE)
+
+#: Urine by its Ukrainian stem.  «Сечовина» (urea) and «сечова кислота» (uric
+#: acid) are blood chemistry, not the specimen; «сечового міхура» and the
+#: sediment's «кристали сечової кислоти» are urine.
+_URINE = r"(?:сеч(?!овин|ов\w*\s+кислот)|кристал\w*\s+сечов)"
 
 #: The material a row was measured in, by the words that name it, mapped to
 #: the category of the concepts measured in it.  Word starts, so «калій»
 #: (potassium) is not stool and «кров'яний» still is blood.
 _SPECIMEN_FAMILIES = (
+    ("saliva", re.compile(r"\bслин|\bsaliva", re.IGNORECASE)),
+    ("csf", re.compile(r"\bліквор|\bcsf\b|\bcerebrospinal", re.IGNORECASE)),
     ("stool", re.compile(r"\bкал(?:у|ом|і|ов\w*)?\b|копрограм|фекал|\bstool|\bfa?eces", re.IGNORECASE)),
-    ("urinalysis", re.compile(r"\bсеч|\burine", re.IGNORECASE)),
+    ("urinalysis", re.compile(rf"\b{_URINE}|\burine|\burinalysis\b", re.IGNORECASE)),
     ("smear", re.compile(r"мазк|мазок|цитолог|пап[\s-]*тест|зішкріб|урогеніт|піхв|цервік|уретр|\bvagin|\bcervi|\bsmear", re.IGNORECASE)),
     ("hematology", re.compile(r"\bкров|сироват|плазм|\bblood|\bserum|\bplasma", re.IGNORECASE)),
 )
@@ -776,12 +921,27 @@ def specimen_family(*texts: str | None) -> str | None:
 def blood_count_unit(unit: str | None) -> bool:
     return bool(unit and _BLOOD_COUNT_UNIT.search(unit))
 
+
+def _urine_strip_method(row: dict, enzyme: re.Pattern) -> bool:
+    """The strip's own unit, or a reference that names the strip or its enzyme.
+    A concentration unit («кл/мкл») alone does not establish the strip."""
+    reference = row["reference"]
+    return bool(_STRIP_UNIT.search(row["unit"]) or (
+        not _PER_FIELD.search(row["unit"])
+        and not _URINE_MICROSCOPY_METHOD.search(reference)
+        and (enzyme.search(reference) or _URINE_STRIP_METHOD.search(reference))
+    ))
+
 #: (definition the label resolved to, test on the row, definition it belongs to).
 #: For labels that do not name their method: the unit, the report or the
 #: printed reference does, and each of these is the one place it is decided.
 _REFINEMENTS = (
-    ("Urine leukocytes", lambda row: _STRIP_UNIT.search(row["unit"]), "Urine leukocytes (dipstick)"),
-    ("Urine erythrocytes", lambda row: _STRIP_UNIT.search(row["unit"]), "Urine erythrocytes (dipstick)"),
+    ("Reticulocytes", lambda row: blood_count_unit(row["unit"]) or row["unit"].replace(" ", "").casefold() in {
+        "10^6/мкл", "10^6/μl", "10^6/ul", "10^6/µl",
+    }, "Reticulocytes, absolute"),
+    ("Reticulocytes, absolute", lambda row: row["unit"].strip() == "%", "Reticulocytes"),
+    ("Urine leukocytes", lambda row: _urine_strip_method(row, _LEUKOCYTE_ESTERASE_METHOD), "Urine leukocytes (dipstick)"),
+    ("Urine erythrocytes", lambda row: _urine_strip_method(row, _ERYTHROCYTE_PEROXIDASE_METHOD), "Urine erythrocytes (dipstick)"),
     # St. Paraskeva prints the field in the value («1-2 в п/з») rather than
     # the unit column, so all three are read.
     ("Urine leukocytes", lambda row: _PER_FIELD.search(" ".join((row["unit"], row["value_text"], row["reference"]))), "Urine leukocytes per high-power field"),
@@ -790,6 +950,28 @@ _REFINEMENTS = (
     ("Pulse rate", lambda row: row["clinical_type"] == "electrocardiogram", "ECG heart rate"),
     ("C-reactive protein", lambda row: _RISK_TIERS.search(row["reference"]), "High-sensitivity C-reactive protein"),
 )
+
+#: A method variant -> the bare-label analyte it is refined from.  The
+#: reticulocyte pair is left out: a fraction and a concentration are two
+#: quantities one report prints side by side, not one reading told two ways.
+_METHOD_BASE = {target: source for source, _test, target in _REFINEMENTS if not source.startswith("Reticulocytes")}
+
+
+def same_method_family(left: str, right: str) -> bool:
+    """Whether two definition names can be one reading: the same definition,
+    or a bare-label analyte and one of its method variants («Urine
+    leukocytes» and its dipstick or per-field reading).  Two different
+    variants are two methods, each stated, and never one reading."""
+    return left == right or _METHOD_BASE.get(left) == right or _METHOD_BASE.get(right) == left
+
+
+# The analyser may print the population name without a percent/hash suffix.
+# Its explicit unit distinguishes a concentration from a relative fraction.
+# Manual differential populations deliberately have no automatic counterpart.
+_AUTOMATED_DIFFERENTIAL = frozenset({
+    "Neutrophils", "Lymphocytes", "Monocytes", "Eosinophils", "Basophils",
+    "Immature granulocytes", "Granulocytes", "Mixed white cells",
+})
 
 
 def refine_definition(
@@ -810,10 +992,21 @@ def refine_definition(
         "reference": str(reference or ""),
         "clinical_type": clinical_type,
     }
+    name = str(definition["name"])
+    if name in _AUTOMATED_DIFFERENTIAL and blood_count_unit(unit):
+        return _BY_NAME[f"{name}, absolute"]
+    if name.endswith(", absolute") and name.removesuffix(", absolute") in _AUTOMATED_DIFFERENTIAL and row["unit"].strip() == "%":
+        return _BY_NAME[name.removesuffix(", absolute")]
     for source, test, target in _REFINEMENTS:
         if definition["name"] == source and test(row):
             return _BY_NAME[target]
     return definition
+
+
+def names_serum_or_plasma(definition: dict[str, object]) -> bool:
+    """A definition whose own name states its blood specimen («Taurine, serum
+    or plasma»): the one kind a urine title alone refuses."""
+    return str(definition["name"]).endswith(", serum or plasma")
 
 
 def foreign_categories(alias: str, specimen: str | None) -> frozenset[str]:
@@ -826,7 +1019,8 @@ def foreign_categories(alias: str, specimen: str | None) -> frozenset[str]:
 
 
 def concept_for_alias(
-    alias: str, value_type: str | None = None, category: str | None = None, specimen: str | None = None
+    alias: str, value_type: str | None = None, category: str | None = None, specimen: str | None = None,
+    *, category_binds: bool = True,
 ) -> dict[str, object] | None:
     """Resolve a printed label to a definition.
 
@@ -842,25 +1036,70 @@ def concept_for_alias(
     alias table says, so urine concepts are not candidates there.  In stool the
     Esculab «… (кал)» spelling of the label is tried first, which is how
     Synevo's bare «Форма» or «Слиз» reaches the stool concept.
+
+    ``category_binds`` says the category is the material itself (a lab
+    catalogue's, an API's), so "urinalysis" refuses a blood definition as a
+    specimen would.  ``ensure_concept`` passes False: its category comes from
+    the report's title, and an order titled «Загальний аналіз сечі ·
+    Біохімічний аналіз» carries creatinine, haemoglobin and TSH rows too.
+    There it only chooses between two definitions the label has -- with one
+    exception, a definition whose own name states serum or plasma.
     """
     excluded = foreign_categories(alias, specimen)
     preferred = specimen if specimen in _SPECIMEN_BOUND else category
+    bound_specimen = specimen or specimen_family(alias)
+    # ponytail: by the catalogue's «…, serum or plasma» naming (the amino
+    # acids, which have no urine definition to prefer); give the definitions
+    # a flag if another group needs the same refusal under a urine title.
+    titled_urine = category == "urinalysis" and not category_binds and not bound_specimen
+    if category_binds and not specimen:
+        if category == "urinalysis" and not bound_specimen:
+            bound_specimen = category
+        elif normalized_key(alias) in _CONTEXTUAL_SPECIMEN_ALIASES.get(category, {}):
+            # "White blood cells" names a cell population, not a blood specimen.
+            # A material-specific API context can disambiguate that generic name.
+            bound_specimen = category
 
-    def choose(matches: list[dict[str, object]]) -> dict[str, object] | None:
+    def choose(matches: list[dict[str, object]], printed: str = alias) -> dict[str, object] | None:
         matches = [
             definition
             for definition in matches
             if (value_type is None or str(definition.get("value_type", "numeric")) in {value_type, "mixed"})
             and definition["category"] not in excluded
+            and (not bound_specimen or not definition.get("specimen_family")
+                 or definition["specimen_family"] == bound_specimen)
+            and not (titled_urine and names_serum_or_plasma(definition))
         ]
         if not matches:
             return None
+        # Folding Latin/Cyrillic lookalikes must not erase a real distinction:
+        # Latin IMT denotes intima-media thickness, while Ukrainian ІМТ is BMI.
+        # Prefer the spelling actually printed before applying a context hint.
+        exact = [definition for definition in matches if any(
+            normalized_key(str(item)) == normalized_key(printed)
+            for item in (definition["name"], *definition["aliases"])
+        )]
+        if exact:
+            matches = exact
+        elif len(matches) > 1:
+            spellings = {
+                normalized_key(str(item))
+                for definition in matches
+                for item in (definition["name"], *definition["aliases"])
+                if label_key(str(item)) == label_key(printed)
+            }
+            if len(spellings) > 1:
+                contextual = [item for item in matches if item["category"] == preferred]
+                return contextual[0] if len(contextual) == 1 else None
         return next((item for item in matches if item["category"] == preferred), matches[0])
 
     if specimen == "stool" and not label_key(alias).endswith(" кал"):
         found = choose(_ALIAS_INDEX.get(label_key(f"{alias} (кал)"), []))
         if found:
             return found
+    contextual = _CONTEXTUAL_SPECIMEN_ALIASES.get(bound_specimen, {}).get(normalized_key(alias))
+    if contextual:
+        return choose([_BY_NAME[contextual]])
     found = choose(_ALIAS_INDEX.get(label_key(alias), []))
     if found:
         return found
@@ -875,13 +1114,45 @@ def concept_for_alias(
     codes = list(re.finditer(r"\(([A-Za-zА-ЯЁІЇЄҐа-яёіїєґ][\w%#.-]{1,10})\)", alias))
     if codes:
         code = codes[-1]
-        found = choose(_ALIAS_INDEX.get(label_key(code.group(1)), []))
+        code_matches = _ALIAS_INDEX.get(label_key(code.group(1)), [])
+        prefix = (alias[: code.start()] + alias[code.end():]).strip(" ,.:;-")
+        prefix_matches = _ALIAS_INDEX.get(label_key(prefix), [])
+        named = choose(prefix_matches, prefix)
+        if prefix_matches and named is None:
+            return None
+        if named:
+            # An explicitly named analyte disambiguates a lookalike code, but
+            # a contradictory name/code pair is not permission to pick either.
+            return named if named in code_matches and not _fallback_blocked(prefix, named) else None
+        found = choose(code_matches, code.group(1))
         # The code alone cannot carry «в сечі», «добової» or «прямий»: a
         # definition that does not carry the same word is refused, not guessed.
-        if found and _fallback_blocked(alias[: code.start()], found):
+        outside = alias[: code.start()] + alias[code.end():]
+        if found and (_fallback_blocked(outside, found) or _names_something_else(code.group(1), outside, found)):
             return None
         return found
     return None
+
+
+#: Bracket codes that other things are written with too: «Простагландин
+#: (E2)» is not estradiol.  ponytail: a list, not a rule -- applied to every
+#: code, a stem test refuses "Leukocytes (WBC)", whose definition spells the
+#: cell in Ukrainian only.  Add a short code here when it becomes an alias.
+_AMBIGUOUS_CODES = frozenset(label_key(code) for code in ("e2", "hb", "irf", "lfr", "mfr", "hfr", "amh"))
+
+
+def _stems(text: str) -> set[str]:
+    return {word[:4] for word in re.findall(r"[^\W\d_]{4,}", label_key(text))}
+
+
+def _names_something_else(code: str, outside: str, definition: dict[str, object]) -> bool:
+    """True when an ambiguous code stands beside words that share no stem
+    with any name of the definition it would select."""
+    if label_key(code) not in _AMBIGUOUS_CODES:
+        return False
+    printed = _stems(outside)
+    own = _stems(" ".join([str(definition["name"]), *(str(item) for item in definition["aliases"])]))
+    return bool(printed) and not printed & own
 
 
 #: Words in the text before a bracketed code that the code alone would drop
@@ -889,21 +1160,27 @@ def concept_for_alias(
 _FALLBACK_DISCRIMINATORS = tuple(
     (name, re.compile(pattern))
     for name, pattern in (
-        ("urine", r"сеч"),
-        ("stool", r"\bкал\b|у калі|в калі"),
-        ("24-hour", r"добов"),
+        ("urine", rf"{_URINE}|\burine"),
+        ("stool", r"\bкал\b|у калі|в калі|\bstool|\bfa?eces"),
+        ("24-hour", r"добов|24[ -]?h(?:our)?"),
         ("free", r"вільн|free"),
         ("total", r"загальн|total"),
         ("direct", r"прям|direct"),
         ("indirect", r"непрям|indirect"),
         ("percent", r"%"),
         ("absolute", r"абс|\babs\b"),
-        ("IgG", r"igg"),
-        ("IgM", r"igm"),
-        ("IgA", r"iga"),
-        ("IgE", r"ige"),
-        ("CSF", r"ліквор"),
-        ("saliva", r"слин"),
+        ("IgG", r"ig\s*g"),
+        ("IgM", r"ig\s*m"),
+        ("IgA", r"ig\s*a"),
+        ("IgE", r"ig\s*e"),
+        ("antibodies", r"антитіл|antibod"),
+        ("breath", r"дихаль|breath"),
+        ("CSF", r"ліквор|\bcsf\b|cerebrospinal"),
+        ("saliva", r"слин|saliva"),
+        ("CKD-EPI 2009", r"\b2009\b"),
+        ("MDRD", r"\bmdrd\b"),
+        ("cystatin", r"cystatin|цистатин"),
+        ("combined markers", r"combined|комбінован"),
     )
 )
 
@@ -914,4 +1191,11 @@ def _fallback_blocked(prefix: str, definition: dict[str, object]) -> bool:
     creatinine, but «Білірубін прямий (DBIL)» still resolves to direct bilirubin."""
     text = prefix.casefold()
     own = " ".join([str(definition["name"]), *(str(item) for item in definition.get("aliases", []))]).casefold()
-    return any(pattern.search(text) and not pattern.search(own) for _, pattern in _FALLBACK_DISCRIMINATORS)
+    # «Лейкоцити (WBC)-абс.»: "absolute" contradicts a percentage, not a
+    # definition that already is the count per litre.
+    counted = blood_count_unit(str(definition.get("unit") or ""))
+    return any(
+        pattern.search(text) and not pattern.search(own)
+        for name, pattern in _FALLBACK_DISCRIMINATORS
+        if not (counted and name == "absolute")
+    )

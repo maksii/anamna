@@ -364,6 +364,7 @@
   </details>
   {% endif %}
   <h{{ level }}><a class="an-metric-card__link" href="{{ card.url }}">{{ card.name }}</a></h{{ level }}>
+  {% if card.context_note %}<p class="tiny">{{ t('metric.report_context') }}: {{ card.context_note }}</p>{% endif %}
   <div class="result-reading">
     {#- The exact value rode only on `title`, which touch and keyboard never
         see; the visually-hidden twin says the same thing in the tree. -#}
@@ -448,6 +449,7 @@
 <div class="an-panel-member-row" data-interpretation="{{ row.verdict.interpretation }}"{% if row.verdict.conflicts_with_vendor %} data-conflict="true"{% endif %}>
   <div class="an-panel-member-row__name">
     <a href="{{ row.url }}">{{ row.name }}</a>
+    {% if row.is_profile %}<small>{{ t('calc.profile_source') }}</small>{% endif %}
     {% if row.category_label != context_name %}<small>{{ row.category_label }}</small>{% endif %}
     {% if row.historical %}<small class="an-historical-note">{{ t('metrics.historical_chip') }}<span class="visually-hidden">: {{ t('metrics.historical_body') }}</span></small>{% endif %}
   </div>
@@ -551,6 +553,21 @@
   handler did not run. It points at something on both pages now, and
   `data-page` is what the handler reads.
 #}
+{#- `auto` is a device day or a profile estimate: arithmetic that follows its
+    inputs, with no review step, so "check before confirming" would ask for an
+    action that does not exist. -#}
+{% macro calculation_details(item, auto=false) -%}
+{% if calculation_source(item.extraction_method) %}
+{% set auto = auto or item.is_device or item.is_profile or item.extraction_method == 'derived_profile_bmi' %}
+<small class="an-calculation-note">{{ t('doc.' ~ item.extraction_method) }}
+{{ calculation_status(item) if item.verification_status in ('verified', 'corrected') else t('calc.provisional_auto') if auto else t('calc.provisional') }} <a href="{{ calculation_source(item.extraction_method) }}" target="_blank" rel="noreferrer">{{ t('calc.source') }}</a></small>
+{% for input in item.calculation_inputs|default([]) %}
+<small class="an-calculation-input">{% if input.input_kind == 'observation' and input.document_id %}<a href="/documents/{{ input.document_id }}#observation-{{ input.input_id }}">{{ input.input_name|conceptfmt }}</a>{% else %}{{ input.input_name|conceptfmt if input.input_kind == 'observation' else t('calc.input_' ~ input.input_kind) }}{% endif %}: {{ input.input_value|numfmt }} {{ input.input_unit|unitfmt }} · {{ input.input_day|datefmt if input.input_day else t('calc.undated_input') if item.extraction_method == 'derived_profile_bmi' else t('calc.undated_profile') }}</small>
+{% if input.input_kind in ('device_height', 'observation_height') and input.input_day and (item.extraction_method == 'derived_profile_bmi' or (item.day|default(item.observed_at, true)|default('', true)|string)[:10] > input.input_day[:10]) %}<small>{{ t('calc.height_carried') }}</small>{% endif %}
+{% endfor %}
+{% endif %}
+{%- endmacro %}
+
 {% macro observation_row(item, csrf_token=none, next_url='', concept_list='', viewer_id='', lab_class='') -%}
 {% set state = item.verification_status %}
 {#- `data-obs-page`/`data-box` let the source viewer follow this list: the
@@ -560,8 +577,8 @@
   <div class="obs-item-top">
     <div>
       <a href="/metrics/{{ item.concept_id }}"><strong>{{ item.canonical_name|conceptfmt }}</strong></a>
-      {% if item.extraction_method == 'derived_ckd_epi_2021' %}
-      <small>{{ t('doc.derived_egfr') }}</small>
+      {% if calculation_source(item.extraction_method) %}
+      {{ calculation_details(item) }}
       {#- The printed name only when it says something the heading does not:
           «Оригінальна назва: Серомукоїди» under «Серомукоїди» was a line of
           nothing on every row. -#}
@@ -574,6 +591,7 @@
   <div class="obs-item-result">
     {#- No-break spaces keep "36 г/л" whole: a unit wrapped as "36 г/" / "л". -#}
     <span class="result">{{ item.display_value }}&nbsp;<small>{{ (item.unit_text|unitfmt)|replace(' ', ' ') }}</small></span>
+    {% if item.unit_mismatch %}<small>{{ t('metric.unit_mismatch', unit=item.expected_unit|unitfmt) }}</small>{% endif %}
     <span class="status {{ state }}">{{ state|statusfmt }}</span>
     {%- if lab_class == 'match' %} <span class="pill an-pill--ok" title="{{ t('labsync.badge_match_title') }}">{{ t('labsync.badge_match') }}</span>{% endif %}
   </div>
@@ -607,8 +625,13 @@
   {#- The exact line the parser read, on the row. The page image is a scroll
       away on a phone, so without this the reviewer is asked to certify a
       number against evidence that is not on the screen. -#}
-  {% if item.evidence_text %}
-  <p class="obs-evidence-line"><b>{{ t('doc.derived_from') if item.extraction_method == 'derived_ckd_epi_2021' else t('doc.evidence_line') }}:</b> <q>{{ item.evidence_text }}</q></p>
+  {#- A calculated row stores its formula first and then a machine record of
+      every input (row ids, raw fields): only the formula is for a reader, and
+      the inputs are already linked above by `calculation_details`. -#}
+  {% set derived = (item.extraction_method or '').startswith('derived_') %}
+  {% set evidence = ((item.evidence_text or '').splitlines() or [''])[0].split(';')[0]|trim if derived else item.evidence_text %}
+  {% if evidence %}
+  <p class="obs-evidence-line"><b>{{ t('doc.derived_from') if derived else t('doc.evidence_line') }}:</b> <q>{{ evidence }}</q></p>
   {% endif %}
   {#- What the report or the lab wrote about this result, in their words: a
       culture's organism called a contaminant, a natural resistance. -#}
@@ -651,7 +674,7 @@
         <label>{{ t('doc.unit') }}<input name="unit_raw" value="{{ item.unit_raw or '' }}"></label>
         <label>{{ t('doc.vendor_ref') }}<input name="vendor_reference_text" value="{{ item.vendor_reference_text or '' }}"></label>
         <label>{{ t('obs.observed_at') }}<input name="observed_at" type="date" value="{{ item.observed_at[:10] if item.observed_at else '' }}"></label>
-        <label>{{ t('obs.evidence') }}<textarea name="evidence_text" rows="2">{{ item.evidence_text or '' }}</textarea></label>
+        <label>{{ t('obs.evidence') }}<textarea name="evidence_text" rows="2">{{ evidence or '' }}</textarea></label>
         <button class="secondary" type="submit">{{ t('doc.save') }}</button>
       </form>
     </details>

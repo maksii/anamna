@@ -606,13 +606,28 @@ RAW_METRICS = {
     "environmental_audio_exposure": "environmental_audio",
     "headphone_audio_exposure": "headphone_audio",
     "environmental_sound_reduction": "environmental_sound_reduction",
+    "body_temperature": "body_temperature",
+    "heart_rate_variability_sdnn": "heart_rate_variability",
+    "heart_rate_variability_rmssd": "heart_rate_variability_rmssd",
+    "oxygen_saturation": "blood_oxygen",
+    "respiratory_rate": "respiratory_rate",
+    "sleeping_breathing_disturbances": "breathing_disturbances",
+    # Current upstream aliases average_met to physical_effort, with unit met.
+    "average_met": "physical_effort",
+    "physical_effort": "physical_effort",
+    "weather_temperature": "weather_temperature",
+    "weather_humidity": "weather_humidity",
 }
 #: Series types a newer server *answers* with for a type requested under its
 #: old name. OpenWearables 0.11 renamed walking_heart_rate_average; requests
 #: keep the old spelling (0.10 rejects the new one), responses may carry
 #: either, and an unmapped row would read as a deleted day.
 RAW_METRIC_RENAMES = {"walking_heart_rate": "walking_heart_rate"}
-DEFS.update({key: _BY_KEY[key] for key in RAW_METRICS.values()})
+DEFS.update({key: _BY_KEY[key] for key in RAW_METRICS.values() if key in _BY_KEY})
+DEFS.update({
+    "weather_temperature": metric("weather_temperature", "Weather temperature", "device_environment", "°C"),
+    "weather_humidity": metric("weather_humidity", "Weather relative humidity", "device_environment", "%"),
+})
 
 # OpenWearables serializes its internal unit enum values, not display labels.
 # Keep this compatibility vocabulary at this API boundary, with exact physical
@@ -621,6 +636,7 @@ _API_UNITS = {
     "percent": "%", "kg_m2": "kg/m²", "m_per_s": "m/s", "meters": "m",
     "brpm": "breaths/min", "seconds": "s", "minutes": "min", "hours": "hours",
     "celsius": "°C", "fahrenheit": "°F", "ml_kg_min": "mL/kg/min",
+    "met": "MET-like effort",
 }
 
 
@@ -748,9 +764,18 @@ def _map_sleep(rows: list[dict], bucket: dict, tz: tzinfo | None = None) -> None
         _aggregate(bucket, "blood_oxygen", day, _num(row.get("avg_spo2_percent")), observed, row)
         _aggregate(bucket, "sleeping_heart_rate", day, _num(row.get("avg_heart_rate_bpm")), observed, row)
         _aggregate(bucket, "sleep_interruptions", day, _num(row.get("interruptions_count")), observed, row)
-        # nap_count / nap_duration_minutes are not mapped: the server reports
-        # 0 for every night of every account (1,358 rows, all zero), which is
-        # "this source does not detect naps", not "no naps".
+        # Legacy servers also emitted zero placeholders. A positive reported
+        # summary is evidence; a zero is used only when the session records
+        # explicitly carry their nap classifications. Missing flags stay unknown.
+        sessions = row.get("sessions")
+        classified = (isinstance(sessions, list) and bool(sessions)
+                      and all(isinstance(s, dict) and isinstance(s.get("is_nap"), bool) for s in sessions))
+        naps = _num(row.get("nap_count"))
+        nap_duration = _num(row.get("nap_duration_minutes"))
+        if naps is not None and naps >= 0 and naps.is_integer() and (naps > 0 or classified):
+            _aggregate(bucket, "sleep_naps", day, naps, observed, row)
+        if nap_duration is not None and nap_duration >= 0 and (nap_duration > 0 or classified):
+            _aggregate(bucket, "sleep_nap_duration", day, nap_duration, observed, row)
         stages = row.get("stages")
         if not isinstance(stages, dict):
             continue
@@ -952,6 +977,10 @@ def raw_metric_keys() -> tuple[str, ...]:
 
 
 DATATYPE_KEYS["raw_metrics"] = raw_metric_keys()
+for _summary_datatype in ("activity", "sleep", "recovery"):
+    DATATYPE_KEYS[_summary_datatype] = tuple(
+        key for key in DATATYPE_KEYS[_summary_datatype] if key not in DATATYPE_KEYS["raw_metrics"]
+    )
 
 
 def _stored_samples(db, user_id: str, server_url: str, remote_user_id: str, lower: str, upper: str,
@@ -993,14 +1022,15 @@ def recompute_raw_days(settings: Settings, db, user_id: str, import_id: str, exp
         # A summary day the raw store holds no sample for (the server summarised
         # it, the raw history has a hole) keeps the summary's value, on the
         # summary's own date: re-cutting is never a reason to lose a day.
-        archived = [json.loads(payload) for (payload,) in db.execute(
-            """SELECT payload_json FROM openwearables_raw_records WHERE owner_user_id=? AND server_url=?
-               AND remote_user_id=? AND datatype='activity' AND day BETWEEN ? AND ?""",
-            (user_id, expected[1], expected[0], start, end))]
         summary: dict = {}
-        _map_activity(archived, summary, tz)
+        for datatype in ("activity", "sleep", "recovery"):
+            archived = [json.loads(payload) for (payload,) in db.execute(
+                """SELECT payload_json FROM openwearables_raw_records WHERE owner_user_id=? AND server_url=?
+                   AND remote_user_id=? AND datatype=? AND day BETWEEN ? AND ?""",
+                (user_id, expected[1], expected[0], datatype, start, end))]
+            _MAPPERS[datatype](archived, summary, tz)
     for (key, day, source), item in summary.items():
-        if key in DAILY_RAW_METRICS.values() and (key, source, day) not in covered and (key, day, source) not in bucket:
+        if key in raw_metric_keys() and (key, source, day) not in covered and (key, day, source) not in bucket:
             bucket[(key, day, source)] = item
     _write_days(settings, user_id, import_id, _in_window(bucket.values(), start, end),
                 tuple(key for key in raw_metric_keys() if key not in failed),
@@ -1090,11 +1120,13 @@ def _write_days(settings: Settings, user_id: str, import_id: str,
         # their upstream provider, and retaining a day just because another
         # source still reports it would strand the vanished source too.
         removed = 0
+        # A calculated BMI carries its weight's import_id; the refresh below
+        # keeps or removes it, so it is not re-created on every sync.
         for key in owned_keys:
             removed += db.execute(
                 """DELETE FROM device_metric_days
                    WHERE owner_user_id=? AND import_id=? AND metric_key=?
-                     AND day BETWEEN ? AND ?""",
+                     AND day BETWEEN ? AND ? AND id NOT LIKE 'derived-bmi-%'""",
                 (user_id, import_id, key, start, end),
             ).rowcount
         db.executemany(
@@ -1121,6 +1153,10 @@ def _write_days(settings: Settings, user_id: str, import_id: str,
                 for item in aggregates
             ],
         )
+        if {"body_weight", "body_height", "body_mass_index"} & set(owned_keys):
+            from .devices.calculations import refresh_device_calculations
+
+            refresh_device_calculations(db)
     if removed:
         logger.info("openwearables: removed %d stale day(s) for %s in %s..%s", removed, owned_keys, start, end)
     return len(aggregates)
@@ -1328,7 +1364,7 @@ def sync_datatype(settings: Settings, user_id: str, datatype: str, start: str, e
             settings, user_id, import_id, _in_window(bucket.values(), start, end), DATATYPE_KEYS[datatype],
             start, end, expected_account, db_connection=db,
         )
-        if datatype == "activity":
+        if datatype in ("activity", "sleep", "recovery"):
             # The daily totals the summary repeats belong to the raw recompute:
             # rebuild them now from stored samples and the archive just refreshed,
             # so a day the server withdrew disappears with this sync, not later.

@@ -69,7 +69,7 @@ def test_device_history_is_built_once_until_the_owner_device_data_changes(tmp_pa
     settings, user_id = owner_of(tmp_path)
     calls: list[str] = []
     monkeypatch.setattr(
-        web, "device_history_summary", lambda connection, owner: calls.append(owner) or [{"metric_key": "steps"}]
+        web, "device_history_summary", lambda connection, owner, **kwargs: calls.append(owner) or [{"metric_key": "steps"}]
     )
     with connect(settings) as connection:
         assert web.device_history(connection, user_id) == [{"metric_key": "steps"}]
@@ -87,7 +87,7 @@ def test_device_history_is_built_once_until_the_owner_device_data_changes(tmp_pa
 def test_memoised_cards_are_rebuilt_when_the_calendar_day_changes(tmp_path, monkeypatch):
     settings, user_id = owner_of(tmp_path)
     calls: list[str] = []
-    monkeypatch.setattr(web, "device_history_summary", lambda connection, owner: calls.append(owner) or [])
+    monkeypatch.setattr(web, "device_history_summary", lambda connection, owner, **kwargs: calls.append(owner) or [])
 
     class Tomorrow(REAL_DATE):
         @classmethod

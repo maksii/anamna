@@ -53,7 +53,7 @@ def source_preferences(connection, owner_user_id: str) -> dict[str, str]:
     ))
 
 
-def _selected_metric(connection, owner_user_id: str, metric_key: str, raw: list[dict]) -> list[dict]:
+def _selected_metric(connection, owner_user_id: str, metric_key: str, raw: list[dict], *, patient_id: str | None = None) -> list[dict]:
     preferences = source_preferences(connection, owner_user_id)
     cohorts = None
     if metric_key in SLEEP_FAMILY:
@@ -61,6 +61,8 @@ def _selected_metric(connection, owner_user_id: str, metric_key: str, raw: list[
             f"SELECT * FROM device_metric_days WHERE owner_user_id=? AND metric_key IN ({','.join('?' for _ in SLEEP_FAMILY)})",
             (owner_user_id, *sorted(SLEEP_FAMILY)),
         )]
+        if patient_id is not None:
+            rows = [row for row in rows if str(row["patient_id"]) == str(patient_id)]
         cohorts = sleep_cohorts(rows, preferences.get("sleep", ""))
     return select_daily(raw, preferences.get(preference_group(metric_key), ""), cohorts)
 
@@ -95,18 +97,33 @@ def _preferred_workouts(rows: list[sqlite3.Row]) -> list[dict[str, object]]:
 
 
 def device_metric_source_values(
-    connection: sqlite3.Connection, owner_user_id: str, metric_key: str
+    connection: sqlite3.Connection, owner_user_id: str, metric_key: str, *, patient_id: str | None = None,
 ) -> list[dict[str, object]]:
     """Every stored source row for a metric, with no display deduplication."""
-    return [
+    rows = [
         dict(row)
         for row in connection.execute(
-            """SELECT * FROM device_metric_days
-               WHERE owner_user_id=? AND metric_key=?
+            f"""SELECT * FROM device_metric_days
+               WHERE owner_user_id=? AND metric_key=? {'AND patient_id=?' if patient_id is not None else ''}
                ORDER BY day DESC, sample_count DESC, source_vendor, source_name""",
-            (owner_user_id, metric_key),
+            (owner_user_id, metric_key, *([patient_id] if patient_id is not None else [])),
         )
     ]
+    derived_ids = {str(row["id"]) for row in rows if str(row["id"]).startswith("derived-bmi-")}
+    if derived_ids:
+        inputs: dict[str, list[dict]] = {}
+        for item in connection.execute(
+            """SELECT i.* FROM device_calculation_inputs i
+               JOIN device_metric_days d ON d.id=i.row_id
+               WHERE d.owner_user_id=? AND d.metric_key=? ORDER BY i.input_kind""",
+            (owner_user_id, metric_key),
+        ):
+            inputs.setdefault(str(item["row_id"]), []).append(dict(item))
+        for row in rows:
+            if str(row["id"]) in derived_ids:
+                row["extraction_method"] = "derived_bmi"
+                row["calculation_inputs"] = inputs.get(str(row["id"]), [])
+    return rows
 
 
 def _disambiguated_labels(identities: list[tuple[str, str]]) -> dict[tuple[str, str], str]:
@@ -153,7 +170,7 @@ def _comparison_source(
         "label": label,
         "vendor": identity[0],
         "name": identity[1],
-        "kind": "bridge" if identity[0].casefold() == "openwearables" else "direct",
+        "kind": source_kind(rows[0]),
         "day_count": len({str(row["day"]) for row in rows}),
         "sample_count": sum(int(row["sample_count"] or 0) for row in rows),
         "selected_days": sum(1 for row in rows if row["selected"]),
@@ -166,7 +183,7 @@ def _comparison_source(
 
 
 def device_metric_comparison(
-    connection: sqlite3.Connection, owner_user_id: str, metric_key: str
+    connection: sqlite3.Connection, owner_user_id: str, metric_key: str, *, patient_id: str | None = None,
 ) -> dict[str, object] | None:
     """Selected daily history plus every competing provider row.
 
@@ -175,10 +192,10 @@ def device_metric_comparison(
     erase provenance from the detail view: `days` and `sources` carry every
     stored row and explicitly mark the row used by the combined series.
     """
-    raw = device_metric_source_values(connection, owner_user_id, metric_key)
+    raw = device_metric_source_values(connection, owner_user_id, metric_key, patient_id=patient_id)
     if not raw:
         return None
-    preferred = _selected_metric(connection, owner_user_id, metric_key, raw)
+    preferred = _selected_metric(connection, owner_user_id, metric_key, raw, patient_id=patient_id)
     selected = {(str(row["day"]), source_key(row)) for row in preferred}
     identities = sorted({(str(row["source_vendor"]), str(row["source_name"])) for row in raw})
     source_ids = {identity: f"source-{index + 1}" for index, identity in enumerate(identities)}
@@ -222,10 +239,14 @@ def device_metric_comparison(
 
 
 def device_metric_values(
-    connection: sqlite3.Connection, owner_user_id: str, metric_key: str
+    connection: sqlite3.Connection, owner_user_id: str, metric_key: str, *, patient_id: str | None = None,
 ) -> list[dict[str, object]]:
-    rows = device_metric_source_values(connection, owner_user_id, metric_key)
-    return _selected_metric(connection, owner_user_id, metric_key, rows)
+    rows = device_metric_source_values(connection, owner_user_id, metric_key, patient_id=patient_id)
+    # Select a source only after isolating the requested person: otherwise a
+    # second patient's preferred source can hide this patient's same-day row.
+    if patient_id is not None:
+        rows = [row for row in rows if str(row["patient_id"]) == str(patient_id)]
+    return _selected_metric(connection, owner_user_id, metric_key, rows, patient_id=patient_id)
 
 
 #: How far back the device cards read rows: enough for the 90-point card
@@ -245,25 +266,27 @@ def _complete(metric_key: str, rows: list[dict], tz) -> list[dict]:
     return complete or rows
 
 
-def _metric_summaries(connection, owner_user_id: str) -> dict[str, dict[str, object]]:
+def _metric_summaries(connection, owner_user_id: str, *, patient_id: str | None = None) -> dict[str, dict[str, object]]:
     """Whole-history facts per metric in two aggregate passes, never as rows."""
+    patient_filter = "AND patient_id=?" if patient_id is not None else ""
+    params = (owner_user_id, *([patient_id] if patient_id is not None else []))
     summary = {
         str(row["metric_key"]): dict(row)
         for row in connection.execute(
-            """SELECT metric_key, MAX(day) last_day, COUNT(DISTINCT day) day_count,
+            f"""SELECT metric_key, MAX(day) last_day, COUNT(DISTINCT day) day_count,
                       MAX(ABS(value)) peak, SUM(sample_count) samples,
                       GROUP_CONCAT(DISTINCT source_vendor) vendors,
                       COUNT(DISTINCT source_vendor || char(0) || source_name) source_count
-               FROM device_metric_days WHERE owner_user_id=? GROUP BY metric_key""",
-            (owner_user_id,),
+               FROM device_metric_days WHERE owner_user_id=? {patient_filter} GROUP BY metric_key""",
+            params,
         )
     }
     for row in connection.execute(
-        """SELECT metric_key, COUNT(*) overlap FROM (
-               SELECT metric_key, day FROM device_metric_days WHERE owner_user_id=?
+        f"""SELECT metric_key, COUNT(*) overlap FROM (
+               SELECT metric_key, day FROM device_metric_days WHERE owner_user_id=? {patient_filter}
                GROUP BY metric_key, day HAVING COUNT(*) > 1)
            GROUP BY metric_key""",
-        (owner_user_id,),
+        params,
     ):
         if str(row["metric_key"]) in summary:
             summary[str(row["metric_key"])]["overlap_days"] = int(row["overlap"])
@@ -322,6 +345,8 @@ def _metric_card(
     label = human_source_label(str(latest["source_vendor"]), str(latest["source_name"]))
     return {
         "id": f"device:{metric_key}",
+        "owner_user_id": latest["owner_user_id"],
+        "patient_id": latest["patient_id"],
         "url": f"/devices/metrics/{metric_key}",
         "name": translate_phrase(str(latest["metric_name"])),
         "category": category,
@@ -356,20 +381,19 @@ def device_metric_catalog(
     owner_user_id: str,
     query: str = "",
     limit: int | None = None,
+    *, patient_id: str | None = None,
 ) -> list[dict[str, object]]:
     tz = user_timezone(connection, owner_user_id)
-    summary = _metric_summaries(connection, owner_user_id)
+    summary = _metric_summaries(connection, owner_user_id, patient_id=patient_id)
     grouped: dict[str, list[dict[str, object]]] = {}
     for metric_key, facts in summary.items():
-        # A metric the source never filled (every night "0 naps") is a
-        # capability gap, not a measurement: no card (OPS-09).
-        if not facts["peak"]:
-            continue
+        # An explicitly recorded zero is still a result. Capability gaps must
+        # be identified by the adapter's schema, never inferred from magnitude.
         since = (datetime.date.fromisoformat(str(facts["last_day"])[:10])
                  - datetime.timedelta(days=CARD_WINDOW_DAYS)).isoformat()
         grouped[metric_key] = [dict(row) for row in connection.execute(
-            "SELECT * FROM device_metric_days WHERE owner_user_id=? AND metric_key=? AND day>=? ORDER BY day DESC",
-            (owner_user_id, metric_key, since),
+            f"SELECT * FROM device_metric_days WHERE owner_user_id=? AND metric_key=? AND day>=? {'AND patient_id=?' if patient_id is not None else ''} ORDER BY day DESC",
+            (owner_user_id, metric_key, since, *([patient_id] if patient_id is not None else [])),
         )]
     needle = query.casefold().strip()
     preferences = source_preferences(connection, owner_user_id)
@@ -409,6 +433,7 @@ def _bucket_stats(rows: list[dict[str, object]]) -> dict[str, object]:
     values = [float(row["value"]) for row in rows]
     return {
         "days": len(values),
+        "calculated_day_count": sum(str(row["id"]).startswith("derived-bmi-") for row in rows),
         "mean": sum(values) / len(values),
         "min": min(values),
         "max": max(values),
@@ -419,7 +444,7 @@ def _bucket_stats(rows: list[dict[str, object]]) -> dict[str, object]:
 
 
 def device_history_summary(
-    connection: sqlite3.Connection, owner_user_id: str, *, months: int = 12
+    connection: sqlite3.Connection, owner_user_id: str, *, months: int = 12, patient_id: str | None = None,
 ) -> list[dict[str, object]]:
     """Every device metric compressed to a history a reader can hold in mind.
 
@@ -435,14 +460,19 @@ def device_history_summary(
     """
     grouped: dict[str, list[dict[str, object]]] = {}
     for row in connection.execute(
-        "SELECT * FROM device_metric_days WHERE owner_user_id=? ORDER BY day DESC",
-        (owner_user_id,),
+        f"SELECT * FROM device_metric_days WHERE owner_user_id=? {'AND patient_id=?' if patient_id is not None else ''} ORDER BY day DESC",
+        (owner_user_id, *([patient_id] if patient_id is not None else [])),
     ):
         grouped.setdefault(str(row["metric_key"]), []).append(dict(row))
     if not grouped:
         return []
 
     newest = max(str(rows[0]["day"]) for rows in grouped.values())
+    bmi_inputs = {
+        str(row["id"]): row.get("calculation_inputs", [])
+        for row in device_metric_source_values(connection, owner_user_id, "body_mass_index", patient_id=patient_id)
+        if str(row["id"]).startswith("derived-bmi-")
+    } if "body_mass_index" in grouped else {}
     year, month = int(newest[:4]), int(newest[5:7])
     recent_months = set()
     for step in range(months):
@@ -477,12 +507,21 @@ def device_history_summary(
                 "vendors": sorted({str(item["source_vendor"]) for item in raw_rows}),
                 "latest_day": str(latest["day"]),
                 "latest_value": float(latest["value"]),
+                "extraction_method": "derived_bmi" if str(latest["id"]).startswith("derived-bmi-") else None,
+                "verification_status": "extracted" if str(latest["id"]).startswith("derived-bmi-") else "device_measurement",
+                "calculation_inputs": bmi_inputs.get(str(latest["id"]), []),
+                "calculated_day_count": sum(str(row["id"]).startswith("derived-bmi-") for row in days),
                 "day_count": len(days),
                 "row_count": len(raw_rows),
                 "first_day": str(days[-1]["day"]),
                 # Newest first: a reader and a model both start at the present.
                 "recent_days": [
-                    {"day": str(row["day"]), "value": float(row["value"])} for row in days[:14]
+                    {
+                        "day": str(row["day"]), "value": float(row["value"]),
+                        "extraction_method": "derived_bmi" if str(row["id"]).startswith("derived-bmi-") else None,
+                        "verification_status": "extracted" if str(row["id"]).startswith("derived-bmi-") else "device_measurement",
+                        "calculation_inputs": bmi_inputs.get(str(row["id"]), []),
+                    } for row in days[:14]
                 ],
                 "months": [
                     {"period": key, **_bucket_stats(rows)}
@@ -856,7 +895,7 @@ def _sleep_summary(
 
 
 def area_tracker(
-    connection: sqlite3.Connection, owner_user_id: str, area_id: str
+    connection: sqlite3.Connection, owner_user_id: str, area_id: str, *, patient_id: str | None = None,
 ) -> dict[str, object] | None:
     """Tracker dashboard data for a device-driven health area.
 
@@ -869,6 +908,9 @@ def area_tracker(
     if area_id not in TRACKER_AREA_IDS:
         return None
     area_clause, area_params = _area_row_predicate(area_id)
+    if patient_id is not None:
+        area_clause = f"({area_clause}) AND patient_id=?"
+        area_params = [*area_params, patient_id]
     tz = user_timezone(connection, owner_user_id)
     # One aggregate pass answers everything that needs the whole history: which
     # metrics this area has, how many days each has ever recorded (the card

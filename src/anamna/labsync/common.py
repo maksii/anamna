@@ -10,12 +10,14 @@ from __future__ import annotations
 import html
 import http.client
 import json
+import math
 import logging
 import re
 import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import date, datetime
 
 from .. import health  # noqa: F401  -- merges UNIT_SYNONYMS into canonical_unit's table
 from ..config import USER_AGENT
@@ -150,8 +152,18 @@ def sex_of(value: object) -> str:
 
 
 def iso_day(value: object) -> str:
-    text = str(value or "")[:10]
-    return text if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text) else ""
+    """The written ISO calendar day of a date/timestamp; never repair its date."""
+    raw = str(value or "").strip()
+    text = raw[:10]
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+        return ""
+    try:
+        date.fromisoformat(text)
+        if len(raw) != 10:
+            datetime.fromisoformat(raw)
+    except ValueError:
+        return ""
+    return text
 
 
 # --- reading rows ---------------------------------------------------------------
@@ -217,7 +229,7 @@ def lab_row(*, test: object, result: object, units: object = "", resulttype: str
             norm: list[str] | None = None, packet: object = "", material: object = "", idtest: object = "") -> dict:
     """The provider-neutral row the cross-check reads."""
     return {
-        "idtest": str(idtest or ""),
+        "idtest": str(idtest if idtest is not None else ""),
         "test": " ".join(str(test or "").split())[:300],
         "packet": " ".join(str(packet or "").split())[:300],
         # Long enough for a whole coprogram or antibiogram block, which the
@@ -273,7 +285,7 @@ def loose_name_key(name: object) -> str:
 
 
 _COMPARATOR_RE = re.compile(r"^\s*(<=|>=|≤|≥|<|>)\s*")
-_NUMBER_RE = re.compile(r"[-+]?\d+(?:\.\d+)?")
+_NUMBER_RE = re.compile(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?")
 
 
 def comparator(sign: object) -> str | None:
@@ -283,13 +295,15 @@ def comparator(sign: object) -> str | None:
 
 def parse_result(text: object) -> tuple[str | None, float | None]:
     """``"3.29"`` → (None, 3.29); ``"<0,5"`` → ("<", 0.5); words → (None, None)."""
-    raw = str(text or "").strip()
+    raw = str(text if text is not None else "").strip()
     match = _COMPARATOR_RE.match(raw)
     sign = None
     if match:
         sign = comparator(match.group(1))
         raw = raw[match.end():]
-    raw = raw.replace("\xa0", "").replace(" ", "").replace(",", ".")
+    raw = raw.replace("\xa0", "").replace(" ", "").replace(",", ".").replace("−", "-")
     if _NUMBER_RE.fullmatch(raw):
-        return sign, float(raw)
+        value = float(raw)
+        if math.isfinite(value):
+            return sign, value
     return None, None

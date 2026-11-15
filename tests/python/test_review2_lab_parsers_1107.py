@@ -246,9 +246,12 @@ def test_an_auto_concept_filed_as_urinalysis_by_the_old_rule_moves_back(connecti
         "INSERT INTO concepts(id, canonical_name, category, value_type, created_at) "
         "VALUES ('old-alanine', 'Аланін', 'urinalysis', 'numeric', '2026-01-01')"
     )
-    assert filed(connection, "Аланін", value_type="numeric", unit_raw="мкмоль/л", specimen="сироватка крові",
-                 context=AMINO_TITLE) == "old-alanine"
-    assert concept(connection, "old-alanine")["category"] == "unmapped"
+    resolved = filed(connection, "Аланін", value_type="numeric", unit_raw="мкмоль/л", specimen="сироватка крові",
+                     context=AMINO_TITLE)
+    assert resolved == "alanine-serum-or-plasma"
+    assert concept(connection, resolved)["category"] == "metabolic"
+    # A urine alanine is a different specimen and cannot inherit this alias.
+    assert filed(connection, "Аланін", value_type="numeric", unit_raw="мкмоль/л", specimen="сеча") != resolved
     # Urea itself stays the catalogue's blood chemistry concept.
     urea = filed(connection, "Сечовина", value_type="numeric", unit_raw="ммоль/л", context=AMINO_TITLE)
     assert concept(connection, urea)["category"] != "urinalysis"

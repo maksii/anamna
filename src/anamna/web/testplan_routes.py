@@ -100,12 +100,12 @@ _URINE = ("urine-colour", "urine-appearance", "urine-specific-gravity", "urine-p
           "urine-ketones", "urine-bilirubin", "urine-urobilinogen", "urine-nitrite", "urine-leukocytes",
           "urine-erythrocytes", "urine-bacteria")
 _CLOTTING = ("prothrombin-time", "inr", "quick-prothrombin-index", "activated-partial-thromboplastin-time",
-             "thrombin-time", "fibrinogen", "x:d-dimer")
+             "thrombin-time", "fibrinogen", "d-dimer")
 PRESETS: dict[str, tuple[str, ...]] = {
     "basic": (*_BLOOD_COUNT, "c-reactive-protein", "blood-glucose", "creatinine", "urea", "alanine-aminotransferase",
               "aspartate-aminotransferase", "total-bilirubin", "potassium", "sodium", *_URINE),
     "blood": _BLOOD_COUNT,
-    "sugar": ("blood-glucose", "hemoglobin-a1c", "insulin", "x:homa-ir", "c-peptide", "x:gad-antibodies"),
+    "sugar": ("blood-glucose", "hemoglobin-a1c", "insulin", "homa-index-reported-model-unspecified", "c-peptide", "x:gad-antibodies"),
     "heart": ("total-cholesterol", "ldl-cholesterol", "hdl-cholesterol", "triglycerides", "apolipoprotein-a1",
               "apolipoprotein-b", "lipoprotein-a", "homocysteine", "c-reactive-protein", "x:creatine-kinase",
               "x:lactate-dehydrogenase", "potassium", "sodium", "magnesium", "fibrinogen"),
@@ -125,10 +125,10 @@ PRESETS: dict[str, tuple[str, ...]] = {
                  "parathyroid-hormone"),
     "clotting": _CLOTTING,
     "men": ("x:psa-total", "x:psa-free", "total-testosterone", "x:free-testosterone", "x:sex-hormone-binding-globulin",
-            "x:luteinizing-hormone", "x:follicle-stimulating-hormone", "x:prolactin", "x:estradiol",
+            "x:luteinizing-hormone", "x:follicle-stimulating-hormone", "prolactin", "estradiol",
             "x:dhea-sulfate"),
-    "women": ("x:follicle-stimulating-hormone", "x:luteinizing-hormone", "x:estradiol", "x:progesterone",
-              "x:prolactin", "total-testosterone", "x:sex-hormone-binding-globulin", "x:dhea-sulfate",
+    "women": ("x:follicle-stimulating-hormone", "x:luteinizing-hormone", "estradiol", "x:progesterone",
+              "prolactin", "total-testosterone", "x:sex-hormone-binding-globulin", "x:dhea-sulfate",
               "cancer-antigen-125-ca-125", "human-epididymis-protein-4-he4", "cancer-antigen-15-3-ca-15-3"),
 }
 #: Presets for one sex: offered to that sex, or to both when the sex is unknown.
@@ -140,7 +140,7 @@ PRESET_SEX = {"men": "M", "women": "F"}
 #: 35+/45+/50+", "Щорічне профілактичне", "Метаболічний Check-UP").  With it
 #: on, every other preset is on too; the person unticks what they skip.
 CHECKUP_EXTRA = ("alpha-amylase", "rheumatoid-factor", "antistreptolysin-o", "total-immunoglobulin-e",
-                 "x:cortisol-serum", "x:alpha-fetoprotein", "x:cea")
+                 "cortisol", "x:alpha-fetoprotein", "x:cea")
 
 
 def presets_for(sex: str | None) -> dict[str, tuple[str, ...]]:

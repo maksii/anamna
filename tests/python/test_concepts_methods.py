@@ -62,10 +62,15 @@ def test_analyser_and_smear_differentials_are_separate_series(printed, expected)
 @pytest.mark.parametrize(
     "printed, unit, value_text, reference, expected",
     [
-        # Synevo: one word, two methods; only the unit tells them apart.
+        # Synevo: one word, two methods; the strip prints its own unit.
         ("Лейкоцити", "Leu/µL", "не виявлені", None, "Urine leukocytes (dipstick)"),
+        ("Лейкоцити", "Leu/µL", "не виявлені", "лейкоцитарна естераза", "Urine leukocytes (dipstick)"),
         ("Лейкоцити", "в п/з", "до 5.0", None, "Urine leukocytes per high-power field"),
         ("Еритроцити", "Ery/µL", "не виявлені", None, "Urine erythrocytes (dipstick)"),
+        # A concentration unit alone names no method; the printed enzyme does.
+        ("Лейкоцити", "кл/мкл", "25", None, "Urine leukocytes"),
+        ("Лейкоцити", "кл/мкл", "25", "лейкоцитарна естераза", "Urine leukocytes (dipstick)"),
+        ("Еритроцити", "Ery/µL", "не виявлені", "активність пероксидази", "Urine erythrocytes (dipstick)"),
         # St. Paraskeva writes the field into the value.
         ("Urine leukocytes", None, "1-2 в п/з", "1 - 6 в п/з", "Urine leukocytes per high-power field"),
         # Esculab automated sediment: counts per microlitre stay on the base concept.
@@ -211,8 +216,8 @@ def test_latin_and_cyrillic_homoglyphs_resolve_alike(printed, expected):
         ("Холедох", "Common bile duct diameter"),
         ("Товщина стінки сечового міхура", "Bladder wall thickness"),
         ("Сумарний об'єм", "Thyroid volume"),
-        ("eGFR", "Estimated glomerular filtration rate (CKD-EPI 2021)"),
-        ("рШКФ", "Estimated glomerular filtration rate (CKD-EPI 2021)"),
+        ("eGFR", "Estimated glomerular filtration rate, reported"),
+        ("рШКФ", "Estimated glomerular filtration rate, reported"),
     ],
 )
 def test_imaging_and_derived_concepts_resolve(printed, expected):

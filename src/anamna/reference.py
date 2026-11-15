@@ -67,7 +67,9 @@ POSITIVE_IS_GOOD = frozenset({"mumps-virus-igg", "normal-site-microbiota"})
 #: library's ``never_verdict`` and ``not_a_measurement`` flags are mirrored here;
 #: a test keeps them in step.
 NOT_A_MEASUREMENT = frozenset(
-    {"blood-group", "rhesus-factor", "hla-b27", "body_height", "blood-pressure-category"}
+    {"blood-group", "rhesus-factor", "hla-b27", "body_height", "blood-pressure-category",
+     "blood-count-comment", "mthfr-c677t-genotype", "mthfr-a1298c-genotype",
+     "mtr-a2756g-genotype", "mtrr-a66g-genotype"}
 )
 
 #: The censored comparators a laboratory prints ("<1.0", ">60").  The printed
@@ -279,6 +281,23 @@ UNIT_CONVERSIONS[("free-triiodothyronine", _UNIT_PMOL_L, _UNIT_PG_ML)] = 1.0 / 1
 # concept: elsewhere "U" is an enzyme unit, not an international unit.
 UNIT_CONVERSIONS[("total-immunoglobulin-e", "iu/ml", "ku/l")] = 1.0
 UNIT_CONVERSIONS[("total-immunoglobulin-e", "ku/l", "iu/ml")] = 1.0
+# Volume fractions and count concentrations differ by exact SI factors.
+# This does not convert platelet counts into platelet volume fractions.
+for _concept in ("hematocrit", "plateletcrit"):
+    UNIT_CONVERSIONS[(_concept, "l/l", "%")] = 100.0
+    UNIT_CONVERSIONS[(_concept, "%", "l/l")] = 0.01
+for _concept in (
+    "white-blood-cell-count", "platelet-count", "neutrophils-absolute", "lymphocytes-absolute",
+    "monocytes-absolute", "eosinophils-absolute", "basophils-absolute", "immature-granulocytes-absolute",
+    "granulocytes-absolute", "mixed-white-cells-absolute", "reticulocytes-absolute",
+):
+    UNIT_CONVERSIONS[(_concept, "cells/ul", "10^9/l")] = 0.001
+    UNIT_CONVERSIONS[(_concept, "10^9/l", "cells/ul")] = 1000.0
+UNIT_CONVERSIONS[("red-blood-cell-count", "cells/ul", "10^12/l")] = 0.000001
+UNIT_CONVERSIONS[("red-blood-cell-count", "10^12/l", "cells/ul")] = 1000000.0
+for _source, _factor in (("mg/l", 8.84), ("g/l", 8840.0), ("mmol/l", 1000.0)):
+    UNIT_CONVERSIONS[("creatinine", _source, "umol/l")] = _factor
+    UNIT_CONVERSIONS[("creatinine", "umol/l", _source)] = 1 / _factor
 # Mass per volume to molar: factor = 10 mg/L over the molar mass in g/mol
 # (magnesium 24.305, creatinine 113.12, uric acid 168.11, bilirubin 584.66).
 _MG_DL_TO_MOLAR = {
@@ -1034,6 +1053,24 @@ def evaluate(
     """
     if concept_id in NOT_A_MEASUREMENT:
         return _verdict("not_a_measurement", "none")
+    if concept_id in {"estimated-glomerular-filtration-rate-ckd-epi-2021", "estimated-glomerular-filtration-rate-reported"} and (clinical_context or {}).get("pregnant"):
+        # eGFR is not staged in pregnancy, so no curated band judges and a
+        # laboratory's "within range" reassures nobody.  What the laboratory
+        # itself flagged still speaks, as under every other blocked rule:
+        # dropping it turned a flagged eGFR of 45 into "No comparison available".
+        verdict = _vendor_verdict(
+            value_numeric, unit, vendor_low, vendor_high, vendor_interpretation,
+            comparator=comparator,
+        )
+        if verdict["interpretation"] == "unjudged" or verdict["interpretation"] in BENIGN_INTERPRETATIONS:
+            verdict = _verdict("unjudged", "none", reason="pregnancy_egfr", value=value_numeric, unit=unit,
+                               source_id="nice-ng3-egfr-pregnancy",
+                               source_name="NICE NG3, recommendation 1.3.30",
+                               source_url="https://www.nice.org.uk/guidance/ng3/chapter/Recommendations",
+                               official=True)
+        verdict["curated_blocked"] = "pregnancy_egfr"
+        _record_vendor_claim(verdict, value_numeric, unit, vendor_low, vendor_high, vendor_interpretation, comparator)
+        return verdict
     rules = curated_rules(connection, concept_id)
     verdict, blocked = _curated_verdict(
         rules, concept_id, value_numeric, value_text, unit, age_years, sex,
@@ -1720,13 +1757,20 @@ def guidance(connection: sqlite3.Connection, concept_id: str) -> dict[str, objec
                   g.retest_interval_months, g.retest_rationale, g.panel_id,
                   g.source_id, g.short_description_uk, g.why_it_matters_uk,
                   g.retest_rationale_uk, g.name_uk,
+                  g.source_ids_json, g.no_universal_target_reason,
+                  g.no_universal_target_reason_uk, g.jurisdiction_note,
+                  g.jurisdiction_note_uk,
                   s.name AS source_name, s.source_url
            FROM concept_guidance g
            LEFT JOIN reference_sets s ON s.id = g.source_id
            WHERE g.concept_id = ?""",
         (concept_id,),
     ).fetchone()
-    return localised_guidance(dict(row)) if row else None
+    if not row:
+        return None
+    item = localised_guidance(dict(row))
+    item["sources"] = sources_for(connection, [concept_id])
+    return item
 
 
 def localised_guidance(item: dict[str, object]) -> dict[str, object]:
@@ -1737,9 +1781,11 @@ def localised_guidance(item: dict[str, object]) -> dict[str, object]:
     substitution itself the Ukrainian columns were simply never consulted: a
     fully translated analyte still explained itself in English.
     """
+    item["source_ids"] = json.loads(str(item.get("source_ids_json") or "[]"))
     if get_locale() != "uk":
         return item
-    for field in ("short_description", "why_it_matters", "retest_rationale"):
+    for field in ("short_description", "why_it_matters", "retest_rationale",
+                  "no_universal_target_reason", "jurisdiction_note"):
         translated = item.get(f"{field}_uk")
         if translated:
             item[field] = translated
@@ -1747,18 +1793,23 @@ def localised_guidance(item: dict[str, object]) -> dict[str, object]:
 
 
 def sources_for(connection: sqlite3.Connection, concept_ids) -> list[dict[str, object]]:
-    """Reference sets cited by any curated rule for these concepts."""
+    """Sources cited by numeric rules or prose, including no-target concepts."""
     ids = list(dict.fromkeys(concept_ids))
     if not ids:
         return []
     placeholders = ",".join("?" for _ in ids)
     rows = connection.execute(
         f"""SELECT DISTINCT s.id, s.name, s.publisher, s.source_url AS url, s.reviewed_at, s.notes
-            FROM reference_sets s
-            JOIN curated_reference_rules r ON r.reference_set_id = s.id
-            WHERE r.concept_id IN ({placeholders})
+            FROM reference_sets s WHERE s.id IN (
+                SELECT r.reference_set_id FROM curated_reference_rules r
+                WHERE r.concept_id IN ({placeholders})
+                UNION SELECT g.source_id FROM concept_guidance g
+                WHERE g.concept_id IN ({placeholders})
+                UNION SELECT j.value FROM concept_guidance g, json_each(g.source_ids_json) j
+                WHERE g.concept_id IN ({placeholders})
+            )
             ORDER BY s.publisher, s.name""",
-        ids,
+        ids * 3,
     ).fetchall()
     return [dict(row) for row in rows]
 
@@ -1950,8 +2001,10 @@ def _seed_analyte(
                concept_id, short_description, why_it_matters, retest_interval_months,
                retest_rationale, panel_id, source_id, updated_at,
                short_description_uk, why_it_matters_uk, retest_rationale_uk, name_uk,
-               retest_condition_json
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               retest_condition_json, source_ids_json,
+               no_universal_target_reason, no_universal_target_reason_uk,
+               jurisdiction_note, jurisdiction_note_uk
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(concept_id) DO UPDATE SET
                short_description=excluded.short_description,
                why_it_matters=excluded.why_it_matters,
@@ -1963,6 +2016,11 @@ def _seed_analyte(
                why_it_matters_uk=excluded.why_it_matters_uk,
                retest_rationale_uk=excluded.retest_rationale_uk,
                retest_condition_json=excluded.retest_condition_json,
+               source_ids_json=excluded.source_ids_json,
+               no_universal_target_reason=excluded.no_universal_target_reason,
+               no_universal_target_reason_uk=excluded.no_universal_target_reason_uk,
+               jurisdiction_note=excluded.jurisdiction_note,
+               jurisdiction_note_uk=excluded.jurisdiction_note_uk,
                -- The prose columns above are JSON-authoritative: clearing a
                -- translation in the library must clear it here too. name_uk
                -- cannot be, because the 295 allergens are seeded from ONE
@@ -1986,6 +2044,9 @@ def _seed_analyte(
             uk.get("retest_rationale"),
             uk.get("name"),
             json.dumps(analyte["retest_condition"]) if analyte.get("retest_condition") else None,
+            json.dumps(analyte.get("source_ids") or ([analyte_set] if analyte_set else [])),
+            analyte.get("no_universal_target_reason"), uk.get("no_universal_target_reason"),
+            analyte.get("jurisdiction_note"), uk.get("jurisdiction_note"),
         ),
     )
     return rule_ids
@@ -2033,7 +2094,7 @@ def seed_reference_library(
                 source.get("effective_to"),
                 _first(source, "url", "source_url", default=""),
                 _first(source, "reviewed_at", default=now[:10]),
-                source.get("notes"),
+                "\n".join(str(note) for note in (source.get("notes"), source.get("access_note")) if note) or None,
                 source.get("region"),
                 None if source.get("official") is None else int(bool(source["official"])),
             ),

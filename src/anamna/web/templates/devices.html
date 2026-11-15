@@ -174,6 +174,12 @@
           {% if item.superseded %}<small>{{ t('devices.superseded') }}</small>
           {% else %}<small>{{ t('devices.records_range', rows=t_plural('devices.rows_held', item.rows_owned, value=item.rows_owned|countfmt), start=item.first_day|datefmt, end=item.last_day|datefmt) }}</small>{% endif %}
           {% if item.last_sync_at %}<small>{{ t('devices.last_sync', date=item.last_sync_at|datefmt) }}</small>{% endif %}
+          {% set impedance = (item.metadata.get('uninterpreted_fields') or {}).get('weight.rawImpedance') %}
+          {% if impedance and impedance.get('records') %}
+          <small><strong>{{ t('devices.raw_impedance_heading') }}</strong></small>
+          <small>{{ t('devices.raw_impedance_counts', records=impedance.records|countfmt, positive=impedance.positive_records|countfmt) }}</small>
+          <small>{{ t('devices.raw_impedance_explanation') }}</small>
+          {% endif %}
         </article>
         {% endfor %}
       </div>

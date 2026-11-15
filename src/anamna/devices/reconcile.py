@@ -15,6 +15,7 @@ from collections.abc import Mapping
 
 from .catalog import canonical_source_vendor, source_priority
 from .units import is_plausible
+from ..i18n import translate_phrase
 
 SLEEP_FAMILY = frozenset({"sleep_duration", "time_in_bed", "sleep_core", "sleep_deep", "sleep_rem", "sleep_awake"})
 
@@ -46,6 +47,12 @@ def source_key(row: Mapping) -> str:
 
 
 def source_kind(row: Mapping) -> str:
+    try:
+        row_id = row["id"]
+    except (KeyError, IndexError):
+        row_id = ""
+    if str(row_id or "").startswith("derived-bmi-"):
+        return "calculated"
     return "bridge" if str(row["source_vendor"]).casefold() == "openwearables" else "direct"
 
 
@@ -97,10 +104,13 @@ def human_source_label(vendor: str, name: str) -> str:
     Apple Watch".  The stored names stay untouched; this is how they read.
     """
     vendor, name = str(vendor or "").strip(), str(name or "").strip()
+    if vendor == "Anamna" and name == "Calculated BMI":
+        return f"Anamna · {translate_phrase(name)}"
     if vendor.casefold() == "openwearables":
         origin, _physical = bridge_origin(name)
         return f"{_plain(origin)} · OpenWearables" if origin else "OpenWearables"
-    readable = _plain(name)
+    # The one source name the application itself wrote; a device's own name is never translated.
+    readable = translate_phrase(name) if name == "Garmin Connect user entry" else _plain(name)
     if not vendor or readable.casefold().startswith(vendor.casefold()) or vendor.casefold() in readable.casefold():
         return readable or vendor
     return f"{vendor} · {readable}"

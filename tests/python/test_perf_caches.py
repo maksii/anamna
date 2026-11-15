@@ -46,7 +46,7 @@ def test_owner_invalidation_keeps_the_device_scan(tmp_path: Path, monkeypatch):
     settings, user_id, _ = build(tmp_path)
     scans: list[str] = []
 
-    def scan(connection, owner_user_id, query="", limit=None):
+    def scan(connection, owner_user_id, query="", limit=None, **kwargs):
         scans.append(owner_user_id)
         return []
 
@@ -79,7 +79,7 @@ def test_the_device_overview_reuses_the_kept_scan(tmp_path: Path, monkeypatch):
     settings, owner_id, _ = build(tmp_path)
     scans: list[str] = []
 
-    def scan(connection, owner_user_id, query="", limit=None):
+    def scan(connection, owner_user_id, query="", limit=None, **kwargs):
         scans.append(owner_user_id)
         return []
 

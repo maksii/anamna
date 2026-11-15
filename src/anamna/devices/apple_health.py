@@ -6,12 +6,13 @@ from bisect import bisect_right
 from collections import Counter
 from datetime import datetime, timedelta, tzinfo
 from pathlib import Path
+from xml.parsers import expat
 
 from .catalog import HEALTHKIT_METRICS, SLEEP_METRICS, canonical_source_vendor, metric
 from .ecg import measure, read_cached
 from .models import Aggregate, DeviceEvent, ParsedDeviceExport, Workout
 from .timezone import local_day, zone
-from .units import convert_quantity, finite_number
+from .units import MAX_SLEEP_HOURS, convert_quantity, finite_number
 
 
 ATTRIBUTE = re.compile(rb'\b(\w+)="([^"]*)"')
@@ -78,7 +79,8 @@ def _sleep_hours(start: str, end: str) -> float | None:
     except ValueError:
         return None
     seconds = delta.total_seconds()
-    return seconds / 3600 if 0 < seconds <= 24 * 3600 else None
+    # Longer than a day is not one sleep interval (a manual entry spanning a week).
+    return seconds / 3600 if 0 < seconds <= MAX_SLEEP_HOURS * 3600 else None
 
 
 class _LocalDays:
@@ -203,9 +205,30 @@ class _ExportState:
         elif line.startswith(b"<ExportDate "):
             self.export_date = _iso(_attributes(line).get("value"))
 
-    def record(self, line: bytes) -> None:
+    def element(self, name: str, attrs: dict[str, str]) -> None:
+        """Read XML elements independently of whitespace and line wrapping."""
+        if name == "Record":
+            self.record(attrs)
+        elif name == "Workout":
+            self.workout(attrs)
+        elif name == "Correlation":
+            self.raw_records += 1
+            _, vendor = _source(attrs.get("sourceName", APPLE_HEALTH))
+            self.source_counts[vendor] += 1
+        elif name == "ActivitySummary":
+            self.raw_records += 1
+            self.source_counts[APPLE_HEALTH] += 1
+        elif name == "Me":
+            self.identity = {
+                "date_of_birth": attrs.get("HKCharacteristicTypeIdentifierDateOfBirth", ""),
+                "biological_sex": attrs.get("HKCharacteristicTypeIdentifierBiologicalSex", "").removeprefix("HKBiologicalSex").casefold(),
+            }
+        elif name == "ExportDate":
+            self.export_date = _iso(attrs.get("value"))
+
+    def record(self, line: bytes | dict[str, str]) -> None:
         self.raw_records += 1
-        attrs = _attributes(line)
+        attrs = line if isinstance(line, dict) else _attributes(line)
         healthkit_type = attrs.get("type", "")
         source_name, source_vendor = _source(attrs.get("sourceName", APPLE_HEALTH))
         start = attrs.get("startDate", "")
@@ -276,9 +299,9 @@ class _ExportState:
         elif healthkit_type not in SLEEP_METRICS:
             self.unknown_types[healthkit_type] += 1
 
-    def workout(self, line: bytes) -> None:
+    def workout(self, line: bytes | dict[str, str]) -> None:
         self.raw_records += 1
-        attrs = _attributes(line)
+        attrs = line if isinstance(line, dict) else _attributes(line)
         source_name, source_vendor = _source(attrs.get("sourceName", APPLE_HEALTH))
         self.source_counts[source_vendor] += 1
         started = attrs.get("startDate")
@@ -339,9 +362,16 @@ class AppleHealthAdapter:
             raise FileNotFoundError(f"Apple Health export.xml not found under {source}")
 
         state = _ExportState(tz)
-        with export.open("rb", buffering=16 * 1024 * 1024) as handle:
-            for raw_line in handle:
-                state.line(raw_line.lstrip())
+        parser = expat.ParserCreate()
+        parser.SetParamEntityParsing(expat.XML_PARAM_ENTITY_PARSING_NEVER)
+        parser.StartElementHandler = state.element
+        try:
+            with export.open("rb", buffering=16 * 1024 * 1024) as handle:
+                parser.ParseFile(handle)
+        except expat.ExpatError:
+            # A truncated or damaged export. Half a record is worse than none,
+            # and the message carries no file name or content.
+            raise ValueError("Apple Health export.xml is truncated or is not well-formed XML") from None
 
         for definition, day, source_name, source_vendor, start, end in _sleep_sessions(state.sleep_intervals, tz):
             state.add(definition, day, source_name, source_vendor, (end - start).total_seconds() / 3600, end.isoformat())
@@ -361,7 +391,6 @@ class AppleHealthAdapter:
             export_started_at=state.earliest,
             export_ended_at=state.latest,
             metadata={
-                "healthkit_export_version": 14,
                 "type_counts": dict(state.type_counts),
                 "source_vendor_counts": dict(state.source_counts),
                 "unknown_type_counts": dict(state.unknown_types),

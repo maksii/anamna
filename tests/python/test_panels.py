@@ -5,6 +5,7 @@ from anamna.db import connect, migrate
 from anamna.devices.catalog import HEALTHKIT_METRICS, SLEEP_METRICS
 from anamna.devices.structured import GarminAdapter, OuraAdapter
 from anamna.health import HEALTH_AREAS
+from anamna.garmin import DEFS as GARMIN_DEFS
 from anamna.ingest.concepts import stable_concept_id
 from anamna.ingest.pipeline import seed_concepts
 from anamna.oura import DEFS as OURA_DEFS
@@ -245,6 +246,7 @@ def test_panel_device_members_match_what_importers_write():
     writable |= {definition.key for definition in SLEEP_METRICS.values()}
     writable |= set(OURA_DEFS)
     writable |= set(OPENWEARABLES_DEFS)
+    writable |= set(GARMIN_DEFS)
     writable |= {spec[0] for spec in OuraAdapter.fields.values()}
     writable |= {spec[0] for spec in GarminAdapter.fields.values()}
     for relative, keys in _INLINE_IMPORTER_KEYS.items():

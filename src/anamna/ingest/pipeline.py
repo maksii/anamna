@@ -39,6 +39,7 @@ from .concepts import (
     clean_label,
     concept_for_alias,
     foreign_categories,
+    names_serum_or_plasma,
     refine_definition,
     specimen_family,
     stable_concept_id,
@@ -806,7 +807,7 @@ def seed_concepts(connection: sqlite3.Connection) -> None:
                 now,
             ),
         )
-        for alias in definition["aliases"]:
+        for alias in (definition["name"], *definition["aliases"]):
             normalized = normalized_key(str(alias))
             seeded.append((concept_id, normalized))
             connection.execute(
@@ -887,13 +888,28 @@ def ensure_vendor(connection: sqlite3.Connection, name: str, website: str | None
     return vendor_id
 
 
-def _row_family(specimen: str | None, unit_raw: str | None, context: str | None) -> str | None:
+def _row_family(specimen: str | None, unit_raw: str | None, context: str | None, raw_name: str = "") -> str | None:
     titled = specimen_family(context)
     return (
         specimen_family(specimen)
         or ("hematology" if blood_count_unit(unit_raw) else None)
         or (titled if titled in {"stool", "smear"} else None)
+        or _own_title_family(raw_name, context)
     )
+
+
+def _own_title_family(raw_name: str, context: str | None) -> str | None:
+    """The material of the title part that names this very row: «Кортизол
+    вільний у добовій сечі» for the row «Кортизол».  That is the row's own
+    specimen, unlike a title that names urine beside other tests.  Blood is
+    not taken this way: it is what a row is without any of this."""
+    key = normalized_key(raw_name)
+    if not key or not context:
+        return None
+    named = re.compile(rf"(?<!\w){re.escape(key)}(?!\w)")
+    families = {specimen_family(part) for part in context.split(" · ") if named.search(normalized_key(part))}
+    family = families.pop() if len(families) == 1 else None
+    return None if family == "hematology" else family
 
 
 def _learned_alias_row(
@@ -956,11 +972,15 @@ def ensure_concept(
     (``concept_for_alias``): «Лейкоцити (WBC) 6.84 10^9 клітин/л» in an order
     titled as a urinalysis is the white cell count, and a smear's «Слиз» is
     not urine mucus.  A urinalysis or blood title stays a preference only:
-    such orders routinely carry the other specimen's rows too.
+    such orders routinely carry the other specimen's rows too.  It chooses
+    between two definitions one label has (blood and urine glucose) and never
+    refuses a label's only one -- except through the title part that names
+    the row itself (``_own_title_family``), and for a definition named for
+    serum or plasma (``concept_for_alias``, ``category_binds``).
     """
     raw_name = clean_label(raw_name)
     normalized = normalized_key(raw_name)
-    family = _row_family(specimen, unit_raw, context)
+    family = _row_family(specimen, unit_raw, context, raw_name)
     inferred_category = _inferred_category(normalized, clinical_type, context, family)
     search_category = None if inferred_category == "unmapped" else inferred_category
     # Canonical definitions are resolved before learned vendor aliases because
@@ -971,6 +991,7 @@ def ensure_concept(
         value_type,
         category=search_category,
         specimen=family,
+        category_binds=False,
     )
     definition = refine_definition(
         by_label, unit=unit_raw, value_text=value_text, reference=reference_text,
@@ -981,7 +1002,7 @@ def ensure_concept(
         # «Кристали» is stool because of its section, and learned as a bare
         # alias it would file the next unsectioned «Кристали» as stool too.
         label_decided = family is None or by_label is concept_for_alias(
-            raw_name, value_type, category=search_category
+            raw_name, value_type, category=search_category, category_binds=False
         )
         return _store_defined_concept(
             connection, definition, by_label if label_decided else None, vendor_id, raw_name, normalized
@@ -993,6 +1014,15 @@ def ensure_concept(
     raw_name = _specimen_qualified(raw_name, family, specimen)
     normalized = normalized_key(raw_name)
     alias_row = _learned_alias_row(connection, normalized, vendor_id, value_type, excluded)
+    # The row's own material binds a learned alias as it binds the catalogue;
+    # a urine title does not (``concept_for_alias``, ``category_binds``).
+    bound_family = family or specimen_family(raw_name)
+    definition = _DEFINED_CONCEPTS_BY_ID.get(alias_row["id"]) if alias_row else None
+    if definition and (
+        definition.get("specimen_family") not in (None, bound_family) if bound_family
+        else inferred_category == "urinalysis" and names_serum_or_plasma(definition)
+    ):
+        alias_row = None
     if alias_row:
         return _reuse_alias_concept(connection, alias_row, inferred_category)
     concept_id, preferred_unit = _store_unmapped_concept(
@@ -1038,6 +1068,15 @@ def _specimen_qualified(raw_name: str, family: str | None, specimen: str | None)
     site = collapse_space(specimen or "")
     if family == "smear" and site and f"({site})".casefold() not in raw_name.casefold():
         return f"{raw_name} ({site})"
+    # A refused canonical alias must not re-enter the same seeded concept
+    # through concepts.canonical_name's unique constraint during fallback.
+    # Preserve the contradictory specimen explicitly instead of guessing.
+    if family:
+        canonical = next((definition for definition in CONCEPT_DEFINITIONS
+                          if str(definition["name"]).casefold() == raw_name.casefold()), None)
+        if canonical and canonical.get("specimen_family") not in (None, family):
+            qualifier = site or family
+            return f"{raw_name} ({qualifier})"
     return raw_name
 
 
@@ -1117,6 +1156,9 @@ def _store_defined_concept(
 
 #: The catalogue's concepts, whose category no row's inference may change.
 _DEFINED_CONCEPT_IDS = frozenset(stable_concept_id(str(definition["name"])) for definition in CONCEPT_DEFINITIONS)
+_DEFINED_CONCEPTS_BY_ID = {
+    stable_concept_id(str(definition["name"])): definition for definition in CONCEPT_DEFINITIONS
+}
 
 
 def _store_unmapped_concept(
@@ -1298,12 +1340,9 @@ def stored_unit(
     every restart.  Storing the measurement and stating its unit honestly is
     idempotent by construction.
 
-    Two printed units are restated, both because the number beside them is
-    already in the other one: a unit that folds to nothing (specific gravity
-    «г/мл» -- the figure is the dimensionless relative density) and a
-    per-concept relabel from ``CONCEPT_UNIT_ALIASES`` (plateletcrit printed
-    «х 10*9/л» over a value in %).  Left as printed, either gives the analyte a
-    second unit and splits its series.
+    Only an exact, per-concept equivalent in ``CONCEPT_UNIT_ALIASES`` is
+    restated. Suspected source-unit errors remain as printed for review;
+    numerical magnitude is never evidence for changing a physical dimension.
     """
     if not unit_raw:
         return preferred_unit
@@ -1422,7 +1461,7 @@ def resolve_parsed_concept(
         clinical_type=report_type_row["clinical_type"] if report_type_row else None,
         context=report_type_row["title"] if report_type_row else None,
         value_text=parsed.value_text,
-        reference_text=parsed.reference_text,
+        reference_text="\n".join(filter(None, (parsed.reference_text, parsed.note))) or None,
         specimen=observation_specimen(parsed, specimen),
     )
 
@@ -1597,7 +1636,7 @@ def repair_observation_semantics(connection: sqlite3.Connection) -> int:
     Ends by refreshing derived values (eGFR), whose inputs this may have moved.
     """
     seed_concepts(connection)
-    changed = 0
+    changed = _repair_human_unmapped_concepts(connection)
     rows = connection.execute(
         f"""SELECT o.*, COALESCE(r.vendor_id, d.vendor_id) resolved_vendor_id,
                          COALESCE(r.clinical_type, d.clinical_type) resolved_clinical_type,
@@ -1605,7 +1644,8 @@ def repair_observation_semantics(connection: sqlite3.Connection) -> int:
            FROM observations o
            JOIN documents d ON d.id=o.document_id
            LEFT JOIN reports r ON r.id=o.report_id
-           WHERE o.extraction_method NOT IN ({",".join("?" * (len(HUMAN_AUTHORED) + 1))})""",
+           WHERE o.extraction_method NOT IN ({",".join("?" * (len(HUMAN_AUTHORED) + 1))})
+             AND substr(o.extraction_method, 1, 8) <> 'derived_'""",
         (*HUMAN_AUTHORED, DERIVED_EGFR_METHOD),
     ).fetchall()
     now = utc_now()
@@ -1619,7 +1659,7 @@ def repair_observation_semantics(connection: sqlite3.Connection) -> int:
             clinical_type=row["resolved_clinical_type"],
             context=row["resolved_title"],
             value_text=row["value_text"],
-            reference_text=row["vendor_reference_text"],
+            reference_text="\n".join(filter(None, (row["vendor_reference_text"], row["note"]))) or None,
             specimen=row["specimen"],
         )
         low, high, low_inclusive, high_inclusive = _repaired_bounds(row)
@@ -1675,6 +1715,41 @@ def repair_observation_semantics(connection: sqlite3.Connection) -> int:
     backfill_review_reason_keys(connection)
     repair_review_tasks(connection)
     refresh_derived_observations(connection)
+    return changed
+
+
+def _repair_human_unmapped_concepts(connection: sqlite3.Connection) -> int:
+    """Attach newly catalogued identities to unchanged, formerly unknown labels.
+
+    A person's choice of any known concept remains theirs. Only a concept
+    minted directly from the same raw label, still explicitly unmapped, can
+    gain a catalogue identity. Values, review state, source and bounds stay.
+    """
+    rows = connection.execute(
+        f"""SELECT o.*, COALESCE(r.vendor_id,d.vendor_id) resolved_vendor_id,
+                   COALESCE(r.clinical_type,d.clinical_type) resolved_clinical_type,
+                   COALESCE(r.title,d.title) resolved_title
+            FROM observations o JOIN concepts c ON c.id=o.concept_id
+            JOIN documents d ON d.id=o.document_id LEFT JOIN reports r ON r.id=o.report_id
+            WHERE o.extraction_method IN ({','.join('?' for _ in HUMAN_AUTHORED)})
+              AND c.category='unmapped' AND c.canonical_name=o.raw_name""", HUMAN_AUTHORED,
+    ).fetchall()
+    changed = 0
+    for row in rows:
+        concept_id, preferred_unit = ensure_concept(
+            connection, row["raw_name"], row["resolved_vendor_id"], value_type=row["value_type"],
+            unit_raw=row["unit_raw"], clinical_type=row["resolved_clinical_type"],
+            context=row["resolved_title"], value_text=row["value_text"],
+            reference_text="\n".join(filter(None, (row["vendor_reference_text"], row["note"]))) or None, specimen=row["specimen"],
+        )
+        target = connection.execute("SELECT category FROM concepts WHERE id=?", (concept_id,)).fetchone()
+        if concept_id == row["concept_id"] or target is None or target[0] == "unmapped":
+            continue
+        unit = stored_unit(row["unit_raw"], preferred_unit, concept_id)
+        _audit_semantic_moves(connection, row, concept_id, unit, utc_now())
+        connection.execute("UPDATE observations SET concept_id=?,unit_canonical=? WHERE id=?",
+                           (concept_id, unit, row["id"]))
+        changed += 1
     return changed
 
 
@@ -2595,13 +2670,15 @@ _COVER_STATUSES = ("supporting_record", "result_not_present")
 
 
 def _result_fingerprint(row) -> tuple[object, ...]:
-    """One result by content: concept, value, unit and day -- never by id or file."""
+    """One result by exact content and sample context, never by id or file."""
+    def field(name):
+        return row[name] if name in row.keys() else None
     return (
         row["concept_id"],
-        None if row["value_numeric"] is None else round(float(row["value_numeric"]), 6),
-        normalized_key(str(row["value_text"] or "")) if row["value_numeric"] is None else "",
-        canonical_unit(row["unit_canonical"]) if row["value_numeric"] is not None else "",
-        str(row["observed_at"] or "")[:10],
+        row["value_numeric"], normalized_key(str(row["value_text"] or "")),
+        canonical_unit(field("unit_raw") or row["unit_canonical"]),
+        str(row["observed_at"] or ""), field("comparator") or "",
+        field("specimen") or "", field("sample_condition") or "", field("note") or "",
     )
 
 
@@ -2728,8 +2805,9 @@ def _result_fingerprints(connection, document_id: str) -> set[tuple[object, ...]
     return {
         _result_fingerprint(row)
         for row in connection.execute(
-            """SELECT concept_id, value_numeric, value_text, unit_canonical, observed_at
-                 FROM observations WHERE document_id=? AND verification_status <> 'rejected'""",
+            """SELECT *
+                 FROM observations WHERE document_id=? AND verification_status <> 'rejected'
+                   AND substr(extraction_method, 1, 8) <> 'derived_'""",
             (document_id,),
         )
     }
@@ -2800,7 +2878,8 @@ def _shared_result_relations(
     connection, owner_user_id: str, document, document_id: str, by_id: dict, relations: dict
 ) -> None:
     mine = _result_fingerprints(connection, document_id)
-    dates = sorted({key[4] for key in mine if key[4]})
+    # The fingerprint holds the whole timestamp; the query below asks by day.
+    dates = sorted({key[4][:10] for key in mine if key[4]})
     if not (mine and dates):
         return
     sharing = connection.execute(
@@ -3429,17 +3508,28 @@ def _duplicate_pair(connection: sqlite3.Connection, owner_user_id: str, copy_id:
 def _copy_rows_held_by_primary(connection: sqlite3.Connection, copy_id: str, primary_id: str):
     """The copy's observations and doses, refused when one a person ruled on
     is not also held, by content, by the kept document."""
-    observation_sql = """SELECT id, raw_name, concept_id, value_numeric, value_text, unit_canonical, observed_at,
-                                verification_status, entry_source, extraction_method, note
+    observation_sql = """SELECT id, raw_name, concept_id, value_numeric, value_text, unit_canonical, unit_raw, observed_at,
+                                verification_status, entry_source, extraction_method, note, comparator, specimen, sample_condition
                            FROM observations WHERE document_id=?"""
-    kept_rows = connection.execute(observation_sql, (primary_id,)).fetchall()
-    held_any = {_result_fingerprint(row) for row in kept_rows}
-    held = {_result_fingerprint(row) for row in kept_rows if row["verification_status"] != "rejected"}
+    # Calculated values are not evidence printed by the kept document. They
+    # cannot justify discarding a source document's independently reported test.
+    kept_rows = [row for row in connection.execute(observation_sql, (primary_id,))
+                 if not is_derived(row["extraction_method"])]
+
+    def reading(row) -> tuple[object, ...]:
+        # Analyte, value, unit, comparator and day.  A photo and the PDF it
+        # copies differ in a note, a time of day or a specimen's spelling,
+        # and the ruling is on the reading, which the kept document holds.
+        concept, number, text, unit, moment, sign = _result_fingerprint(row)[:6]
+        return concept, number, text, unit, moment[:10], sign
+
+    held_any = {reading(row) for row in kept_rows}
+    held = {reading(row) for row in kept_rows if row["verification_status"] != "rejected"}
     copy_rows = connection.execute(observation_sql, (copy_id,)).fetchall()
     unheld = [
         row for row in copy_rows
         if _is_ruled(row)
-        and _result_fingerprint(row) not in (held_any if row["verification_status"] == "rejected" else held)
+        and reading(row) not in (held_any if row["verification_status"] == "rejected" else held)
     ]
     # A test the kept document does not hold at all is lost with the copy's
     # rows: a Synevo lab record was set aside as a copy of its PDF, whose
@@ -3747,8 +3837,8 @@ def _content_concepts(connection, document_id: str) -> dict[tuple[object, ...], 
             """SELECT page_number, raw_name, value_numeric, value_text, unit_canonical,
                       comparator, observed_at, concept_id
                  FROM observations WHERE document_id=? AND verification_status='extracted'
-                  AND extraction_method <> ?""",
-            (document_id, DERIVED_EGFR_METHOD),
+                  AND substr(extraction_method, 1, 8) <> 'derived_'""",
+            (document_id,),
         )
     }
 
@@ -3797,8 +3887,8 @@ def _content_counts(connection, document_id: str) -> Counter[tuple[object, ...]]
             """SELECT page_number, raw_name, value_numeric, value_text, unit_canonical,
                       comparator, observed_at
                  FROM observations WHERE document_id=? AND verification_status='extracted'
-                  AND extraction_method <> ?""",
-            (document_id, DERIVED_EGFR_METHOD),
+                  AND substr(extraction_method, 1, 8) <> 'derived_'""",
+            (document_id,),
         )
     )
 

@@ -32,6 +32,7 @@ import threading
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from functools import cache
 
 from .config import Settings
 from .db import connect, transaction, utc_now
@@ -118,6 +119,31 @@ def _specimen_key(label: str, context: str) -> str:
 _ROW_ID_IS_PARAMETER = frozenset({"esculab"})
 
 
+@cache
+def _defined_concepts() -> dict[str, dict]:
+    from .ingest.concepts import CONCEPT_DEFINITIONS, stable_concept_id
+
+    return {stable_concept_id(str(d["name"])): d for d in CONCEPT_DEFINITIONS}
+
+
+def _matches_specimen(concept_id: str, label: str, context: str, material: str | None = None) -> bool:
+    """Whether a concept bound to one specimen can be measured in this one.
+
+    ``material`` is the item's specimens joined with " + ".  A package drawn
+    on several («сеча + зішкріб + цільна кров») says nothing about which one
+    a parameter is measured in, so nothing is refused; reading the specimen
+    off the package's title instead («… зішкріб із урогенітального тракту»)
+    took a blood count out of a package that includes one."""
+    from .ingest.concepts import specimen_family
+
+    definition = _defined_concepts().get(concept_id)
+    if len({specimen_family(part) for part in (material or "").split(" + ")} - {None}) > 1:
+        return True
+    family = specimen_family(material, label, context)
+    return (definition is None or not family or not definition.get("specimen_family")
+            or definition["specimen_family"] == family)
+
+
 def _value_concepts(observations) -> dict[float, list[str]]:
     by_value: dict[float, list[str]] = {}
     for row in observations:
@@ -126,40 +152,55 @@ def _value_concepts(observations) -> dict[float, list[str]]:
     return by_value
 
 
-def _row_concept(label: str, result, by_name: dict, by_value: dict) -> str | None:
-    """The concept a lab row names: the report's observation of that name, else the one with the same value."""
+def _row_concept(label: str, result, by_name: dict, by_value: dict, context: str = "") -> str | None:
+    """The concept a lab row names, with a value match only confirming identity.
+
+    Unrelated analytes routinely share a number. A lone equal value cannot
+    teach an orderable parameter's identity without a matching analyte name.
+    """
     from .ingest.text import normalized_key
     from .labsync.common import parse_result
 
     concept = by_name.get(normalized_key(label))
-    if concept:
+    if concept and _matches_specimen(concept, label, context):
         return concept
     _, number = parse_result(result)
     matches = set(by_value.get(round(number, 6), [])) if number is not None else set()
-    return matches.pop() if len(matches) == 1 else None
+    resolved = resolve(label, context, "", {}, None)
+    return resolved if resolved in matches else None
 
 
-def _learn_row(learned: dict[str, str], lab_row: dict, lab: str, by_name: dict, by_value: dict) -> None:
-    """Teach ``learned`` what one lab row means, unless it already knows that."""
+def _learn_row(learned: dict[str, str], lab_row: dict, lab: str, by_name: dict, by_value: dict,
+               conflicts: set[str] | None = None) -> None:
+    """Teach a label/parameter only when every supporting row agrees."""
     from .ingest.concepts import clean_label
 
     label = clean_label(str(lab_row.get("test") or ""))
-    name = _specimen_key(label, str(lab_row.get("packet") or ""))
+    context = " ".join(str(lab_row.get(field) or "") for field in ("packet", "material"))
+    name = _specimen_key(label, context)
     row_id = f"id:{lab_row['idtest']}" if lab in _ROW_ID_IS_PARAMETER and lab_row.get("idtest") else None
-    if not label or (name in learned and (row_id is None or row_id in learned)):
+    if not label:
         return
-    concept = _row_concept(label, lab_row.get("result"), by_name, by_value)
+    concept = _row_concept(label, lab_row.get("result"), by_name, by_value, context)
+    if concept and not _matches_specimen(concept, label, context, str(lab_row.get("material") or "")):
+        concept = None
     if concept:
-        learned.setdefault(name, concept)
-        if row_id:
-            learned.setdefault(row_id, concept)
+        for key in (name, row_id):
+            if key is None or (conflicts is not None and key in conflicts):
+                continue
+            if key in learned and learned[key] != concept:
+                learned.pop(key)
+                if conflicts is not None:
+                    conflicts.add(key)
+            else:
+                learned[key] = concept
 
 
 def learned_names(connection, owner_user_id: str, lab: str) -> dict[str, str]:
     """What this lab's own analyte names meant in this person's record:
     ``normalized name -> concept`` from every synced order whose report was
     imported, pairing the lab's row with the parsed value of the same report
-    by name, else by the one value that is equal.  The lab's price list uses
+    by name, or confirming a resolved analyte with its equal value. The lab's price list uses
     the names its results do; where the row also carries the catalogue's
     parameter id (Esculab: the ``idtest``), ``"id:<id>" -> concept`` too, so
     a test the person has had there is recognised however the catalogue
@@ -168,6 +209,7 @@ def learned_names(connection, owner_user_id: str, lab: str) -> dict[str, str]:
     from .ingest.text import normalized_key
 
     learned: dict[str, str] = {}
+    conflicts: set[str] = set()
     for order in connection.execute(
         """SELECT rows_json, document_id FROM lab_orders
            WHERE provider=? AND owner_user_id=? AND rows_json IS NOT NULL AND document_id IS NOT NULL""",
@@ -177,10 +219,13 @@ def learned_names(connection, owner_user_id: str, lab: str) -> dict[str, str]:
             "SELECT raw_name, concept_id, value_numeric FROM observations WHERE document_id=? AND verification_status<>'rejected'",
             (order["document_id"],),
         ).fetchall()
-        by_name = {normalized_key(clean_label(row["raw_name"] or "")): row["concept_id"] for row in observations}
+        candidates: dict[str, set[str]] = {}
+        for row in observations:
+            candidates.setdefault(normalized_key(clean_label(row["raw_name"] or "")), set()).add(row["concept_id"])
+        by_name = {name: next(iter(ids)) for name, ids in candidates.items() if len(ids) == 1}
         by_value = _value_concepts(observations)
         for lab_row in json.loads(order["rows_json"]):
-            _learn_row(learned, lab_row, lab, by_name, by_value)
+            _learn_row(learned, lab_row, lab, by_name, by_value, conflicts)
     return learned
 
 
@@ -204,10 +249,23 @@ _OTHER_SPECIMEN = re.compile(
     r"|волосс|нігт|амніот|навколоплідн|молок|цільн\w* кров|добов", re.IGNORECASE)
 
 
+#: An immunoglobulin class with a Cyrillic letter: Esculab prints «Ig М»,
+#: identical on paper and invisible to every Latin pattern.
+_CYRILLIC_IG = re.compile(r"\b[IІ]g\s?[МАЕ]\b", re.IGNORECASE)
+_LATIN_IG = str.maketrans("ІіМмАаЕе", "IiMmAaEe")
+_IG_CLASS = re.compile(r"\big\s?[gmae]\d?\b", re.IGNORECASE)
+#: «IgG_ANCA» too: an underscore is a word character, so no ``\b`` follows it.
+_IGG = re.compile(r"\big\s?g(?![^\W_])", re.IGNORECASE)
+
+
+def _latin_ig(label: str) -> str:
+    return _CYRILLIC_IG.sub(lambda match: match.group().translate(_LATIN_IG), label)
+
+
 def _fits(definition: dict, label: str) -> bool:
     """A resolution that does not contradict the label: an antibody name is
     an antibody concept."""
-    if not _ANTIBODY.search(label):
+    if not _ANTIBODY.search(_latin_ig(label)):
         return True
     name = str(definition["name"]).casefold()
     return definition["category"] in _ANTIBODY_CATEGORIES or "antibod" in name or "anti-" in name
@@ -238,12 +296,31 @@ def _initialism(part: str, base: str) -> bool:
     return True
 
 
+def _contradicts(label: str, definition: dict) -> bool:
+    """The label names a specimen, fraction, method or antibody class the
+    definition does not: «Ig G до Хелікобактер пілорі (Helicobacter Pylori)»
+    is not the H. pylori test of unstated method its bracket spells.  One
+    exception: an antibody concept that names no class at all is the IgG
+    assay («ДНК двоспіральна (dsDNA), антитіла IgG», MPO, PR3 -- the class
+    those autoantibodies are measured in), so «IgG» alone does not rule it
+    out; IgM or IgA still does."""
+    from .ingest.concepts import _fallback_blocked
+
+    label = _latin_ig(label)
+    own = " ".join([str(definition["name"]), *(str(alias) for alias in definition.get("aliases", []))])
+    if re.search(r"antibod|антитіл", own, re.IGNORECASE) and not _IG_CLASS.search(own):
+        label = _IGG.sub(" ", label)
+    return _fallback_blocked(label, definition)
+
+
 def _look(text: str, label: str, urine: bool) -> dict | None:
     from .ingest.concepts import concept_for_alias
 
     category = "urinalysis" if urine else None
     definition = concept_for_alias(text, None, category=category) if text else None
-    if definition is None or not _fits(definition, label) or (definition["category"] == "urinalysis") != urine:
+    if (definition is None or not _fits(definition, label)
+            or _contradicts(label, definition)
+            or (definition["category"] == "urinalysis") != urine):
         return None
     return definition
 
@@ -276,7 +353,9 @@ def _by_parts(label: str, urine: bool, context: str) -> dict | None:
     Protein, High Sensitivity)») name none.  Never for a specimen other than
     blood and urine or a genetic test, and a urine label only ever finds a
     urine concept."""
-    if _OTHER_SPECIMEN.search(f"{label} {context}") or _GENETIC.search(label) or _DERIVED.search(label):
+    # Antibodies to DNA are serology: «ДНК двоспіральна (dsDNA), антитіла IgG».
+    genetic = _GENETIC.search(label) and not _ANTIBODY.search(_latin_ig(label))
+    if _OTHER_SPECIMEN.search(f"{label} {context}") or genetic or _DERIVED.search(label):
         return None
     bare = " ".join(_SERUM.sub(" ", label).split())
     if bare != label and (definition := _look(bare, label, urine)):
@@ -300,25 +379,29 @@ def resolve(name: str, context: str, vendor: str, aliases: dict, learned: dict |
     before anyone else's (Latin/Cyrillic homoglyphs folded: «(МСН)» is MCH),
     then the label's parts (:func:`_by_parts`).  ``context`` names the
     specimen: the lab's own smallest item carrying the analyte."""
-    from .ingest.concepts import clean_label, concept_for_alias, label_key, stable_concept_id
+    from .ingest.concepts import clean_label, concept_for_alias, label_key, specimen_family, stable_concept_id
     from .ingest.text import normalized_key
 
     label = clean_label(name)
     if not label:
         return None
     specimen = _specimen_key(label, context)
-    if learned and specimen in learned:
+    family = specimen_family(label, context)
+
+    if learned and specimen in learned and _matches_specimen(learned[specimen], label, context):
         return learned[specimen]
     urine = specimen.startswith("urine:")
-    definition = concept_for_alias(label, None, category="urinalysis" if urine else None)
+    definition = concept_for_alias(label, None, category="urinalysis" if urine else None, specimen=family)
     if definition and _fits(definition, label):
         return stable_concept_id(str(definition["name"]))
     found = aliases.get(normalized_key(label)) or aliases.get(label_key(label)) or []
     found = sorted(found, key=lambda pair: (pair[0] != vendor, pair[0] is None))
-    if found:
-        return found[0][1]
+    for _, concept_id in found:
+        if _matches_specimen(concept_id, label, context):
+            return concept_id
     definition = _by_parts(label, urine, context)
-    return stable_concept_id(str(definition["name"])) if definition else None
+    concept_id = stable_concept_id(str(definition["name"])) if definition else None
+    return concept_id if concept_id and _matches_specimen(concept_id, label, context) else None
 
 
 #: Analyte names that are a whole examination reported as one text block,
@@ -413,14 +496,102 @@ def _smallest_items(items: list[dict]) -> dict[str, dict]:
     return smallest
 
 
+def _ambiguous_smallest_specimens(items: list[dict], smallest: dict[str, dict]) -> set[str]:
+    """Parameter banks can reuse an id across incompatible sample types.
+
+    Equally small carrier tests provide no basis for picking the first one's
+    specimen. Resolve those parameters in each actual item instead.
+    """
+    from .ingest.concepts import specimen_family
+
+    families: dict[str, set[str | None]] = {}
+    for item in items:
+        for parameter in item["parameters"]:
+            if len(item["parameters"]) != len(smallest[parameter["id"]]["parameters"]):
+                continue
+            material = " + ".join(str(value) for value in item.get("material") or [])
+            family = specimen_family(material, parameter["name"], item["name"])
+            families.setdefault(parameter["id"], set()).add(family)
+    return {key for key, choices in families.items() if len(choices) > 1}
+
+
+# A catalogue wrapper names the result of an empty or generic parameter
+# outright.  Any other parameter takes the title only through
+# :func:`_title_key`: an unresolved RET-He, antibody or specimen is not the
+# different analyte its generic order title names.
+_GENERIC_PARAMETER_NAMES = frozenset({
+    "", "результат", "результат дослідження", "показник", "значення", "result", "value",
+})
+
+
+def _names_another(label: str, concept_id: str) -> bool:
+    """A part of the label, inside or outside its brackets, that is another
+    analyte's name: «Гемоглобін (RET-He)» under the title «Ретикулоцити»."""
+    from .ingest.concepts import concept_for_alias, stable_concept_id
+
+    pieces = [" ".join(_BRACKET.sub(" ", label).split())]
+    pieces += [part.strip() for group in _BRACKET.findall(label) for part in re.split(r"[,;/]", group)]
+    return any(stable_concept_id(str(found["name"])) != concept_id
+               for piece in pieces if piece and (found := concept_for_alias(piece, None)))
+
+
+_WORD = re.compile(r"[^\W_]+")
+
+
+def _words(text: str) -> str:
+    return f" {' '.join(_WORD.findall(text.casefold()))} "
+
+
+def _says(label: str, definition: dict) -> bool:
+    """One of the definition's names stands in the label as whole words:
+    «HLA-B27» in «Виявлення носійства HLA-B27-антигену», and no name of the
+    HOMA index in «Індекс HOMA2».  A name under four characters says too
+    little («ret» is not the reticulocyte count)."""
+    spoken = _words(label)
+    return any(len(name) > 5 and name in spoken
+               for name in map(_words, (str(definition["name"]), *map(str, definition.get("aliases", [])))))
+
+
+def _title_key(parameter_name: str, own: dict, context: str, vendor: str, aliases: dict,
+               learned: dict | None) -> str | None:
+    """What the title of a test of one parameter names, for a parameter whose
+    own name resolved to nothing: «Виявлення носійства гену HLA B-27» for
+    «Виявлення носійства HLA-B27-антигену (ПЛР) (якісне визначення)».  The
+    parameter has to say the titled concept's name itself (:func:`_says`),
+    and not when it says something that concept does not (a specimen, a
+    class, a method: :func:`_contradicts`) or names another analyte.  A
+    placeholder («Результат») says nothing at all and takes the title."""
+    from .ingest.concepts import clean_label
+    from .ingest.text import normalized_key
+
+    key = resolve(own["name"], context, vendor, aliases, learned)
+    if not key or normalized_key(parameter_name) in _GENERIC_PARAMETER_NAMES:
+        return key
+    definition = _defined_concepts().get(key)
+    label = clean_label(parameter_name)
+    if (definition is None or not _says(label, definition)
+            or not _fits(definition, label) or _contradicts(label, definition)
+            or (_OTHER_SPECIMEN.search(label) and not _OTHER_SPECIMEN.search(str(own["name"])))
+            or _names_another(label, key)):
+        return None
+    return key
+
+
 def _parameter_keys(parameter: dict, own: dict, lab: str, vendor: str, aliases: dict,
                     learned: dict | None) -> list[str]:
     """Keys for one parameter id, the same in every item that lists it."""
     from . import testplan_aliases
     from .ingest.text import normalized_key
 
+    material = " + ".join(str(value) for value in own.get("material") or [])
+    context = " ".join((str(own["name"]), material))
+    def compatible(key):
+        return _matches_specimen(key, parameter["name"], context, material)
+
     chosen = testplan_aliases.curated(lab, parameter["id"])
     if chosen is not None:
+        if not all(compatible(key) for key in chosen):
+            return [f"{lab}:{parameter['id']}"]
         return list(chosen) or [f"{lab}:{parameter['id']}"]
     single = len(own["parameters"]) == 1
     allergen = testplan_aliases.allergen_key(f"{parameter['name']} {own['name']}" if single else parameter["name"])
@@ -429,16 +600,20 @@ def _parameter_keys(parameter: dict, own: dict, lab: str, vendor: str, aliases: 
     whole = WHOLE_TESTS.get(normalized_key(parameter["name"]))
     if whole:
         return list(whole)
-    key = (learned or {}).get(f"id:{parameter['id']}") or resolve(
-        parameter["name"], own["name"], vendor, aliases, learned)
+    key = (learned or {}).get(f"id:{parameter['id']}")
+    if key and not compatible(key):
+        key = None
+    key = key or resolve(parameter["name"], context, vendor, aliases, learned)
     if not key and single:
-        key = resolve(own["name"], own["name"], vendor, aliases, learned)
+        key = _title_key(parameter["name"], own, context, vendor, aliases, learned)
+    if key and not compatible(key):
+        key = None
     key = key or f"{lab}:{parameter['id']}"
     return [key, *testplan_aliases.IMPLIED.get(key, ())]
 
 
-def _item_keys(item: dict, daily: bool, by_id: dict[str, list[str]], analyte, spot_urine: set,
-               lab: str) -> list[list[str]]:
+def _item_keys(item: dict, daily: bool, by_id: dict[object, list[str]], analyte, spot_urine: set,
+               lab: str, ambiguous: set[str]) -> list[list[str]]:
     """The keys of each parameter of one item, aligned with its ``parameters``."""
     from . import testplan_aliases
     from .ingest.text import normalized_key
@@ -448,9 +623,16 @@ def _item_keys(item: dict, daily: bool, by_id: dict[str, list[str]], analyte, sp
         if testplan_aliases.is_note(normalized_key(parameter["name"])) and len(item["parameters"]) > 1:
             per_parameter.append([])
             continue
-        if parameter["id"] not in by_id:
-            by_id[parameter["id"]] = analyte(parameter)
-        found = by_id[parameter["id"]]
+        bank_key = (parameter["id"], item["id"]) if parameter["id"] in ambiguous else parameter["id"]
+        if bank_key not in by_id:
+            by_id[bank_key] = analyte(parameter, item)
+        found = by_id[bank_key]
+        material = " + ".join(str(value) for value in item.get("material") or [])
+        # A package's title names what it is sold for, not the specimen of
+        # each parameter; only a test of one parameter is named after it.
+        title = item["name"] if len(item["parameters"]) == 1 else ""
+        if not all(_matches_specimen(key, parameter["name"], title, material) for key in found):
+            found = [f"{lab}:{parameter['id']}"]
         if daily:
             found = [f"{lab}:24h:{parameter['id']}" if key in spot_urine else key for key in found]
         per_parameter.append(found)
@@ -475,7 +657,8 @@ def keyed(items: list[dict], lab: str, vendor: str, aliases: dict, learned: dict
     6. its name (:func:`resolve`), with the specimen of the lab's smallest
        item carrying it: «глюкоза» in a package is urine glucose when a
        urinalysis is the smallest item that lists it;
-    7. when that smallest item reports nothing else, the item's own name;
+    7. when that smallest item reports nothing else, the item's own name,
+       unless the parameter's name contradicts it (:func:`_title_key`);
     8. ``"<lab>:<parameter id>"``.
 
     A parameter id gets the same keys in every item that lists it, and a
@@ -492,16 +675,18 @@ def keyed(items: list[dict], lab: str, vendor: str, aliases: dict, learned: dict
 
     aliases = _folded(aliases)
     smallest = _smallest_items(items)
+    ambiguous = _ambiguous_smallest_specimens(items, smallest)
 
-    def analyte(parameter: dict) -> list[str]:
-        return _parameter_keys(parameter, smallest[parameter["id"]], lab, vendor, aliases, learned)
+    def analyte(parameter: dict, item: dict) -> list[str]:
+        own = item if parameter["id"] in ambiguous else smallest[parameter["id"]]
+        return _parameter_keys(parameter, own, lab, vendor, aliases, learned)
 
-    by_id: dict[str, list[str]] = {}
+    by_id: dict[object, list[str]] = {}
     spot_urine = {stable_concept_id(str(definition["name"])) for definition in CONCEPT_DEFINITIONS
                   if definition["category"] == "urinalysis"}
     out = []
     for item in items:
-        per_parameter = _item_keys(item, _daily_urine(item), by_id, analyte, spot_urine, lab)
+        per_parameter = _item_keys(item, _daily_urine(item), by_id, analyte, spot_urine, lab, ambiguous)
         keys = [key for found in per_parameter for key in found]
         out.append({**item, "lab": lab, "keys": list(dict.fromkeys(keys)), "parameter_keys": per_parameter,
                     "fees": [{**fee, "id": fee["id"] if str(fee["id"]).startswith(f"{lab}:") else f"{lab}:{fee['id']}"}

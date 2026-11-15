@@ -26,11 +26,14 @@ from __future__ import annotations
 
 import math
 import re
+import json
 from collections.abc import Callable, Collection, Mapping, Sequence
 from datetime import date
 
 from .. import diagnoses, diagnosis_matrix, diagnosis_treatment, factors, icd10
+from ..calculation_info import calculation_source
 from ..devices.catalog import CORE_METRIC_KEYS
+from ..health import concept_display_name, display_unit
 from ..i18n import get_locale, t, t_plural, translate_phrase
 from ..panels import SAME_DEVICE_KEYS
 
@@ -363,6 +366,9 @@ def _result_line(card: dict[str, object], sources: Sources, *, dated: str = "") 
     # A same-measurement twin is one line read from documents and devices.
     if card.get("sources_text"):
         text += f"; {card['sources_text']}"
+    calculation = _calculation_text(card)
+    if calculation:
+        text += "; " + calculation
     return text
 
 
@@ -383,7 +389,16 @@ def _history_line(card: dict[str, object], limit: int = MAX_HISTORY_POINTS) -> s
         indexes = sorted(set(indexes) | {0, len(series) - 1})
         kept = [series[index] for index in indexes]
         dropped = len(series) - len(kept)
-    path = ", ".join(f"{point['date']} {_num(point['value'])}" for point in kept)
+    def history_value(point):
+        text = f"{point['date']} {_num(point['value'])}"
+        if source := calculation_source(point.get("extraction_method")):
+            text += f" [{t('calc.source')}: {source}"
+            if str(point.get("verification_status") or "") not in _CHECKED:
+                text += "; " + t("ai.mark_unverified")
+            text += "]"
+        return text
+
+    path = ", ".join(history_value(point) for point in kept)
     unit = str(card.get("unit") or "").strip()
     # The span is only news when points were dropped: otherwise every date
     # and the extremes are already on the line.
@@ -395,6 +410,68 @@ def _history_line(card: dict[str, object], limit: int = MAX_HISTORY_POINTS) -> s
             low=_num(min(values)), high=_num(max(values)),
         )
     return f"- {card['name']}{f' ({unit})' if unit else ''}: {path}{thinned}"
+
+
+def _calculation_inputs(item: Mapping[str, object]) -> list[Mapping[str, object]]:
+    """Accept hydrated page rows and portable stored JSON through one path."""
+    inputs = item.get("calculation_inputs") or item.get("calculation_inputs_json") or []
+    if isinstance(inputs, str):
+        try:
+            inputs = json.loads(inputs)
+        except (ValueError, TypeError):
+            return []
+    if not isinstance(inputs, (list, tuple)):
+        return []
+    return [value for value in inputs if isinstance(value, Mapping)]
+
+
+def _calculation_text(item: Mapping[str, object]) -> str:
+    """Keep arithmetic distinguishable from measurements in a model's input."""
+    method = str(item.get("extraction_method") or "")
+    source = calculation_source(method)
+    if not source:
+        return ""
+    parts = [t("doc." + method), f"{t('calc.source')}: {source}"]
+    if inputs := _calculation_inputs_text(item):
+        parts.append(inputs)
+    return "; ".join(parts)
+
+
+def _calculation_inputs_text(item: Mapping[str, object]) -> str:
+    inputs = []
+    for value in _calculation_inputs(item):
+        kind = str(value.get("input_kind") or "")
+        label = (concept_display_name(str(value.get("input_name") or ""))
+                 if kind == "observation" else t('calc.input_' + kind))
+        inputs.append(
+            f"{label} {_num(value.get('input_value'))} "
+            f"{display_unit(str(value.get('input_unit') or ''))} "
+            f"@{value.get('input_day') or t('calc.undated_input')}"
+        )
+    return f"{t('ai.calculation_inputs')}: " + "; ".join(inputs) if inputs else ""
+
+
+def _calculated_days(item: Mapping[str, object]) -> str:
+    count = int(item.get("calculated_day_count") or 0)
+    return t("ai.calculated_days", count=count) if count else ""
+
+
+def _device_calculation_text(summary: Mapping[str, object]) -> str:
+    # A reported latest reading must not conceal calculated older days in
+    # the same compressed history. The current managed device equation is BMI.
+    if (summary.get("metric_key") == "body_mass_index"
+            and summary.get("calculated_day_count") and not summary.get("extraction_method")):
+        return _calculation_text({"extraction_method": "derived_bmi"})
+    return _calculation_text(summary)
+
+
+def _device_day(day: Mapping[str, object]) -> str:
+    text = f"{day['day']} {_num(day['value'], 4)}"
+    # The formula and its source are stated once for the metric; a day says
+    # only that it was calculated and from what.
+    if calculation_source(day.get("extraction_method")):
+        text += " [" + "; ".join(filter(None, (t("calc.status"), _calculation_inputs_text(day)))) + "]"
+    return text
 
 
 def _device_block(summary: dict[str, object]) -> list[str]:
@@ -415,17 +492,18 @@ def _device_block(summary: dict[str, object]) -> list[str]:
             vendors=", ".join(str(item) for item in summary["vendors"]),
         ),
     ]
+    if calculated := _calculated_days(summary):
+        lines.append(calculated)
+    if calculation := _device_calculation_text(summary):
+        lines.append(calculation)
     recent, _ = _capped(summary["recent_days"], MAX_DEVICE_RECENT_DAYS)
     if recent:
-        # Newest first, so the first entry is the latest reading; only it
-        # carries the year (a watch value six figures deep is noise).
+        # These are available sample-days, which can span years across gaps.
+        # Every date therefore retains its year.
         lines.append(
             t("ai.device_recent")
             + " "
-            + ", ".join(
-                f"{day['day'] if index == 0 else str(day['day'])[5:]} {_num(day['value'], 4)}"
-                for index, day in enumerate(recent)
-            )
+            + ", ".join(_device_day(day) for day in recent)
         )
     months, _ = _capped(summary["months"], MAX_DEVICE_MONTHS)
     if months:
@@ -439,6 +517,7 @@ def _buckets(rows: Sequence[dict[str, object]]) -> str:
     return "; ".join(
         f"{bucket['period']} {_num(bucket['mean'], 4)} "
         f"({_num(bucket['min'], 4)}-{_num(bucket['max'], 4)}, {bucket['days']}d)"
+        + (f" [{_calculated_days(bucket)}]" if _calculated_days(bucket) else "")
         for bucket in rows
     )
 
@@ -467,6 +546,8 @@ def _device_one_liner(summary: dict[str, object]) -> str:
             + f" @{summary['latest_day']}",
             recent,
             t("ai.device_span", days=summary["day_count"], first=summary["first_day"]),
+            _calculated_days(summary),
+            _device_calculation_text(summary),
         )
         if part
     )
@@ -901,6 +982,8 @@ def _observation_card(row: dict[str, object]) -> dict[str, object]:
         "latest_date": str(row.get("observed_at") or "")[:10] or None,
         "verdict": row.get("verdict"),
         "verification_status": row.get("verification_status"),
+        "extraction_method": row.get("extraction_method"),
+        "calculation_inputs": _calculation_inputs(row),
     }
 
 

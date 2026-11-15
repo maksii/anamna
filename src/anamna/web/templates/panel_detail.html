@@ -20,7 +20,8 @@
 {% set members_ns = namespace(has_device=false) %}
 {% for row in rows %}{% if row.is_device %}{% set members_ns.has_device = true %}{% endif %}{% endfor %}
 {% for member in panel.missing_members %}{% if member.id.startswith('device:') %}{% set members_ns.has_device = true %}{% endif %}{% endfor %}
-{% set coverage_text = t('panel.members_in_record' if members_ns.has_device else 'panel.coverage', present=panel.present_count, total=panel.member_count) %}
+{% set nonprescriptive = renderer in ('imaging', 'context') %}
+{% set coverage_text = t('panel.context_coverage' if nonprescriptive else 'panel.members_in_record' if members_ns.has_device else 'panel.coverage', present=panel.present_count, total=panel.member_count) %}
 {#- A relationships sentence exists only for panels whose members are computed
     from one another; t() echoes a missing key, so the echo is the has-key
     check and nothing renders until the catalog carries the panel's entry. -#}
@@ -200,7 +201,7 @@
 {% else %}
 <section class="panel an-panel-members">
   <div class="panel-head">
-    <div><span class="eyebrow">{{ t('panel.members_heading') }}</span><h2>{{ t('panel.members_lead') }}</h2></div>
+    <div><span class="eyebrow">{{ t('panel.members_heading') }}</span><h2>{{ t('panel.context_lead') if nonprescriptive else t('panel.members_lead') }}</h2></div>
     <span>{{ coverage_text }}</span>
   </div>
   {% if rows %}
@@ -262,8 +263,8 @@
 {% if panel.missing_members %}
 <section class="panel an-panel-missing">
   <div class="panel-head">
-    <div><span class="eyebrow">{{ t('panel.missing_heading') }}</span><h2>{{ t('panel.missing_lead') }}</h2></div>
-    <span>{{ t('panel.missing_count', count=panel.missing_members|length) }}</span>
+    <div><span class="eyebrow">{{ t('panel.context_not_recorded') if nonprescriptive else t('panel.missing_heading') }}</span><h2>{{ t('panel.context_optional') if nonprescriptive else t('panel.missing_lead') }}</h2></div>
+    {% if not nonprescriptive %}<span>{{ t('panel.missing_count', count=panel.missing_members|length) }}</span>{% endif %}
   </div>
   <ul class="an-missing-list">
     {% for member in panel.missing_members %}<li>{{ member.name }}</li>{% endfor %}
@@ -275,7 +276,7 @@
     reference, not the result: each folds to one line (they were 4,000px of a
     phone page below the values themselves). -#}
 <details class="panel an-page-disclosure an-panel-sources">
-  <summary><span><strong>{{ t('panel.sources_lead') }}</strong><small>{{ t('panel.sources_heading') }}</small></span></summary>
+  <summary><span><strong>{{ t('panel.source_records_lead') if members_ns.has_device else t('panel.sources_lead') }}</strong><small>{{ t('panel.sources_heading') }}</small></span></summary>
   <div class="an-page-disclosure__body">
   <div class="area-document-list">
     {% for document in documents %}
@@ -308,7 +309,10 @@
   {% else %}
   <p>{{ t('panel.guidance_empty') }}</p>
   {% endif %}
+  {#- The authority badge explains itself in a `title`, which a touch screen
+      never shows: the same sentence in the open, once, beside the sources. -#}
   <p class="an-authority-explainer">{{ t('authority.explainer') }}</p>
+  <p class="an-authority-explainer">{{ t('panel.provenance_explainer') }}</p>
   </div>
 </details>
 {% endblock %}

@@ -241,7 +241,7 @@ ENTRIES: tuple[Entry, ...] = (
     Entry("kidney-acr", "chronic", ("x:urine-albumin-creatinine-ratio",)),
     Entry("lipoprotein-a", "chronic", ("lipoprotein-a",), once=True, once_kind="lifetime_level"),
     Entry("thyroid-tpo", "chronic", ("thyroid-peroxidase-antibodies",)),
-    Entry("celiac-serology", "chronic", ("x:ttg-iga", "x:immunoglobulin-a")),
+    Entry("celiac-serology", "chronic", ("x:ttg-iga", "total-immunoglobulin-a")),
     Entry("rheumatoid", "chronic", ("x:ccp-igg", "rheumatoid-factor")),
     Entry("ana", "chronic", ("x:ana-ift",)),
     Entry("calprotectin", "chronic", ("x:calprotectin-stool",)),
@@ -254,7 +254,7 @@ ENTRIES: tuple[Entry, ...] = (
     Entry("strep-a", "urgent", (_SP["strep-a"],)),
     Entry("urine-culture", "urgent", (_SP["urine-culture"],)),
     Entry("gut-infection", "urgent", (_SP["gut-bacteria"], _SP["gut-viruses"])),
-    Entry("d-dimer", "urgent", ("x:d-dimer",)),
+    Entry("d-dimer", "urgent", ("d-dimer",)),
 )
 
 BY_ID = {entry.id: entry for entry in ENTRIES}

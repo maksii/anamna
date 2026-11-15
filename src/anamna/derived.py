@@ -1,41 +1,32 @@
-"""Values the record calculates from other stored values.
+"""Refresh sourced calculations from independently confirmed observations.
 
-One so far: the estimated glomerular filtration rate.  KDIGO 2024 says kidney
-function is assessed with an estimating equation rather than serum creatinine
-alone, and no laboratory in this record prints one -- so every creatinine
-reading was a number nobody could act on.
-
-The equation is CKD-EPI 2021 (Inker LA et al., N Engl J Med 2021;385:1737-49),
-the race-free refit KDIGO and the US National Kidney Foundation recommend:
-
-    eGFR = 142 × min(Scr/κ, 1)^α × max(Scr/κ, 1)^−1.200 × 0.9938^age × 1.012 [female]
-    κ = 0.7 (female) / 0.9 (male),  α = −0.241 (female) / −0.302 (male),  Scr in mg/dL
-
-A derived row is an ordinary observation, so the metric page, its chart, the
-search and the document it came from all show it with no special case.  It
-carries the creatinine's document, page, date and evidence line -- the printed
-line it was calculated from -- and ``extraction_method`` names the equation.
-It is calculated only from a creatinine a person has verified or corrected,
-and then carries that verification: arithmetic on a confirmed value is not a
-new extraction waiting for review, and an eGFR worked out from a number the
-parser may have misread would put a kidney-function figure nobody checked in
-front of the patient -- and a second value on every review list.
+The CKD-EPI 2021 equation estimates adult eGFR; ``lab_calculations`` supplies
+same-sample arithmetic for blood counts and chemistry. New or changed outputs
+stay provisional. Reported results take precedence and a person's review of
+an unchanged calculation is retained. Device calculations share the refresh
+hook, but keep their own device-day provenance and dependency records.
 """
 
 from __future__ import annotations
 
 import sqlite3
 import uuid
+import math
+import json
+import re
+from collections import Counter, defaultdict
+from datetime import date, datetime, timedelta
 
 from .config import ID_NAMESPACE_PREFIX
 from .db import utc_now
-from .health import age_on
-from .ingest.concepts import stable_concept_id
+from .health import PREGNANCY_DAYS, age_on
+from .ingest.concepts import stable_concept_id, specimen_family
 from .ingest.parsers import PARSER_VERSION
 from .reference import canonical_unit
 
 DERIVED_EGFR_METHOD = "derived_ckd_epi_2021"
 EGFR_CONCEPT_ID = stable_concept_id("Estimated glomerular filtration rate (CKD-EPI 2021)")
+EGFR_REPORTED_CONCEPT_ID = stable_concept_id("Estimated glomerular filtration rate, reported")
 EGFR_UNIT = "mL/min/1.73m²"
 EGFR_LABEL = "eGFR (CKD-EPI 2021)"
 CREATININE_CONCEPT_ID = stable_concept_id("Creatinine")
@@ -46,6 +37,9 @@ _NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, f"{ID_NAMESPACE_PREFIX}/derived/egfr
 
 def ckd_epi_2021(creatinine_mg_dl: float, age: float, sex: str) -> float:
     """eGFR in mL/min/1.73 m² for an adult; ``sex`` is "female" or "male"."""
+    if (sex not in {"female", "male"} or not math.isfinite(creatinine_mg_dl)
+            or creatinine_mg_dl <= 0 or not math.isfinite(age) or age < 18):
+        raise ValueError("Unsupported CKD-EPI 2021 input")
     female = sex == "female"
     kappa = 0.7 if female else 0.9
     alpha = -0.241 if female else -0.302
@@ -56,56 +50,138 @@ def ckd_epi_2021(creatinine_mg_dl: float, age: float, sex: str) -> float:
 
 def _creatinine_mg_dl(value: float, unit: str | None) -> float | None:
     folded = canonical_unit(unit)
-    if folded in {"umol/l", ""}:
-        # Unitless creatinine is the µmol/L every laboratory here prints; the
-        # concept's own unit.  A value in that range cannot be mg/dL.
-        return value / CREATININE_UMOL_PER_MG_DL if value > 20 else None
+    if not math.isfinite(value) or value <= 0:
+        return None
+    if folded == "umol/l":
+        return value / CREATININE_UMOL_PER_MG_DL
     if folded == "mg/dl":
         return value
+    if folded == "mg/l":
+        return value / 10
+    if folded == "g/l":
+        return value * 100
     if folded == "mmol/l":
         return value * 1000 / CREATININE_UMOL_PER_MG_DL
     return None
 
 
-def _wanted(connection: sqlite3.Connection) -> dict[str, tuple]:
-    """Every eGFR the current record supports, keyed by its derived row id."""
+def _wanted(connection: sqlite3.Connection, owner_user_id: str | None = None) -> dict[str, tuple]:
+    """Every eGFR the current record supports, keyed by its derived row id.
+
+    ``owner_user_id`` limits it to one account's record."""
+    from .devices.units import finite_number
+    from .lab_calculations import _sample_may_match
+
+    # A plain equality, so the (owner, concept, date) index serves it.
+    mine, owner = (" AND o.owner_user_id = ?", (owner_user_id,)) if owner_user_id else ("", ())
     rows = connection.execute(
-        """SELECT o.*, p.date_of_birth, p.sex_at_birth
-             FROM observations o JOIN patients p ON p.id = o.patient_id
-            WHERE o.concept_id = ? AND o.value_numeric IS NOT NULL
-              AND COALESCE(o.comparator, '') = '' AND o.observed_at IS NOT NULL
-              AND o.verification_status IN ('verified', 'corrected')
-              AND p.sex_at_birth IN ('female', 'male') AND p.date_of_birth IS NOT NULL""",
-        (CREATININE_CONCEPT_ID,),
+        f"""SELECT o.*, p.date_of_birth, p.sex_at_birth, p.pregnancy_due_date
+             FROM observations o JOIN patients p ON p.id = o.patient_id AND p.owner_user_id=o.owner_user_id
+             LEFT JOIN documents d ON d.id=o.document_id
+             LEFT JOIN reports r ON r.id=o.report_id
+             LEFT JOIN documents rd ON rd.id=r.document_id
+            WHERE o.concept_id = ? AND o.observed_at IS NOT NULL
+              AND o.verification_status <> 'rejected'
+              AND substr(o.extraction_method, 1, 8) <> 'derived_'
+              AND TRIM(COALESCE(NULLIF(o.report_id, ''), o.document_id, '')) <> ''
+              AND (o.document_id IS NULL OR (d.owner_user_id=o.owner_user_id AND d.patient_id=o.patient_id))
+              AND (o.report_id IS NULL OR (r.owner_user_id=o.owner_user_id AND r.patient_id=o.patient_id
+                   AND rd.owner_user_id=o.owner_user_id AND rd.patient_id=o.patient_id
+                   AND (o.document_id IS NULL OR r.document_id=o.document_id)))
+              AND p.sex_at_birth IN ('female', 'male') AND p.date_of_birth IS NOT NULL{mine}""",
+        (CREATININE_CONCEPT_ID, *owner),
     ).fetchall()
     # A report that printed its own eGFR keeps it; a second, calculated one
     # beside it would be the same measurement twice.
-    printed = {
-        (row[0], row[1])
+    printed = [
+        (row["owner_user_id"], row["patient_id"],
+         ("report", row["report_id"]) if row["report_id"] else ("document", row["document_id"]),
+         row["observed_at"], (row["specimen"] or "").strip().casefold(), row["sample_condition"])
         for row in connection.execute(
-            """SELECT COALESCE(report_id, document_id), substr(observed_at, 1, 10) FROM observations
-                WHERE concept_id = ? AND extraction_method <> ?
-                  AND verification_status <> 'rejected'""",
-            (EGFR_CONCEPT_ID, DERIVED_EGFR_METHOD),
+            f"""SELECT o.owner_user_id, o.patient_id, o.report_id, o.document_id, o.observed_at,
+                      o.specimen, o.sample_condition FROM observations o
+                JOIN patients p ON p.id=o.patient_id AND p.owner_user_id=o.owner_user_id
+                LEFT JOIN documents d ON d.id=o.document_id
+                LEFT JOIN reports r ON r.id=o.report_id
+                LEFT JOIN documents rd ON rd.id=r.document_id
+                WHERE o.concept_id IN (?, ?) AND o.extraction_method <> ?
+                  AND o.verification_status <> 'rejected'
+                  AND (o.document_id IS NULL OR (d.owner_user_id=o.owner_user_id AND d.patient_id=o.patient_id))
+                  AND (o.report_id IS NULL OR (r.owner_user_id=o.owner_user_id AND r.patient_id=o.patient_id
+                       AND rd.owner_user_id=o.owner_user_id AND rd.patient_id=o.patient_id
+                       AND (o.document_id IS NULL OR r.document_id=o.document_id))){mine}""",
+            (EGFR_CONCEPT_ID, EGFR_REPORTED_CONCEPT_ID, DERIVED_EGFR_METHOD, *owner),
         )
-    }
+    ]
+    printed_by_source = defaultdict(list)
+    for target in printed:
+        printed_by_source[target[:3]].append(target)
     wanted: dict[str, tuple] = {}
+    def sample(row):
+        source = ("report", row["report_id"]) if row["report_id"] else ("document", row["document_id"])
+        return (row["owner_user_id"], row["patient_id"], source,
+                row["observed_at"], (row["specimen"] or "").strip().casefold(), row["sample_condition"])
+
+    samples = Counter(sample(row) for row in rows)
     for row in rows:
-        age = age_on(row["date_of_birth"], row["observed_at"])
-        mg_dl = _creatinine_mg_dl(float(row["value_numeric"]), row["unit_raw"])
+        try:
+            observed_at = str(row["observed_at"])
+            date.fromisoformat(observed_at[:10])
+            if len(observed_at) != 10:
+                datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if row["verification_status"] not in {"verified", "corrected"}:
+            continue
+        if row["comparator"] or row["value_numeric"] is None:
+            continue
+        if specimen_family(row["specimen"]) not in (None, "hematology"):
+            continue
+        if samples[sample(row)] != 1:
+            continue
+        try:
+            born = date.fromisoformat(str(row["date_of_birth"]))
+        except ValueError:
+            continue
+        age = age_on(born.isoformat(), row["observed_at"])
+        number = finite_number(row["value_numeric"])
+        mg_dl = _creatinine_mg_dl(number, row["unit_raw"]) if number is not None else None
         # CKD-EPI is validated for adults only; children need a different equation.
         if age is None or age < 18 or not mg_dl:
             continue
-        if (row["report_id"] or row["document_id"], str(row["observed_at"])[:10]) in printed:
+        # Use the same recorded-pregnancy window as the application's sample
+        # facts. eGFR equations are not valid in pregnancy (UK Kidney 4.1.1;
+        # NICE NG3 1.3.30); preserve reported values, but do not reconstruct one.
+        try:
+            due = date.fromisoformat(str(row["pregnancy_due_date"]))
+        except ValueError:
+            due = None
+        taken = date.fromisoformat(observed_at[:10])
+        if due is not None and due - timedelta(days=PREGNANCY_DAYS) <= taken <= due:
             continue
-        status = "verified"
+        if any(_sample_may_match(sample(row), target) for target in printed_by_source[sample(row)[:3]]):
+            continue
+        status = "extracted"
+        evidence = (f"CKD-EPI 2021: Scr={mg_dl:g} mg/dL; age={age:g}; "
+                    f"sex={row['sex_at_birth']}; date_of_birth={row['date_of_birth']}; "
+                    f"input_id={row['id']}; value={row['value_numeric']!r}; "
+                    f"unit_raw={row['unit_raw']!r}; unit_canonical={row['unit_canonical']!r}; "
+                    f"observed_at={row['observed_at']!r}; specimen={row['specimen']!r}; "
+                    f"sample_condition={row['sample_condition']!r}; {row['evidence_text']}")
         wanted[str(uuid.uuid5(_NAMESPACE, str(row["id"])))] = (
             row["owner_user_id"], row["patient_id"], row["document_id"], row["page_number"],
             EGFR_CONCEPT_ID, EGFR_LABEL, "numeric",
             float(round(ckd_epi_2021(mg_dl, age, str(row["sex_at_birth"])))),
             EGFR_UNIT, EGFR_UNIT, row["observed_at"], status, DERIVED_EGFR_METHOD,
-            row["confidence"], row["evidence_text"], row["evidence_bbox_json"], PARSER_VERSION,
+            row["confidence"], evidence, row["evidence_bbox_json"], PARSER_VERSION,
             row["report_id"], row["entry_source"], row["entered_by_user_id"],
+            row["specimen"], row["sample_condition"],
+            json.dumps([
+                {"input_kind": "observation", "input_id": row["id"],
+                 "input_concept_id": row["concept_id"], "input_name": "Creatinine",
+                 "input_value": row["value_numeric"], "input_unit": row["unit_raw"] or row["unit_canonical"],
+                 "input_day": row["observed_at"], "document_id": row["document_id"], "report_id": row["report_id"]},
+            ], ensure_ascii=False, sort_keys=True),
         )
     return wanted
 
@@ -115,10 +191,67 @@ _COLUMNS = (
     "value_type", "value_numeric", "unit_raw", "unit_canonical", "observed_at",
     "verification_status", "extraction_method", "confidence", "evidence_text",
     "evidence_bbox_json", "parser_version", "report_id", "entry_source", "entered_by_user_id",
+    "specimen", "sample_condition", "calculation_inputs_json",
 )
 
 
-def refresh_derived_observations(connection: sqlite3.Connection) -> dict[str, int]:
+#: What a person checked when they reviewed a calculation: whose sample, the
+#: method, the number and its unit.  With the inputs (:func:`_inputs`) and the
+#: person's facts the equation used (:func:`_facts`), this is the calculation.
+_REVIEWED = (
+    "owner_user_id", "patient_id", "document_id", "report_id", "concept_id", "value_numeric",
+    "unit_raw", "unit_canonical", "observed_at", "extraction_method",
+)
+#: The input's sample context, copied onto the result.
+_SAMPLE = ("specimen", "sample_condition")
+#: The head of an eGFR's evidence: creatinine in mg/dL, age, sex, date of birth.
+_EGFR_FACTS = re.compile(r"^CKD-EPI 2021: [^\n]*?; date_of_birth=[^;\n]*")
+
+
+def _inputs(row) -> list[tuple] | None:
+    """Id, value, unit and date of each input; None for a row stored before
+    inputs were recorded, whose id still names them (it is a hash of theirs)."""
+    try:
+        items = json.loads(row["calculation_inputs_json"] or "null")
+    except ValueError:
+        return None
+    if not isinstance(items, list):
+        return None
+    return sorted(
+        (str(item.get("input_id")), item.get("input_value"), item.get("input_unit"), item.get("input_day"))
+        for item in items if isinstance(item, dict)
+    )
+
+
+def _facts(row) -> str | None:
+    found = _EGFR_FACTS.match(row["evidence_text"] or "")
+    return found.group() if found else None
+
+
+def _same_calculation(current, wanted: dict) -> bool:
+    """Whether a stored derived row is still the calculation ``wanted`` is.
+
+    Decided from the substance, never from the evidence text as a whole: that
+    text also quotes each input's source line and folded unit, and when its
+    wording changed, five eGFR results a person had checked went back to
+    review with the same number, input and method.  What an older row never
+    recorded cannot have changed: its inputs, the person's facts, and the
+    sample context it left empty."""
+    if any(current[column] != wanted[column] for column in _REVIEWED):
+        return False
+    older = _inputs(current) is None
+    if any(current[column] != wanted[column] and not (older and current[column] is None) for column in _SAMPLE):
+        return False
+    for read in (_inputs, _facts):
+        before = read(current)
+        if before is not None and before != read(wanted):
+            return False
+    return True
+
+
+def refresh_derived_observations(
+    connection: sqlite3.Connection, *, owner_user_id: str | None = None,
+) -> dict[str, int]:
     """Bring every derived row in line with its inputs; idempotent.
 
     Runs after ingest, re-read, on start-up and after any request that changes
@@ -126,15 +259,27 @@ def refresh_derived_observations(connection: sqlite3.Connection) -> dict[str, in
     verification is reflected without anyone remembering to recalculate.  A
     derived row a person has since corrected (its method is no longer this
     one) is theirs and is left alone.
+
+    ``owner_user_id`` limits the laboratory calculations and the eGFR to one
+    account's record: a request changes one record, and reading everyone's
+    after each is work for nothing.  Without it the whole database is
+    refreshed, as start-up and the command line need.
     """
     counts = {"added": 0, "updated": 0, "removed": 0}
+    from .devices.calculations import refresh_device_calculations
+
     if connection.execute("SELECT 1 FROM concepts WHERE id = ?", (EGFR_CONCEPT_ID,)).fetchone() is None:
         return counts  # catalogue not seeded yet; start-up seeds it, then calls this again
-    wanted = _wanted(connection)
+    from .lab_calculations import DERIVED_LAB_METHODS, wanted_lab_observations
+
+    wanted = {**_wanted(connection, owner_user_id), **wanted_lab_observations(connection, owner_user_id)}
+    methods = (DERIVED_EGFR_METHOD, *sorted(DERIVED_LAB_METHODS))
     existing = {
         str(row["id"]): row
         for row in connection.execute(
-            "SELECT * FROM observations WHERE extraction_method = ?", (DERIVED_EGFR_METHOD,)
+            f"""SELECT * FROM observations WHERE extraction_method IN ({','.join('?' for _ in methods)})
+                {'AND owner_user_id = ?' if owner_user_id else ''}""",
+            (*methods, *((owner_user_id,) if owner_user_id else ())),
         )
     }
     for row_id in existing.keys() - wanted.keys():
@@ -143,10 +288,18 @@ def refresh_derived_observations(connection: sqlite3.Connection) -> dict[str, in
     for row_id, values in wanted.items():
         current = existing.get(row_id)
         if current is not None:
-            if tuple(current[column] for column in _COLUMNS) != values:
+            fresh = dict(zip(_COLUMNS, values, strict=True))
+            if _same_calculation(current, fresh):
+                # A person's decision survives an unchanged calculation: only
+                # how its evidence is written is brought up to date.  A global
+                # PDF-parser release is bookkeeping and rewrites nothing.  A
+                # changed value or input makes the result provisional again.
+                fresh["verification_status"] = current["verification_status"]
+                fresh["parser_version"] = current["parser_version"]
+            if any(current[column] != fresh[column] for column in _COLUMNS):
                 connection.execute(
                     f"UPDATE observations SET {', '.join(f'{c}=?' for c in _COLUMNS)} WHERE id = ?",
-                    (*values, row_id),
+                    (*fresh.values(), row_id),
                 )
                 counts["updated"] += 1
             continue
@@ -156,4 +309,8 @@ def refresh_derived_observations(connection: sqlite3.Connection) -> dict[str, in
             (row_id, *values, utc_now()),
         ).rowcount
         counts["added"] += inserted
+    # A confirmed same-sample clinical BMI outranks a device fallback. Reconcile
+    # device calculations last so either path produces just one derived BMI.
+    for key, value in refresh_device_calculations(connection, owner_user_id).items():
+        counts[key] += value
     return counts

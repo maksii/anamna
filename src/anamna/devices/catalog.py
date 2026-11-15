@@ -24,6 +24,9 @@ HEALTHKIT_METRICS: dict[str, MetricDefinition] = {
     "HKQuantityTypeIdentifierHeartRateRecoveryOneMinute": metric("heart_rate_recovery", "One-minute heart-rate recovery", "device_fitness", "bpm"),
     "HKQuantityTypeIdentifierOxygenSaturation": metric("blood_oxygen", "Blood oxygen saturation", "device_recovery", "%"),
     "HKQuantityTypeIdentifierRespiratoryRate": metric("respiratory_rate", "Respiratory rate", "device_recovery", "breaths/min"),
+    # Discrete thermometer readings, not the watch's sleeping wrist temperature.
+    # https://developer.apple.com/documentation/healthkit/hkquantitytypeidentifier/bodytemperature
+    "HKQuantityTypeIdentifierBodyTemperature": metric("body_temperature", "Body temperature", "device_recovery", "°C", "latest"),
     "HKQuantityTypeIdentifierAppleSleepingWristTemperature": metric("sleeping_wrist_temperature", "Sleeping wrist temperature", "device_recovery", "°C"),
     "HKQuantityTypeIdentifierAppleSleepingBreathingDisturbances": metric("breathing_disturbances", "Sleeping breathing disturbances", "device_recovery", "count"),
     "HKQuantityTypeIdentifierVO2Max": metric("vo2_max", "Cardio fitness (VO₂ max)", "device_fitness", "mL/kg/min"),

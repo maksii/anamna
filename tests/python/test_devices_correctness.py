@@ -83,6 +83,7 @@ def test_zero_or_low_coverage_total_never_hides_another_sources_day():
     assert select_daily([watch, phone])[0]["value"] == 7133
     # Even an explicit preference yields to a source that covered the day...
     assert select_daily([watch, phone], source_key(watch))[0]["value"] == 7133
+    assert select_daily([dict(watch, value=12), phone], source_key(watch))[0]["value"] == 7133
     # ...and the totals are chosen between, never summed.
     assert [row["value"] for row in select_daily([dict(watch, value=2000), phone])] == [7133]
     # A comparable reading keeps the device priority.
@@ -95,15 +96,18 @@ def test_a_sleep_fragment_never_hides_the_night_another_source_recorded():
     fragment = dict(reading("Oura", "Oura", "time_in_bed", 0.2, unit="hours"), category="device_sleep")
     night = dict(reading("Clock", "Apple Health", "time_in_bed", 5.9, unit="hours"), category="device_sleep")
     assert select_metrics({"time_in_bed": [fragment, night]}, {})["time_in_bed"][0]["value"] == 5.9
+    # The preference is per metric: it cannot be corrected for one night.
+    preferred = {"sleep": source_key(fragment)}
+    assert select_metrics({"time_in_bed": [fragment, night]}, preferred)["time_in_bed"][0]["value"] == 5.9
 
 
 # --- OPS-01: implausible body values -----------------------------------------
 
-def test_plausibility_matches_the_patient_checks_and_rescues_metres():
-    assert plausible_value("waist_circumference", 0.99) == pytest.approx(99.0)
+def test_plausibility_matches_patient_checks_without_inventing_units():
+    assert plausible_value("waist_circumference", 0.99) is None
     assert plausible_value("waist_circumference", 99.0) == 99.0
     assert plausible_value("waist_circumference", 450) is None
-    assert plausible_value("body_height", 1.85) == pytest.approx(185.0)
+    assert plausible_value("body_height", 1.85) is None
     assert plausible_value("body_weight", 0.5) is None
     assert plausible_value("steps", 0) == 0
     assert not valid_row(reading("x", "OpenWearables", "waist_circumference", 0.99, unit="cm"))
@@ -114,7 +118,7 @@ def test_bridge_waist_in_metres_is_stored_as_centimetres(linked_record):  # noqa
     settings, owner = linked_record
     bucket: dict = {}
     ow._map_body_series([{"type": "waist_circumference", "timestamp": "2018-09-05T20:25:00Z", "value": 0.99,
-                          "unit": "cm", "source": {"provider": "apple", "source": "Health", "device": "iPhone10,6"}}], bucket)
+                          "unit": "m", "source": {"provider": "apple", "source": "Health", "device": "iPhone10,6"}}], bucket)
     ow._write_days(settings, owner, ow.ensure_envelope(settings, owner), list(bucket.values()),
                    ("waist_circumference",), "2018-09-05", "2018-09-05", ow.account_identity(settings, owner))
     with connect(settings) as db:
@@ -269,7 +273,7 @@ def test_reaggregation_is_idempotent_and_reports_moved_days(linked_record, monke
 
 # --- OPS-07, OPS-09, OPS-12, OPS-24 on the pages -----------------------------
 
-def test_partial_today_never_headlines_and_never_fills_a_metric_never_filled(ledger):
+def test_partial_today_never_headlines_and_recorded_zeros_remain_visible(ledger):
     settings, owner, patient = ledger
     now = today(KYIV)
     yesterday = (date.fromisoformat(now) - timedelta(days=1)).isoformat()
@@ -283,7 +287,7 @@ def test_partial_today_never_headlines_and_never_fills_a_metric_never_filled(led
     with connect(settings) as db:
         cards = {card["id"]: card for card in device_metric_catalog(db, owner)}
     assert cards["device:steps"]["latest_numeric"] == 6245 and cards["device:steps"]["latest_date"] == yesterday
-    assert "device:sleep_naps" not in cards
+    assert cards["device:sleep_naps"]["latest_numeric"] == 0
     with TestClient(create_app(settings)) as client:
         login(client, "owner@example.com")
         client.cookies.set("anamna_lang", "en")
@@ -418,15 +422,21 @@ def test_device_write_rebuilds_only_the_device_half_and_only_for_its_owner(ledge
     assert built == [f"lab:{other}", f"device:{other}"]
 
 
-def test_a_night_longer_than_sixteen_hours_is_never_selected():
+def test_source_sleep_durations_have_no_invented_sixteen_hour_maximum():
     from anamna.devices.reconcile import valid_row
     from anamna.devices.units import is_plausible
 
-    assert not valid_row({"metric_key": "sleep_duration", "value": 21.0})  # a manual 21 h entry, 2019-08-09
-    assert not valid_row({"metric_key": "time_in_bed", "value": 16.5})
+    assert valid_row({"metric_key": "sleep_duration", "value": 21.0})
+    assert valid_row({"metric_key": "time_in_bed", "value": 16.5})
     assert valid_row({"metric_key": "sleep_duration", "value": 6.55})
     assert valid_row({"metric_key": "sleep_duration", "value": 16.0})
     assert is_plausible("sleep_awake", 0.0)
+    assert not is_plausible("sleep_duration", -1)
+    assert not is_plausible("sleep_duration", float("inf"))
+    # A day holds 24 hours: that, and nothing shorter, is the upper bound.
+    assert valid_row({"metric_key": "sleep_duration", "value": 24.0})
+    assert not valid_row({"metric_key": "sleep_duration", "value": 24.01})
+    assert not is_plausible("time_in_bed", 168)
 
 
 def test_a_quiet_device_metric_never_marks_a_panel_overdue(ledger):
