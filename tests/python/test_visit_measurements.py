@@ -177,8 +177,8 @@ def test_printed_units_fold_onto_the_library_unit(printed, library):
     assert canonical_unit(printed) == canonical_unit(library)
 
 
-def test_bare_minutes_are_breaths_per_minute_only_under_the_respiratory_rate():
-    assert pipeline.stored_unit("хв", "breaths/min", "resting-respiratory-rate") == "breaths/min"
+def test_bare_minutes_stay_duration_while_reciprocal_minutes_are_a_rate():
+    assert pipeline.stored_unit("хв", "breaths/min", "resting-respiratory-rate") == "хв"
     assert pipeline.stored_unit("/хв", "breaths/min", "resting-respiratory-rate") == "breaths/min"
     assert canonical_unit("хв") == "min"
 
@@ -231,7 +231,7 @@ def test_a_rescan_files_each_value_under_its_concept_and_a_second_rescan_changes
     assert {row[8] for row in first} == {"extracted"}
     assert {row[6] for row in first} == {"2026-08-09"}
     by_concept = {row[0]: row for row in first}
-    assert by_concept["resting-respiratory-rate"][4] == "breaths/min"
+    assert by_concept["resting-respiratory-rate"][4] == "хв"
     assert by_concept["body-mass-index"][4] == "kg/m²"
     assert {row[5] for row in first if row[0] == "systolic-blood-pressure"} == {"права рука", "ліва рука"}
 

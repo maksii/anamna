@@ -1,4 +1,4 @@
-"""Panels: the groups of analytes that are ordered and read together.
+"""Panels: laboratory groups and reported study measurements read together.
 
 A panel is the primary navigational object ("how are my lipids"), the single
 analyte is the drill-down.  Panel membership is deliberately independent of
@@ -16,7 +16,7 @@ import sqlite3
 from dataclasses import dataclass, field
 
 from .i18n import translate_phrase
-from .ingest.concepts import stable_concept_id
+from .ingest.concepts import CONCEPT_DEFINITIONS, stable_concept_id
 
 
 ATTENTION_INTERPRETATIONS = frozenset(
@@ -37,6 +37,7 @@ DISPLAY_SUPPRESSED = frozenset(
         # Recording length is device telemetry, not a result; the recording
         # itself lives on /devices/ecg and the id stays reachable by search.
         "ecg-recording-duration",
+        "blood-count-comment",
     }
 )
 
@@ -72,6 +73,7 @@ MEASUREMENT_TWINS: dict[str, tuple[tuple[str, str], ...]] = {
     "oxygen-saturation-spo2": (("blood_oxygen", "method"),),
     "resting-respiratory-rate": (("respiratory_rate", "related"),),
     "body-temperature": (
+        ("body_temperature", "same"),
         ("sleeping_wrist_temperature", "related"),
         ("temperature_deviation", "related"),
     ),
@@ -115,6 +117,8 @@ class Panel:
     member_categories: tuple[str, ...] = ()
     device_members: tuple[str, ...] = ()
     renderer: str = "standard"
+    #: ``imaging`` and ``context`` are nonprescriptive collections of reported
+    #: findings: absent members are not required tests or an incomplete study.
     #: Cadence comes from the curated library, never from a hand-typed number.
     retest_months: int | None = None
     members: tuple[str, ...] = field(init=False)
@@ -190,6 +194,13 @@ PANELS: list[Panel] = [
             "Mixed white cells, absolute",
             "Platelet count",
             "Mean platelet volume",
+            "Reticulocytes",
+            "Reticulocytes, absolute",
+            "Reticulocyte index",
+            "Immature reticulocyte fraction",
+            "Reticulocytes, low fluorescence fraction",
+            "Reticulocytes, medium fluorescence fraction",
+            "Reticulocytes, high fluorescence fraction",
             "Platelet distribution width",
             "Platelet distribution width, SD",
             "Platelet large cell ratio",
@@ -235,7 +246,7 @@ PANELS: list[Panel] = [
         short="Glucose",
         description="Fasting glucose and the three-month average carried by glycated hemoglobin.",
         area_id="metabolism",
-        member_names=("Blood glucose", "Hemoglobin A1c", "C-peptide", "Insulin"),
+        member_names=("Blood glucose", "Hemoglobin A1c", "C-peptide", "Insulin", "HOMA index (reported, model unspecified)"),
     ),
     Panel(
         id="liver",
@@ -253,6 +264,7 @@ PANELS: list[Panel] = [
             "Indirect bilirubin",
             "Total protein",
             "Albumin",
+            "Globulin, calculated",
             "Albumin fraction",
             "Albumin to globulin ratio",
             "Alpha-1 globulins",
@@ -268,7 +280,7 @@ PANELS: list[Panel] = [
         short="Pancreas",
         description="Pancreatic enzymes measured in serum.",
         area_id="liver",
-        member_names=("Alpha-amylase", "Lipase"),
+        member_names=("Alpha-amylase", "Pancreatic amylase", "Lipase"),
     ),
     Panel(
         id="kidney",
@@ -279,6 +291,7 @@ PANELS: list[Panel] = [
         member_names=(
             "Creatinine",
             "Estimated glomerular filtration rate (CKD-EPI 2021)",
+            "Estimated glomerular filtration rate, reported",
             "Urea",
             "Uric acid",
         ),
@@ -312,7 +325,7 @@ PANELS: list[Panel] = [
         short="Hormones",
         description="Endocrine measurements outside the thyroid panel.",
         area_id="thyroid",
-        member_names=("Parathyroid hormone", "Total testosterone"),
+        member_names=("Parathyroid hormone", "Total testosterone", "Total beta-hCG", "Anti-Mullerian hormone", "Estradiol", "Prolactin", "Cortisol"),
     ),
     Panel(
         id="iron",
@@ -375,6 +388,10 @@ PANELS: list[Panel] = [
             "Activated partial thromboplastin time",
             "Thrombin time",
             "Fibrinogen",
+            "D-dimer",
+            "Lupus anticoagulant screening time",
+            "Lupus anticoagulant confirmation time",
+            "Lupus anticoagulant index",
         ),
     ),
     Panel(
@@ -438,7 +455,7 @@ PANELS: list[Panel] = [
         short="Digestive",
         description="Laboratory testing of the stomach and intestines.",
         area_id="digestive",
-        member_names=("H. pylori stool antigen",),
+        member_names=("H. pylori stool antigen", "H. pylori urea breath test", "H. pylori test, method unspecified", "Breath hydrogen"),
     ),
     Panel(
         id="coprogram",
@@ -447,6 +464,42 @@ PANELS: list[Panel] = [
         description="Physical, chemical and microscopic examination of a stool sample.",
         area_id="digestive",
         member_categories=("stool",),
+    ),
+    Panel(
+        id="amino_acids",
+        name="Amino acids",
+        short="Amino acids",
+        description="Amino acids and related metabolites measured in serum or plasma.",
+        area_id="metabolism",
+        member_names=tuple(str(item["name"]) for item in CONCEPT_DEFINITIONS
+                           if str(item["name"]).endswith(", serum or plasma")),
+    ),
+    Panel(
+        id="celiac",
+        name="Coeliac testing",
+        short="Coeliac testing",
+        description="Antibody tests read with total IgA and the laboratory method.",
+        area_id="digestive",
+        member_names=("Total immunoglobulin A", "Tissue transglutaminase IgG antibodies",
+                      "Endomysial IgA antibodies", "Gliadin IgG antibodies"),
+    ),
+    Panel(
+        id="folate_genetics",
+        name="Folate pathway genetics",
+        short="Folate pathway genetics",
+        description="Reported genetic variants; a variant alone does not diagnose disease.",
+        area_id="metabolism",
+        member_names=("MTHFR C677T genotype", "MTHFR A1298C genotype", "MTR A2756G genotype",
+                      "MTRR A66G genotype"),
+    ),
+    Panel(
+        id="ovarian_risk",
+        name="Ovarian risk assessment",
+        short="Ovarian risk assessment",
+        description="CA 125, HE4 and reported ROMA scores, kept separate by menopausal status and assay.",
+        area_id="reproductive",
+        member_names=("Cancer antigen 125 (CA 125)", "Human epididymis protein 4 (HE4)",
+                      "ROMA, premenopausal", "ROMA, postmenopausal"),
     ),
     Panel(
         id="blood_pressure",
@@ -482,11 +535,106 @@ PANELS: list[Panel] = [
     ),
     Panel(
         id="ecg",
-        name="ECG intervals",
+        name="ECG findings",
         short="ECG",
-        description="How long each electrical phase of the heartbeat lasts on a 12-lead ECG.",
+        description="Heart rhythm and electrical intervals recorded on an ECG.",
         area_id="heart",
-        member_names=("PR interval", "QRS duration", "QT interval", "QTc (Bazett)", "QTc (Framingham)"),
+        member_names=("Heart rhythm", "PR interval", "QRS duration", "QT interval", "QTc (Bazett)", "QTc (Framingham)"),
+    ),
+    # Protocol collections organize existing report evidence. Unlike a lab
+    # order's analyte list, they never imply every member must be measured.
+    Panel(
+        id="echocardiography", name="Echocardiography", short="Echocardiography",
+        description="Reported cardiac chamber dimensions, mass, function and Doppler measurements.",
+        area_id="heart", renderer="imaging",
+        member_names=(
+            "Left ventricular mass index", "Left ventricular mass", "Right ventricular diameter",
+            "Interventricular septal thickness, diastole", "Left ventricular end-diastolic diameter",
+            "Left ventricular posterior wall thickness, diastole", "Left ventricular ejection fraction",
+            "Ascending aorta diameter", "Aortic root diameter at the sinuses of Valsalva",
+            "Left atrial diameter", "Tricuspid valve peak pressure gradient", "Pulmonary artery acceleration time",
+        ),
+    ),
+    Panel(
+        id="vascular_ultrasound", name="Vascular ultrasound", short="Vascular ultrasound",
+        description="Vessel dimensions and Doppler measurements from ultrasound reports.",
+        area_id="heart", renderer="imaging",
+        member_names=(
+            "Carotid intima-media thickness", "Peak systolic velocity, common carotid artery",
+            "Peak systolic velocity, internal carotid artery", "Peak systolic velocity, external carotid artery",
+            "Peak systolic velocity, vertebral artery", "Vertebral artery diameter",
+            "Peak systolic velocity, anterior cerebral artery", "Peak systolic velocity, middle cerebral artery",
+            "Peak systolic velocity, intracranial vertebral artery (V4)", "Peak systolic velocity, basilar artery",
+            "Vertebral artery resistive index", "Internal jugular vein diameter",
+        ),
+    ),
+    Panel(
+        id="abdominal_ultrasound", name="Abdominal ultrasound", short="Abdominal ultrasound",
+        description="Reported liver, biliary, pancreatic and splenic ultrasound measurements.",
+        area_id="liver", renderer="imaging",
+        member_names=(
+            "Liver craniocaudal size", "Liver left lobe size", "Common bile duct diameter", "Portal vein diameter",
+            "Gallbladder length", "Gallbladder width", "Gallbladder volume", "Gallbladder ejection fraction",
+            "Pancreatic head size", "Pancreatic body size", "Pancreatic tail size", "Splenic vein diameter",
+            "Spleen length", "Spleen thickness",
+        ),
+    ),
+    Panel(
+        id="renal_ultrasound", name="Kidney and bladder ultrasound", short="Kidney ultrasound",
+        description="Reported kidney and bladder ultrasound measurements.",
+        area_id="kidneys", renderer="imaging",
+        member_names=("Kidney length", "Kidney width", "Renal parenchymal thickness",
+                      "Largest renal salt crystal size", "Bladder wall thickness", "Urinary bladder volume"),
+    ),
+    Panel(
+        id="thyroid_ultrasound", name="Thyroid ultrasound", short="Thyroid ultrasound",
+        description="Reported thyroid dimensions and ultrasound categories.",
+        area_id="thyroid", renderer="imaging",
+        member_names=("Thyroid volume", "Thyroid isthmus thickness", "Thyroid lobe length", "Thyroid TI-RADS category"),
+    ),
+    Panel(
+        id="pelvic_ultrasound", name="Pelvic ultrasound", short="Pelvic ultrasound",
+        description="Reported uterine, cervical and ovarian ultrasound measurements and categories.",
+        area_id="reproductive", renderer="imaging",
+        member_names=(
+            "Uterine body length", "Uterine body anteroposterior diameter", "Uterine body width",
+            "Endometrial thickness", "Cervical length", "Cervical thickness", "Ovary length", "Ovarian volume",
+            "Antral follicle count", "Largest ovarian follicle diameter", "Corpus luteum diameter",
+            "Ovarian cyst largest diameter", "Ovarian cyst smaller diameter", "Ovarian O-RADS category",
+            "Uterine lesion largest diameter", "Uterine lesion smaller diameter",
+        ),
+    ),
+    Panel(
+        id="breast_imaging", name="Breast imaging", short="Breast imaging",
+        description="Reported breast measurements and imaging assessment categories.",
+        area_id="reproductive", renderer="imaging",
+        member_names=("Breast BI-RADS category", "Breast lesion largest diameter", "Breast lesion smaller diameter",
+                      "Largest breast cyst diameter", "Breast skin thickness", "Breast subcutaneous fat thickness",
+                      "Breast glandular tissue thickness"),
+    ),
+    Panel(
+        id="soft_tissue_imaging", name="Soft-tissue imaging", short="Soft-tissue imaging",
+        description="Reported soft-tissue lesion dimensions.",
+        area_id="joints", renderer="imaging",
+        member_names=("Soft tissue lesion largest diameter", "Soft tissue lesion smaller diameter"),
+    ),
+    Panel(
+        id="eeg", name="Electroencephalography (EEG)", short="EEG",
+        description="Reported rhythm frequencies and amplitudes from an electroencephalogram.",
+        area_id="brain", renderer="imaging",
+        member_names=("EEG alpha rhythm frequency", "EEG alpha rhythm amplitude", "EEG beta rhythm frequency",
+                      "EEG beta rhythm amplitude", "EEG theta rhythm frequency", "EEG theta rhythm amplitude"),
+    ),
+    Panel(
+        id="imaging_radiation", name="Imaging radiation exposure", short="Imaging exposure",
+        description="Effective dose as reported for medical imaging; this is not an individual risk estimate.",
+        area_id="imaging", renderer="imaging", member_names=("Effective radiation dose",),
+    ),
+    Panel(
+        id="tumour_markers", name="Tumour markers", short="Tumour markers",
+        description="Reported CA 15-3, CA 125 and HE4 measurements; their uses and methods remain separate.",
+        area_id="reproductive", renderer="context",
+        member_names=("Cancer antigen 15-3 (CA 15-3)", "Cancer antigen 125 (CA 125)", "Human epididymis protein 4 (HE4)"),
     ),
     Panel(
         id="body",
@@ -525,6 +673,7 @@ PANELS: list[Panel] = [
             "walking_heart_rate",
             "pulse_wave_velocity",
             "cardiovascular_age",
+            "fitness_age",
         ),
     ),
     Panel(
@@ -619,6 +768,12 @@ PANELS: list[Panel] = [
             "environmental_sound_reduction",
             "time_in_daylight",
         ),
+    ),
+    Panel(
+        id="weather", name="Weather context", short="Weather",
+        description="Reported weather temperature and relative humidity; these are not body measurements.",
+        area_id="environment", renderer="context",
+        device_members=("weather_temperature", "weather_humidity"),
     ),
     Panel(
         id="mobility",

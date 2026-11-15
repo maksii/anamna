@@ -6,7 +6,7 @@ Regressions for the 2026-11-06 sandbox audit:
   person's local midnight (users.timezone, Europe/Kyiv by default).
 * OPS-04 -- the first Takeout adapter filed each sleep period under its bedtime
   date and published 14.6 h "nights" beside 0.1 h ones.  Periods belong to
-  Oura's own `day`; a day holding more than 16 h is withheld, not charted; and
+  Oura's own `day`; identical repeated acquisitions are counted once; and
   re-importing the same export repairs what the old grouping wrote.
 * OPS-05 -- a webhook for the newest night synced a window that started on the
   wake day, which Oura's /sleep (filtered by bedtime date) never answers with
@@ -26,6 +26,8 @@ import time
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 from zoneinfo import ZoneInfo
+
+import pytest
 
 from anamna import oura
 from anamna.config import Settings
@@ -124,10 +126,10 @@ def test_heart_rate_days_are_cut_at_the_persons_midnight(tmp_path: Path, monkeyp
     assert (row["value"], row["sample_count"]) == (120.0, 2)
 
 
-# --- OPS-04: implausible nights are withheld, API and export alike ------------
+# --- OPS-04: acquisition identity, not an invented duration maximum -----------
 
 
-def test_api_sleep_day_over_sixteen_hours_is_withheld_and_its_stale_copy_removed(tmp_path: Path, monkeypatch):
+def test_api_long_sleep_and_independent_hrv_are_retained(tmp_path: Path, monkeypatch):
     settings, user_id, _ = build(tmp_path)
     configure(settings)
     connect_account(settings, user_id)
@@ -138,11 +140,29 @@ def test_api_sleep_day_over_sixteen_hours_is_withheld_and_its_stale_copy_removed
     oura.sync_range(settings, user_id, "sleep", "2026-08-03", "2026-08-04")
     assert hours(metric_rows(settings, "sleep_duration")) == {"2026-08-03": 7.5, "2026-08-04": 7.5}
 
-    piled = [{**night, "id": f"x{i}", "total_sleep_duration": 21000, "time_in_bed": 21600} for i in range(3)]
-    fake_api(monkeypatch, {"/v2/usercollection/sleep": {"data": [*piled, other], "next_token": None}})
+    long_night = {**night, "total_sleep_duration": 72000, "time_in_bed": 75600}
+    fake_api(monkeypatch, {"/v2/usercollection/sleep": {"data": [long_night, other], "next_token": None}})
     oura.sync_range(settings, user_id, "sleep", "2026-08-03", "2026-08-04")
-    assert hours(metric_rows(settings, "sleep_duration")) == {"2026-08-04": 7.5}
-    assert "2026-08-03" not in hours(metric_rows(settings, "heart_rate_variability_rmssd"))
+    assert hours(metric_rows(settings, "sleep_duration")) == {"2026-08-03": 20, "2026-08-04": 7.5}
+    assert hours(metric_rows(settings, "heart_rate_variability_rmssd"))["2026-08-03"] == 50
+
+
+def test_api_conflicting_sleep_overlaps_fail_without_replacing_the_stored_night(tmp_path: Path, monkeypatch):
+    settings, user_id, _ = build(tmp_path)
+    configure(settings)
+    connect_account(settings, user_id)
+    night = {"id": "a", "day": "2026-08-03", "type": "long_sleep", "total_sleep_duration": 27000,
+             "time_in_bed": 28800, "average_hrv": 50, "bedtime_start": "2026-08-02T22:00:00Z",
+             "bedtime_end": "2026-08-03T06:00:00Z"}
+    endpoint = "/v2/usercollection/sleep"
+    fake_api(monkeypatch, {endpoint: {"data": [night], "next_token": None}})
+    oura.sync_range(settings, user_id, "sleep", "2026-08-03", "2026-08-03")
+    fake_api(monkeypatch, {endpoint: {"data": [night, {**night, "id": "b", "total_sleep_duration": 25000}],
+                                    "next_token": None}})
+    with pytest.raises(ValueError, match="Conflicting overlapping Oura sleep acquisitions"):
+        oura.sync_range(settings, user_id, "sleep", "2026-08-03", "2026-08-03")
+    assert hours(metric_rows(settings, "sleep_duration")) == {"2026-08-03": 7.5}
+    assert hours(metric_rows(settings, "heart_rate_variability_rmssd")) == {"2026-08-03": 50}
 
 
 SLEEP_COLUMNS = ["id", "day", "type", "bedtime_start", "bedtime_end", "total_sleep_duration",
@@ -166,7 +186,7 @@ PERIODS = [
     period("e", "2026-02-22", "sleep", "2026-02-21T18:40:00.000+02:00", "2026-02-21T19:10:00.000+02:00", 600, 1800),
     # No `day`: filed by the local day it ended on.
     period("f", "", "long_sleep", "2026-02-22T00:30:00.000+02:00", "2026-02-22T07:55:00.000+02:00", 21600, 26640),
-    # Three long periods all claiming 25 Feb: 17.5 h, not a night anyone slept.
+    # One acquisition repeated under three storage IDs: count it once.
     *(period(f"q{i}", "2026-02-25", "long_sleep", "2026-02-24T23:00:00.000+02:00",
              "2026-02-25T06:00:00.000+02:00", 21000, 21600) for i in range(3)),
 ]
@@ -191,20 +211,19 @@ def sleep_hours(parsed, key: str = "sleep_duration") -> dict[str, float]:
     return {item.day: round(item.value, 3) for item in parsed.aggregates if item.definition.key == key}
 
 
-def test_takeout_files_each_period_under_its_own_day_and_withholds_impossible_nights(tmp_path: Path):
+def test_takeout_files_each_period_under_its_own_day_and_deduplicates_captures(tmp_path: Path):
     parsed = OuraAdapter().parse(write_takeout(tmp_path))
     assert sleep_hours(parsed) == {
         "2026-02-19": 6.667,   # not 6.7 + the 22:00 bedtime that woke on the 20th
         "2026-02-20": 8.0,
         "2026-02-21": 6.333,   # the rest period is not sleep...
         "2026-02-22": 6.167,   # the 18:40 nap and the day-less night, both the 22nd
+        "2026-02-25": 5.833,
     }
     assert sleep_hours(parsed, "time_in_bed")["2026-02-21"] == round((2400 + 25200) / 3600, 3)  # ...but is in bed
-    assert parsed.metadata["quarantined_sleep_days"] == [
-        {"day": "2026-02-25", "source": "Oura", "sleep_duration": 17.5, "time_in_bed": 18.0}
-    ]
-    assert not any(item.day == "2026-02-25" for item in parsed.aggregates
-                   if item.definition.key in oura.DATATYPE_KEYS["sleep"])
+    assert parsed.metadata["quarantined_sleep_days"] == []
+    assert sleep_hours(parsed, "time_in_bed")["2026-02-25"] == 6
+    assert sleep_hours(parsed, "heart_rate_variability_rmssd")["2026-02-25"] == 40
     # A UTC heart-rate sample at 22:30 is 00:30 the next morning in Kyiv...
     assert sleep_hours(parsed, "daily_heart_rate") == {"2026-02-19": 58.0}
     # ...and stays on the 18th for a person whose zone is UTC.
@@ -249,6 +268,7 @@ def test_reimporting_the_same_export_replaces_the_bedtime_grouped_nights(tmp_pat
     assert run()["import_id"] == import_id  # same bytes, same fingerprint, same import
     assert hours(metric_rows(settings, "sleep_duration")) == {
         "2026-02-19": 6.667, "2026-02-20": 8.0, "2026-02-21": 6.333, "2026-02-22": 6.167,
+        "2026-02-25": 5.833,
     }
     with connect(settings) as db:
         assert db.execute("PRAGMA foreign_key_check").fetchall() == []

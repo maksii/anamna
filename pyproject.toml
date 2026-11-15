@@ -36,6 +36,7 @@ dependencies = [
   # with a MIP start under full presolve). test_every_mode_equals_brute_force
   # fails on it; lift the cap once that test passes on a newer release.
   "highspy>=1.15.1,<1.16",
+  "garmin-fit-sdk==21.221.0",
 ]
 
 [project.optional-dependencies]

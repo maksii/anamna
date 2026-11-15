@@ -39,6 +39,10 @@ WORKOUTS = "workouts"
 EVENTS = "events"
 #: File adapters: a rule they own names the export's own source name.
 FILE_ADAPTERS = ("apple_health", "oura", "garmin", "kardia")
+# FIT-only captures are a distinct provenance channel of the same scale. A
+# canonical scale rule reaches them; a FIT-specific rule stays FIT-specific.
+FIT_SCALE_SOURCE = "Garmin Index Scale FIT archive"
+_SOURCE_RULE_ALIASES = {FIT_SCALE_SOURCE: ("Garmin Index Scale",)}
 #: Direct provider APIs; their rows carry the same source names as the
 #: provider's own file export ("Oura", "Garmin Index Scale").
 API_ADAPTERS = ("oura_api", "garmin_api", "garmin_personal_api")
@@ -151,12 +155,17 @@ class Matcher:
         self._day_zone = day_zone
 
     def excludes(self, source_name: str, key: str, observed: object, until: object = None) -> bool:
-        rules = self._rules.get(source_name)
+        rules = [rule for name in source_rule_names(source_name) for rule in self._rules.get(name, ())]
         if not rules:
             return False
         moment, day = _when(observed)
         end = _when(until)[0] if until else None
         return any(rule.covers(key, moment, day, end, self._day_zone) for rule in rules)
+
+
+def source_rule_names(source_name: str) -> tuple[str, ...]:
+    """Source-specific and inherited physical-origin rules, in one direction."""
+    return (source_name, *_SOURCE_RULE_ALIASES.get(source_name, ()))
 
 
 def _rule(row) -> Rule:
@@ -491,10 +500,7 @@ def rebuild_openwearables(settings, owner_user_id: str, first: str, last: str) -
 def _adapters_reached(db, owner_user_id: str, rows) -> set[str]:
     """File exports and provider APIs holding rows that a pending rule reaches."""
     adapters = {row[0] for row in db.execute(
-        """SELECT DISTINCT i.adapter_key FROM device_imports i WHERE i.owner_user_id=? AND (
-               EXISTS (SELECT 1 FROM device_metric_days d WHERE d.import_id=i.id)
-               OR EXISTS (SELECT 1 FROM device_workouts w WHERE w.import_id=i.id)
-               OR EXISTS (SELECT 1 FROM device_events e WHERE e.import_id=i.id))""", (owner_user_id,))}
+        "SELECT DISTINCT i.adapter_key FROM device_imports i WHERE i.owner_user_id=?", (owner_user_id,))}
     return {adapter for adapter in adapters & set(ADAPTERS) if any(label_for(row, adapter) for row in rows)}
 
 
@@ -536,20 +542,26 @@ def _merged_spans(rows) -> list[list[str]]:
     return merged
 
 
-def _rebuild_providers(settings, owner_user_id: str, adapters: set[str], first: str, last: str) -> None:
+def _rebuild_providers(settings, owner_user_id: str, adapters: set[str], first: str, last: str) -> bool:
+    complete = True
     for adapter in sorted(adapters & set(API_ADAPTERS)):
         try:
             _rebuild_provider(settings, owner_user_id, adapter, first, last)
         except Exception:  # noqa: BLE001 - its next sync applies the rules in its own write
             logger.warning("exclusions: %s could not be asked again", adapter, exc_info=True)
+            complete = False
+    return complete
 
 
-def _reimport_files(settings, owner_user_id: str) -> None:
+def _reimport_files(settings, owner_user_id: str, adapters: set[str]) -> bool:
     from .reaggregate import reimport_files
 
-    for result in reimport_files(settings, owner_user_id):
+    complete = True
+    for result in reimport_files(settings, owner_user_id, adapters=adapters):
         if result["status"] == "skipped_source_missing":
             logger.warning("exclusions: export %s has no kept copy to re-read", result["import_id"])
+            complete = False
+    return complete
 
 
 def run_pending(settings, owner_user_id: str) -> int:
@@ -564,11 +576,14 @@ def run_pending(settings, owner_user_id: str) -> int:
         adapters = _adapters_reached(db, owner_user_id, rows) if rows else set()
     if not rows:
         return 0
+    complete = True
     for first, last in _merged_spans(rows):
         rebuild_openwearables(settings, owner_user_id, first, last)
-        _rebuild_providers(settings, owner_user_id, adapters, first, last)
+        complete = _rebuild_providers(settings, owner_user_id, adapters, first, last) and complete
     if adapters & set(FILE_ADAPTERS):
-        _reimport_files(settings, owner_user_id)
+        complete = _reimport_files(settings, owner_user_id, adapters) and complete
+    if not complete:
+        return 0  # Retain the pending state; an unavailable source is not success.
     with transaction(settings, immediate=True) as db:
         settled = 0
         for row in rows:

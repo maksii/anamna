@@ -72,6 +72,7 @@ from ..ingest.pipeline import (
     lab_order_collected_at,
     mark_document_duplicate,
     open_review_task,
+    observation_specimen,
     reason_part,
     resolve_parsed_concept,
     stored_unit,
@@ -86,6 +87,7 @@ from .common import (
     name_key,
     word_key,
     parse_result,
+    iso_day,
     url_is_acceptable,
 )
 
@@ -925,7 +927,7 @@ def documents_for_order(connection, owner_user_id: str, numbers: list[str], key:
 _OBS_COLUMNS = """o.id, o.document_id, o.page_number, o.raw_name, o.value_numeric, o.value_text, o.comparator,
                   o.unit_raw, o.verification_status, o.vendor_interpretation, o.vendor_interpretation_source,
                   o.vendor_reference_text, o.vendor_reference_low, o.vendor_reference_high, o.concept_id,
-                  o.evidence_text, o.specimen, r.order_identifier report_order"""
+                  o.evidence_text, o.specimen, o.note, r.order_identifier report_order"""
 
 
 def _observation_rows(connection, owner_user_id: str, document_ids: list[str]) -> list[dict]:
@@ -975,6 +977,7 @@ def _obs_view(obs: dict) -> dict:
         "from_lab": obs.get("vendor_interpretation_source") == "lab_record",
         "concept_id": obs.get("concept_id"),
         "specimen": obs.get("specimen"),
+        "note": obs.get("note"),
     }
 
 
@@ -1113,6 +1116,8 @@ def cross_check(rows: list[dict], observations: list[dict], order_id: str = "") 
     judged.  ``flag`` marks a bound value whose lab normal/critical flag
     disagrees with the range we read from the report: informational only.
     """
+    rows = [{**row, "_sample_specimen": parsed.specimen if parsed else row.get("material")}
+            for row, parsed in _record_values(rows)]
     pool = [{**obs, "_key": name_key(obs["raw_name"]), "_loose": loose_name_key(obs["raw_name"]), "_used": False}
             for obs in observations]
     lab_loose = Counter(loose_name_key(row["test"]) for row in rows)
@@ -1192,6 +1197,54 @@ def _judge_reference(item: dict, row: dict, obs: dict) -> None:
         and not (_same_bound(lab_low, ours_low) and _same_bound(lab_high, ours_high)))
 
 
+def _sample_site(text: str | None) -> str | None:
+    text = str(text or "").casefold()
+    for site, pattern in (("vaginal", r"vagin|вагін|піхв"),
+                          ("cervical", r"cervi|цервік|шийк"),
+                          ("urethral", r"urethr|уретр")):
+        if re.search(pattern, text):
+            return site
+    return None
+
+
+def _same_reading_identity(row: dict, obs: dict) -> bool:
+    """Refuse a false match when the sources explicitly name different tests/samples."""
+    from ..ingest.concepts import concept_for_alias, refine_definition, specimen_family, stable_concept_id
+
+    material = row.get("_sample_specimen") or row.get("material")
+    lab_family = specimen_family(material, row.get("test"), row.get("packet"))
+    obs_family = specimen_family(obs.get("specimen"), obs.get("raw_name"))
+    if lab_family and obs_family and lab_family != obs_family:
+        return False
+    left_site, right_site = _sample_site(material), _sample_site(obs.get("specimen"))
+    if left_site and right_site and left_site != right_site:
+        return False
+    lab_name = _record_name(row)
+    # Some reports include the unit in the printed name. Resolve that exact
+    # qualified label before the bare WBC spelling, which otherwise means blood.
+    glued_name = f"{lab_name}, {row.get('units') or ''}"
+    labelled = (concept_for_alias(glued_name, specimen=lab_family)
+                if name_key(glued_name) == name_key(obs.get("raw_name")) else None)
+    lab = refine_definition(labelled or concept_for_alias(lab_name, specimen=lab_family),
+                            unit=row.get("units"), value_text=row.get("result"),
+                            reference="; ".join(row.get("norm") or []))
+    ours = refine_definition(concept_for_alias(str(obs.get("raw_name") or ""), specimen=obs_family),
+                             unit=obs.get("unit_raw"), value_text=obs.get("value_text"),
+                             reference="; ".join(str(obs.get(field) or "")
+                                                 for field in ("vendor_reference_text", "reference", "note")))
+    if lab and ours and stable_concept_id(str(lab["name"])) != stable_concept_id(str(ours["name"])):
+        return False
+    # An explicit material must also agree with a known stored concept when
+    # the original printed name itself is too terse to resolve.
+    if lab_family and obs.get("concept_id"):
+        from ..ingest.concepts import CONCEPT_DEFINITIONS
+        known = next((definition for definition in CONCEPT_DEFINITIONS
+                      if stable_concept_id(str(definition["name"])) == obs["concept_id"]), None)
+        if known and known.get("specimen_family") not in (None, lab_family):
+            return False
+    return True
+
+
 def _find_observation(row: dict, pool: list[dict], lab_loose: Counter, obs_loose: Counter, number) -> dict | None:
     """The first unused observation that reads as this lab row, by name."""
     key, loose = name_key(row["test"]), loose_name_key(row["test"])
@@ -1215,6 +1268,7 @@ def _find_observation(row: dict, pool: list[dict], lab_loose: Counter, obs_loose
         # name.  Equal names pair in page order, so the two MTHFR rows do too.
         candidates = [obs for obs in free
                       if obs["_key"].endswith("," + key) or obs["_key"].startswith(key + "(")]
+    candidates = [obs for obs in candidates if _same_reading_identity(row, obs)]
     if number is not None:
         exact = [obs for obs in candidates
                  if obs["value_numeric"] is not None and _same_number(float(obs["value_numeric"]), number)]
@@ -1247,6 +1301,7 @@ def _place_unpaired(obs: dict, items: list[dict], info_texts: list[tuple[dict, s
     # (ЛПВЩ» for «… (ЛПВЩ, HDL)».  Paired only by a unique prefix *and* the
     # same number, so a truncated name never borrows another test's row.
     prefixed = [item for item in items if item["cls"] == "missing" and len(obs["_key"]) >= 8
+                and _same_reading_identity(item["lab"], obs)
                 and name_key(item["lab"]["test"]).startswith(obs["_key"])
                 and item["_number"] is not None and obs["value_numeric"] is not None
                 and _same_number(float(obs["value_numeric"]), item["_number"])]
@@ -1290,6 +1345,8 @@ def _pair_lone_row(items: list[dict], pool: list[dict]) -> None:
         return
     lone, spare = missing[0], extra[0]
     obs = next(o for o in pool if o["id"] == spare["obs"]["id"])
+    if not _same_reading_identity(lone["lab"], obs):
+        return
     if lone["_number"] is not None:
         same = (obs["value_numeric"] is not None and _same_number(float(obs["value_numeric"]), lone["_number"])
                 and comparator(obs["comparator"]) == lone["_sign"])
@@ -1768,8 +1825,24 @@ def _record_value(row: dict, site: str | None = None) -> ParsedObservation | Non
         if row["state"] == "critical" and not _inside_printed_band({"value_numeric": number}, row, None, None)
         and not _states_no_interval({}, row)
         else None,
-        specimen=site,
+        specimen=_record_specimen(row, site),
+        section=collapse_space(str(row.get("packet") or "")) or None,
+        note="; ".join(line for line in row["norm"] if _method_note(line)) or None,
     )
+
+
+def _record_specimen(row: dict, site: str | None) -> str | None:
+    """A specific section site may refine a compatible general row material."""
+    from ..ingest.concepts import specimen_family
+
+    material = collapse_space(str(row.get("material") or "")) or None
+    if site and material:
+        family = specimen_family(site)
+        same_family = family and family == specimen_family(material)
+        material_site = _sample_site(material)
+        if same_family and (material_site is None or material_site == _sample_site(site)):
+            return site
+    return material or site
 
 
 def _record_title(rows: list[dict]) -> str:
@@ -1814,8 +1887,16 @@ def _record_values(rows: list[dict]) -> list[tuple[dict, ParsedObservation | Non
     specimen instead, up to the next site or the conclusion.
     """
     site: str | None = None
+    packet: str | None = None
     out: list[tuple[dict, ParsedObservation | None]] = []
     for row in rows:
+        next_packet = collapse_space(str(row.get("packet") or "")) or None
+        if packet and next_packet and next_packet != packet:
+            site = None
+        if next_packet:
+            packet = next_packet
+        if site and row.get("material") and _record_specimen(row, site) != site:
+            site = None
         test = str(row.get("test") or "")
         if _SITE_ROW_RE.match(test):
             site = collapse_space(str(row.get("result") or "")) or None
@@ -1828,9 +1909,9 @@ def _record_values(rows: list[dict]) -> list[tuple[dict, ParsedObservation | Non
 
 
 def _record_day(order: dict) -> str | None:
-    days = sorted(order.get("dates") or [])
-    day = days[0] if days else str(order.get("ordered_at") or "")[:10]
-    return day if re.fullmatch(r"\d{4}-\d{2}-\d{2}", day or "") else None
+    """Earliest valid supplied order day, or its written ordered-at day."""
+    days = sorted(day for value in order.get("dates") or [] if (day := iso_day(value)))
+    return (days[0] if days else iso_day(order.get("ordered_at"))) or None
 
 
 def _file_lab_record(settings, connection, user_id: str, key: str, patient_id: str, order: dict,
@@ -2345,9 +2426,38 @@ def _set_aside_by_sync(connection, record) -> bool:
 
 
 def _same_result(parsed: ParsedObservation, obs: dict) -> bool:
+    obs = {**obs, "raw_name": obs.get("raw_name", obs.get("name")),
+           "unit_raw": obs.get("unit_raw", obs.get("unit"))}
+    row = {"test": parsed.raw_name, "material": parsed.specimen, "packet": parsed.section,
+           "norm": [part for part in (parsed.reference_text, parsed.note) if part],
+           "units": parsed.unit_raw or "", "result": parsed.value_text or ""}
+    if not _same_reading_identity(row, obs):
+        return False
+    if name_key(parsed.raw_name) != name_key(obs.get("raw_name")):
+        from ..ingest.concepts import concept_for_alias, refine_definition, specimen_family
+
+        family = specimen_family(parsed.specimen, parsed.section, parsed.raw_name)
+        left = refine_definition(concept_for_alias(parsed.raw_name, specimen=family),
+                                 unit=parsed.unit_raw, value_text=parsed.value_text,
+                                 reference="; ".join(row["norm"]))
+        right = refine_definition(
+            concept_for_alias(str(obs.get("raw_name") or ""),
+                              specimen=specimen_family(obs.get("specimen"), obs.get("raw_name"))),
+            unit=obs.get("unit_raw"), value_text=obs.get("value_text"),
+            reference="; ".join(str(obs.get(field) or "")
+                                for field in ("vendor_reference_text", "reference", "note")),
+        )
+        # Coincident values cannot establish the identity of an unresolved
+        # test. Keep the source row for review rather than silently losing it.
+        if left is None or right is None or left["name"] != right["name"]:
+            return False
     if parsed.value_numeric is not None:
-        return obs["value_numeric"] is not None and _same_number(float(obs["value_numeric"]), parsed.value_numeric)
-    return obs["value_numeric"] is None and _same_text(obs["value_text"], parsed.value_text)
+        return (obs["value_numeric"] is not None
+                and _same_number(float(obs["value_numeric"]), parsed.value_numeric)
+                and comparator(obs.get("comparator")) == comparator(parsed.comparator)
+                and canonical_unit(obs.get("unit_raw")) == canonical_unit(parsed.unit_raw))
+    return (obs["value_numeric"] is None and _same_text(obs["value_text"], parsed.value_text)
+            and canonical_unit(obs.get("unit_raw")) == canonical_unit(parsed.unit_raw))
 
 
 def _collected_from_order(connection, user_id: str, row) -> int:
@@ -2662,8 +2772,8 @@ def _refresh_document_values(settings: Settings, connection, document) -> int:
     except (OSError, ValueError, TypeError):
         return 0
     stored = connection.execute(
-        "SELECT id, raw_name, value_text, specimen, evidence_text, verification_status, concept_id, "
-        "vendor_interpretation_source, vendor_reference_text, report_id, unit_raw FROM observations "
+        "SELECT id, raw_name, value_numeric, value_text, value_type, comparator, specimen, evidence_text, verification_status, concept_id, "
+        "vendor_interpretation_source, vendor_reference_text, report_id, unit_raw, note FROM observations "
         "WHERE document_id=? AND extraction_method=? ORDER BY rowid", (document["id"], LAB_RECORD)).fetchall()
     unused = list(stored)
     changed = 0
@@ -2688,16 +2798,22 @@ def _refresh_stored_value(connection, document, match, parsed) -> int:
         connection.execute("DELETE FROM observations WHERE id=?", (match["id"],))
         return 1
     touched = False
+    if parsed.note and parsed.note not in str(match["note"] or ""):
+        note = "; ".join(part for part in (match["note"], parsed.note) if part)
+        connection.execute("UPDATE observations SET note=? WHERE id=?", (note, match["id"]))
+        touched = True
     if match["vendor_interpretation_source"] == "lab_record" and not parsed.vendor_interpretation:
         # A "critical" the record's own interval contradicts: the bounds' reading.
         connection.execute(
             "UPDATE observations SET vendor_interpretation=?, vendor_interpretation_source=NULL WHERE id=?",
             (interpretation(parsed, match["concept_id"]), match["id"]))
         touched = True
-    if (parsed.raw_name, parsed.value_text, parsed.specimen) != (
-            match["raw_name"], match["value_text"], match["specimen"]):
-        connection.execute("UPDATE observations SET raw_name=?, value_text=?, specimen=? WHERE id=?",
-                           (parsed.raw_name, parsed.value_text, parsed.specimen, match["id"]))
+    value_type = "numeric" if parsed.value_numeric is not None else "text"
+    specimen = observation_specimen(parsed)
+    if (parsed.raw_name, parsed.value_numeric, parsed.value_text, value_type, parsed.comparator, specimen) != (
+            match["raw_name"], match["value_numeric"], match["value_text"], match["value_type"], match["comparator"], match["specimen"]):
+        connection.execute("UPDATE observations SET raw_name=?, value_numeric=?, value_text=?, value_type=?, comparator=?, specimen=? WHERE id=?",
+                           (parsed.raw_name, parsed.value_numeric, parsed.value_text, value_type, parsed.comparator, specimen, match["id"]))
         touched = True
     if match["vendor_reference_text"] is None and parsed.reference_text:
         connection.execute(

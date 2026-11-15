@@ -40,17 +40,24 @@ def category(connection, concept_id):
 # --- 2: an auto concept reused through its learned alias takes the current category --
 
 
-def test_a_learned_alias_does_not_keep_a_category_the_inference_no_longer_gives(connection):
+def test_a_learned_urine_alias_does_not_claim_the_seeded_serum_amino_acid(connection):
     # As an older reader filed it: a urine word in the title made it urinalysis.
     first = filed(connection, "Таурин", unit_raw="мкмоль/л", context="Аналіз сечі загальний")
     assert category(connection, first) == "urinalysis"
     # The re-read files the row before its specimen is known: the learned
     # alias is the path, and it must not keep the old category.
     again = filed(connection, "Таурин", unit_raw="мкмоль/л", context="Амінокислоти (скринінг в сироватці) · Сечовина")
-    assert again == first and category(connection, first) != "urinalysis"
-    # A defined concept keeps the catalogue's category whatever the title says.
+    assert again == "taurine-serum-or-plasma" and again != first
+    assert category(connection, again) == "metabolic"
+    assert category(connection, first) == "urinalysis"
+    # A bare chemistry name under a urine title cannot establish blood:
+    # urea can also be measured in urine, and those results stay distinct.
     urea = filed(connection, "Сечовина", unit_raw="ммоль/л", context="Аналіз сечі загальний")
-    assert category(connection, urea) == "renal"
+    assert category(connection, urea) == "urinalysis" and urea != "urea"
+    serum_urea = filed(connection, "Сечовина", unit_raw="ммоль/л", context="Аналіз сечі загальний",
+                       specimen="сироватка")
+    assert serum_urea == "urea" and category(connection, serum_urea) == "renal"
+    assert category(connection, urea) == "urinalysis"
 
 
 # --- 3: a re-read that only renamed a row reports nothing vanished ------------------
@@ -377,4 +384,6 @@ def test_an_auto_concept_found_by_its_own_id_loses_a_stale_urinalysis_category(c
     )
     again = filed(connection, "Аланін", unit_raw="мкмоль/л", specimen="сироватка крові",
                   context="Амінокислоти (скринінг в сироватці)")
-    assert again == stale and category(connection, stale) != "urinalysis"
+    assert again == "alanine-serum-or-plasma"
+    assert category(connection, again) == "metabolic"
+    assert filed(connection, "Аланін", unit_raw="мкмоль/л", specimen="сеча") != again

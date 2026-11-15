@@ -247,7 +247,8 @@ def test_every_new_unit_folds_onto_its_concepts_unit(text):
                "Діастолічний артеріальний тиск": "mmHg", "SpO2": "%"}
     for name, _, unit, _ in read(text):
         if name == "ЧД":
-            assert pipeline.stored_unit(unit, "breaths/min", "resting-respiratory-rate") == "breaths/min"
+            expected = unit if canonical_unit(unit) == "min" else "breaths/min"
+            assert pipeline.stored_unit(unit, "breaths/min", "resting-respiratory-rate") == expected
         else:
             assert canonical_unit(unit) == canonical_unit(library[name]), (name, unit)
 

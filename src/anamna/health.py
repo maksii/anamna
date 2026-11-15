@@ -4,7 +4,7 @@ import json
 import re
 import sqlite3
 import uuid
-from datetime import date
+from datetime import date, datetime
 from functools import lru_cache
 
 from .config import ID_NAMESPACE_PREFIX
@@ -24,6 +24,13 @@ from .locales.concepts_en import CONCEPT_NAMES_EN
 from .locales.concepts_uk import CONCEPT_NAMES_UK
 from .locales.phrases import PHRASES
 from .panels import DISPLAY_SUPPRESSED, PANEL_BY_ID  # noqa: F401  (re-exported for the web layer)
+
+# Shared with sample interpretation and calculation eligibility. This is the
+# record's existing due-date window, not a new pregnancy-dating calculation.
+PREGNANCY_DAYS = 280
+
+# An extraction-state notice, never a clinical conclusion or diagnosis.
+IMAGE_SOURCE_REVIEW = "Medical images require source review; no written conclusion was extracted."
 
 
 HEALTH_AREAS: list[dict[str, object]] = [
@@ -52,6 +59,7 @@ HEALTH_AREAS: list[dict[str, object]] = [
     {"id": "mobility", "name": "Mobility & gait", "short": "Mobility", "categories": {"device_mobility"}, "description": "Walking speed, step length, steadiness and asymmetry"},
     {"id": "sleep", "name": "Sleep & recovery", "short": "Sleep", "categories": {"device_sleep", "device_recovery"}, "description": "Sleep stages, heart-rate recovery, oxygen and breathing"},
     {"id": "environment", "name": "Hearing & environment", "short": "Environment", "categories": {"device_environment"}, "description": "Sound exposure and time in daylight"},
+    {"id": "imaging", "name": "Medical imaging & exposure", "short": "Imaging", "categories": {"radiation_exposure"}, "description": "Imaging studies and their reported radiation exposure"},
 ]
 
 AREA_BY_ID = {str(area["id"]): area for area in HEALTH_AREAS}
@@ -70,6 +78,9 @@ CATEGORY_TO_AREA = {
 # depending on someone remembering to extend a literal.
 PANEL_RELATED_AREAS: dict[str, set[str]] = {
     "inflammation": {"joints"},
+    "celiac": {"digestive"},
+    "folate_genetics": {"metabolism"},
+    "ovarian_risk": {"reproductive"},
 }
 
 # Concept-level links where the panel as a whole would be too coarse.  The
@@ -79,6 +90,12 @@ PANEL_RELATED_AREAS: dict[str, set[str]] = {
 # myositis antibodies beside joints and soft tissue, liver antibodies beside
 # the liver, HLA-B27 and the inflammation markers beside the spine.
 CONCEPT_RELATED_AREAS: dict[str, set[str]] = {
+    "Total beta-hCG": {"reproductive"},
+    "Anti-Mullerian hormone": {"reproductive"},
+    "Estradiol": {"reproductive"},
+    "Prolactin": {"reproductive"},
+    "Cancer antigen 15-3 (CA 15-3)": {"reproductive"},
+    "H. pylori test, method unspecified": {"digestive"},
     "25-hydroxyvitamin D": {"spine"},
     "Alkaline phosphatase": {"spine"},
     "Calcium, total": {"spine"},
@@ -255,6 +272,9 @@ VALUE_TRANSLATIONS = {
 }
 
 UNIT_TRANSLATIONS = {
+    "мкг/дл": "µg/dL",
+    "нгфеод/мл": "ng/mL FEU",
+    "титр": "titer",
     "ммоль/л": "mmol/L",
     "мкмоль/л": _UMOL_L,
     "нг/мл": "ng/mL",
@@ -396,6 +416,11 @@ for _determination in (
 #: silence -- the reading is stored, and the page looks like it was never taken.
 #: Synevo prints all six of these; the app already held the other spelling.
 UNIT_SYNONYMS = {
+    # Explicit reporting units, never inferred from a reading's magnitude.
+    "10^6/мкл": _TERA_PER_L,
+    "10^6/μl": _TERA_PER_L,
+    "10^6/ul": _TERA_PER_L,
+    "miu/ml": "IU/L",
     "мкмо/мл": _MIU_L,  # µIU/mL and mIU/L are the same quantity, exactly 1:1
     "ммо/мл": "IU/L",   # «мМО/мл», mIU/mL: 10^-3 IU per 10^-3 L is exactly IU/L (Synevo beta-hCG)
     "f/л": "fL",         # one lab's spelling; «фл» above is what Ukrainian shows
@@ -510,12 +535,10 @@ UNIT_SYNONYMS = {
 #: Same number, different label -- registered per concept and never globally.
 #:
 #: Two situations produce these.  A dimensionless quantity gets a different
-#: name from each laboratory: Synevo prints the atherogenic ratio as «Од» and
-#: the mumps antibody indices as "AI" and "R", where Expert Hospital prints
-#: «коефіцієнт» and the library stores "index".  And a laboratory simply
-#: mislabels its own column: Expert Hospital heads plateletcrit «х 10*9/л» and
-#: INR «%», then prints values (0.22-0.36 against a 0.1-0.5 interval, 0.87
-#: against 0.77-1.24) that are unambiguously the percentage and the ratio.
+#: name from each laboratory: the atherogenic ratio can carry «Од» and
+#: antibody indices "AI" or "R", where the library stores "ratio" or "index".
+#: Suspected source misprints are not aliases: platelet counts cannot become
+#: platelet fractions, and a percentage cannot become INR without assay data.
 #:
 #: Scoping each to one concept is what makes this safe.  Folding «Од» into
 #: «коефіцієнт» globally would be wrong -- «Од» is "units" on an antibody
@@ -525,16 +548,11 @@ UNIT_SYNONYMS = {
 #: conversion (×16.9, in ``reference.UNIT_CONVERSIONS``), not a relabel.
 CONCEPT_UNIT_ALIASES: dict[tuple[str, str], str] = {
     ("atherogenic-coefficient", "units"): "ratio",
-    ("inr", "%"): "ratio",
-    ("plateletcrit", "10^9/l"): "%",
     ("mumps-virus-igg", "ai"): "index",
     ("mumps-virus-igm", "r"): "index",
-    # A visit note prints breathing rate «18 /хв» inline and «16 хв» under its
-    # «ЧД» column: per minute, and minutes, by the letter.  Under the
-    # respiratory-rate concept both are breaths per minute; anywhere else «хв»
-    # stays minutes, which is why this is scoped here and not a synonym.
+    # A reciprocal minute under a respiratory-rate concept counts breaths.
+    # Bare minutes are a duration and cannot be silently relabelled as a rate.
     ("resting-respiratory-rate", "/хв"): _BREATHS_PER_MIN,
-    ("resting-respiratory-rate", "min"): _BREATHS_PER_MIN,
     # Insulin «мкОд/мл» (µU/mL) and «мкМО/мл» (µIU/mL, folded to mIU/L): by
     # prefix arithmetic 1 µU/mL = 1 mU/L, and on an insulin immunoassay the
     # "unit" is the international unit of the WHO insulin reference
@@ -542,13 +560,6 @@ CONCEPT_UNIT_ALIASES: dict[tuple[str, str], str] = {
     # same number.  Not folded globally: elsewhere "U" is an enzyme or an
     # arbitrary assay unit and is no international unit at all.
     ("insulin", "uu/ml"): "miu/l",
-    # Expert Hospital labels urine specific gravity «Питома вага, г/мл 1,035».
-    # The figure is the relative density every other laboratory here prints
-    # without a unit (Esculab 1.032, St. Paraskeva 1.005), and the reference
-    # library files the analyte unitless; folded to "" for this concept only, so
-    # the three stay one series.  Global, it erased the unit of any analyte
-    # printed in g/mL.
-    ("urine-specific-gravity", "г/мл"): "",
 }
 
 # Merged only after the reverse map is built, deliberately.  Folding has to
@@ -1622,9 +1633,9 @@ def age_on(date_of_birth: str | None, on_date: str | None = None) -> int | None:
     if not date_of_birth:
         return None
     try:
-        born = date.fromisoformat(date_of_birth[:10])
-        current = date.fromisoformat(on_date[:10]) if on_date else date.today()
-    except ValueError:
+        born = date.fromisoformat(date_of_birth)
+        current = (date.fromisoformat(on_date) if len(on_date) == 10 else datetime.fromisoformat(on_date.replace("Z", "+00:00")).date()) if on_date else date.today()
+    except (ValueError, TypeError):
         return None
     return current.year - born.year - ((current.month, current.day) < (born.month, born.day))
 
@@ -2075,6 +2086,9 @@ def _margin_debris(token: str, following: str | None) -> bool:
     unless it is a negation: «Не» wrapped onto a line of its own still says it.
     """
     if len(token) > 2 or not token.isalpha() or (len(token) == 2 and token.isupper()):
+        return False
+    # An English negative conclusion must not turn into a positive finding.
+    if token.casefold() == "no":
         return False
     # A letter naming a shape («С подібний сколіоз», «S подібна») is the word.
     if following and _SHAPE_WORD.match(following):
@@ -2832,7 +2846,23 @@ def _report_candidate(
     # Only an image set is filed without a written conclusion (its finding
     # points at the pictures); any other report with nothing read stays a
     # review task, not an empty finding filed by a word on its page.
-    if not areas or (not summary and clinical_type != "diagnostic_image"):
+    source_review = not summary and clinical_type == "diagnostic_image"
+    if source_review and not areas:
+        # A person may have identified and filed this image under an organ
+        # the automatic classifier cannot read. Their ruling already covers
+        # the source; an unknown-organ fallback must not sit beside it.
+        if connection.execute(
+            "SELECT 1 FROM clinical_findings WHERE document_id=?"
+            " AND verification_status IN ('verified','corrected','rejected') LIMIT 1",
+            (first["document_id"],),
+        ).fetchone():
+            return None
+        # A textless image with no identifiable organ is still retained in
+        # the record. Do not invent an organ, study identity or interpretation,
+        # or merge separate unknown studies merely because their dates agree.
+        areas = ("imaging",)
+        study_key = f"source-review:{first['document_id']}:{first['report_id']}"
+    if not areas or (not summary and not source_review):
         return None
     sides = _named_sides(first)
     if study_key in {"knee_mri", "elbow_mri"} and len(sides) == 1:
@@ -2845,6 +2875,8 @@ def _report_candidate(
         identities[first["patient_id"]] = _identity_tokens(connection, first["patient_id"])
     original = _strip_letterhead(text[:body_end], identities[first["patient_id"]]) if summary else ""
     fields = _summary_fields(summary, original, areas)
+    if source_review:
+        fields.update(summary_en=IMAGE_SOURCE_REVIEW, summary_uk="", confidence=0.0)
     return {
         "document_id": first["document_id"], "owner_user_id": first["owner_user_id"],
         "patient_id": first["patient_id"], "report_id": first["report_id"],

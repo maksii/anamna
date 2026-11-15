@@ -209,10 +209,8 @@ def test_devices_overview_shows_a_twin_on_its_concept_card(tmp_path: Path):
     assert "107.9" in response.text
 
 
-def test_home_pdf_duplicate_is_shown_once_and_clinic_reading_is_kept(tmp_path: Path):
-    """The Garmin 4-week report printed the cuff's readings; matched on day and
-    maker, never on value (the PDF rounds differently).  A clinic pulse taken
-    the same morning is a different reading and stays."""
+def test_home_pdf_acquisition_is_kept_beside_device_daily_aggregate(tmp_path: Path):
+    """A maker and date do not prove a PDF acquisition equals a daily aggregate."""
     settings, user_id, client = _build(tmp_path)
     _document(settings, user_id, "garmin-pdf", "Garmin Connect", "blood_pressure", "2025-08-01")
     _document(settings, user_id, "visit-1", "Veselka", "consultation", "2025-08-01")
@@ -228,13 +226,13 @@ def test_home_pdf_duplicate_is_shown_once_and_clinic_reading_is_kept(tmp_path: P
     with connect(settings) as connection:
         systolic = web._linked_observation_rows(connection, user_id, "systolic-blood-pressure")
         pulse = web._linked_observation_rows(connection, user_id, "pulse-rate")
-    assert [row["id"] for row in systolic if not row.get("is_device")] == ["obs-sys-only"]
+    assert {row["id"] for row in systolic if not row.get("is_device")} == {"obs-sys-only", "obs-sys-dup"}
     assert [row["value_numeric"] for row in systolic if row.get("is_device")] == [119.0]
-    assert {row["id"] for row in pulse if not row.get("is_device")} == {"obs-pulse-visit"}
+    assert {row["id"] for row in pulse if not row.get("is_device")} == {"obs-pulse-visit", "obs-pulse-dup"}
     assert len([row for row in pulse if row.get("is_device")]) == 1
     page = client.get("/metrics/pulse-rate").text
     history = page.split('id="reading-history"', 1)[1].split("</section>", 1)[0]
-    assert history.count("<tr") == 1 + 2
+    assert history.count("<tr") == 1 + 3
 
 
 def test_twins_link_both_ways_and_related_ones_say_why(tmp_path: Path):

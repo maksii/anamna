@@ -614,7 +614,7 @@ def test_document_panel_verifies_only_matches_on_a_press_with_csrf(tmp_path: Pat
         # Verifying the creatinine is what lets the record calculate its eGFR.
         assert [tuple(row) for row in connection.execute(
             "SELECT verification_status FROM observations WHERE document_id=? "
-            "AND extraction_method = 'derived_ckd_epi_2021'", (document_id,))] == [("verified",)]
+            "AND extraction_method = 'derived_ckd_epi_2021'", (document_id,))] == [("extracted",)]
         audit = connection.execute(
             "SELECT details_json FROM audit_events WHERE action='observation_verify'").fetchall()
     assert states == {ids[0]: "verified", ids[1]: "extracted"}

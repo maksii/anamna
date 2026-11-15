@@ -23,7 +23,7 @@ from collections import defaultdict
 from datetime import date, timedelta
 from pathlib import Path
 
-from ..config import Settings, get_settings
+from ..config import Settings, get_settings, resolve_source_path
 from ..db import connect, migrate, transaction
 from . import exclusions
 from .timezone import local_day, user_timezone_for
@@ -164,29 +164,33 @@ def local_bounds(start: str, end: str, tz) -> tuple[str, str]:
     return local_bounds_utc(start, end, tz)
 
 
-def reimport_files(settings: Settings, user_id: str) -> list[dict[str, object]]:
+def reimport_files(settings: Settings, user_id: str, *, adapters: set[str] | None = None) -> list[dict[str, object]]:
     """Re-read every file export that still owns rows, from the kept copy.
 
     The same file has the same fingerprint, so the importer updates its own
     rows in place and prunes the days it no longer produces; rows another
-    import owns are left alone.  A superseded export (no rows left) is skipped:
-    re-reading it would only resurrect what a newer export replaced.
+    import owns are left alone. A superseded export is skipped: re-reading it
+    would resurrect what a newer export replaced. An export marked as emptied
+    while exclusions were applied remains eligible, so undo can restore it.
     """
     from .importer import import_device_export
 
     with connect(settings) as db:
         imports = db.execute(
-            """SELECT di.id, di.adapter_key, di.source_path, di.patient_id,
+            """SELECT di.id, di.adapter_key, di.source_path, di.patient_id, di.metadata_json,
                       (SELECT COUNT(*) FROM device_metric_days d WHERE d.import_id=di.id) rows_owned
                FROM device_imports di
-               WHERE di.owner_user_id=? AND di.adapter_key IN ('apple_health', 'oura', 'garmin', 'kardia')""",
+               WHERE di.owner_user_id=? AND di.adapter_key IN ('apple_health', 'oura', 'garmin', 'kardia')
+               ORDER BY COALESCE(di.export_ended_at, di.imported_at) DESC, di.imported_at DESC, di.id""",
             (user_id,),
         ).fetchall()
     results = []
     for item in imports:
-        source = Path(str(item["source_path"]))
+        if adapters is not None and item["adapter_key"] not in adapters:
+            continue
+        source = resolve_source_path(settings, str(item["source_path"]))
         entry = {"import_id": item["id"], "adapter": item["adapter_key"], "rows_owned": item["rows_owned"]}
-        if not item["rows_owned"]:
+        if not item["rows_owned"] and not json.loads(item["metadata_json"] or "{}").get("rebuild_after_exclusion"):
             results.append({**entry, "status": "skipped_superseded"})
             continue
         if not source.exists():
@@ -208,8 +212,8 @@ def run(settings: Settings, user_id: str, *, chunk_days: int = 7, files: bool = 
     started = time.time()
     ow_counts = reaggregate_openwearables(settings, user_id, chunk_days=chunk_days)
     file_results = reimport_files(settings, user_id) if files else []
-    # No cache to drop here: the app's device memo is keyed on the newest
-    # `created_at` of the person's rows, which every write above advanced.
+    # The app observes the device revision maintained by database triggers;
+    # even a repair in the same timestamp second invalidates its memo.
     after = snapshot(settings, user_id)
     return {
         "user_id": user_id, "seconds": round(time.time() - started, 1),

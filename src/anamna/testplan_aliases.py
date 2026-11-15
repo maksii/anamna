@@ -69,6 +69,43 @@ CONCEPTS: dict[tuple[str, str], tuple[str, str]] = {
     ("esculab", "318"): ("total-casts-in-urine", "циліндри"),
     # The total IgE an Esculab allergen panel reports beside its extracts.
     ("esculab", "429"): ("total-immunoglobulin-e", "Загальний імуноглобулін Е в сироватці крові"),
+    # Its panel establishes electrophoresis: this is the percentage fraction,
+    # not the serum chemistry concentration a bare albumin normally names.
+    ("esculab", "2885"): ("albumin-fraction", "альбумін"),
+    # Former cross-laboratory requirements whose exact analytes now have
+    # seeded concepts. Fractions, specimens and unspecified models stay
+    # distinct: total beta-hCG is not free beta-hCG; HOMA is not a guessed
+    # model; serum cortisol is not saliva cortisol.
+    ('synevo', '1011'): ('prolactin', 'Пролактин'),
+    ('esculab', '20'): ('prolactin', 'Пролактин (ПРЛ)'),
+    ('synevo', '1015'): ('estradiol', 'Естрадіол (E2)'),
+    ('esculab', '17'): ('estradiol', 'Естрадіол (E2)'),
+    ('synevo', '1020'): ('cortisol', 'Кортизол (сироватка)'),
+    ('esculab', '27'): ('cortisol', 'Кортизол'),
+    ('synevo', 'name:poзpaxyhokihдekcyhoma'): ('homa-index-reported-model-unspecified', 'Розрахунок індексу HOMA'),
+    ('esculab', '36'): ('homa-index-reported-model-unspecified', 'Індекс HOMA'),
+    ('synevo', '1033'): ('total-beta-hcg', 'β-ХГЛ загальний (хоріонічний гонадотропін загальний)'),
+    ('synevo', '1018'): ('total-beta-hcg', 'β-ХГЛ загальний (хоріонічний гонадотропін загал.) - пренатальний'),
+    ('esculab', '57'): ('total-beta-hcg', 'Хоріонічний гонадотропін (бета-ХГЛ)'),
+    ('esculab', '463'): ('total-beta-hcg', 'Хоріонічний гонадотропін (бета-ХГЛ)'),
+    ('esculab', '58'): ('total-beta-hcg', 'Хоріонічний гонадотропін (пренатальна діагностика 12-21тв)'),
+    ('synevo', '1127'): ('d-dimer', 'D-димер'),
+    ('esculab', '298'): ('d-dimer', 'Д-димер'),
+    ('synevo', '1606'): ('pancreatic-amylase', 'α-Амілаза панкреатична'),
+    ('esculab', '934'): ('pancreatic-amylase', 'Амілаза панкреатична'),
+    ('synevo', '1038'): ('total-immunoglobulin-a', 'Імуноглобулін A (IgA, сироватка)'),
+    ('esculab', '329'): ('total-immunoglobulin-a', 'Концентрація Ig А в сироватці крові'),
+    ('synevo', '2056'): ('giardia-total-antibodies', 'Giardia (лямблії), антитіла сумарні'),
+    ('esculab', '141'): ('giardia-total-antibodies', 'Сумарні (Ig A, Ig M, Ig G) до лямблій'),
+    ('synevo', '2058'): ('ascaris-igg-antibodies', 'Ascaris lumbricoides, антитіла IgG'),
+    ('esculab', '142'): ('ascaris-igg-antibodies', 'Антитіла Іg G до аскарид (Ascaris)'),
+    ('synevo', '2057'): ('toxocara-igg-antibodies', 'Toxocara canis, антитіла IgG'),
+    ('esculab', '143'): ('toxocara-igg-antibodies', 'Антитіла Іg G до токсокар (Toxocara)'),
+    ('synevo', '9169'): ('gliadin-igg-antibodies', 'Гліадин, антитіла IgG'),
+    ('esculab', '339'): ('gliadin-igg-antibodies', 'антиГліадин (Gliadin) IgG'),
+    ('synevo', '2108'): ('tissue-transglutaminase-igg-antibodies', 'Тканинна трансглутаміназа, антитіла IgG'),
+    # ІФА (immunoassay) is the index concept, not the IFT titre/pattern.
+    ('esculab', '1917'): ('antinuclear-antibodies', 'Антинуклеарні антитіла / ANA (метод ІФА)'),
 }
 
 #: ``(lab, parameter id) -> (printed name, why it is not the concept its name resolves to)``.
@@ -84,9 +121,6 @@ UNMAPPED: dict[tuple[str, str], tuple[str, str]] = {
     # blood count.  Its unit (per field or per µl) is not printed, so it is
     # not filed under either urine concept either.
     ("esculab", "312"): ("лейкоцити", "urine sediment, not the blood white cell count"),
-    # Albumin as a serum electrophoresis fraction, not the chemistry albumin
-    # concentration (g/L) its bare name resolves to.
-    ("esculab", "2885"): ("альбумін", "an electrophoresis fraction, not serum albumin in g/L"),
 }
 
 # --- one analyte at both labs, no concept of ours -----------------------------------
@@ -102,12 +136,10 @@ SAME: dict[str, tuple[tuple[str, str, str], ...]] = {
         ('synevo', '1014', 'Фолікулостимулюючий гормон (ФСГ)'),
         ('esculab', '23', 'Фолікулостимулюючий гормон (ФСГ)'),
     ),
-    "x:prolactin": (('synevo', '1011', 'Пролактин'), ('esculab', '20', 'Пролактин (ПРЛ)'),),
     "x:macroprolactin": (
         ('synevo', '9010', 'Макропролактин'),
         ('esculab', '2933', 'Макропролактин (big + big-big)'),
     ),
-    "x:estradiol": (('synevo', '1015', 'Естрадіол (E2)'), ('esculab', '17', 'Естрадіол (E2)'),),
     "x:progesterone": (('synevo', '1010', 'Прогестерон'), ('esculab', '19', 'Прогестерон'),),
     "x:dhea-sulfate": (
         ('synevo', '1017', 'Дегідроепіандростерон-сульфат (ДГЕА-с, DHEA-s)'),
@@ -135,7 +167,6 @@ SAME: dict[str, tuple[tuple[str, str, str], ...]] = {
         ('synevo', '2069', '17-α-оксипрогестерон (17-OHP)'),
         ('esculab', '29', '17α-гідроксипрогестерон (17α-OHP)'),
     ),
-    "x:cortisol-serum": (('synevo', '1020', 'Кортизол (сироватка)'), ('esculab', '27', 'Кортизол'),),
     "x:cortisol-saliva": (('synevo', '2214', 'Кортизол (слина)'), ('esculab', '1549', 'Кортизол (слина)'),),
     "x:acth": (
         ('synevo', '9006', 'Адренокортикотропний гормон (АКТГ, ACTH)'),
@@ -148,10 +179,6 @@ SAME: dict[str, tuple[tuple[str, str, str], ...]] = {
     "x:igf-1": (
         ('synevo', '9016', 'Інсуліноподібний фактор росту - 1 (ІФР - 1, ІGF-1)'),
         ('esculab', '1684', 'Інсуліноподібний фактор росту-1 (Соматомедин С, ІФР-1, IGF-1)'),
-    ),
-    "x:homa-ir": (
-        ('synevo', 'name:poзpaxyhokihдekcyhoma', 'Розрахунок індексу HOMA'),
-        ('esculab', '36', 'Індекс HOMA'),
     ),
     "x:inhibin-a": (('synevo', '2288', 'Інгібін A'), ('esculab', '3167', 'Інгібін А'),),
     "x:inhibin-b": (('synevo', '2289', 'Інгібін B'), ('esculab', '457', 'Інгібін В'),),
@@ -178,13 +205,6 @@ SAME: dict[str, tuple[tuple[str, str, str], ...]] = {
     "x:gastrin-17": (('synevo', '2292', 'Гастрин-17'), ('esculab', '2329', 'Гастрин -17'),),
     "x:erythropoietin": (('synevo', '9210', 'Еритропоетин'), ('esculab', '913', 'Еритропоетин'),),
     # pregnancy screening
-    "x:hcg-total": (
-        ('synevo', '1033', 'β-ХГЛ загальний (хоріонічний гонадотропін загальний)'),
-        ('synevo', '1018', 'β-ХГЛ загальний (хоріонічний гонадотропін загал.) - пренатальний'),
-        ('esculab', '57', 'Хоріонічний гонадотропін (бета-ХГЛ)'),
-        ('esculab', '463', 'Хоріонічний гонадотропін (бета-ХГЛ)'),
-        ('esculab', '58', 'Хоріонічний гонадотропін (пренатальна діагностика 12-21тв)'),
-    ),
     "x:hcg-free-beta": (
         ('synevo', '1853', 'β-ХГЛ вільний'),
         ('synevo', '1149', 'β-ХГЛ вільний (пренатальна діагностика)'),
@@ -302,7 +322,6 @@ SAME: dict[str, tuple[tuple[str, str, str], ...]] = {
     "x:bile-acids": (('synevo', '9041', 'Жовчні кислоти'), ('esculab', '1841', 'Жовчні кислоти, кров'),),
     "x:copper-serum": (('synevo', '9296', 'Мідь'), ('esculab', '2912', 'Мідь в сироватці'),),
     "x:zinc": (('synevo', '9297', 'Цинк'), ('esculab', '2335', 'Цинк 2 (Zn)'),),
-    "x:d-dimer": (('synevo', '1127', 'D-димер'), ('esculab', '298', 'Д-димер'),),
     "x:procalcitonin": (('synevo', '9011', 'Прокальцитонін'), ('esculab', '555', 'Прокальцитонін'),),
     "x:interleukin-6": (('synevo', '9294', 'Інтерлейкін-6 (ІЛ-6, IL-6)'), ('esculab', '825', 'Інтерлейкін 6'),),
     "x:interleukin-1-beta": (
@@ -342,10 +361,6 @@ SAME: dict[str, tuple[tuple[str, str, str], ...]] = {
         ('synevo', '1263', 'Еозинофільний катіонний білок (ЕКБ, ECP)'),
         ('esculab', '1323', 'Еозинофільний катіонний білок'),
     ),
-    "x:pancreatic-amylase": (
-        ('synevo', '1606', 'α-Амілаза панкреатична'),
-        ('esculab', '934', 'Амілаза панкреатична'),
-    ),
     "x:pancreatic-elastase-serum": (
         ('synevo', '9199', 'Панкреатична еластаза (сироватка)'),
         ('esculab', '2898', 'Еластаза підшлункової залози в сироватці'),
@@ -353,10 +368,6 @@ SAME: dict[str, tuple[tuple[str, str, str], ...]] = {
     "x:calprotectin-serum": (
         ('synevo', '2237', 'Кальпротектин (сироватка)'),
         ('esculab', '1840', 'Кальпротектин в сироватці'),
-    ),
-    "x:immunoglobulin-a": (
-        ('synevo', '1038', 'Імуноглобулін A (IgA, сироватка)'),
-        ('esculab', '329', 'Концентрація Ig А в сироватці крові'),
     ),
     "x:immunoglobulin-g": (
         ('synevo', '1040', 'Імуноглобулін G (IgG, сироватка)'),
@@ -641,18 +652,6 @@ SAME: dict[str, tuple[tuple[str, str, str], ...]] = {
         ('esculab', '1957', 'anti-anatoxin C. Diphtheriae IgG, кількісний'),
         ('esculab', '2132', 'Антитіла IgG до дифтерійного анатоксину'),
     ),
-    "x:giardia-total-antibodies": (
-        ('synevo', '2056', 'Giardia (лямблії), антитіла сумарні'),
-        ('esculab', '141', 'Сумарні (Ig A, Ig M, Ig G) до лямблій'),
-    ),
-    "x:ascaris-igg": (
-        ('synevo', '2058', 'Ascaris lumbricoides, антитіла IgG'),
-        ('esculab', '142', 'Антитіла Іg G до аскарид (Ascaris)'),
-    ),
-    "x:toxocara-igg": (
-        ('synevo', '2057', 'Toxocara canis, антитіла IgG'),
-        ('esculab', '143', 'Антитіла Іg G до токсокар (Toxocara)'),
-    ),
     "x:echinococcus-igg": (
         ('synevo', '2097', 'Echinococcus granulosus, антитіла IgG'),
         ('esculab', '144', 'Антитіла Іg G до ехінококів (Echinococcus)'),
@@ -702,7 +701,6 @@ SAME: dict[str, tuple[tuple[str, str, str], ...]] = {
         ('synevo', '2152', 'Saccharomyces cerevisiae, антитіла IgG'),
         ('esculab', '2229', 'Saccharomyces cerevisiae IgG'),
     ),
-    "x:gliadin-igg": (('synevo', '9169', 'Гліадин, антитіла IgG'), ('esculab', '339', 'антиГліадин (Gliadin) IgG'),),
     "x:gliadin-iga": (('synevo', '9168', 'Гліадин, антитіла IgA'), ('esculab', '340', 'антиГліадин (Gliadin) IgA'),),
     "x:gliadin-deamidated-igg": (
         ('synevo', '9324', 'Дезаміновані пептиди гліадину, антитіла IgG'),
@@ -712,7 +710,6 @@ SAME: dict[str, tuple[tuple[str, str, str], ...]] = {
         ('synevo', '9325', 'Дезаміновані пептиди гліадину, антитіла IgA'),
         ('esculab', '2018', 'Антитіла IgA до гліадину (деамінізовані пептиди), ELiA'),
     ),
-    "x:ttg-igg": (('synevo', '2108', 'Тканинна трансглутаміназа, антитіла IgG'),),
     "x:ttg-iga": (('synevo', '2109', 'Тканинна трансглутаміназа, антитіла IgA'),),
     "x:gad-antibodies": (
         ('synevo', '9196', 'Глютамінокисла декарбоксилаза (GADA), антитіла IgG'),
@@ -742,8 +739,10 @@ SAME: dict[str, tuple[tuple[str, str, str], ...]] = {
     ),
     "x:ana-ift": (
         ('synevo', '9344', 'Антинуклеарні антитіла (ANA, метод IFT)'),
-        ('esculab', '1917', 'Антинуклеарні антитіла / ANA (метод ІФА)'),
         ('esculab', '1918', 'Антинуклеарні антитіла / ANA-висота титру (метод IFT)'),
+    ),
+    # A morphology description cannot replace the assay's titre.
+    "x:ana-ift-pattern": (
         ('esculab', '1919', 'ANA-флюоресцентний малюнок (*опис наявний при позитивному результаті)'),
     ),
     "x:intrinsic-factor-igg": (('esculab', '2620', 'Внутрішній фактор Кастла, IgG, EliA'),),
@@ -755,6 +754,7 @@ DISTINCT_FROM: dict[str, tuple[str, str]] = {
     "x:ana-ift": ("antinuclear-antibodies",
                   "indirect immunofluorescence on HEp-2 cells (titre, pattern), not the immunoassay index "
                   "the record's ANA holds"),
+    "x:ana-ift-pattern": ("antinuclear-antibodies", "fluorescent pattern description, not the immunoassay index"),
 }
 
 # --- whole examinations -------------------------------------------------------------
@@ -806,9 +806,9 @@ WHOLE: dict[tuple[str, str], tuple[tuple[str, ...], str]] = {
                          "антиген К системи Келл (Kell)"),
     ("synevo", "4006"): (_NECHIPORENKO, "Аналіз сечі за Нечипоренком"),
     # Esculab's coeliac panels are one row each; their names list the members.
-    ("esculab", "341"): (("x:gliadin-deamidated-igg", "x:ttg-igg", "x:intrinsic-factor-igg"),
+    ("esculab", "341"): (("x:gliadin-deamidated-igg", "tissue-transglutaminase-igg-antibodies", "x:intrinsic-factor-igg"),
                          "Панель Целіакія (deam. Gliadin IgG, tTG IgG, intrinsic factor)"),
-    ("esculab", "342"): (("x:gliadin-deamidated-iga", "x:ttg-iga", "x:immunoglobulin-a"),
+    ("esculab", "342"): (("x:gliadin-deamidated-iga", "x:ttg-iga", "total-immunoglobulin-a"),
                          "Панель Целіакія 2 (deam.Gliadin IgA, tTG IgA, загальний IgA)"),
 }
 

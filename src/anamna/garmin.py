@@ -558,6 +558,10 @@ def replace_metric_days(db, user_id: str, import_id: str, keys: Iterable[str], d
             for a in wanted
         ],
     )
+    from .devices.calculations import refresh_device_calculations
+
+    if {"body_weight", "body_height", "body_mass_index"} & set(keys):
+        refresh_device_calculations(db)
     return len(wanted)
 
 
@@ -657,6 +661,9 @@ def purge_envelope(db, user_id: str, adapter_key: str, keys: Iterable[str] = (),
         for table in ("device_metric_days", "device_workouts", "device_events"):
             removed += db.execute(f"DELETE FROM {table} WHERE import_id=?", (import_id,)).rowcount
         db.execute("DELETE FROM device_imports WHERE id=?", (import_id,))
+    if drop_envelope or {"body_weight", "body_height", "body_mass_index"} & set(keys):
+        from .devices.calculations import refresh_device_calculations
+        refresh_device_calculations(db)
     return removed
 
 

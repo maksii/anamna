@@ -45,7 +45,7 @@ from .db import connect, transaction, utc_now
 from .devices import exclusions
 from .devices.catalog import HEALTHKIT_METRICS, SLEEP_METRICS, metric
 from .devices.models import Aggregate, DeviceEvent, MetricDefinition, Workout
-from .devices.oura_export import SLEEP_KEYS, quarantine_sleep
+from .devices.oura_export import SLEEP_KEYS, distinct_sleep_periods, quarantine_sleep
 from .devices.timezone import local_bounds_utc, local_day, user_timezone_for
 from .devices.timezone import today as local_today
 from .devices.units import finite_number, plausible_aggregates
@@ -321,13 +321,12 @@ def _write_days(settings: Settings, user_id: str, import_id: str,
             aggregates = build()
         # Withheld values are absent from fresh_days, so a stale stored copy of
         # them is deleted below rather than left standing.
-        # Quarantine first: an over-long night withholds every metric of that
-        # night (HRV included), and the plain plausibility filter would otherwise
-        # drop the sleep total alone and leave the night's other metrics standing.
+        # Invalid duration fields are withheld without discarding independent
+        # physiological readings or imposing an unsourced maximum night length.
         kept, quarantined = quarantine_sleep(aggregates)
         aggregates = plausible_aggregates(kept)
         if quarantined:
-            logger.warning("oura: withheld implausible sleep days %s", quarantined)
+            logger.warning("oura: withheld %d invalid sleep duration fields", len(quarantined))
         fresh_days = {(item.definition.key, item.day) for item in aggregates}
         db.executemany(
             """INSERT INTO device_metric_days(
@@ -411,7 +410,7 @@ _SLEEP_FIELDS = (
 
 def _sleep_periods_by_day(documents: list[dict]) -> dict[str, list[dict]]:
     by_day: dict[str, list[dict]] = {}
-    for document in documents:
+    for document in distinct_sleep_periods(document for document in documents if str(document.get("type") or "") != "deleted"):
         day = str(document.get("day") or "")[:10]
         if len(day) == 10 and str(document.get("type") or "") != "deleted":
             by_day.setdefault(day, []).append(document)
@@ -423,10 +422,12 @@ def _map_sleep(documents: list[dict], bucket: dict) -> None:
         asleep = [p for p in periods if str(p.get("type") or "") in _SLEEP_TYPES]
         for field, key in _SLEEP_FIELDS:
             for period in asleep:
-                _aggregate(bucket, key, day, _scaled(period, field, 1 / 3600),
+                value = _scaled(period, field, 1 / 3600)
+                _aggregate(bucket, key, day, value if value is not None and value >= 0 else None,
                            str(period.get("bedtime_start") or day))
         for period in periods:
-            _aggregate(bucket, "time_in_bed", day, _scaled(period, "time_in_bed", 1 / 3600),
+            value = _scaled(period, "time_in_bed", 1 / 3600)
+            _aggregate(bucket, "time_in_bed", day, value if value is not None and value >= 0 else None,
                        str(period.get("bedtime_start") or day))
         _map_sleep_summary(bucket, day, asleep)
 

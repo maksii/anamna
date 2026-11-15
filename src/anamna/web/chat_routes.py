@@ -135,6 +135,10 @@ def result_row(card: dict, sources: Sources | None, dated: str = "") -> str:
             f"{_code(verdict.get('interpretation'))}{judged(verdict, sources) if sources else ''}")
     if str(card.get("verification_status")) in {"verified", "corrected"}:
         text += " ✓"
+    if calculation := fx._calculation_text(card):
+        if str(card.get("verification_status")) not in {"verified", "corrected"}:
+            text += " " + t("ai.mark_unverified")
+        text += "; " + calculation
     return text + _ids(card.get("url"))
 
 
@@ -166,28 +170,29 @@ def _device_line(summary: dict) -> str:
         mean = sum(float(bucket["mean"]) * int(bucket["days"]) for bucket in window) / max(days, 1)
         recent = (f"; mean {fx._num(mean, 4)} ({fx._num(min(float(b['min']) for b in window), 4)}-"
                   f"{fx._num(max(float(b['max']) for b in window), 4)}) over the last {days}d")
-    return (f"- {summary['name']}: {fx._num(summary['latest_value'])} {summary['unit'] or ''} "
+    text = (f"- {summary['name']}: {fx._num(summary['latest_value'])} {summary['unit'] or ''} "
             f"@{summary['latest_day']}{recent}; {summary['day_count']}d since {summary['first_day']} "
             f"key:{summary['metric_key']}").replace("  ", " ")
+    for detail in (fx._calculated_days(summary), fx._device_calculation_text(summary)):
+        if detail:
+            text += "; " + detail
+    return text
 
 
 def _device_detail(summary: dict) -> str:
-    def buckets(rows: list[dict]) -> str:
-        return "; ".join(
-            f"{bucket['period']} {fx._num(bucket['mean'], 4)} ({fx._num(bucket['min'], 4)}-"
-            f"{fx._num(bucket['max'], 4)}, {bucket['days']}d)" for bucket in rows
-        )
-
     lines = [
         f"{summary['name']} ({summary['unit'] or 'no unit'}; daily {summary['aggregation']}; "
         f"{summary['day_count']}d since {summary['first_day']}; from {', '.join(map(str, summary['vendors']))})",
-        "last 14 days: " + ", ".join(
-            f"{str(day['day'])[5:]} {fx._num(day['value'])}" for day in summary["recent_days"][:14]),
+        t("ai.device_recent") + " " + ", ".join(
+            fx._device_day(day) for day in summary["recent_days"][:14]),
     ]
+    for detail in (fx._calculated_days(summary), fx._device_calculation_text(summary)):
+        if detail:
+            lines.append(detail)
     if summary["months"]:
-        lines.append("monthly mean (min-max, days): " + buckets(summary["months"][:12]))
+        lines.append("monthly mean (min-max, days): " + fx._buckets(summary["months"][:12]))
     if summary["years"]:
-        lines.append("yearly: " + buckets(summary["years"]))
+        lines.append("yearly: " + fx._buckets(summary["years"]))
     return "\n".join(lines)
 
 
@@ -255,6 +260,7 @@ def _history_context(item: dict, sources: Sources) -> dict:
         "judged": judged(verdict, sources),
         "lab": "" if item.get("hide_lab") or not item.get("display_reference") else f" lab {item['display_reference']}",
         "source": " device" if item.get("is_device") else f" {item.get('vendor') or '-'} {_doc(item.get('document_id'))}",
+        "calculation": ("; " + fx._calculation_text(item)) if fx._calculation_text(item) else "",
     }
 
 
@@ -273,7 +279,7 @@ def _metric_history_lines(connection, metric_id: str, rows: list[dict], birth, s
     from . import app as web
 
     out = []
-    previous = {"judged": None, "lab": None, "source": None}
+    previous = {"judged": None, "lab": None, "source": None, "calculation": None}
     for item in rows[:HISTORY_ROWS]:
         web._metric_history_row(connection, metric_id, item, birth, sex)
         current = _history_context(item, sources)

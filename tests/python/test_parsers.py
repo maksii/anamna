@@ -558,6 +558,10 @@ def test_antibiogram_disk_potency_is_never_read_as_a_result():
 #: laboratory never ran the test.  The equality assertion below is what stops a
 #: new concept from being added into that hole without anyone noticing.
 UNIT_SPELLINGS = {
+    "IU/L": "мМО/мл",
+    "µg/dL": "мкг/дл",
+    "ng/mL FEU": "нгФЕОд/мл",
+    "titer": "Titer",
     "%": "%",
     "10^9/L": "10^9/L",
     "10^12/L": "10^12/L",

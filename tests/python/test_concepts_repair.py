@@ -43,7 +43,7 @@ def test_old_rows_move_to_the_new_concepts_keep_their_value_and_verification(tmp
         _insert(connection, user_id, "abs", "Нейтрофіли (абс.)", "granulocytes-absolute", value=3.08,
                 unit="10^9", canonical="10^9")
         _insert(connection, user_id, "pct", "Тромбокрит (PCT)", "plateletcrit", value=0.3,
-                unit="х 10*9/л", canonical="х 10*9/л")
+                unit="х 10*9/л", canonical="%")
         # The concept the HCV split left behind; no definition names it any more.
         connection.execute("INSERT OR IGNORE INTO concepts(id, canonical_name, category, value_type, created_at) "
                            "VALUES ('hepatitis-c-antibodies', 'Hepatitis C antibodies', 'infection', 'numeric', ?)",
@@ -64,7 +64,7 @@ def test_old_rows_move_to_the_new_concepts_keep_their_value_and_verification(tmp
         assert rows["smear"]["concept_id"] == "lymphocytes-manual-differential"
         assert rows["abs"]["concept_id"] == "neutrophils-absolute"
         assert rows["hcv"]["concept_id"] == "hepatitis-c-total-antibodies"
-        assert rows["pct"]["unit_canonical"] == "%"
+        assert rows["pct"]["unit_canonical"] == "х 10*9/л"
         for row_id, value in (("smear", 36.0), ("abs", 3.08), ("pct", 0.3), ("hcv", 0.12)):
             assert rows[row_id]["value_numeric"] == value
             assert rows[row_id]["verification_status"] == "verified"
@@ -75,7 +75,7 @@ def test_old_rows_move_to_the_new_concepts_keep_their_value_and_verification(tmp
         assert moved[("observation_concept_remapped", "smear")]["to"] == "lymphocytes-manual-differential"
         assert moved[("observation_concept_remapped", "smear")]["verification_status"] == "verified"
         folded = moved[("observation_unit_folded", "pct")]
-        assert (folded["from"], folded["to"], folded["value_numeric"]) == ("х 10*9/л", "%", 0.3)
+        assert (folded["from"], folded["to"], folded["value_numeric"]) == ("%", "х 10*9/л", 0.3)
         assert all(a["actor_user_id"] is None for a in audits)
 
         # Idempotent: nothing to move, nothing written.
@@ -131,7 +131,7 @@ def test_egfr_is_derived_from_creatinine_and_follows_its_input(tmp_path: Path):
         # An unchecked creatinine gives nothing: no figure nobody confirmed.
         assert _egfr(connection) == []
 
-        # A verified creatinine makes a verified eGFR -- arithmetic, not extraction.
+        # Confirmed inputs permit arithmetic; the new result remains provisional.
         connection.execute("UPDATE observations SET verification_status='verified' WHERE concept_id='creatinine'")
         refresh_derived_observations(connection)
         [row] = _egfr(connection)
@@ -140,8 +140,9 @@ def test_egfr_is_derived_from_creatinine_and_follows_its_input(tmp_path: Path):
         assert row["unit_raw"] == "mL/min/1.73m²"
         assert row["document_id"] == "doc-1"
         assert row["observed_at"] == "2025-02-13"
-        assert row["evidence_text"] == "Creatinine evidence"  # the printed line it came from
-        assert row["verification_status"] == "verified"
+        assert "Creatinine evidence" in row["evidence_text"]
+        assert "Scr=" in row["evidence_text"] and "age=34" in row["evidence_text"]
+        assert row["verification_status"] == "extracted"
         assert refresh_derived_observations(connection) == {"added": 0, "updated": 0, "removed": 0}
 
         # A corrected value recalculates.

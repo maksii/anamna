@@ -86,6 +86,11 @@
   <div class="an-verdict-details__body">
     {% if has_about and guidance.short_description %}<p>{{ guidance.short_description }}</p>{% endif %}
     {% if has_about and guidance.why_it_matters %}<h3>{{ t('panel.why_it_matters') }}</h3><p>{{ guidance.why_it_matters }}</p>{% endif %}
+      {% if guidance and guidance.no_universal_target_reason %}<p>{{ guidance.no_universal_target_reason }}</p>{% endif %}
+      {% if guidance and guidance.jurisdiction_note %}<p>{{ guidance.jurisdiction_note }}</p>{% endif %}
+      {% if guidance and guidance.sources %}
+      <ul>{% for source in guidance.sources %}<li><a href="{{ source.url }}" target="_blank" rel="noreferrer">{{ source.publisher }} · {{ source.name }}</a></li>{% endfor %}</ul>
+      {% endif %}
     {% if has_cadence %}
     <h3>{{ t('stale.how_often') }}</h3>
     {% if staleness.state == 'no_interval' %}

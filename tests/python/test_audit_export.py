@@ -209,7 +209,9 @@ def test_device_originals_are_in_the_archive_once(tmp_path):
     imports = _csv_rows(archive, "device_imports.csv")
     assert {row["id"] for row in imports} == {"import-alice", "import-alice-again"}
     assert imports[0]["source_path"]
-    assert not any(word in name.lower() for name in imports[0] for word in ("password", "secret", "token", "hash", "key"))
+    assert imports[0]["adapter_key"] == "test_export"
+    assert not any(word in name.lower() for name in imports[0] if name != "adapter_key"
+                   for word in ("password", "secret", "token", "hash", "key"))
 
 
 def test_a_device_export_directory_is_added_file_by_file(tmp_path):

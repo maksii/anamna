@@ -1,5 +1,7 @@
 """Matching lab catalogues to concepts and to each other (testplan_aliases)."""
 
+import pytest
+
 from anamna import testplan, testplan_aliases
 from anamna.ingest.concepts import CONCEPT_DEFINITIONS, stable_concept_id
 
@@ -160,3 +162,66 @@ def test_curated_concepts_exist_and_shared_keys_do_not_hide_one():
             # a concept exists, the entry belongs in CONCEPTS instead.
             found = testplan.resolve(name, name, lab, {}, None)
             assert found is None or testplan_aliases.DISTINCT_FROM.get(shared, ("",))[0] == found, (shared, name)
+
+
+@pytest.mark.parametrize("lab,parameter,name,target", [
+    ("synevo", "1011", "Пролактин", "prolactin"),
+    ("esculab", "20", "Пролактин (ПРЛ)", "prolactin"),
+    ("synevo", "1015", "Естрадіол (E2)", "estradiol"),
+    ("synevo", "1020", "Кортизол (сироватка)", "cortisol"),
+    ("esculab", "36", "Індекс HOMA", "homa-index-reported-model-unspecified"),
+    ("synevo", "1033", "β-ХГЛ загальний (хоріонічний гонадотропін загальний)", "total-beta-hcg"),
+    ("esculab", "58", "Хоріонічний гонадотропін (пренатальна діагностика 12-21тв)", "total-beta-hcg"),
+    ("esculab", "298", "Д-димер", "d-dimer"),
+    ("synevo", "1606", "α-Амілаза панкреатична", "pancreatic-amylase"),
+    ("synevo", "1038", "Імуноглобулін A (IgA, сироватка)", "total-immunoglobulin-a"),
+    ("esculab", "141", "Сумарні (Ig A, Ig M, Ig G) до лямблій", "giardia-total-antibodies"),
+    ("synevo", "2058", "Ascaris lumbricoides, антитіла IgG", "ascaris-igg-antibodies"),
+    ("esculab", "143", "Антитіла Іg G до токсокар (Toxocara)", "toxocara-igg-antibodies"),
+    ("synevo", "9169", "Гліадин, антитіла IgG", "gliadin-igg-antibodies"),
+    ("synevo", "2108", "Тканинна трансглутаміназа, антитіла IgG", "tissue-transglutaminase-igg-antibodies"),
+    ("esculab", "2885", "альбумін", "albumin-fraction"),
+])
+def test_seeded_metrics_are_orderable_by_their_own_requirement(lab, parameter, name, target):
+    offering = keys(lab, item("offering", name, (parameter, name)))["offering"]
+    assert offering["parameter_keys"] == [[target]]
+    assert testplan.optimise([offering], {target})["missing"] == []
+
+
+def test_seeded_coeliac_members_reach_whole_panel_coverage():
+    offering = keys("esculab", item("coeliac", "Панель Целіакія", ("341", "Панель Целіакія")))["coeliac"]
+    assert "tissue-transglutaminase-igg-antibodies" in offering["keys"]
+    offering = keys("esculab", item("coeliac2", "Панель Целіакія 2", ("342", "Панель Целіакія 2")))["coeliac2"]
+    assert "total-immunoglobulin-a" in offering["keys"]
+
+
+def test_assay_fraction_specimen_and_model_distinctions_remain_orderable_separately():
+    offerings = keys("esculab",
+                     item("cortisol", "Кортизол", ("27", "Кортизол")),
+                     item("saliva", "Кортизол (слина)", ("1549", "Кортизол (слина)")),
+                     item("total", "ХГЛ", ("57", "Хоріонічний гонадотропін (бета-ХГЛ)")),
+                     item("free", "Вільна бета-ХГЛ", ("47", "Вільний Бета-ХГЛ (8-13 тиждень вагітності)")),
+                     item("gliadin", "Гліадин IgG", ("339", "антиГліадин (Gliadin) IgG")),
+                     item("deamidated", "Деамінований гліадин IgG", ("2017", "Антитіла IgG до гліадину (деамінізовані пептиди), ELiA")),
+                     item("homa2", "Індекс HOMA", ("unknown-homa2", "Індекс HOMA2")))
+    assert offerings["cortisol"]["keys"] == ["cortisol"]
+    assert offerings["saliva"]["keys"] == ["x:cortisol-saliva"]
+    assert offerings["total"]["keys"] == ["total-beta-hcg"]
+    assert offerings["free"]["keys"] == ["x:hcg-free-beta"]
+    assert offerings["gliadin"]["keys"] == ["gliadin-igg-antibodies"]
+    assert offerings["deamidated"]["keys"] == ["x:gliadin-deamidated-igg"]
+    assert offerings["homa2"]["keys"] == ["esculab:unknown-homa2"]
+
+
+def test_specific_parameters_are_never_replaced_by_a_generic_order_title():
+    offerings = keys("esculab",
+                     item("retic", "Ретикулоцити", ("unknown-rethe", "Гемоглобін (RET-He)")),
+                     item("saliva", "Кортизол", ("unknown-saliva", "Кортизол (слина)")),
+                     item("serology", "Helicobacter pylori", ("unknown-igg", "Ig G до Хелікобактер пілорі (Helicobacter Pylori)")),
+                     item("breath", "Helicobacter pylori", ("unknown-breath", "Дихальний тест (Helicobacter pylori)")),
+                     item("placeholder", "Калій", ("unknown-placeholder", "Результат")))
+    assert offerings["retic"]["keys"] == ["esculab:unknown-rethe"]
+    assert offerings["saliva"]["keys"] == ["esculab:unknown-saliva"]
+    assert offerings["serology"]["keys"] == ["esculab:unknown-igg"]
+    assert offerings["breath"]["keys"] == ["esculab:unknown-breath"]
+    assert offerings["placeholder"]["keys"] == ["potassium"]

@@ -1,7 +1,8 @@
 """The Diagnoses pages: the record, the form, the detail page, possible and found diagnoses.
 
-The matching of possible diagnoses is replaced at its seam (its rules are tested in
-test_diagnosis_matrix.py and the refresh job in test_diagnoses_job.py), and the AI
+Candidate collection and the matching of possible diagnoses are replaced at their seams
+(their rules are tested in test_diagnosis_candidates.py and test_diagnosis_matrix.py,
+and the refresh job in test_diagnoses_job.py), and the AI
 switch is set by hand, so nothing here reaches a model.
 """
 
@@ -17,7 +18,7 @@ import pytest
 from fastapi.testclient import TestClient
 from markupsafe import escape
 
-from anamna import ai, diagnosis_matrix, factor_jobs, icd10, security
+from anamna import ai, diagnosis_candidates, diagnosis_matrix, factor_jobs, icd10, security
 from anamna.db import connect, migrate, utc_now
 from anamna.i18n import MESSAGES
 from anamna.security import create_access_token, create_user
@@ -31,10 +32,16 @@ from test_web_security import PASSWORD, seed_document, seed_patient, settings_fo
 
 @pytest.fixture(autouse=True)
 def fresh_state(monkeypatch):
+    # These page tests seed candidates directly. The real collector rebuilds
+    # unreviewed text candidates from source findings, deliberately replacing
+    # such rows. Neither a startup scheduler nor a page refresh may rewrite
+    # these fixtures; collection and scheduling have their own integration tests.
+    monkeypatch.setenv("ANAMNA_BACKGROUND_WORKERS", "0")
     security._attempts.clear()
     factor_jobs.reset()
     # The matching is replaced at its seam: test_diagnosis_matrix.py and test_diagnoses_job.py cover it.
     monkeypatch.setattr(diagnosis_matrix, "refresh", lambda *args, **kwargs: {"opened": 0, "cleared": 0})
+    monkeypatch.setattr(diagnosis_candidates, "collect", lambda *args, **kwargs: 0)
     yield
     security._attempts.clear()
     factor_jobs.reset()

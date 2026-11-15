@@ -1,11 +1,12 @@
 {% extends "base.html" %}
 {% from "_components.html" import range_bar, status_chip, staleness_chip,
-        verdict_details, trend_chip, empty_state, plural_t with context %}
+        verdict_details, trend_chip, empty_state, plural_t, calculation_details with context %}
 {% from "_correlation.html" import correlation_block with context %}
 {% from "_experience.html" import period_stats, metric_about with context %}
 {% from "_factors.html" import factor_key with context %}
 {% block title %}{{ latest.metric_name|phrase }} · {{ t('brand.name') }}{% endblock %}
 {% block content %}
+{% if pending_exclusions %}<p class="alert neutral">{{ t('device.exclusions_pending') }} <a href="/devices">{{ t('devices.heading') }}</a></p>{% endif %}
 <link rel="stylesheet" href="{{ asset('patient-experience.css') }}">
 <script src="{{ asset('patient-experience.js') }}"></script>
 {% set display_name = latest.metric_name|phrase %}
@@ -54,9 +55,10 @@
     {% endif %}
     <p class="an-device-source">
       <span>{{ t('device.data_source') }}</span> ·
-      <i class="metric-state information">{{ t('device.measurement') }}</i> ·
+      <i class="metric-state information">{{ t('calc.status') if calculation_source(latest.extraction_method) else t('device.measurement') }}</i> ·
       <b>{{ latest_source_label }}</b> · {{ t('experience.alternative_reading') if comparison.has_selected_values is defined and not comparison.has_selected_values else t('device.selected_series') }}
     </p>
+    {{ calculation_details(latest) }}
     {{ verdict_details(verdict) }}
   </div>
 </section>
@@ -156,7 +158,7 @@
             <td data-label="{{ t('device.th_value') }}"><strong>{{ item.value_text }} {{ item.unit|unitfmt }}</strong>{% if item.selected %} <span class="metric-state information">{{ t('device.used_in_series') }}</span>{% endif %}</td>
             <td data-label="{{ t('device.th_range') }}">{{ item.min_text }}-{{ item.max_text }}</td>
             <td data-label="{{ t('device.th_samples') }}">{{ item.samples_text }}</td>
-            <td data-label="{{ t('device.th_source') }}">{{ item.source_label }}</td>
+            <td data-label="{{ t('device.th_source') }}">{{ item.source_label }}{{ calculation_details(item) }}</td>
             {% if exclusion.own %}<td data-label="{{ t('exclusions.th_action') }}">{% if item.review_url %}<a class="device-tap" href="{{ item.review_url }}">{{ t('exclusions.not_mine') }}<span class="visually-hidden"> {{ item.day|datefmt }}, {{ item.source_label }}</span></a>{% endif %}</td>{% endif %}
           </tr>
           {% endfor %}
@@ -204,7 +206,7 @@
         <div><dt>{{ t('device.selected_days') }}</dt><dd>{{ source.selected_days|countfmt }}</dd></div>
       </dl>
       {% set device_url = exclusion.review_url({'source_name': source.name, 'day': source.last_day}) %}
-      {% if device_url %}<a class="device-tap" href="{{ device_url }}#origin-heading">{{ t('exclusions.not_my_device') }}<span class="visually-hidden"> {{ source.label }}</span></a>{% endif %}
+      {% if device_url %}<a class="device-tap" href="{{ device_url }}#origin-heading">{{ t('exclusions.exclude_calculated_source') if source.kind == 'calculated' else t('exclusions.not_my_device') }}<span class="visually-hidden"> {{ source.label }}</span></a>{% endif %}
     </article>
     {% endfor %}
   </div>

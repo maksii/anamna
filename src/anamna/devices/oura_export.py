@@ -223,35 +223,63 @@ AUDITED_RETAINED_FILES = set(RETAINED_REASONS) | {
 
 _SLEEP_TYPES = {"long_sleep", "sleep", "late_nap"}
 
-#: Every metric a night of sleep produces -- the set a quarantined night loses.
+#: Every metric a night of sleep produces; used to rebuild the owned window.
 SLEEP_KEYS = (
     "sleep_duration", "sleep_deep", "sleep_rem", "sleep_core", "sleep_awake",
     "time_in_bed", "sleep_efficiency", "lowest_sleeping_heart_rate",
     "heart_rate_variability_rmssd", "respiratory_rate",
 )
 
-#: More sleep (or time in bed) than this in one day is not a night anybody
-#: slept; it is periods attributed to the wrong day.  The first Takeout adapter
-#: grouped periods by their bedtime date and published 14.6 h "nights" beside
-#: 0.1 h ones; a value past this is withheld and named in the import metadata
-#: rather than charted.
-SLEEP_QUARANTINE_HOURS = 16.0
-
-
 def quarantine_sleep(aggregates: list[Aggregate]) -> tuple[list[Aggregate], list[dict[str, object]]]:
-    """Drop every sleep metric of a (source, day) whose summed sleep or time
-    in bed exceeds :data:`SLEEP_QUARANTINE_HOURS`; return what is kept and
-    what was withheld.  Shared by the export importer and the API sync."""
-    over: dict[tuple[str, str], dict[str, float]] = {}
+    """Withhold invalid durations, never an arbitrary maximum-length night.
+
+    Independent HRV and respiratory observations are not invalidated by a bad
+    duration field. Acquisition overlap is checked before any period is summed.
+    """
+    from .units import NONNEGATIVE_SLEEP_KEYS
+
+    kept, withheld = [], []
     for item in aggregates:
-        if item.definition.key in ("sleep_duration", "time_in_bed") and item.value > SLEEP_QUARANTINE_HOURS:
-            over.setdefault((item.source_name, item.day), {})[item.definition.key] = round(item.value, 2)
-    if not over:
-        return aggregates, []
-    kept = [item for item in aggregates
-            if not (item.definition.key in SLEEP_KEYS and (item.source_name, item.day) in over)]
-    withheld = [{"day": day, "source": source, **hours} for (source, day), hours in sorted(over.items())]
+        value = finite_number(item.value)
+        if item.definition.key in NONNEGATIVE_SLEEP_KEYS and (value is None or value < 0):
+            withheld.append({"day": item.day, "source": item.source_name, "metric": item.definition.key,
+                             "reason": "negative or non-finite duration"})
+        else:
+            kept.append(item)
     return kept, withheld
+
+
+def distinct_sleep_periods(periods: Iterable[dict]) -> list[dict]:
+    """Deduplicate identical captures and refuse conflicting overlaps.
+
+    A repeated acquisition with the same written fields is one capture even
+    if its storage ID differs. Different overlapping captures cannot be added
+    without reconstructing unreported sleep-stage timings, so the import/sync
+    fails explicitly and its transaction leaves the existing record intact.
+    """
+    kept, seen, intervals = [], set(), []
+    for row in periods:
+        start, end = row.get("bedtime_start"), row.get("bedtime_end")
+        if start and end:
+            signature = json.dumps({key: value for key, value in row.items() if key != "id"}, sort_keys=True)
+            if signature in seen:
+                continue
+            seen.add(signature)
+            try:
+                low = datetime.fromisoformat(str(start).replace("Z", "+00:00"))
+                high = datetime.fromisoformat(str(end).replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise ValueError("Invalid Oura sleep acquisition timestamp") from exc
+            if (low.tzinfo is None) != (high.tzinfo is None) or high <= low:
+                raise ValueError("Invalid Oura sleep acquisition interval")
+            for other_low, other_high in intervals:
+                if (low.tzinfo is None) != (other_low.tzinfo is None):
+                    raise ValueError("Inconsistent Oura sleep acquisition time zones")
+                if low < other_high and high > other_low:
+                    raise ValueError("Conflicting overlapping Oura sleep acquisitions")
+            intervals.append((low, high))
+        kept.append(row)
+    return kept
 
 
 def _float(value: object) -> float | None:
@@ -331,7 +359,7 @@ def _legacy_records(files: list[Path]) -> list[dict[str, object]]:
 
 
 def _hours(value: float | None) -> float | None:
-    return value / 3600 if value is not None else None
+    return value / 3600 if value is not None and value >= 0 else None
 
 
 def _minutes(value: float | None) -> float | None:
@@ -419,7 +447,7 @@ class _TakeoutParse:
         # the API mapper (oura._map_sleep) groups by -- never to the date its
         # bedtime falls on: an evening bedtime is the *next* day's night.
         sleep_by_day: dict[str, list[dict[str, str]]] = {}
-        for row in self.rows(_SLEEPMODEL_CSV):
+        for row in distinct_sleep_periods(row for row in self.rows(_SLEEPMODEL_CSV) if (row.get("type") or "") != "deleted"):
             day = self.touch(row.get("day") or local_day(row.get("bedtime_end") or "", self.tz))
             if len(day) == 10 and (row.get("type") or "") != "deleted":
                 sleep_by_day.setdefault(day, []).append(row)
@@ -549,6 +577,8 @@ def _add_legacy_row(
         value = _float(row.get(field))
         if value is None:
             continue
+        if key in {"sleep_duration", "sleep_deep", "sleep_rem", "sleep_core", "sleep_awake", "time_in_bed"} and value < 0:
+            continue
         definition = metric(key, name, category, unit, _AGGREGATION.get(key, "average"))
         item = bucket.setdefault((SOURCE_NAME, key, day), Aggregate(definition, day, SOURCE_NAME, SOURCE_NAME))
         item.add(value * scale, observed)
@@ -566,7 +596,7 @@ class OuraAdapter:
         records = _legacy_records(files)
         bucket: dict[tuple[str, str, str], Aggregate] = {}
         days: list[str] = []
-        for row in records:
+        for row in distinct_sleep_periods(row for row in records if (row.get("type") or "") != "deleted"):
             observed = next((str(row.get(key) or "") for key in
                              ("day", "date", "timestamp", "start_datetime") if row.get(key)), "")
             day = local_day(observed, tz)

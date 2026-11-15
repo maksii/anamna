@@ -2,6 +2,12 @@ from __future__ import annotations
 
 # UI chrome strings. Keys are stable; values are locale maps.
 MESSAGES: dict[str, dict[str, str]] = {
+    "panel.context_coverage": {"en": "{present} recorded quantities in this collection", "uk": "У цій групі записано показників: {present}"},
+    "panel.context_not_recorded": {"en": "Other catalogued quantities", "uk": "Інші показники каталогу"},
+    "panel.context_optional": {"en": "A report may contain only a subset of these quantities. This list is not a checklist of required tests or measurements.", "uk": "Документ може містити лише частину цих показників. Цей перелік не є списком обов’язкових аналізів чи вимірювань."},
+    "metric.report_context": {"en": "Context from the report", "uk": "Контекст із документа"},
+    "metric.limit_history_note": {"en": "Results reported as limits remain in the evidence history. They are excluded from exact numeric charts, changes and correlations.", "uk": "Результати у вигляді меж залишаються в історії з джерелами. Вони не включаються до точних числових графіків, змін і кореляцій."},
+    "device.exclusions_pending": {"en": "A device exclusion is awaiting a source rebuild. These summaries may still include the earlier data. Open device sources to check the rebuild status.", "uk": "Виключення даних пристрою очікує перебудови з джерела. Ці зведення ще можуть містити попередні дані. Відкрийте джерела пристроїв, щоб перевірити стан перебудови."},
     # Top-right link on each home area card; the area name follows it,
     # visually hidden, so every link has a distinct accessible name.
     "experience.open_short": {"en": "Open", "uk": "Відкрити"},
@@ -1424,14 +1430,14 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
     "metric.no_trend_title": {"en": "No dated numeric trend", "uk": "Немає числових значень із датами"},
     # One numeric result: a value, not yet a trend.
-    "metric.single_point_title": {"en": "One measurement so far", "uk": "Поки що одне вимірювання"},
+    "metric.single_point_title": {"en": "One result so far", "uk": "Поки що один результат"},
     "metric.single_point_body": {
-        "en": "Measured once, on {date}. A trend appears here after the next result.",
-        "uk": "Виміряно один раз: {date}. Динаміка з’явиться після наступного результату.",
+        "en": "One result recorded on {date}. A trend appears here after the next result.",
+        "uk": "Один результат за {date}. Динаміка з’явиться після наступного результату.",
     },
     "metric.no_trend_body": {
-        "en": "Categorical observations remain available in the evidence history below.",
-        "uk": "Нечислові результати можна переглянути в історії нижче.",
+        "en": "A trend needs multiple dated numeric readings. The evidence history remains available below.",
+        "uk": "Для динаміки потрібні числові вимірювання за кілька дат. Історія з джерелами залишається доступною нижче.",
     },
     "metric.official": {"en": "Official comparison", "uk": "Порівняння з настановами"},
     "metric.guidance": {"en": "Current, versioned guidance", "uk": "Актуальні версіоновані настанови"},
@@ -1855,6 +1861,45 @@ MESSAGES: dict[str, dict[str, str]] = {
     "doc.note_line": {"en": "Note from the laboratory or report", "uk": "Примітка лабораторії або документа"},
     # A derived eGFR row: say it was calculated, from what, and how.
     "doc.derived_from": {"en": "Calculated from", "uk": "Розраховано за"},
+    "calc.provisional": {"en": "Calculated result; check the inputs and calculation before confirming it.", "uk": "Розрахований результат; перед підтвердженням перевірте вихідні дані та розрахунок."},
+    "calc.source": {"en": "Calculation source", "uk": "Джерело формули"},
+    "calc.status": {"en": "Calculated · provisional", "uk": "Розраховано · не підтверджено"},
+    "calc.checked_status": {"en": "Calculated · {status}", "uk": "Розраховано · {status}"},
+    "device.source_calculated": {"en": "Calculated value", "uk": "Розраховане значення"},
+    "exclusions.exclude_calculated_source": {"en": "Exclude calculated source", "uk": "Виключити джерело розрахунку"},
+    "profile.from_record": {"en": "Confirmed in the record on {date}; {source}.", "uk": "Підтверджено в записі за {date}; {source}."},
+    "profile.height_conflict": {"en": "Conflicting height measurements", "uk": "Суперечливі вимірювання зросту"},
+    "profile.height_conflict_detail": {"en": "Different heights were recorded on the latest day. Check the source measurements; no profile BMI is calculated from them.", "uk": "За останній день записано різні значення зросту. Перевірте вихідні вимірювання; ІМТ із профілю за ними не розраховується."},
+    "calc.height_carried": {"en": "This calculation assumes the earlier measured height still applies; the height was not measured with this weight.", "uk": "У цьому розрахунку припускається, що раніше виміряний зріст досі актуальний; його не вимірювали одночасно з цією вагою."},
+    "metric.unit_mismatch": {"en": "The reported unit cannot be converted to {unit} for this metric. Check the source before using this value.", "uk": "Зазначену одиницю неможливо перерахувати в {unit} для цього показника. Перш ніж використовувати значення, перевірте джерело."},
+    "ai.calculated_days": {"en": "{count} calculated days; provisional", "uk": "Розрахованих днів: {count}; не підтверджено"},
+    "ai.calculation_inputs": {"en": "Calculation inputs", "uk": "Вихідні дані розрахунку"},
+    "doc.derived_globulin": {"en": "Globulin calculated as total protein minus albumin in the same blood sample. This is a mass concentration, distinct from electrophoresis fractions.", "uk": "Глобулін розраховано як різницю загального білка та альбуміну в одному зразку крові. Це масова концентрація, окрема від фракцій електрофорезу."},
+    "calc.profile_source": {"en": "Undated profile estimate", "uk": "Оцінка з профілю без дати"},
+    "profile.bmi": {"en": "Body mass index (BMI)", "uk": "Індекс маси тіла (ІМТ)"},
+    "calc.input_profile_weight": {"en": "Weight from profile", "uk": "Вага з профілю"},
+    "calc.undated_input": {"en": "No measurement date recorded", "uk": "Дату вимірювання не зазначено"},
+    "doc.derived_profile_bmi": {"en": "BMI estimated from the weight entered in your profile and the available height: weight (kg) / height (m)². These inputs have no shared measurement date, so this provisional estimate is kept outside historical charts and trends.", "uk": "ІМТ оцінено за вагою, введеною в профілі, та наявним зростом: вага (кг) / зріст (м)². Ці дані не мають спільної дати вимірювання, тому попередню оцінку не включено до історичних графіків і динаміки."},
+    "calc.undated_profile": {"en": "Undated profile height assumed; confirm it applies to this date.", "uk": "Використано зріст із профілю без дати; перевірте, чи він відповідає цій даті."},
+    "calc.input_device_weight": {"en": "Weight from device", "uk": "Вага з пристрою"},
+    "calc.input_device_height": {"en": "Height from device", "uk": "Зріст із пристрою"},
+    "calc.input_observation_height": {"en": "Confirmed height from record", "uk": "Підтверджений зріст із запису"},
+    "calc.input_profile_height": {"en": "Height from profile", "uk": "Зріст із профілю"},
+    "doc.derived_bmi": {"en": "Body mass index (BMI) calculated as weight in kilograms divided by height in metres squared. A reported BMI takes precedence.", "uk": "Індекс маси тіла (ІМТ) розраховано як вагу в кілограмах, поділену на квадрат зросту в метрах. За наявності повідомленого ІМТ перевага надається йому."},
+    "doc.derived_mcv": {"en": "Mean corpuscular volume (MCV), calculated from hematocrit and red blood cell count in the same sample.", "uk": "Середній об’єм еритроцита (MCV), розрахований із гематокриту та кількості еритроцитів в одному зразку."},
+    "doc.derived_reticulocytes_absolute": {"en": "Absolute reticulocyte count calculated from reticulocyte percentage and red blood cell count in the same sample, with explicit count-unit conversion.", "uk": "Абсолютну кількість ретикулоцитів розраховано з їхнього відсотка та кількості еритроцитів в одному зразку з явним перерахунком одиниць кількості клітин."},
+    "doc.derived_reticulocytes_percentage": {"en": "Reticulocyte percentage calculated from absolute reticulocyte count and red blood cell count in the same sample.", "uk": "Відсоток ретикулоцитів розраховано з абсолютної кількості ретикулоцитів та кількості еритроцитів в одному зразку."},
+    "doc.derived_immature_reticulocyte_fraction": {"en": "Immature reticulocyte fraction (IRF), calculated by adding the medium- and high-fluorescence reticulocyte fractions from the same sample and method.", "uk": "Частку незрілих ретикулоцитів (IRF) розраховано як суму фракцій ретикулоцитів із середньою та високою флуоресценцією одного зразка, визначених одним методом."},
+    "doc.derived_mch": {"en": "Mean corpuscular hemoglobin (MCH), calculated from hemoglobin and red blood cell count in the same sample.", "uk": "Середній вміст гемоглобіну в еритроциті (MCH), розрахований із гемоглобіну та кількості еритроцитів в одному зразку."},
+    "doc.derived_mchc": {"en": "Mean corpuscular hemoglobin concentration (MCHC), calculated from hemoglobin and hematocrit in the same sample.", "uk": "Середня концентрація гемоглобіну в еритроцитах (MCHC), розрахована з гемоглобіну та гематокриту в одному зразку."},
+    "doc.derived_hematocrit": {"en": "Hematocrit calculated from an independently reported red blood cell count and mean corpuscular volume (MCV) in the same sample.", "uk": "Гематокрит розраховано з незалежно повідомлених кількості еритроцитів та середнього об’єму еритроцита (MCV) в одному зразку."},
+    "doc.derived_plateletcrit": {"en": "Plateletcrit (PCT), the volume fraction occupied by platelets, calculated from platelet count and mean platelet volume (MPV) in the same sample.", "uk": "Тромбокрит (PCT), об’ємну частку тромбоцитів, розраховано з кількості тромбоцитів та їхнього середнього об’єму (MPV) в одному зразку."},
+    "doc.derived_non_hdl": {"en": "Non-HDL cholesterol calculated by subtracting HDL cholesterol from total cholesterol in the same sample.", "uk": "Холестерин не-ЛПВЩ розраховано як різницю загального холестерину та холестерину ЛПВЩ в одному зразку."},
+    "doc.derived_indirect_bilirubin": {"en": "Indirect bilirubin calculated by subtracting direct bilirubin from total bilirubin in the same sample.", "uk": "Непрямий білірубін розраховано як різницю загального та прямого білірубіну в одному зразку."},
+    "doc.derived_differential_absolute": {"en": "Absolute count calculated from the automated differential percentage and white blood cell count in the same sample. Manual differential results are kept separate.", "uk": "Абсолютну кількість розраховано з відсотка автоматичної лейкоцитарної формули та кількості лейкоцитів в одному зразку. Ручна лейкоцитарна формула зберігається окремо."},
+    "doc.derived_differential_percentage": {"en": "Percentage calculated from the automated absolute count and white blood cell count in the same sample. Manual differential results are kept separate.", "uk": "Відсоток розраховано з абсолютної кількості автоматичної лейкоцитарної формули та кількості лейкоцитів в одному зразку. Ручна лейкоцитарна формула зберігається окремо."},
+    "doc.derived_albumin_globulin_ratio": {"en": "Albumin to globulin ratio calculated as albumin divided by total protein minus albumin, using the same sample. This is not an electrophoresis fraction.", "uk": "Альбумін-глобулінове співвідношення розраховано як альбумін, поділений на різницю загального білка й альбуміну в одному зразку. Це не фракція електрофорезу."},
+    "doc.derived_atherogenic_coefficient": {"en": "Atherogenic coefficient calculated as total cholesterol minus HDL cholesterol, divided by HDL cholesterol in the same sample. This is distinct from the logarithmic atherogenic index of plasma.", "uk": "Коефіцієнт атерогенності розраховано як різницю загального холестерину та холестерину ЛПВЩ, поділену на холестерин ЛПВЩ в одному зразку. Це окремий показник від логарифмічного атерогенного індексу плазми."},
     "doc.derived_egfr": {
         "en": "Not printed on the report: calculated by this record from the creatinine on this page with the CKD-EPI 2021 equation (no race coefficient), using your age and sex on the day of the test.",
         "uk": "У документі цього показника немає: Anamna розрахувала його з креатиніну на цій сторінці за формулою CKD-EPI 2021 (без расового коефіцієнта), з урахуванням вашого віку та статі на день аналізу.",
@@ -2952,10 +2997,14 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "No source document is linked to this panel yet.",
         "uk": "До цієї панелі ще не прив’язано жодного документа.",
     },
-    "panel.guidance_heading": {"en": "Where these intervals come from", "uk": "Звідки взято ці інтервали"},
+    "panel.guidance_heading": {"en": "Published sources", "uk": "Опубліковані джерела"},
     "panel.guidance_lead": {
-        "en": "Published guidance cited on this page, with publisher and link.",
-        "uk": "Настанови, на які спирається ця сторінка: хто їх видав і де прочитати.",
+        "en": "Publications cited for the measurements, methods and guidance, with publisher and link.",
+        "uk": "Публікації про вимірювання, методи та настанови: хто їх видав і де прочитати.",
+    },
+    "panel.provenance_explainer": {
+        "en": "A source may explain a measurement or method without providing a universal reference range. Published guidance and the interval printed by the performing laboratory remain separate.",
+        "uk": "Джерело може пояснювати вимірювання або метод без універсального референтного інтервалу. Опубліковані настанови та інтервал лабораторії зберігаються окремо.",
     },
     "panel.guidance_empty": {
         "en": "No published guidance is cited for this panel. Only the laboratory's own printed intervals were used.",
@@ -3321,6 +3370,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "This result was taken during a pregnancy recorded in the profile. The published intervals for it are written for people who are not pregnant, so they are not applied; the laboratory's own interval is shown instead.",
         "uk": "Цей результат отримано під час вагітності, зазначеної в профілі. Опубліковані інтервали для нього розраховані на невагітних, тому не застосовуються; натомість показано інтервал лабораторії.",
     },
+    "verdict.blocked_egfr_pregnancy": {
+        "en": "This result falls within the pregnancy recorded in the profile. eGFR equations are not valid in pregnancy, so no kidney-function stage or normal/abnormal verdict is assigned. The laboratory's reported value and range are retained as source evidence.",
+        "uk": "Цей результат припадає на вагітність, зазначену в профілі. Рівняння рШКФ не є валідними під час вагітності, тому стадію функції нирок та оцінку норма/поза нормою не визначено. Значення та інтервал, повідомлені лабораторією, збережено як дані джерела.",
+    },
     "glucose.assumed_fasting": {
         "en": "Judged as a fasting sample (nothing to eat or drink except water for at least 8 hours). The record does not say whether it was.",
         "uk": "Оцінено як зразок, узятий натще (щонайменше 8 годин без їжі й напоїв, крім води). У картці не зазначено, чи це так.",
@@ -3390,30 +3443,30 @@ MESSAGES: dict[str, dict[str, str]] = {
     # Only a handful of analytes have a published screening cadence. Everything
     # else gets `no_interval`: elapsed time is reported, lateness is not implied.
     # Chip / strip face — keep short for a 3-slot labelled strip; the disclosure
-    # carries the full “nothing published” explanation via stale.no_interval_body.
+    # explains the absence of a sourced interval in this record.
     "stale.no_interval": {"en": "No screening interval", "uk": "Без планового повтору"},
     # Ukrainian has three plural forms for "місяць" (1 / 2–4 / 5–20). One string
     # cannot serve all three, so the file's per-form key convention is extended
     # to _one / _few / _many; the caller picks the form from the count.
     "stale.no_interval_detail_one": {
-        "en": "Last tested {months} month ago · no published screening interval",
-        "uk": "Останній аналіз {months} місяць тому · інтервал скринінгу не опубліковано",
+        "en": "Last result {months} month ago · no routine interval set in this record",
+        "uk": "Останній результат {months} місяць тому · у картці не задано планового інтервалу",
     },
     "stale.no_interval_detail_few": {
-        "en": "Last tested {months} months ago · no published screening interval",
-        "uk": "Останній аналіз {months} місяці тому · інтервал скринінгу не опубліковано",
+        "en": "Last result {months} months ago · no routine interval set in this record",
+        "uk": "Останній результат {months} місяці тому · у картці не задано планового інтервалу",
     },
     "stale.no_interval_detail_many": {
-        "en": "Last tested {months} months ago · no published screening interval",
-        "uk": "Останній аналіз {months} місяців тому · інтервал скринінгу не опубліковано",
+        "en": "Last result {months} months ago · no routine interval set in this record",
+        "uk": "Останній результат {months} місяців тому · у картці не задано планового інтервалу",
     },
     "stale.no_interval_body": {
-        "en": "No professional body publishes a screening interval for this, so there is nothing to be late for. The elapsed time is shown for context only.",
-        "uk": "Для цього аналізу жодна фахова організація не публікує інтервалу скринінгу, тож прострочити його неможливо. Час, що минув, показано лише для довідки.",
+        "en": "This record has no sourced routine retest interval for this metric. The elapsed time is shown for context only.",
+        "uk": "У цій картці немає підтвердженого джерелом планового інтервалу повторної перевірки цього показника. Час, що минув, показано лише для довідки.",
     },
     "stale.tested_months_ago": {"en": "Tested {months} months ago", "uk": "Аналіз {months} міс. тому"},
     "stale.tested_days_ago": {"en": "Tested {days} days ago", "uk": "Аналіз {days} дн. тому"},
-    "stale.tested_on": {"en": "Last tested {date}", "uk": "Останній аналіз: {date}"},
+    "stale.tested_on": {"en": "Last result {date}", "uk": "Останній результат: {date}"},
     "stale.overdue_by": {"en": "Overdue by {months} months", "uk": "Прострочено на {months} міс."},
     "stale.due_on": {"en": "Due {date}", "uk": "Термін: {date}"},
     "stale.due_in": {"en": "Due in {months} months", "uk": "Через {months} міс."},
@@ -4322,8 +4375,8 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
     "ai.devices_heading": {"en": "Watch and device measurements", "uk": "Вимірювання з годинника та пристроїв"},
     "ai.devices_body": {
-        "en": '{metrics} metrics, summarized from {rows} daily rows covering {first} to {last}; the rows themselves are not included. Main metrics show the recent days (newest first, the year only on the first), then monthly means for the last twelve months and yearly means before that, each as mean (min-max, days measured). Ask me for a specific metric and period if you need finer detail.',
-        "uk": 'Показників: {metrics}, узагальнено з добових записів (усього {rows}) за період з {first} по {last}; самих записів тут немає. Для основних показників наведено останні дні (від найновішого, рік лише в першому), далі середні за кожен з останніх дванадцяти місяців і за кожен попередній рік у форматі середнє (мін-макс, днів із вимірюваннями). Якщо потрібна точніша картина, попросіть у мене конкретний показник за конкретний період.',
+        "en": '{metrics} metrics, summarized from {rows} daily rows covering {first} to {last}; the rows themselves are not included. Main metrics show the recent days (newest first, with a full date on each), then monthly means for the last twelve months and yearly means before that, each as mean (min-max, days measured). Ask me for a specific metric and period if you need finer detail.',
+        "uk": 'Показників: {metrics}, узагальнено з добових записів (усього {rows}) за період з {first} по {last}; самих записів тут немає. Для основних показників наведено останні дні (від найновішого, з повною датою кожного запису), далі середні за кожен з останніх дванадцяти місяців і за кожен попередній рік у форматі середнє (мін-макс, днів із вимірюваннями). Якщо потрібна точніша картина, попросіть у мене конкретний показник за конкретний період.',
     },
     "ai.devices_none": {
         "en": "No wearable or device data has been imported.",
@@ -7553,6 +7606,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Height from your health app or device profile and height measured at a visit are one measurement, read together on the height page.",
         "uk": "Зріст із застосунку здоров’я чи профілю пристрою і зріст, виміряний на прийомі, це одне вимірювання, тож їх показано разом на сторінці зросту.",
     },
+    "twin.why_body_temperature": {
+        "en": "Body temperature from HealthKit and a clinical record share this page. Sleeping wrist temperature and temperature deviation remain separate because the measurement site and meaning differ.",
+        "uk": "Температура тіла з HealthKit та медичного запису показана на цій сторінці. Температура зап’ястка під час сну та відхилення температури залишаються окремими показниками через інше місце й значення вимірювання.",
+    },
     "twin.why_body_mass_index": {
         "en": "BMI from a smart scale and BMI calculated at a visit are the same number, weight divided by height squared, read as one series.",
         "uk": "ІМТ із розумних ваг і ІМТ, розрахований на прийомі, це те саме число: маса, поділена на квадрат зросту. Їх показано одним рядом.",
@@ -8945,3 +9002,13 @@ MESSAGES: dict[str, dict[str, str]] = {
         "uk": "Продукт розпаду тромбу; нормальний результат допомагає виключити тромб.",
     },
 }
+
+
+MESSAGES.update({
+    "panel.context_lead": {"en": "Reported quantities and their source context", "uk": "Показники та контекст їхнього джерела"},
+    "metric.context_history_note": {"en": "The chart follows the latest result's sample and method context. Results from other contexts remain in the source history below.", "uk": "Графік показує результати з тим самим контекстом зразка та методу, що й останній результат. Результати з іншим контекстом залишаються нижче в історії джерел."},
+    "panel.source_records_lead": {"en": "Device values trace to their source series; document results link to their original reports.", "uk": "Значення пристроїв пов’язані зі своїми рядами джерел, а результати документів — з оригінальними звітами."},
+    "devices.raw_impedance_heading": {"en": "Raw impedance field retained without interpretation", "uk": "Поле сирого імпедансу збережено без інтерпретації"},
+    "devices.raw_impedance_counts": {"en": "Source records containing weight.rawImpedance: {records}; positive entries: {positive}.", "uk": "Записи джерела з полем weight.rawImpedance: {records}; додатні значення: {positive}."},
+    "devices.raw_impedance_explanation": {"en": "This export does not document the field's unit or calibration. It remains in the original source and is not interpreted as a measurement in ohms.", "uk": "У цьому експорті не зазначено одиницю або калібрування поля. Воно залишається в оригінальному джерелі й не тлумачиться як вимірювання в омах."},
+})

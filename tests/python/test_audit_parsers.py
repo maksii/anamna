@@ -112,7 +112,7 @@ def test_unspaced_x10_unit_folds_like_the_spaced_one():
     assert canonical_unit("х10*12/л") == canonical_unit("х 10*12/л") == "10^12/l"
 
 
-def test_grams_per_millilitre_folds_only_for_specific_gravity():
+def test_mass_density_unit_is_preserved_for_source_review():
     assert canonical_unit("г/мл") == "г/мл"
-    assert stored_unit("г/мл", None, "urine-specific-gravity") == ""
+    assert stored_unit("г/мл", None, "urine-specific-gravity") == "г/мл"
     assert stored_unit("г/мл", None, "creatinine") == "г/мл"

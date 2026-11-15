@@ -6083,6 +6083,7 @@ details.panel.an-page-disclosure { padding: 0; }
 .stack-form p.tiny a { display: inline-block; padding-block: var(--space-2); }
 .an-profile-group > p.tiny { margin: 0 0 var(--space-2); }
 .an-profile-field .an-static-field { margin: 0; }
+.an-profile-bmi dd { white-space: nowrap; overflow-wrap: normal; }
 
 /* --- Access credentials ----------------------------------------------------
 

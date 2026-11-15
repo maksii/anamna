@@ -224,7 +224,8 @@ def test_an_image_set_without_a_conclusion_is_filed_but_says_so(ledger):
     add_report(settings, owner, patient, "ct", "diagnostic_image", "ENT CT screening image set",
                ["Дата обстеження: 11.09.2025\nПІБ: Тестенко Т.І.\n[Embedded image region 1]\nSagittal 64mm"])
     [row] = findings(settings)
-    assert (row["health_area"], row["summary_uk"], row["summary_en"], row["original_text"]) == ("ent", "", "", "")
+    assert (row["health_area"], row["summary_uk"], row["summary_en"], row["original_text"]) == (
+        "ent", "", "Medical images require source review; no written conclusion was extracted.", "")
     assert row["finding_date"] == "2025-09-11"
 
 
