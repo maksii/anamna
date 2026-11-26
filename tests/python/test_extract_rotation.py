@@ -10,7 +10,7 @@ from anamna.ingest import extract
 
 def _osd_available() -> bool:
     try:
-        result = subprocess.run(["tesseract", "--list-langs"], capture_output=True, text=True, timeout=10)
+        result = subprocess.run([extract.tesseract_command(), "--list-langs"], capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.TimeoutExpired):
         return False
     return result.returncode == 0 and "osd" in result.stdout.split()
@@ -36,7 +36,7 @@ def _page(path):
 def _words(path) -> str:
     # psm 11 (sparse) does no orientation handling of its own, unlike psm 3.
     return subprocess.run(
-        ["tesseract", str(path), "stdout", "--psm", "11", "-l", "eng"], capture_output=True, text=True
+        [extract.tesseract_command(), str(path), "stdout", "--psm", "11", "-l", "eng"], capture_output=True, text=True
     ).stdout.lower()
 
 

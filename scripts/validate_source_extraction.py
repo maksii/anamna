@@ -298,6 +298,13 @@ def main() -> None:
     parser.add_argument("--json-output", type=Path, default=ROOT / "work" / "extraction-validation.json")
     parser.add_argument("--markdown-output", type=Path, default=ROOT / "work" / "extraction-validation.md")
     args = parser.parse_args()
+    if not args.database.is_file():
+        # sqlite3 says only "unable to open database file", which reads like a
+        # permissions fault; a fresh checkout simply has no database yet.
+        parser.error(
+            f"no database at {args.database}: start the server once (uv run anamna-web), "
+            "create the first account (uv run anamna init), or pass --database"
+        )
 
     source_root = args.sources.resolve()
     files = collect_files(source_root)

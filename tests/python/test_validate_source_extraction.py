@@ -61,3 +61,42 @@ def test_a_synevo_package_summary_is_not_a_report_that_lost_its_results():
     record = {}
     validator.check_observations(record, row, [], [1], plain)
     assert _codes(record) == {("error", "structured_results_missing")}
+
+
+def test_both_validators_name_a_missing_database_instead_of_a_traceback(tmp_path, monkeypatch, capsys):
+    import pytest
+
+    missing = tmp_path / "absent.sqlite3"
+    for name in ("validate_source_extraction.py", "validate_device_imports.py"):
+        path = SCRIPT.parent / name
+        module_spec = importlib.util.spec_from_file_location(path.stem, path)
+        module = importlib.util.module_from_spec(module_spec)
+        module_spec.loader.exec_module(module)
+        monkeypatch.setattr("sys.argv", [name, "--database", str(missing), "--json-output", str(tmp_path / "out.json")])
+        with pytest.raises(SystemExit) as stopped:
+            module.main()
+        assert stopped.value.code == 2
+        assert f"no database at {missing}" in capsys.readouterr().err
+        assert not missing.exists(), "a validator must never create the database it checks"
+
+
+def test_a_record_with_no_device_imports_has_nothing_to_fail(tmp_path, monkeypatch, capsys):
+    """A fresh checkout, or a person with neither a Garmin nor a Kardia, is not an error."""
+    import json
+
+    from anamna.config import Settings
+    from anamna.db import migrate
+
+    settings = Settings(tmp_path / "empty.sqlite3", tmp_path / "sources", "test-secret")
+    migrate(settings)
+    path = SCRIPT.parent / "validate_device_imports.py"
+    module_spec = importlib.util.spec_from_file_location(path.stem, path)
+    module = importlib.util.module_from_spec(module_spec)
+    module_spec.loader.exec_module(module)
+    output = tmp_path / "device.json"
+    monkeypatch.setattr("sys.argv", [path.name, "--database", str(settings.database_path), "--json-output", str(output)])
+    module.main()
+    report = json.loads(output.read_text(encoding="utf-8"))
+    assert report["errors"] == []
+    assert report["skipped_no_import"] == ["garmin", "kardia"]
+    assert json.loads(capsys.readouterr().out)["errors"] == 0

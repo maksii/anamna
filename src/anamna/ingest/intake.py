@@ -27,6 +27,7 @@ import logging
 import shutil
 import threading
 import time
+import unicodedata
 import uuid
 import zipfile
 from dataclasses import dataclass, field
@@ -77,6 +78,7 @@ DETAIL_KEYS = (
     "intake.done_rescanned",
     FAILED_MISSING,
     "intake.failed_unreadable",
+    "intake.failed_archive_collision",
     "intake.failed_unsupported",
     "intake.failed_empty",
     "intake.failed_too_big",
@@ -224,11 +226,31 @@ def _unsafe(name: str) -> bool:
 class _ExpansionBudget:
     entries: int = 0
     bytes: int = 0
-    destinations: set[Path] = field(default_factory=set)
+    #: Each written file, as `_destination` names it.
+    destinations: set[tuple[object, ...]] = field(default_factory=set)
 
 
 class _ArchiveCollisionError(zipfile.BadZipFile):
     """Two archive members would publish different bytes at one source path."""
+
+
+def _destination(written: Path) -> tuple[object, ...]:
+    """What makes `written` one file on disk, so two members can be compared.
+
+    A path cannot say whether two members land in one file: APFS on macOS and
+    NTFS fold case, and APFS also folds Unicode normalization, so
+    `A/report.pdf` and `a/Report.pdf` (or a name in NFC and the same name in
+    NFD) are one file there. The file's (device, inode) can. A filesystem
+    that reports no file id (inode 0: some network shares and FUSE mounts)
+    would make every file look like the first one and refuse every archive,
+    so there the resolved path is compared, folded the way the loosest
+    filesystem folds it: a false refusal tells the person to rename a member,
+    a missed collision loses a report.
+    """
+    status = written.stat()
+    if status.st_ino:
+        return ("file", status.st_dev, status.st_ino)
+    return ("path", unicodedata.normalize("NFC", str(written.resolve())).casefold())
 
 
 def expand_archive(
@@ -288,7 +310,7 @@ def _extract_entries(
             logger.warning("intake: skipped unsafe archive entry (type %s)", kind)
             continue
         written = Path(bundle.extract(info, target))
-        destination = written.resolve()
+        destination = _destination(written)
         if destination in budget.destinations:
             # Nothing is queued until expansion succeeds. Reject the
             # ambiguous bundle and retain its original zip for recovery,
@@ -725,6 +747,13 @@ def _unpack_for_job(settings: Settings, job, archive: Path, target: Path) -> tup
             relative_root = relative_root if adapter == named else ""
             adapter = named
         produced = expand_archive(archive, target)
+    except _ArchiveCollisionError:
+        # Said apart from a damaged file: the archive opens fine, and the
+        # person can fix it by renaming one member. On macOS and Windows names
+        # that differ only in capitals are one file, so this is not rare there.
+        discard_upload_tree(settings, target)
+        _finish(settings, job["id"], "failed", "intake.failed_archive_collision")
+        return None
     except zipfile.BadZipFile:
         discard_upload_tree(settings, target)
         _finish(settings, job["id"], "failed", "intake.failed_unreadable")

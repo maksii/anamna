@@ -27,11 +27,16 @@ from anamna.ingest.extract import extract_document
 #: would leave the bug it guards unguarded on exactly the machine that runs CI.
 needs_tesseract = pytest.mark.skipif(
     not extract.ocr_available(),
-    reason="OCR needs tesseract, locally or through WSL",
+    reason="OCR needs tesseract with ukr and eng, locally or through WSL",
 )
 
 #: Short enough to fit the page at a size the default bitmap font survives.
-TEXT = "VACCINATION CARD"
+#: Mixed case on purpose: with `ukr+eng`, Tesseract 5.5 (Homebrew on macOS)
+#: reads an all-capital Latin line drawn in this font as Cyrillic look-alikes
+#: at some sizes («VACCINATION CARD» came back as «МАССІМАТІОМ САВО»), which
+#: says nothing about the plumbing under test. Lower-case Latin letters have
+#: few Cyrillic twins, and this line reads the same on 5.3 and 5.5.
+TEXT = "Vaccination record"
 
 
 def scanned_pdf(path: Path) -> Path:

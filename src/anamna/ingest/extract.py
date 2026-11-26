@@ -5,6 +5,8 @@ import hashlib
 import io
 import logging
 import mimetypes
+import os
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -71,8 +73,57 @@ SCANNED_PAGE_CHARS = 80
 MAX_OCR_PAGES = 400
 #: The Windows launcher for the WSL install that carries tesseract.
 WSL_EXE = "wsl.exe"
+#: WSL is a Windows launcher; anywhere else trying it only spawns a failure.
+ON_WINDOWS = os.name == "nt"
+def _tesseract_fallbacks() -> tuple[str, ...]:
+    """Where an installer puts tesseract, for a server whose PATH lacks it.
+
+    On macOS: Homebrew on Apple silicon, Homebrew on Intel, MacPorts. A
+    process started by launchd (the Dock, an editor opened from Finder, a
+    login item) gets only /usr/bin:/bin:/usr/sbin:/sbin, and OCR then went
+    missing without a word: every scan imported as a blank page. On Windows:
+    the UB Mannheim installer's folders, machine-wide and per user, which it
+    does not add to PATH. A POSIX path is never tried on Windows, where it
+    would name a folder at the root of whatever drive the server runs from.
+    """
+    if not ON_WINDOWS:
+        return ("/opt/homebrew/bin/tesseract", "/usr/local/bin/tesseract", "/opt/local/bin/tesseract")
+    roots = [os.environ.get(name) for name in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA")]
+    local = os.environ.get("LOCALAPPDATA")
+    if local:
+        roots.append(os.path.join(local, "Programs"))
+    return tuple(os.path.join(root, "Tesseract-OCR", "tesseract.exe") for root in roots if root)
+
+
+TESSERACT_FALLBACKS = _tesseract_fallbacks()
 #: Tesseract's language argument: Ukrainian reports with English terms.
 OCR_LANGUAGES = "ukr+eng"
+
+
+@lru_cache(maxsize=1)
+def tesseract_command() -> str:
+    """The tesseract executable: the one on PATH, else a package manager's, else the bare name."""
+    found = shutil.which("tesseract")
+    if found:
+        return found
+    for candidate in TESSERACT_FALLBACKS:
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return "tesseract"
+
+
+def tesseract_commands(path: Path | None, *arguments: str) -> list[list[str]]:
+    """The command lines to try, in order, for one tesseract call on `path`.
+
+    Native tesseract first; on Windows, the one inside WSL after it, with the
+    path translated to WSL's view of the drive.
+    """
+    target = [str(path)] if path is not None else []
+    commands = [[tesseract_command(), *target, *arguments]]
+    if ON_WINDOWS:
+        translated = [wsl_path(path)] if path is not None else []
+        commands.append([WSL_EXE, "tesseract", *translated, *arguments])
+    return commands
 
 
 @lru_cache(maxsize=1)
@@ -84,7 +135,7 @@ def ocr_available() -> bool:
     end-to-end OCR test run and then fail with an empty page. Probe the exact
     language contract instead of inferring capability from an executable name.
     """
-    for command in (["tesseract", "--list-langs"], [WSL_EXE, "tesseract", "--list-langs"]):
+    for command in tesseract_commands(None, "--list-langs"):
         try:
             result = subprocess.run(
                 command, capture_output=True, text=True, encoding="utf-8", errors="replace",
@@ -129,10 +180,7 @@ def upright_image_file(path: Path) -> int:
     Never raises: on any doubt the image is left untouched.
     """
     try:
-        output = _first_output([
-            ["tesseract", str(path), "stdout", "--psm", "0", "-l", "osd"],
-            [WSL_EXE, "tesseract", wsl_path(path), "stdout", "--psm", "0", "-l", "osd"],
-        ])
+        output = _first_output(tesseract_commands(path, "stdout", "--psm", "0", "-l", "osd"))
         fields = {
             key.strip().lower(): value.strip()
             for key, _, value in (line.partition(":") for line in output.splitlines())
@@ -150,11 +198,7 @@ def upright_image_file(path: Path) -> int:
 
 
 def ocr_image(path: Path, psm: str = SPARSE_REGION_PSM) -> str:
-    commands = [
-        ["tesseract", str(path), "stdout", "-l", OCR_LANGUAGES, "--psm", psm],
-        [WSL_EXE, "tesseract", wsl_path(path), "stdout", "-l", OCR_LANGUAGES, "--psm", psm],
-    ]
-    return _first_output(commands).strip()
+    return _first_output(tesseract_commands(path, "stdout", "-l", OCR_LANGUAGES, "--psm", psm)).strip()
 
 
 def _tsv_words(output: str) -> list[dict[str, object]]:
@@ -211,11 +255,7 @@ def _row_groups(words: list[dict[str, object]]) -> list[dict[str, object]]:
 
 def ocr_layout_rows(path: Path, psm: str = SPARSE_REGION_PSM) -> str:
     """OCR an image and reconstruct visual rows from TSV word coordinates."""
-    commands = [
-        ["tesseract", str(path), "stdout", "-l", OCR_LANGUAGES, "--psm", psm, "tsv"],
-        [WSL_EXE, "tesseract", wsl_path(path), "stdout", "-l", OCR_LANGUAGES, "--psm", psm, "tsv"],
-    ]
-    output = _first_output(commands)
+    output = _first_output(tesseract_commands(path, "stdout", "-l", OCR_LANGUAGES, "--psm", psm, "tsv"))
     if not output:
         return ""
     lines = []
