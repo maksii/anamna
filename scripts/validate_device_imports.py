@@ -311,6 +311,13 @@ def main() -> None:
     parser.add_argument("--kardia", type=Path, default=None)
     parser.add_argument("--json-output", type=Path, default=ROOT / "work" / "device-import-validation.json")
     args = parser.parse_args()
+    if not args.database.is_file():
+        # sqlite3 says only "unable to open database file", which reads like a
+        # permissions fault; a fresh checkout simply has no database yet.
+        parser.error(
+            f"no database at {args.database}: start the server once (uv run anamna-web), "
+            "create the first account (uv run anamna init), or pass --database"
+        )
 
     connection = sqlite3.connect(f"file:{args.database.resolve()}?mode=ro", uri=True)
     connection.row_factory = sqlite3.Row
@@ -318,10 +325,15 @@ def main() -> None:
     results: dict[str, object] = {}
 
     pairs = []
+    skipped: list[str] = []
     for key, override in (("garmin", args.garmin), ("kardia", args.kardia)):
         source = override or _latest_source(connection, key)
         if source is None:
-            errors.append(f"{key}: no import recorded and no --{key} path given")
+            # Nothing of this kind was ever imported: a fresh checkout, or a
+            # person who uses neither device. There is no import to check, and
+            # a row left behind by a deleted import is the foreign-key check's
+            # to report, below.
+            skipped.append(key)
             continue
         pairs.append((key, source.resolve()))
 
@@ -344,6 +356,7 @@ def main() -> None:
         "kardia_document_linked": bool(kardia_event and kardia_event[0]["document_id"]),
         "database_integrity": integrity,
         "foreign_key_violations": foreign_keys,
+        "skipped_no_import": skipped,
         "errors": errors,
         "automated_pass_grants_clinical_verification": False,
     }
@@ -353,6 +366,7 @@ def main() -> None:
         "garmin": {key: results.get("garmin", {}).get(key) for key in ("raw_records", "daily_metrics", "events")},
         "kardia": {key: results.get("kardia", {}).get(key) for key in ("raw_records", "daily_metrics", "events")},
         "kardia_document_linked": payload["kardia_document_linked"],
+        "skipped_no_import": skipped,
         "errors": len(errors),
         "database_integrity": integrity,
         "foreign_key_violations": foreign_keys,

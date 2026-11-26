@@ -8,7 +8,8 @@ Ukrainian.
 
 You need [uv](https://docs.astral.sh/uv/), Python 3.14 and Node.js 26 (for the JavaScript tests).
 Tesseract with the `ukr` and `eng` language data is needed to run the OCR tests; without it they
-skip.
+skip. On macOS: `brew install tesseract tesseract-lang`. On Debian or Ubuntu:
+`sudo apt-get install tesseract-ocr tesseract-ocr-ukr tesseract-ocr-eng`.
 
 ```bash
 uv sync --locked --all-extras

@@ -421,5 +421,5 @@ def test_archive_collisions_are_reported_without_silently_losing_a_report(ledger
     assert list(source.parent.iterdir()) == [source]
     with connect(settings) as connection:
         job = connection.execute("SELECT * FROM upload_jobs").fetchone()
-        assert (job["state"], job["detail_key"]) == ("failed", "intake.failed_unreadable")
+        assert (job["state"], job["detail_key"]) == ("failed", "intake.failed_archive_collision")
         assert connection.execute("SELECT COUNT(*) FROM documents").fetchone()[0] == 0

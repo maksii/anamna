@@ -3747,6 +3747,18 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "The file could not be opened. It may be damaged, or its name cannot be used",
         "uk": "Не вдалося відкрити файл. Можливо, він пошкоджений або має непридатну назву",
     },
+    "intake.failed_archive_collision": {
+        "en": (
+            "Two files in this archive would be saved under one name (names that differ only in "
+            "capital letters count as the same), so one would replace the other. Nothing was "
+            "imported. Rename one of them and upload the archive again"
+        ),
+        "uk": (
+            "Два файли в цьому архіві мали б однакову назву (назви, що відрізняються лише великими "
+            "літерами, вважаються однаковими), і один замінив би інший. Нічого не імпортовано. "
+            "Перейменуйте один із них і завантажте архів знову"
+        ),
+    },
     "intake.failed_unsupported": {
         "en": "That format is not accepted here",
         "uk": "Цей формат не підтримується",

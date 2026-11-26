@@ -39,6 +39,28 @@ jobs:
           uv export --locked --no-dev --no-emit-project --output-file "${{ runner.temp }}/runtime-requirements.txt"
           uv tool run --from pip-audit==2.10.1 pip-audit --requirement "${{ runner.temp }}/runtime-requirements.txt" --disable-pip --require-hashes --progress-spinner off
 
+  # The same suite on a Mac: APFS folds case and Unicode normalization, the
+  # system fonts live elsewhere, and Homebrew's Tesseract is a newer release
+  # than Ubuntu's. Each of those has broken something only on macOS.
+  test-macos:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: "3.14"
+          version: "0.13.8"
+      - name: Install OCR engines exercised by scanned-page tests
+        run: brew install tesseract tesseract-lang
+      - run: uv sync --locked --all-extras
+      - run: uv run --no-sync pytest -q -n auto --basetemp=${{ runner.temp }}/pytest
+
   js:
     runs-on: ubuntu-latest
     timeout-minutes: 10

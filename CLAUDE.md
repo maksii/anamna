@@ -75,8 +75,9 @@ Windows and produces phantom `PermissionError`s that have nothing to do with the
 The lint gate is correctness-only (pyflakes rules, configured in `pyproject.toml`). A docker build is
 not needed locally: CI builds the image and smoke-tests the running container.
 
-OCR tests need Tesseract with the `ukr` and `eng` language data (on `PATH`, or inside WSL on
-Windows); without it they skip.
+OCR tests need Tesseract with the `ukr` and `eng` language data (on `PATH`, inside WSL on
+Windows, or Homebrew/MacPorts on macOS: `brew install tesseract tesseract-lang`); without it they
+skip. CI runs the suite on macOS as well as Linux.
 
 ## Test account
 

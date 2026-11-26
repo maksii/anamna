@@ -167,13 +167,23 @@ def prepare_metric(
     }
 
 
+#: Regular and bold TrueType fonts that carry Cyrillic, one pair per platform.
+#: Without one, reportlab falls back to Helvetica, which has no Cyrillic glyphs:
+#: every Ukrainian word of an export or a visit record printed as a row of
+#: boxes. macOS keeps Arial under Supplemental; the Debian image installs
+#: fonts-dejavu-core; Fedora and Arch put DejaVu elsewhere.
+FONT_CANDIDATES = (
+    (Path("C:/Windows/Fonts/arial.ttf"), Path("C:/Windows/Fonts/arialbd.ttf")),
+    (Path("/System/Library/Fonts/Supplemental/Arial.ttf"), Path("/System/Library/Fonts/Supplemental/Arial Bold.ttf")),
+    (Path("/Library/Fonts/Arial.ttf"), Path("/Library/Fonts/Arial Bold.ttf")),
+    (Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"), Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")),
+    (Path("/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf"), Path("/usr/share/fonts/dejavu-sans-fonts/DejaVuSans-Bold.ttf")),
+    (Path("/usr/share/fonts/TTF/DejaVuSans.ttf"), Path("/usr/share/fonts/TTF/DejaVuSans-Bold.ttf")),
+)
+
+
 def _font_paths() -> tuple[Path | None, Path | None]:
-    candidates = (
-        (Path("C:/Windows/Fonts/arial.ttf"), Path("C:/Windows/Fonts/arialbd.ttf")),
-        (Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"), Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")),
-        (Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"), Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")),
-    )
-    for regular, bold in candidates:
+    for regular, bold in FONT_CANDIDATES:
         if regular.is_file() and bold.is_file():
             return regular, bold
     return None, None
