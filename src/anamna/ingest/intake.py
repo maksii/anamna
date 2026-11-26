@@ -27,6 +27,7 @@ import logging
 import shutil
 import threading
 import time
+import unicodedata
 import uuid
 import zipfile
 from dataclasses import dataclass, field
@@ -225,15 +226,31 @@ def _unsafe(name: str) -> bool:
 class _ExpansionBudget:
     entries: int = 0
     bytes: int = 0
-    #: Each written file as (device, inode). A path cannot say whether two
-    #: members land in one file: APFS on macOS and NTFS fold case, and APFS
-    #: also folds Unicode normalization, so `A/report.pdf` and `a/Report.pdf`
-    #: (or a name in NFC and the same name in NFD) are one file there.
-    destinations: set[tuple[int, int]] = field(default_factory=set)
+    #: Each written file, as `_destination` names it.
+    destinations: set[tuple[object, ...]] = field(default_factory=set)
 
 
 class _ArchiveCollisionError(zipfile.BadZipFile):
     """Two archive members would publish different bytes at one source path."""
+
+
+def _destination(written: Path) -> tuple[object, ...]:
+    """What makes `written` one file on disk, so two members can be compared.
+
+    A path cannot say whether two members land in one file: APFS on macOS and
+    NTFS fold case, and APFS also folds Unicode normalization, so
+    `A/report.pdf` and `a/Report.pdf` (or a name in NFC and the same name in
+    NFD) are one file there. The file's (device, inode) can. A filesystem
+    that reports no file id (inode 0: some network shares and FUSE mounts)
+    would make every file look like the first one and refuse every archive,
+    so there the resolved path is compared, folded the way the loosest
+    filesystem folds it: a false refusal tells the person to rename a member,
+    a missed collision loses a report.
+    """
+    status = written.stat()
+    if status.st_ino:
+        return ("file", status.st_dev, status.st_ino)
+    return ("path", unicodedata.normalize("NFC", str(written.resolve())).casefold())
 
 
 def expand_archive(
@@ -293,8 +310,7 @@ def _extract_entries(
             logger.warning("intake: skipped unsafe archive entry (type %s)", kind)
             continue
         written = Path(bundle.extract(info, target))
-        status = written.stat()
-        destination = (status.st_dev, status.st_ino)
+        destination = _destination(written)
         if destination in budget.destinations:
             # Nothing is queued until expansion succeeds. Reject the
             # ambiguous bundle and retain its original zip for recovery,

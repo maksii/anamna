@@ -9,6 +9,7 @@ application printed on a Mac came out as boxes.
 from __future__ import annotations
 
 import io
+import os
 import sys
 import unicodedata
 import zipfile
@@ -122,3 +123,44 @@ def test_an_exported_pdf_keeps_its_cyrillic_text():
     canvas.save()
     text = PdfReader(io.BytesIO(output.getvalue())).pages[0].extract_text()
     assert "Гемоглобін" in text
+
+
+def _without_file_ids(monkeypatch) -> None:
+    """Make every stat report inode 0, as some network shares and FUSE mounts do."""
+    real_stat = Path.stat
+
+    def stat(self, *args, **kwargs):
+        status = real_stat(self, *args, **kwargs)
+        fields = list(status[:10])
+        fields[1] = fields[2] = 0  # st_ino, st_dev
+        return os.stat_result(fields)
+
+    monkeypatch.setattr(Path, "stat", stat)
+
+
+def test_a_filesystem_without_file_ids_still_imports_distinct_members(tmp_path: Path, monkeypatch):
+    """Inode 0 for every file must not read as every member landing in one file."""
+    archive = _zip(tmp_path / "bundle.zip", [("a/first.pdf", b"first report"), ("b/second.pdf", b"second report")])
+    _without_file_ids(monkeypatch)
+    produced = intake.expand_archive(archive, tmp_path / "out")
+    assert sorted(path.read_bytes() for path in produced) == [b"first report", b"second report"]
+
+
+def test_a_filesystem_without_file_ids_still_refuses_a_case_collision(tmp_path: Path, monkeypatch):
+    archive = _zip(tmp_path / "bundle.zip", [("reports/report.pdf", b"first"), ("Reports/Report.pdf", b"second")])
+    _without_file_ids(monkeypatch)
+    with pytest.raises(intake._ArchiveCollisionError):
+        intake.expand_archive(archive, tmp_path / "out")
+
+
+def test_posix_install_paths_are_not_tried_on_windows(monkeypatch):
+    monkeypatch.setattr(extract, "ON_WINDOWS", True)
+    monkeypatch.setenv("ProgramFiles", r"C:\Program Files")
+    monkeypatch.delenv("ProgramFiles(x86)", raising=False)
+    monkeypatch.setenv("LOCALAPPDATA", r"C:\Users\someone\AppData\Local")
+    fallbacks = extract._tesseract_fallbacks()
+    assert fallbacks and all(path.endswith("tesseract.exe") for path in fallbacks)
+    assert not any(path.startswith("/") for path in fallbacks)
+    assert any("Program Files" in path for path in fallbacks)
+    monkeypatch.setattr(extract, "ON_WINDOWS", False)
+    assert extract._tesseract_fallbacks()[0] == "/opt/homebrew/bin/tesseract"

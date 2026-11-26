@@ -18,7 +18,8 @@ uv run anamna-web
 
 The server listens on http://127.0.0.1:8000. For OCR of scans and photos, install
 [Tesseract](https://tesseract-ocr.github.io/) with the `ukr` and `eng` language data on `PATH`
-(on Windows a Tesseract inside WSL is also found). On macOS, `brew install tesseract tesseract-lang`;
+(on Windows one installed under `Program Files` or `AppData\Local` without `PATH`, or one inside WSL,
+is also found). On macOS, `brew install tesseract tesseract-lang`;
 a Homebrew or MacPorts Tesseract is found even when the server was started without it on `PATH`,
 as an app opened from the Dock is.
 

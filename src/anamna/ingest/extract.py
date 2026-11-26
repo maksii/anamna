@@ -75,12 +75,27 @@ MAX_OCR_PAGES = 400
 WSL_EXE = "wsl.exe"
 #: WSL is a Windows launcher; anywhere else trying it only spawns a failure.
 ON_WINDOWS = os.name == "nt"
-#: Where a package manager installs tesseract, for a server whose PATH lacks
-#: it: Homebrew on Apple silicon, Homebrew on Intel, MacPorts. A process
-#: started by launchd (the Dock, an editor opened from Finder, a login item)
-#: gets only /usr/bin:/bin:/usr/sbin:/sbin, and OCR then went missing without
-#: a word: every scan imported as a blank page.
-TESSERACT_FALLBACKS = ("/opt/homebrew/bin/tesseract", "/usr/local/bin/tesseract", "/opt/local/bin/tesseract")
+def _tesseract_fallbacks() -> tuple[str, ...]:
+    """Where an installer puts tesseract, for a server whose PATH lacks it.
+
+    On macOS: Homebrew on Apple silicon, Homebrew on Intel, MacPorts. A
+    process started by launchd (the Dock, an editor opened from Finder, a
+    login item) gets only /usr/bin:/bin:/usr/sbin:/sbin, and OCR then went
+    missing without a word: every scan imported as a blank page. On Windows:
+    the UB Mannheim installer's folders, machine-wide and per user, which it
+    does not add to PATH. A POSIX path is never tried on Windows, where it
+    would name a folder at the root of whatever drive the server runs from.
+    """
+    if not ON_WINDOWS:
+        return ("/opt/homebrew/bin/tesseract", "/usr/local/bin/tesseract", "/opt/local/bin/tesseract")
+    roots = [os.environ.get(name) for name in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA")]
+    local = os.environ.get("LOCALAPPDATA")
+    if local:
+        roots.append(os.path.join(local, "Programs"))
+    return tuple(os.path.join(root, "Tesseract-OCR", "tesseract.exe") for root in roots if root)
+
+
+TESSERACT_FALLBACKS = _tesseract_fallbacks()
 #: Tesseract's language argument: Ukrainian reports with English terms.
 OCR_LANGUAGES = "ukr+eng"
 
